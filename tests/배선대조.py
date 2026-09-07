@@ -20,7 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 머리 행 -> 참조해야 하는 가정 항목 (키 이름)
 WANT = {
-    3:  {"cvs", "cve", "cv30"},                # Flag(전환) — ⑮ 는 cv30
+    3:  {"cvs", "cve", "cv30", "auto", "n"},                # Flag(전환) — ⑮ 는 cv30
     4:  {"pst", "pen", "frq"},                 # Flag(조기상환)
     5:  {"kst", "ken", "kfrq"},                # Flag(매도청구)
     6:  {"roff", "cyc"},                       # Flag(리픽싱)

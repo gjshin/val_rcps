@@ -11,3 +11,7 @@
     python3 tests/값조서대조.py
     python3 tests/리포트대조.py
     python3 tests/조서대조.py
+
+## RCPS
+
+사이드바 **모형 → 상품** 에서 고른다. 결정 사항과 근거는 [`docs/RCPS_설계.md`](docs/RCPS_설계.md).

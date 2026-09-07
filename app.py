@@ -2308,6 +2308,31 @@ def relabel_rcps(wb):
                 if v != c.value: c.value = v
 
 
+def rcps_text(tm: Terms, text: str) -> str:
+    """화면 문장을 상품 용어로. CB 면 그대로다."""
+    if not is_rcps(tm) or not isinstance(text, str): return text
+    for a, b in _RCPS_WORDS:
+        if a in text: text = text.replace(a, b)
+    return text
+
+
+def remeasure(tm: Terms, rows):
+    """기말 재평가. 배분표에서 파생상품부채 줄을 모아 당기 공정가치를 잡고
+    전기말 장부금액과 견준다. 부채가 늘면 발행회사에는 평가손실이다.
+
+    주계약은 여기서 다루지 않는다 — 상각후원가 장부금액은 발행일의 유효이자율로
+    굴린 값이어야 하는데, 이 앱의 상각표는 평가기준일 배분액에서 출발하므로
+    최초 인식 평가에만 맞는다. 전기 장부금액은 참고로 함께 보인다.
+    """
+    fv_liab = sum(v for k, v in rows[:-1] if "파생상품부채" in k)
+    fv_asset = sum(-v for k, v in rows[:-1] if "파생상품자산" in k)
+    has = tm.prev_deriv is not None and tm.prev_deriv >= 0
+    pl = (fv_liab - tm.prev_deriv) if has else None      # + 이면 부채 증가 = 손실
+    return dict(fv_liab=fv_liab, fv_asset=fv_asset, has=has,
+                prev=(tm.prev_deriv if has else None), pl=pl,
+                prev_host=(tm.prev_host if (has and tm.prev_host >= 0) else None))
+
+
 def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     """트리 하나에 시트 하나. 엑셀 트리모델과 같은 구조로 내보낸다."""
     from openpyxl import Workbook
@@ -2775,6 +2800,31 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         color=GREY, size=9)
     put(E, tr+3, 2, "전환권 분류: " + ("파생상품부채 — 주계약을 잔여로"
         if tm.conv_class == "liability" else "자본 — 전환권대가를 잔여로"), color=GREY, size=9)
+    _rm = remeasure(tm, al)
+    if _rm["has"]:
+        rq = tr+5
+        sec(E, rq, "3. 기말 재평가 — 파생상품부채", span=5)
+        for i, h in enumerate(["항목", "100 기준", "전액 기준 (원)"]):
+            put(E, rq+1, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+        _pl = _rm["pl"]
+        rows_rm = [("전기말 장부금액 (입력)", _rm["prev"]),
+                   ("당기말 공정가치 (배분표의 파생상품부채)", _rm["fv_liab"]),
+                   (("평가손실 — 부채 증가" if _pl >= 0 else "평가이익 — 부채 감소"), abs(_pl))]
+        if _rm["prev_host"] is not None:
+            rows_rm.append(("주계약 전기말 장부금액 (참고 · 재평가 대상 아님)", _rm["prev_host"]))
+        for i, (k, v) in enumerate(rows_rm):
+            put(E, rq+2+i, 2, k, border=True, bold=(i == 2), fill=(BAND if i == 2 else None))
+            put(E, rq+2+i, 3, v, fmt=N4, align="right", border=True, bold=(i == 2),
+                fill=(BAND if i == 2 else None), color=(AMB if i == 0 else "000000"))
+            put(E, rq+2+i, 4, v/100*fac, fmt=N0, align="right", border=True, bold=(i == 2),
+                fill=(BAND if i == 2 else None))
+        rj = rq+2+len(rows_rm)+1
+        put(E, rj, 2, ("차) 파생상품평가손실 / 대) 파생상품부채" if _pl >= 0
+                       else "차) 파생상품부채 / 대) 파생상품평가이익"), bold=True, size=9)
+        put(E, rj, 3, abs(_pl), fmt=N4, align="right", bold=True)
+        put(E, rj, 4, abs(_pl)/100*fac, fmt=N0, align="right", bold=True)
+        put(E, rj+1, 2, "주계약은 발행일 유효이자율로 상각한 장부금액을 쓴다. 이 조서의 상각표는 "
+            "평가기준일 배분액에서 출발하므로 최초 인식 평가에만 맞는다.", color=GREY, size=9)
 
     # ── 상각표 ──
     r_eir, rows_eir, redm, nper = eir
@@ -3021,6 +3071,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         ("BDT 변동성 σ", "bsig", tm.bdt_sig, P2, True),
         ("BDT 기준 (0 위험곡선 / 1 무위험+스프레드)", "bbase", tm.bdt_base, N0, False),
         ("전자등록총액 (원)", "face", tm.face_total, N0, True),
+        # 기말 재평가. 음수면 「없음」이다 — 발행 시점 평가.
+        ("전기말 파생상품부채 장부금액 (음수 = 없음)", "pdrv", tm.prev_deriv, N4, True),
+        ("전기말 주계약 장부금액 (음수 = 없음)", "phst", tm.prev_host, N4, True),
         ("무위험 (연속, 평탄)", "rfc", RF(tm.T), P2, False)]
     ROWN = {key: 3+i for i, (_, key, _, _, _) in enumerate(spec)}
     K = {key: f"가정!$C${r}" for key, r in ROWN.items()}
@@ -3918,6 +3971,32 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     put(E, 26, 2, "차변과 대변이 일치해야 한다", bold=True, border=True)
     put(E, 26, 3, '=IF(ABS(C25-D25)<0.01,"적합","오류")', align="center", border=True)
     put(E, 28, 2, "최초 인식에는 어떠한 손익도 생기지 않는다.", color=GREY, size=9)
+    # ── 기말 재평가 — 전기말 장부금액이 있을 때만 값이 찬다 (수식은 늘 산다) ──
+    sec(E, 30, "3. 기말 재평가 — 파생상품부채", span=5)
+    for i, h in enumerate(["항목", "100 기준", "전액 기준 (원)"]):
+        put(E, 31, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+    _FVL = (f'IF({K["eqcls"]}=1,IF({NS},0,IF({KS}=1,결과!C18,결과!C18-결과!C22)),'
+            f'IF({KS}=1,결과!C24,결과!C24-결과!C22))')
+    _HAS = f'{K["pdrv"]}>=0'
+    for i, (k, fx) in enumerate([
+            ("전기말 장부금액 (가정)", f'=IF({_HAS},{K["pdrv"]},"")'),
+            ("당기말 공정가치 (배분표의 파생상품부채)", f"={_FVL}"),
+            ("평가손익 (+ 손실 · − 이익)", f'=IF({_HAS},C33-C32,"")'),
+            ("주계약 전기말 장부금액 (참고 · 재평가 대상 아님)",
+             f'=IF(AND({_HAS},{K["phst"]}>=0),{K["phst"]},"")')]):
+        r = 32+i
+        put(E, r, 2, k, border=True, bold=(i == 2), fill=(BAND if i == 2 else None))
+        put(E, r, 3, fx, fmt=N4, align="right", border=True, bold=(i == 2),
+            fill=(BAND if i == 2 else None))
+        put(E, r, 4, f'=IF(ISNUMBER(C{r}),C{r}/100*{K["face"]},"")', fmt=N0,
+            align="right", border=True, bold=(i == 2), fill=(BAND if i == 2 else None))
+    put(E, 37, 2, '=IF(NOT(ISNUMBER(C34)),"전기말 장부금액이 없어 재평가 없음 (발행 시점 평가)",'
+                  'IF(C34>=0,"차) 파생상품평가손실 / 대) 파생상품부채",'
+                  '"차) 파생상품부채 / 대) 파생상품평가이익"))', bold=True, size=9)
+    put(E, 37, 3, '=IF(ISNUMBER(C34),ABS(C34),"")', fmt=N4, align="right", bold=True)
+    put(E, 37, 4, '=IF(ISNUMBER(D34),ABS(D34),"")', fmt=N0, align="right", bold=True)
+    put(E, 38, 2, "주계약은 발행일 유효이자율로 상각한 장부금액을 쓴다. 이 조서의 상각표는 "
+        "평가기준일 배분액에서 출발하므로 최초 인식 평가에만 맞는다.", color=GREY, size=9)
 
     # ── 분리 판단 ──
     # 화면과 같은 함수가 만든 문안이라 둘이 어긋날 수 없다.
@@ -4835,9 +4914,9 @@ eq = full["GS"]*full["P"] if t.model == "GS" else full["E"]
 dv = full["GS"]*(1-full["P"]) if t.model == "GS" else full["B"]
 
 c1, c2, c3 = st.columns([2, 1, 1])
-_L = lbl(t)
-c1.metric(f"{_L['inst']} 공정가치 · {t.model}", f"{b2:,.2f}",
-          help=f"{_L['call']} 미반영 기준 (B2). 반영한 값은 구성요소 탭의 B3.")
+LB = lbl(t)
+c1.metric(f"{LB['inst']} 공정가치 · {t.model}", f"{b2:,.2f}",
+          help=f"{LB['call']} 미반영 기준 (B2). 반영한 값은 구성요소 탭의 B3.")
 c2.metric("지분가치", f"{eq:,.2f}", help="주식으로 받게 될 부분")
 c3.metric("부채가치", f"{dv:,.2f}", help="현금으로 받게 될 부분")
 
@@ -4846,13 +4925,13 @@ tabs = st.tabs(["구성요소", "회계처리", "분리 판단", "이자율곡�
 
 with tabs[0]:
     df = pd.DataFrame([
-        [f"B0  {_L['host'].split(' (')[0]} — 옵션 없음", b0, None, "—"],
-        [f"B1  {_L['put']} 추가", b1, b1-b0, _L["put"]],
+        [f"B0  {LB['host'].split(' (')[0]} — 옵션 없음", b0, None, "—"],
+        [f"B1  {LB['put']} 추가", b1, b1-b0, LB["put"]],
         ["B2  전환권 추가", b2, b2-b1, "전환권"
          + (" (존속기간 만료 시 자동전환 포함)" if auto_conv(t) else "")],
-        [f"B3  {_L['call']} 반영", b2-ca, -ca,
-         (f"{_L['call']} (전체에 걸림)" if is_rcps(t)
-          else f"{_L['call']} ({t.k_w*100:.0f}% 한도)")]],
+        [f"B3  {LB['call']} 반영", b2-ca, -ca,
+         (f"{LB['call']} (전체에 걸림)" if is_rcps(t)
+          else f"{LB['call']} ({t.k_w*100:.0f}% 한도)")]],
         columns=["단계", "가치", "차액", "해당 옵션"])
     st.dataframe(df.style.format({"가치": "{:,.2f}", "차액": "{:+,.2f}"}, na_rep="—"),
                  use_container_width=True, hide_index=True)
@@ -4878,36 +4957,64 @@ with tabs[1]:
         use_container_width=True, hide_index=True)
     st.caption(f"전자등록총액 {t.face_total:,.0f}원 기준으로 환산했습니다.")
     st.caption(alloc_note)
-    if t.conv_class == "liability":
-        deriv = b2 - b0 - ca
-        host_acc = 100 - deriv + ca
-        je = f"""[최초 인식]
-차) 현금                                {100:>10,.2f}
-차) 파생상품자산 (매도청구권)             {ca:>10,.2f}
-    대) 전환사채 (주계약 · 잔여)              {host_acc:>10,.2f}
-    대) 파생상품부채 (내재파생상품)            {deriv:>10,.2f}
-
-[후속 결산]
-차) 이자비용                   주계약 × 유효이자율
-    대) 전환사채
-차) 파생상품평가손익            매 결산 공정가치로 재측정
-    대) 파생상품부채
-※ 전환권이 부채이므로 주가가 오르면 평가손실이 납니다."""
-    else:
-        je = f"""[최초 인식]
-차) 현금                                {100:>10,.2f}
-차) 파생상품자산 (매도청구권)             {ca:>10,.2f}
-    대) 전환사채 (주계약)                    {b0:>10,.2f}
-    대) 파생상품부채 (조기상환청구권)          {b1-b0:>10,.2f}
-    대) 전환권대가 (자본 · 잔여)              {conv:>10,.2f}
-
-[후속 결산]
-차) 이자비용                   주계약 × 유효이자율
-    대) 전환사채
-차) 파생상품평가손익            공정가치 변동분
-    대) 파생상품부채
-※ 전환권대가는 자본이므로 후속 재측정이 없습니다."""
+    # 분개는 배분표를 그대로 뒤집는다 — 조서와 같은 규칙. 음수 줄(자산)만
+    # 차변으로 가고 나머지는 대변이다. 따로 쓰면 두 표가 어긋난다.
+    _je = [("현금", 100.0, None)]
+    for _k, _v in alloc_rows[:-1]:
+        _nm = rcps_text(t, _k.split(" · ")[0])
+        if _v < 0: _je.append((f"파생상품자산 ({_nm})", -_v, None))
+        else:      _je.append((f"    {_nm}", None, _v))
+    _w = max(len(k) for k, _, _ in _je) + 2
+    _ln = [f"차) {k:<{_w}} {dr:>12,.4f}" if dr is not None else
+           f"    대) {k.strip():<{_w-4}} {cr:>12,.4f}" for k, dr, cr in _je]
+    _sd = sum(dr for _, dr, _ in _je if dr); _sc = sum(cr for _, _, cr in _je if cr)
+    je = ("[최초 인식]\n" + "\n".join(_ln)
+          + f"\n{'합계':<{_w+4}} 차변 {_sd:,.4f} = 대변 {_sc:,.4f}\n\n[후속 결산]\n"
+          + rcps_text(t, "차) 이자비용                   주계약 × 유효이자율\n"
+                         "    대) 전환사채 (주계약)\n")
+          + ("차) 파생상품평가손익            매 결산 공정가치로 재측정\n"
+             "    대) 파생상품부채\n"
+             "※ 전환권이 부채이므로 주가가 오르면 평가손실이 납니다."
+             if t.conv_class == "liability" else
+             ("차) 파생상품평가손익            분리한 파생상품부채를 공정가치로 재측정\n"
+              "    대) 파생상품부채\n" if any("파생상품부채" in k for k, _ in alloc_rows[:-1])
+              else "")
+             + "※ 전환권대가는 자본이므로 후속 재측정이 없습니다."))
     st.code(je, language=None)
+
+    # ── 기말 재평가 ──
+    _rm = remeasure(t, alloc_rows)
+    st.markdown("### 기말 재평가")
+    if not _rm["has"]:
+        st.caption("결산 평가라면 사이드바 **기말 재평가 · 전기 장부금액** 에 전기말 장부금액을 "
+                   "넣으십시오. 당기 공정가치와의 차이가 평가손익으로, 분개와 함께 나옵니다. "
+                   f"지금 파생상품부채 공정가치는 **{_rm['fv_liab']:,.4f}** 입니다.")
+    else:
+        _F = t.face_total/100
+        _pl = _rm["pl"]
+        st.dataframe(pd.DataFrame([
+            ["파생상품부채 · 전기말 장부금액", _rm["prev"], _rm["prev"]*_F],
+            ["파생상품부채 · 당기말 공정가치", _rm["fv_liab"], _rm["fv_liab"]*_F],
+            [("평가손실 (부채 증가)" if _pl >= 0 else "평가이익 (부채 감소)"), abs(_pl), abs(_pl)*_F]]
+            + ([["주계약 · 전기말 장부금액 (참고)", _rm["prev_host"], _rm["prev_host"]*_F]]
+               if _rm["prev_host"] is not None else []),
+            columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
+            {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
+            use_container_width=True, hide_index=True)
+        if _pl >= 0:
+            st.code(f"차) 파생상품평가손실            {_pl:>12,.4f}\n"
+                    f"    대) 파생상품부채                {_pl:>12,.4f}", language=None)
+        else:
+            st.code(f"차) 파생상품부채                {-_pl:>12,.4f}\n"
+                    f"    대) 파생상품평가이익            {-_pl:>12,.4f}", language=None)
+        st.caption("공정가치는 이 화면의 배분표에서 파생상품부채 줄을 모은 값입니다 — 전환권이 "
+                   "부채면 복합내재파생상품, 자본이면 분리한 상환·매도청구권 파생상품부채입니다. "
+                   "**주계약은 여기서 재평가하지 않습니다.** 상각후원가는 발행일 유효이자율로 "
+                   "굴린 장부금액이어야 하는데 이 앱의 상각표는 평가기준일 배분액에서 출발하므로 "
+                   "최초 인식에만 맞습니다. 발행 시점 조서의 상각표 그 회차 기말 금액을 쓰십시오.")
+        if (st.session_state.get("px_src") or "").startswith("발행가 역산"):
+            st.error("주가가 **발행가 역산**값입니다. 기말 재평가에서는 발행가가 기준이 아니므로 "
+                     "평가기준일 주가를 직접 넣으십시오.")
 
 with tabs[2]:
     st.write("조기상환청구권과 매도청구권을 **주계약과 분리해야 하는지**를 계약 "
@@ -4946,14 +5053,14 @@ with tabs[2]:
                      eir_table(t, acc_host(t, full, b0, b1, b2, ca))[1])
     st.divider()
 
-    for _key, _nm in (("put", "조기상환청구권"), ("call", "매도청구권")):
+    for _key, _nm in (("put", LB["put"]), ("call", LB["call"])):
         _d = _sp[_key]
         st.markdown(f"### {_nm}")
         if not _d["있음"]:
             st.info(_d["이유"][0]); continue
         _box = (st.success if _d["결론"] in ("분리", "별도의 금융상품", "묶어서 분리")
                 else st.warning)
-        _box(f"**{_d['결론']}**　—　" + " ".join(_d["이유"]))
+        _box(rcps_text(t, f"**{_d['결론']}**　—　" + " ".join(_d["이유"])))
         if _d["근거"]:
             st.caption("근거 · " + " · ".join(_d["근거"]))
         if _d["지표"]:
@@ -4962,7 +5069,7 @@ with tabs[2]:
                        ("예" if v2 is True else "아니오" if v2 is False
                         else f"{v2:,.4f}"))] for k2, v2 in _d["지표"].items()],
                 columns=["항목", "값"]), use_container_width=True, hide_index=True)
-        st.markdown("**평가방법** — " + _d["평가"])
+        st.markdown("**평가방법** — " + rcps_text(t, _d["평가"]))
 
     if not _sp["put"]["설정일치"]:
         st.error("사이드바의 **조기상환청구권 → 회계 처리** 설정이 위 판정과 "
@@ -5235,9 +5342,9 @@ with tabs[5]:
     D = full["dist"]; tot = D["conv"]+D["put"]+D["call"]+D["mat"] or 1
     st.dataframe(pd.DataFrame([
         ["전환", D["conv"]/tot, D["tc"]/D["conv"]/full["mper"] if D["conv"] else None],
-        ["조기상환", D["put"]/tot, D["tp"]/D["put"]/full["mper"] if D["put"] else None],
-        ["매도청구", D["call"]/tot, D["tk"]/D["call"]/full["mper"] if D["call"] else None],
-        ["만기 상환", D["mat"]/tot, t.T*12]],
+        [LB["put"], D["put"]/tot, D["tp"]/D["put"]/full["mper"] if D["put"] else None],
+        [LB["call"], D["call"]/tot, D["tk"]/D["call"]/full["mper"] if D["call"] else None],
+        [("존속기간 만료 · 자동전환" if auto_conv(t) else "만기 상환"), D["mat"]/tot, t.T*12]],
         columns=["유형", "비중", "평균 시점(개월)"]).style.format(
         {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
         use_container_width=True, hide_index=True)
