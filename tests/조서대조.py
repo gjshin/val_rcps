@@ -180,7 +180,10 @@ def main():
         ROWS = BASE + ([("전환권대가", "C23", "conv")]
                        if over.get("conv_class", "equity") == "equity" else [])
         # 유무가치비교법일 때만 30% 트랜치가 조서에 있다
-        if over.get("k_method", 0) == 0:
+        # 유무가치비교법일 때만 30% 트랜치가 조서에 있다. RCPS 는 발행자 상환권이
+        # 있을 때만 그 시트(⑮)가 생긴다 — 없으면 k_w=0 이라 C11 이 비어 있다.
+        if over.get("k_method", 0) == 0 and (over.get("inst") != "RCPS"
+                                              or over.get("issuer_call")):
             ROWS = ROWS + [("적용 30% 트랜치", "C11", "b3")]
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "wb.xlsx")

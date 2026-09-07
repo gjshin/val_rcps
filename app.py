@@ -790,7 +790,19 @@ def decompose(tm: Terms):
         cs = max(tm.cv_s, tm.k_lock)
         b3 = pick(engine(tm, conv=True, put=True, call=True, conv_start=cs), tm.model)
         ca = tm.k_w*(b2-b3)
-    resid = 100 - b1 + ca          # 전환권이 자본일 때의 잔여 (전환권대가)
+    # RCPS 의 발행자 상환권은 자본요소가 아닌 파생이라 **부채요소 안에서** 잰다
+    # (1032 문단 31·32 — 비자본 파생 특성은 부채요소 장부금액에 포함). 전체 격자에서
+    # 잰 콜(ca)은 전환 상승분을 자르는 값이라 부채에서 빼면 부채가 과소, 자본이
+    # 과대가 되고, 풋보다 커지면 복합내재파생이 음수가 되기도 한다. 그래서 전환권을
+    # 자본으로 볼 때의 배분에는 부채 격자(전환권 없음)에서 잰 콜을 쓴다. 전환권이
+    # 부채면 전환권·풋·콜을 전체 격자에서 묶어 재므로 ca 그대로다.
+    if is_rcps(tm) and has_call:
+        _b1p = pick(engine(tm, conv=False, put=True, call=False), tm.model)
+        _b1c = pick(engine(tm, conv=False, put=True, call=True), tm.model)
+        full["ca_debt"] = max(0.0, _b1p - _b1c)
+        resid = 100 - b1 + full["ca_debt"]
+    else:
+        resid = 100 - b1 + ca      # 전환권이 자본일 때의 잔여 (전환권대가)
     return full, b0, b1, b2, ca, resid
 
 def backsolve(tm: Terms, target: float = None, lo: float = None, hi: float = None):
@@ -1030,6 +1042,8 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
     # 가 복수의 내재파생을 하나의 복합내재파생으로 다루라고 하므로 조기상환권도
     # 그 묶음에 딸려 분리된다. 전환권이 부채면 애초에 묶음으로 재므로 마찬가지다.
     psep = not (tm.conv_class == "equity" and sep and int(tm.p_sep) == 0)
+    # 자본 갈래에서 부채요소를 줄이는 콜 — RCPS 는 부채 격자에서 잰 값 (문단 31)
+    cad = full.get("ca_debt", ca) if is_rcps(tm) else ca
     if tm.conv_class == "liability":
         # 전환권이 파생상품부채 — 내재파생을 공정가치로 두고 주계약을 잔여로.
         # 전환권과 조기상환권은 상호의존적이라 하나의 복합내재파생상품으로 묶어
@@ -1053,9 +1067,9 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # 조기상환권이 주계약과 밀접하게 관련되어 분리하지 않는다. 부채요소를
         # 통째로 상각후원가로 두고, 파생상품부채를 세우지 않는다.
         rows = [("부채요소 (사채 + 조기상환권)", b1)]
-        if ca > 1e-12 or not is_rcps(tm):
-            rows.append(("매도청구권 · 파생상품자산", -ca))
-        rows.append(("전환권대가 · 자본", 100-b1+ca))
+        if cad > 1e-12 or not is_rcps(tm):
+            rows.append(("매도청구권 · 파생상품자산", -cad))
+        rows.append(("전환권대가 · 자본", 100-b1+cad))
         note = ("기업회계기준서 제1032호 문단 31 — 부채요소를 먼저 정하고 나머지를 자본에 "
                 "배분합니다. 최초 인식에는 손익이 생기지 않습니다. "
                 "조기상환청구권은 주계약과 밀접하게 관련되어 분리하지 않으므로 "
@@ -1064,12 +1078,12 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
                 "입니다 — 분리하지 않으므로 인식하지 않고, 유효이자율에 녹아 듭니다.")
     else:
         rows = [("주계약 (옵션 없는 사채)", b0),
-                ("조기상환청구권 · 파생상품부채", (b1-b0) if sep else (b1-b0-ca))]
-        if sep and (ca > 1e-12 or not is_rcps(tm)):
-            rows.append(("매도청구권 · 파생상품자산", -ca))
+                ("조기상환청구권 · 파생상품부채", (b1-b0) if sep else (b1-b0-cad))]
+        if sep and (cad > 1e-12 or not is_rcps(tm)):
+            rows.append(("매도청구권 · 파생상품자산", -cad))
         if not sep:
-            rows[1] = ("복합내재파생상품 · 파생상품부채", b1-b0-ca)
-        rows.append(("전환권대가 · 자본", 100-b1+ca))
+            rows[1] = ("복합내재파생상품 · 파생상품부채", b1-b0-cad)
+        rows.append(("전환권대가 · 자본", 100-b1+cad))
         note = ("기업회계기준서 제1032호 문단 31 — 부채요소를 먼저 정하고 나머지를 자본에 배분합니다. "
                 "최초 인식에는 손익이 생기지 않습니다."
                 + ("" if sep else
@@ -2712,6 +2726,11 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         put(R, 6+i, 4, dv if dv is not None else "", bold=last, fill=fl, fmt=N2,
             align="right", border=True)
         put(R, 6+i, 5, nm, bold=last, fill=fl, border=True)
+    if is_rcps(tm) and tm.issuer_call and ca > 0:
+        put(R, 10, 2, f"발행자 상환권을 전환권 없는 부채 격자에서 재면 {full.get('ca_debt', 0.0):,.4f} 다. "
+            "부채요소·전환권대가 배분에는 이 값을 쓴다 (1032 문단 31 — 비자본 파생 특성은 "
+            "부채요소에 포함). 위 B3 의 차액은 전체 격자에서 전환 상승분을 자른 크기다.",
+            color=GREY, size=9)
     # 앱에서 고른 모형만 싣는다.
     sec(R, 11, "2. 신용위험 처리 — " + ("TF · 값을 쪼갠다" if _tf else "GS · 할인율을 섞는다"),
         span=5)
@@ -3182,6 +3201,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     S11, S12, S13, S14 = "11 GS 전환확률", "12 GS 할인율", "13 GS 보유가치", "14 GS 금융상품가치"
     S15 = "15 발행자 상환권 반영" if is_rcps(tm) else f"15 {KW} 트랜치"
     S16 = "16 부채요소"
+    _rcps_call = is_rcps(tm) and bool(tm.issuer_call) and tm.k_w > 0
+    # 자본 배분에서 부채요소를 줄이는 콜 — RCPS 는 결과 C26 (부채 격자), CB 는 C22
+    CAE = "C26" if is_rcps(tm) else "C22"
     S17, S18 = "17 구성비율", "18 혼합할인율"
     S19, S20 = "19 콜 페이오프", "20 매도청구권가치"
     S21, S22 = "21 방법2 지분보유", "22 방법2 부채보유"
@@ -3511,6 +3533,52 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     put(D, 13, 2, "부채요소 (t=0)", bold=True)
     put(D, 13, 3, "=C11", bold=True, fmt=N2, align="right")
 
+    # ── 16c 부채요소 (발행자 상환권 포함) — RCPS 만 ──
+    # 1032 문단 31: 자본요소가 아닌 파생(콜)은 부채요소에 포함한다. 그래서 전환권
+    # 없는 부채 격자에 발행자 상환권을 걸어 재고, 그 차이를 자본 배분에 쓴다.
+    S16C = "16c 부채요소 (발행자 상환권)"
+    if _rcps_call:
+        Dc = wb.create_sheet(S16C); Dc.sheet_view.showGridLines = False
+        Dc.column_dimensions["B"].width = 22
+        for i in range(n+1): Dc.column_dimensions[gl(3+i)].width = 9
+        title(Dc, 2, "⑯c 부채요소 + 발행자 상환권  전환권 없는 부채에 상환청구권과 발행자 상환권을 함께 붙인 값",
+              span=min(n+1, 14))
+        put(Dc, 3, 2, "MAX(상환청구금액, MIN(계속보유, 발행자 상환가액)). 전환권이 없으니 발행자가 "
+            "되사올 이유가 거의 없어 ⑯ 과 비슷하다 — 그 차이가 부채 격자에서 잰 발행자 상환권이다.",
+            color=GREY, size=9)
+        for r, nm in enumerate(["Date", "time-step", "Flag(조기상환)", "조기상환금액", "쿠폰",
+                                "만기상환", "위험 선도이자율", "Flag(매도청구)", "매도청구금액",
+                                "부채요소 (콜 포함)"], start=4):
+            put(Dc, r, 2, nm, bold=True, size=8, fill=LIGHT, border=True)
+        for i in range(n+1):
+            L = gl(3+i); Lp = gl(2+i) if i > 0 else None; Ln = gl(4+i) if i < n else None
+            g = lambda r, v, fm=None, col="000000": put(Dc, r, 3+i, v, fmt=fm,
+                                                        align="center", size=8, color=col)
+            st = f"{L}$5"
+            yr = f"({st}*{K['dt']}+{K['elm']}/12)"
+            g(4, f"={K['d_base']}+{st}*{K['dt']}*365", DATE, GREY)
+            g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
+            g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
+                 f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
+            g(7, f"=IF({L}$6=1,IF({K['pyld']}>0,"
+                 f"100*(1+MAX(0,({K['pyld']}-{K['cpn']})/{K['pyld']}*"
+                 f"((1+{K['pyld']}/{K['pcmp']})^({K['pcmp']}*{yr})-1))),"
+                 f"{K['prate']}),0)", N2)
+            g(8, f"=IF(AND({st}>0,MOD({st},{K['ipay']})=0),"
+                 f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
+            g(9, f"=IF({st}={K['n']},{K['red']},0)", N2)
+            if i < n: g(10, forward_rate(CR, i*dt_, (i+1)*dt_), P2, AMB)
+            g(11, f"=IF(AND({st}>={K['kst']},{st}<={K['ken']},"
+                  f"MOD({st}-{K['kst']},{K['kfrq']})=0),1,0)", N0)
+            g(12, f"=IF({L}$11=1,IF({K['prem']}>0,"
+                  f"100*(1+MAX(0,({K['prem']}-{K['cpn']})/{K['prem']}*"
+                  f"((1+{K['prem']}/{K['kcmp']})^({K['kcmp']}*{yr})-1))),"
+                  f"100*(1+MAX(0,-{K['cpn']}*{yr}))),999999)", N2)
+            g(13, (f"=MAX({L}$7,{L}$9)+{L}$8" if i == n else
+                   f"=MAX({L}$7,MIN({Ln}13*EXP(-{L}$10*{K['dt']})+{L}$8,{L}$12))"), N2)
+        put(Dc, 15, 2, "부채요소 + 발행자 상환권 (t=0)", bold=True)
+        put(Dc, 15, 3, "=C13", bold=True, fmt=N2, align="right")
+
     if _bdt:
         # ── BDT 단기이자율 · BDT 부채요소 ──
         # 기준금리 a_i 는 곡선에 맞추려고 역산한 값이라 수식으로 펼 수 없다.
@@ -3748,9 +3816,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
              ("매도청구권 · 옵션차익 · 지분·부채 분리",
               f"={K['cw']}*{Q(S24)}!C{R0+n+3}" if _need2 else B_),
              ("매도청구권자산 (적용값)", f"=C{19+_km}" if _hascall else "=0"),
-             ("전환권대가 (자본일 때)", f'=IF({K["eqcls"]}=1,100-C17+C22,"")'),
+             ("전환권대가 (자본일 때)", f'=IF({K["eqcls"]}=1,100-C17+{CAE},"")'),
              ("복합내재파생상품 (부채일 때)", f'=IF({K["eqcls"]}=0,C10-C16,"")'),
              ("주계약 잔여 (부채일 때)", f'=IF({K["eqcls"]}=0,100+C22-C24,"")')]
+    if is_rcps(tm):
+        # 부채 격자에서 잰 발행자 상환권. 자본 배분(전환권대가·회계처리)이 이 값을 쓴다.
+        items.append(("매도청구권 · 부채 격자 기준 (자본 배분용)",
+                      f"=MAX(0,{Q(S16)}!C13-'{S16C}'!C15)" if _rcps_call else "=0"))
     for i, (nm, fx) in enumerate(items):
         r = 16+i
         put(R, r, 2, nm, bold=True, border=True)
@@ -3775,8 +3847,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
              '=IF(ABS(C29-1)<0.000001,"적합","확인 필요")'),
             ("전체 ≥ 주계약", "=C10-C16", '=IF(C30>=0,"적합","확인 필요")'),
             ("배분 합계 = 100",
-             f'=IF({K["ksep"]}=1,IF({K["eqcls"]}=1,C16+C18-C22+C23,C25+C24-C22),'
-             f'IF({K["eqcls"]}=1,C16+C18-C22+C23,C25+C24-C22))',
+             f'=IF({K["ksep"]}=1,IF({K["eqcls"]}=1,C16+C18-{CAE}+C23,C25+C24-C22),'
+             f'IF({K["eqcls"]}=1,C16+C18-{CAE}+C23,C25+C24-C22))',
              '=IF(ABS(C31-100)<0.01,"적합","확인 필요")'),
             # 상태확장 격자는 재결합하지 않아 엑셀 트리 한 장으로 옮길 수 없다.
             # 앱이 상태확장으로 계산했다면 이 조서는 근사값이므로 그 사실을 밝힌다.
@@ -3925,8 +3997,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     # 전환권이 부채면 전환권+조기상환권 묶음, 자본이면서 콜을 내재파생으로
     # 넣었으면 조기상환권+매도청구권 묶음이다. 어느 쪽이든 순액 한 줄이다.
     _CMP = (f'=IF({K["eqcls"]}=0,IF({KS}=1,결과!C24,결과!C24-결과!C22),'
-            f'IF({KS}=0,결과!C18-결과!C22,""))')
-    _CALL = f'=IF({KS}=1,-결과!C22,"")'
+            f'IF({KS}=0,결과!C18-결과!{CAE},""))')
+    _CALL = f'=IF({KS}=1,IF({K["eqcls"]}=1,-결과!{CAE},-결과!C22),"")'
     _EQ = f'=IF({K["eqcls"]}=1,결과!C23,"")'
     al2 = [("주계약", _HOST),
            ("부채요소 (사채 + 조기상환권)", _LIAB),
@@ -3949,7 +4021,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     for i, h in enumerate(["계정", "차변 (100)", "대변 (100)", "차변 (원)", "대변 (원)"]):
         put(E, 17, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
     je2 = [("현금", "=100", None),
-           ("파생상품자산 (매도청구권)", f'=IF({KS}=1,결과!C22,"")', None),
+           ("파생상품자산 (매도청구권)", f'=IF({KS}=1,IF({K["eqcls"]}=1,결과!{CAE},결과!C22),"")', None),
            ("　전환사채 (주계약)", None, _HOST),
            ("　전환사채 (부채요소)", None, _LIAB),
            ("　파생상품부채 (조기상환청구권)", None, _PUT),
@@ -3975,7 +4047,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     sec(E, 30, "3. 기말 재평가 — 파생상품부채", span=5)
     for i, h in enumerate(["항목", "100 기준", "전액 기준 (원)"]):
         put(E, 31, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
-    _FVL = (f'IF({K["eqcls"]}=1,IF({NS},0,IF({KS}=1,결과!C18,결과!C18-결과!C22)),'
+    _FVL = (f'IF({K["eqcls"]}=1,IF({NS},0,IF({KS}=1,결과!C18,결과!C18-결과!{CAE})),'
             f'IF({KS}=1,결과!C24,결과!C24-결과!C22))')
     _HAS = f'{K["pdrv"]}>=0'
     for i, (k, fx) in enumerate([
@@ -4935,6 +5007,12 @@ with tabs[0]:
         columns=["단계", "가치", "차액", "해당 옵션"])
     st.dataframe(df.style.format({"가치": "{:,.2f}", "차액": "{:+,.2f}"}, na_rep="—"),
                  use_container_width=True, hide_index=True)
+    if is_rcps(t) and t.issuer_call and ca > 0:
+        st.info(f"발행자 상환권을 **전환권 없는 부채 격자**에서 재면 **{full.get('ca_debt', 0.0):,.4f}** "
+                f"입니다. 부채요소·전환권대가 배분은 이 값을 씁니다 — 기준서 1032 문단 31 은 "
+                "자본요소가 아닌 파생(콜)을 **부채요소 안에** 넣으라고 합니다. 위 B3 의 차액 "
+                f"{ca:,.4f} 은 전체 격자에서 전환 상승분을 자른 크기이고, 전환권을 **부채**로 "
+                "보면 그쪽을 씁니다 (복합내재파생을 전체로 재므로).")
     st.caption("옵션은 서로 대체 관계라 각각 따로 평가해 더하면 총액이 부풀려집니다. "
                "하나씩 얹으며 차액을 보면 합계가 항상 맞습니다.")
     st.dataframe(pd.DataFrame([
