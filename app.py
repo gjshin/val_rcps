@@ -103,6 +103,16 @@ class Terms:
     k_lock: float = 25.0
     k_third: int = 1              # 매도청구권을 제3자에게 지정할 수 있는가
     k_transfer: int = 0           # 매도청구권을 사채와 독립적으로 양도할 수 있는가
+    # 조기상환청구권과 매도청구권이 **같은 노드에서 함께 열릴 때** 누구의 권리가
+    # 먼저 작동하는지는 계약이 정한다. 수식이 정하는 것이 아니다.
+    #   0 투자자 풋 우선 — 통지한 조기상환은 매도청구로 막지 못한다.
+    #                    한국 사모 CB 의 매도청구권은 사채 **일부를 매수**하는
+    #                    권리이지 상환이 아니라는 읽기다.  V = MAX(전환, 풋, MIN(보유, 콜))
+    #   1 발행자 콜 우선 — 콜이 유효하게 행사되면 투자자는 전환으로만 대응한다.
+    #                    미국식 callable convertible 의 표준 처리다 (Hull).
+    #                    V = MAX(전환, MIN(MAX(보유, 풋), 콜))
+    # 두 금액이 다르고 행사기간이 겹칠 때만 값이 갈린다. validate() 가 그 자리를 짚는다.
+    pc_order: int = 0             # 0 투자자 풋 우선 / 1 발행자 콜 우선
     p_lost_int: int = 0           # 조기상환 행사금액이 상실이자 보상 수준인가
     fvpl_whole: int = 0           # 복합계약 전체를 당기손익-공정가치로 지정했는가
     k_method: int = 0
@@ -772,8 +782,15 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
                 elif bwd:
                     # 분리형 — 신주인수권증권이 따로 유통되므로 사채를 상환받아도
                     # 남는다. 두 결정이 서로를 건드리지 않는다.
-                    inner = min(B, kv)
-                    if pv >= inner - TOL:
+                    # 사채 쪽 풋·콜 우선순위는 전환사채와 같은 규칙을 따른다.
+                    if int(tm.pc_order) == 1 and max(B, pv) > kv + TOL:
+                        o = dict(E=En, B=kv, V=En+kv, P=0.0, kind="call", wx=_wx, **ex)
+                    elif int(tm.pc_order) == 1:
+                        if pv >= B - TOL:
+                            o = dict(E=En, B=pv, V=En+pv, P=0.0, kind="put", wx=_wx, **ex)
+                        else:
+                            o = dict(E=En, B=B, V=En+B, P=0.0, kind="hold", wx=_wx, **ex)
+                    elif pv >= min(B, kv) - TOL:
                         o = dict(E=En, B=pv, V=En+pv, P=0.0, kind="put", wx=_wx, **ex)
                     elif B <= kv + TOL:
                         o = dict(E=En, B=B, V=En+B, P=0.0, kind="hold", wx=_wx, **ex)
@@ -784,7 +801,14 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
                     # 그래서 조기상환청구는 신주인수권을 버리는 값까지 치르고
                     # 고르는 결정이 된다. 상환 직전에 행사할 기회는 남아 있다.
                     holdT, putT = B + En, pv + wv
-                    if putT >= min(holdT, kv) - TOL:
+                    if int(tm.pc_order) == 1 and max(holdT, putT) > kv + TOL:
+                        o = dict(E=0.0, B=kv, V=kv, P=0.0, kind="call", wx=0.0, **ex)
+                    elif int(tm.pc_order) == 1 and putT >= holdT - TOL:
+                        o = dict(E=wv, B=pv, V=putT, P=0.0, kind="put",
+                                 wx=1.0 if wv > 0 else 0.0, **ex)
+                    elif int(tm.pc_order) == 1:
+                        o = dict(E=En, B=B, V=holdT, P=0.0, kind="hold", wx=_wx, **ex)
+                    elif putT >= min(holdT, kv) - TOL:
                         o = dict(E=wv, B=pv, V=putT, P=0.0, kind="put",
                                  wx=1.0 if wv > 0 else 0.0, **ex)
                     elif holdT <= kv + TOL:
@@ -794,7 +818,16 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
                 memo[key] = o
                 return o
             hold = E + B; inner = min(hold, kv)
-            Vg = max(cv, pv, min(Vc, kv))
+            # 풋과 콜이 **같은 노드에서 함께 열릴 때** 누가 먼저 움직이는지는
+            # 계약이 정한다 (pc_order). 조기상환금액과 매도청구금액이 다르고
+            # 행사기간이 겹치는 자리에서만 값이 갈린다.
+            #   투자자 풋 우선 :  MAX(전환, 풋, MIN(보유, 콜))
+            #   발행자 콜 우선 :  MAX(전환, MIN(MAX(보유, 풋), 콜))
+            # GS 도 같은 우선순위를 따라야 한다 — 한 격자에서 두 모형이 다른
+            # 계약을 읽으면 안 된다.
+            _kfirst = int(tm.pc_order) == 1
+            Vg = (max(cv, min(max(Vc, pv), kv)) if _kfirst
+                  else max(cv, pv, min(Vc, kv)))
             # GS 의 전환확률은 GS 자신의 판단을 따른다. TF 와 다른 갈래를 고를 수 있다.
             # GS 도 같은 순서다. 현금이 동점이면 전환확률 0 이다.
             if abs(Vg - pv) < TOL or (kv < math.inf and abs(Vg - kv) < TOL): Pg = 0.0
@@ -807,7 +840,19 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
             # 공정가치는 행사가치 이상이어야 한다 — 계속보유로 눌러 두면 값이
             # 과소계상되고, 같은 판단을 하는 GS·수식 조서와도 어긋난다. 그날
             # 행사할 수 없는 권리는 conv_ok·put_a·call_a 가 이미 막는다.
-            if cv >= max(pv, inner) + TOL:   o = dict(E=cv, B=0.0, V=Vg, P=Pg, kind="conv", **ex)
+            if _kfirst:
+                # 발행자 콜이 먼저다. 콜을 당하면 투자자는 전환으로만 대응할 수
+                # 있고 조기상환청구는 막힌다. _inv 는 콜이 없을 때의 투자자 선택값.
+                _inv = max(hold, pv)
+                if cv >= min(_inv, kv) + TOL:
+                    o = dict(E=cv, B=0.0, V=Vg, P=Pg, kind="conv", **ex)
+                elif _inv > kv + TOL:
+                    o = dict(E=0.0, B=kv, V=Vg, P=Pg, kind="call", **ex)
+                elif pv >= hold - TOL:
+                    o = dict(E=0.0, B=pv, V=Vg, P=Pg, kind="put", **ex)
+                else:
+                    o = dict(E=E, B=B, V=Vg, P=Pg, kind="hold", **ex)
+            elif cv >= max(pv, inner) + TOL: o = dict(E=cv, B=0.0, V=Vg, P=Pg, kind="conv", **ex)
             elif pv >= inner - TOL:          o = dict(E=0.0, B=pv, V=Vg, P=Pg, kind="put", **ex)
             elif hold <= kv + TOL:           o = dict(E=E, B=B, V=Vg, P=Pg, kind="hold", **ex)
             else:                            o = dict(E=0.0, B=kv, V=Vg, P=Pg, kind="call", **ex)
@@ -1504,9 +1549,22 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
     ey = tm.elapsed_m/12
     liab = tm.conv_class != "equity"
 
+    # 문단 B4.3.5(5)(가) 의 「채무상품의 상각후원가」는 **주계약**의 상각후원가다.
+    # 내재파생을 떼어 낸 뒤 남는 사채, 곧 B0 에서 출발하는 상각표다.
+    #
+    # 넘겨받은 rows_eir 은 **실제로 인식한 배분액**에서 출발한다 — 조기상환권을
+    # 분리하지 않기로 고르면 부채요소(B1)에서 시작한다. 그것을 그대로 쓰면
+    # 「분리하지 않기로 했더니 상각후원가가 올라가 행사금액과 가까워지고, 그래서
+    # 분리하지 않아도 된다」는 순환이 생긴다. 판정은 설정과 무관해야 하므로
+    # 여기서는 늘 B0 기준 상각표를 다시 만들어 쓴다.
+    try:
+        _rows_host = eir_table(tm, b0)[1]
+    except Exception:
+        _rows_host = rows_eir
+
     def amort_at(t_year):
-        """그 시점 주계약의 상각후원가 — 실제로 인식한 배분액에서 상각한 값."""
-        return next((en for _, tt_, _b, _i, _c, en in rows_eir
+        """그 시점 **주계약**의 상각후원가. 분리 여부 설정과 무관하다."""
+        return next((en for _, tt_, _b, _i, _c, en in _rows_host
                      if tt_ >= t_year - 1e-9), b0)
 
     out = {}
@@ -1717,6 +1775,82 @@ def split_memo(sp) -> str:
     return "\n\n".join(out)
 
 
+RIGHT_COLS = ["권리", "권리자", "행사기간", "행사조건", "페이오프", "우선순위"]
+
+
+def rights_table(tm: Terms):
+    """계약상 권리를 한 표로 편다 — 격자 로직의 설계도다.
+
+    모델을 짜기 전에 「누가 · 언제 · 무슨 조건으로 · 얼마를 받고 · 누가 먼저」를
+    적어 두면 노드 의사결정이 그 표를 옮긴 것이 된다. 감사인에게도 이 표 하나가
+    계약서 몇 장보다 빠르다. 화면과 조서가 같은 표를 쓴다.
+    """
+    L = lbl(tm)
+    rows = []
+    _mo = lambda a, b, f=None: (f"{a:,.0f} ~ {b:,.0f}개월"
+                                + (f" · {f:,.0f}개월마다" if f else ""))
+    if is_sha(tm):
+        _pk = 100*(1 + accrue_rate(tm.sha_put_s/12, tm.sha_put_yield, 0.0,
+                                   tm.sha_put_cmp))
+        rows.append(("투자자 풋옵션", "투자자",
+                     _mo(tm.sha_put_s, tm.sha_put_e, tm.sha_put_f),
+                     ("적격상장하면 소멸" if int(tm.ipo_on) else "—"),
+                     f"MAX(행사금액 − 지분가치, 0) · 첫날 {_pk:,.2f}",
+                     "—"))
+        if tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e:
+            rows.append(("최대주주 콜옵션", "최대주주",
+                         _mo(tm.sha_call_s, tm.sha_call_e, tm.sha_call_f),
+                         ("적격상장하면 소멸" if (int(tm.ipo_on)
+                                            and int(tm.sha_qipo_kill)) else "—"),
+                         "MAX(지분가치 − 행사금액, 0)", "—"))
+        rows.append(("풋 의무자", ["최대주주", "발행회사", "최대주주 · 발행회사 연대"]
+                     [int(tm.sha_writer)], "—", "—",
+                     ("상환금액의 현재가치를 총액으로 (1032 문단 23)"
+                      if int(tm.sha_writer) else "옵션 공정가치"), "—"))
+        return rows
+
+    # 전환권 (BW 는 신주인수권)
+    _rfx = (["조정 없음", "하향만 조정", "하향+상향 조정"][int(tm.rfx_mode)]
+            + (f" · {tm.rfx_cyc:,.0f}개월 주기 · 하한 {max(tm.floor, tm.par):,.0f}원"
+               if tm.rfx_mode > 0 else ""))
+    rows.append((inst_text(tm, "전환권"), "투자자",
+                 _mo(tm.cv_s, tm.cv_e), _rfx,
+                 ("100 × 주가 ÷ 행사가격 − 100 (현금납입)" if bw_cash(tm)
+                  else "100 × 주가 ÷ 전환가격"),
+                 "—"))
+    if auto_conv(tm):
+        rows.append(("존속기간 만료 시 자동전환", "—", f"{tm.T*12+tm.elapsed_m:,.0f}개월",
+                     "상법상 우선주 존속기간 만료", "100 × 주가 ÷ 전환가격", "—"))
+    # 조기상환청구권
+    _po = ("투자자 우선" if int(tm.pc_order) == 0 else "발행자 콜에 밀림")
+    if tm.p_s <= tm.p_e:
+        _amt = ("100 × (1 + 보장수익률 복리)" if tm.p_mode == "accrue"
+                else f"{tm.p_rate:,.2f} 고정")
+        rows.append((L["put"], "투자자", _mo(tm.p_s, tm.p_e, tm.p_f), "—", _amt,
+                     (_po if tm.k_w > 0 else "—")))
+    # 매도청구권 (RCPS 발행자 상환권 포함)
+    if tm.k_w > 0 and tm.k_s <= tm.k_e:
+        _who = ("발행회사" if not tm.k_third else "발행회사 또는 지정하는 제3자")
+        _cond = []
+        if tm.k_w < 1.0: _cond.append(f"한도 {tm.k_w:.0%}")
+        if tm.k_lock > tm.cv_s: _cond.append(f"의무보유 {tm.k_lock:,.0f}개월")
+        rows.append((L["call"], _who, _mo(tm.k_s, tm.k_e, tm.k_f),
+                     (" · ".join(_cond) if _cond else "—"),
+                     "100 × (1 + 프리미엄 복리)",
+                     ("발행자 우선" if int(tm.pc_order) == 1 else "투자자 풋에 밀림")))
+    return rows
+
+
+def rights_memo(tm: Terms) -> str:
+    """권리 표를 조서 문안으로. 화면과 조서가 같은 글을 쓴다."""
+    rows = rights_table(tm)
+    if not rows: return ""
+    return "\n".join(
+        f"[{r[0]}] 권리자 {r[1]} · 행사 {r[2]} · 조건 {r[3]} · 페이오프 {r[4]}"
+        + (f" · 우선순위 {r[5]}" if r[5] != "—" else "")
+        for r in rows)
+
+
 def allocate(tm: Terms, full, b0, b1, b2, ca):
     """최초 인식 배분.  전환권 분류에 따라 무엇을 잔여로 두는지가 뒤바뀐다.
 
@@ -1775,8 +1909,13 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
                 f"측정합니다. 분리했다면 파생상품부채로 세웠을 금액은 {b1-b0:,.2f} "
                 "입니다 — 분리하지 않으므로 인식하지 않고, 유효이자율에 녹아 듭니다.")
     else:
-        rows = [("주계약 (옵션 없는 사채)", b0),
-                ("조기상환청구권 · 파생상품부채", (b1-b0) if sep else (b1-b0-cad))]
+        # 계약에 조기상환청구권이 없으면 0 짜리 줄을 남기지 않는다 — 있는 것처럼
+        # 보이면 조서를 읽는 사람이 헷갈린다.
+        _hasput = tm.p_s <= tm.p_e and abs(b1 - b0) > 1e-9
+        rows = [("주계약 (옵션 없는 사채)", b0)]
+        if _hasput or not sep:
+            rows.append(("조기상환청구권 · 파생상품부채",
+                         (b1-b0) if sep else (b1-b0-cad)))
         if sep and (cad > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -cad))
         if not sep:
@@ -1892,6 +2031,39 @@ def eir_table(tm: Terms, host):
     return r, rows, red, nper
 
 
+def pc_overlap(tm: Terms):
+    """조기상환청구권과 매도청구권이 **같은 노드에서 함께 열리는** 스텝을 찾는다.
+
+    격자 안에서 두 권리가 부딪히는 자리다. 어느 쪽이 먼저인지는 계약이 정하는데
+    (``pc_order``), 두 행사금액이 같으면 어느 쪽을 골라도 답이 같다. **조기상환금액이
+    매도청구금액보다 큰 스텝이 하나라도 있을 때만** 값이 갈린다 — 그 자리를 짚어
+    준다.
+
+    돌려주는 것은 [(스텝, 발행일 기준 개월, 조기상환금액, 매도청구금액)] 이다.
+    """
+    n = max(1, int(tm.n)); dt_ = tm.T/n
+    mper = n/(tm.T*12); ey = tm.elapsed_m/12
+    lo, hi = step_mapper(tm, n, dt_)
+
+    def opened(i, a, b, fr):
+        s0, s1 = lo(a), hi(b)
+        if i < max(s0, 0) or i > s1: return False
+        per = max(1, int(round(fr*mper)))
+        return (i - s0) % per == 0
+
+    out = []
+    for i in range(n+1):
+        if not (opened(i, tm.p_s, tm.p_e, tm.p_f)
+                and opened(i, tm.k_s, tm.k_e, tm.k_f)):
+            continue
+        t_ = i*dt_ + ey
+        pv = (100*(1 + accrue_rate(t_, tm.p_yield, eff_cpn(tm), tm.p_cmp))
+              if tm.p_mode == "accrue" else tm.p_rate)
+        kv = 100*(1 + accrue_rate(t_, tm.k_prem, eff_cpn(tm), tm.k_cmp))
+        out.append((i, t_*12, pv, kv))
+    return out
+
+
 def validate(tm: Terms):
     derive(tm)
     w = []
@@ -1949,7 +2121,34 @@ def validate(tm: Terms):
                      "충족하지 못해 파생상품부채가 됩니다 (1032 문단 16(2)(나)). "
                      "모든 주주에게 동등하게 적용되는 희석방지조항이라 자본으로 본다면 "
                      "그 근거를 조서에 남기십시오.")
+    if int(tm.fvpl_whole) and not is_sha(tm):
+        if tm.conv_class == "equity":
+            w.append("**복합계약 전체를 당기손익-공정가치로 지정**하셨는데 전환권을 "
+                     "**자본**으로 두었습니다. 자본요소가 있는 복합금융상품은 전체를 "
+                     "당기손익-공정가치로 지정할 수 없습니다 — 제1109호 문단 4.2.2 는 "
+                     "**금융부채**에만 지정을 허용하고, 자본요소는 금융부채가 아닙니다. "
+                     "전환권 회계 분류를 파생상품부채로 바꾸시거나 지정을 해제하십시오.")
+        w.append("전체 지정은 **분리 판단에만** 반영되어 있습니다 (내재파생을 떼지 "
+                 "않는다는 결론). 배분표와 상각표는 여전히 요소별 배분으로 만들어지므로, "
+                 "실제로 전체를 공정가치로 측정하신다면 이 조서의 배분표 대신 "
+                 "**전체 공정가치 한 줄**로 인식하셔야 합니다.")
     if tm.k_s > tm.k_e: w.append("매도청구 시작이 종료보다 늦습니다.")
+    # 두 권리가 같은 노드에서 부딪히는 자리. 행사금액이 같으면 어느 우선순위든
+    # 답이 같으므로, 조기상환금액이 더 큰 스텝이 있을 때만 알린다.
+    if tm.k_w > 0 and not is_sha(tm):
+        _ov = [x for x in pc_overlap(tm) if x[2] > x[3] + 1e-9]
+        if _ov:
+            _i, _m, _pv, _kv = _ov[0]
+            w.append(
+                f"**조기상환청구권과 매도청구권이 {len(_ov)}개 노드에서 함께 열리고, "
+                f"그 자리의 조기상환금액이 매도청구금액보다 큽니다.** 처음 부딪히는 "
+                f"곳은 발행일 기준 {_m:,.0f}개월(스텝 {_i})이고 조기상환 {_pv:,.4f} 대 "
+                f"매도청구 {_kv:,.4f} 입니다. 이럴 때는 **누가 먼저 행사하는가**에 "
+                "따라 값이 갈립니다 — 지금 설정은 "
+                + ("「발행자 매도청구 우선」" if int(tm.pc_order) == 1
+                   else "「투자자 조기상환 우선」")
+                + " 입니다. 계약서의 통지기간과 우선순위 조항을 확인하시고, 고른 "
+                  "근거를 조서에 남기십시오. (매도청구권 칸에서 바꿉니다)")
     if tm.k_lock < tm.k_e and not issuer_redeem(tm) and tm.k_w > 0:
         w.append("의무보유 전환지연이 매도청구 종료보다 이릅니다. 콜이 실효화될 수 있습니다.")
     # 할증금 산식은 보장수익률에서 표면이자율을 뺀다. 보장이 더 낮으면 음수가
@@ -3484,6 +3683,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("매도청구 복리 횟수 (연)", tm.k_cmp, N0), ("매도청구 한도", tm.k_w, P2),
         ("의무보유 전환지연 (개월)", tm.k_lock, N0),
         ("매도청구권 평가방법", K_METHODS[tm.k_method], None),
+        ("풋·콜 우선순위", ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None),
         ("매도청구권 회계 처리",
          "별도 금융상품" if tm.k_sep else "복합내재파생에 포함", None)]),
       ("5. 시장 인풋", [("변동성 σ", tm.sig, P2)]
@@ -3980,7 +4180,24 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                  "따라 전환채무상품의 자본요소를 분리하기 전에 내재된 콜옵션이나 "
                  "풋옵션이 주채무계약과 밀접하게 관련되어 있는지를 판단하라고 정한다.",
         color=GREY, size=9)
+    # 격자 의사결정의 설계도. 계약을 표로 편 뒤에 분리 판단이 온다.
+    for _c, _w in zip("BCDEFG", (20, 16, 22, 26, 34, 20)):
+        J.column_dimensions[_c].width = _w
     _r = 5
+    sec(J, _r, "계약상 권리 — 격자 의사결정의 설계도", span=6); _r += 1
+    for _i, _c in enumerate(RIGHT_COLS):
+        put(J, _r, 2+_i, _c, bold=True, fill=LIGHT, align="center", border=True, size=9)
+    _r += 1
+    for _row in rights_table(tm):
+        for _i, _v in enumerate(_row):
+            put(J, _r, 2+_i, _v, border=True, size=9, bold=(_i == 0))
+        _r += 1
+    put(J, _r, 2, "조기상환청구권과 매도청구권이 같은 노드에서 함께 열릴 때 누가 먼저 "
+                  "움직이는지는 계약이 정한다 — 수식이 정하는 것이 아니다. 이 조서는 "
+                  + ("「발행자 매도청구 우선」" if int(tm.pc_order) == 1
+                     else "「투자자 조기상환 우선」")
+                  + " 으로 계산했다. 두 행사금액이 다르고 행사기간이 겹치는 자리에서만 "
+                    "값이 갈린다.", color=GREY, size=9); _r += 2
     for _k, _nm in (("put", "조기상환청구권"), ("call", "매도청구권")):
         _d = SP[_k]
         sec(J, _r, _nm, span=2); _r += 1
@@ -3999,9 +4216,32 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                            ("예" if _v is True else "아니오" if _v is False
                             else f"{_v:,.4f}")), border=True); _r += 1
         _r += 1
+    # 판정과 실제 회계처리 설정이 어긋나면 이 조서 안에서 「분리 판단」 시트와
+    # 「회계처리」 시트가 서로 다른 말을 하게 된다. 그 사실을 여기 적어 둔다.
+    _mis = [(_nm, SP[_k]) for _k, _nm in
+            (("put", "조기상환청구권"), ("call", "매도청구권"))
+            if not SP[_k].get("설정일치", True)]
+    sec(J, _r, "판정과 회계처리 설정이 맞는가", span=6); _r += 1
+    if _mis:
+        for _nm, _d in _mis:
+            _set = ((("분리 · 파생상품부채" if int(tm.p_sep) else "분리하지 않음 · 부채요소에 포함")
+                     if _nm == "조기상환청구권" else
+                     ("별도 금융상품" if tm.k_sep else "복합내재파생에 포함")))
+            put(J, _r, 2, f"★ {_nm}", bold=True, color=RED, border=True)
+            put(J, _r, 3, f"판정은 「{_d['결론']}」 인데 이 조서의 회계처리 설정은 "
+                          f"「{_set}」 이다. 배분표와 분개가 위 판정과 다르게 나온다 — "
+                          "어느 쪽이 계약에 맞는지 정하고 근거를 남겨야 한다.",
+                color=RED, border=True); _r += 1
+    else:
+        put(J, _r, 2, "일치", bold=True, border=True)
+        put(J, _r, 3, "위 판정과 이 조서의 회계처리 설정이 같다. 배분표·분개·상각표가 "
+                      "판정대로 만들어졌다.", border=True); _r += 1
+    _r += 1
     put(J, _r, 2, "이 시트는 앱의 「분리 판단」 화면과 같은 함수가 만든다. 계약 조항 "
                   "확인 항목을 **앱에서** 바꾸면 결론과 문안이 함께 바뀐다. "
-                  "이 시트는 그 결과를 옮겨 적은 것이라 수식이 없다.",
+                  "이 시트는 그 결과를 옮겨 적은 것이라 수식이 없다.  판정에 쓰는 "
+                  "상각후원가는 문단 B4.3.5(5)(가) 대로 **주계약(B0)** 기준이라 "
+                  "분리 여부 설정과 무관하다.",
         color=GREY, size=9)
     for _row in J.iter_rows(min_row=5, max_row=_r, min_col=3, max_col=3):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
@@ -4038,6 +4278,20 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
       ("TF", "05~09. 값을 지분과 부채로 쪼개 각각 다른 이자율로 할인한다."),
       ("GS", "10~12. 값은 하나로 두고 전환확률로 할인율을 섞는다."),
       ("비교", "09와 12의 같은 칸을 비교하면 두 모형의 차이가 그 노드에서 얼마인지 보인다."),
+      ("", ""),
+      ("노드에서 무엇을 고르는가", ""),
+      ("투자자 권리", "전환 · 조기상환청구 · 보유. 셋 중 자기에게 가장 유리한 것을 고른다."),
+      ("발행자 권리", "매도청구. 투자자 가치를 눌러 내리는 쪽으로만 쓴다."),
+      ("적용한 식", "MAX(전환, MIN(MAX(보유, 조기상환), 매도청구))　— 발행자 매도청구 우선" if int(tm.pc_order) == 1 else "MAX(전환, 조기상환, MIN(보유, 매도청구))　— 투자자 조기상환 우선"),
+      ("우선순위", "두 권리가 같은 노드에서 함께 열릴 때 누가 먼저 움직이는지는 "
+              "계약이 정한다 — 수식이 정하는 것이 아니다. 두 행사금액이 다르고 "
+              "행사기간이 겹치는 자리에서만 값이 갈린다. 「분리 판단」 시트의 "
+              "「계약상 권리」 표에 고른 근거를 남겨야 한다."),
+      ("동점 처리", "전환은 허용오차(1e-9)만큼 앞설 때만 이긴다. 동점이면 현금(상환)이다. "
+              "리픽싱이 주가로 재설정되는 날에는 전환가치가 정확히 100 이 되어 "
+              "조기상환금액과 동점이 되는데, 정해 두지 않으면 부동소수 잡음이 갈라 놓는다."),
+      ("만기 노드", "매도청구는 없다. 전환가치와 현금(MAX(조기상환금액, 만기상환금액) + 이자) "
+              "둘만 견준다."),
       ("", ""),
       ("이 파일의 성격", ""),
       ("값 조서", "평가앱이 계산한 결과를 값으로 담았다. 수식이 아니므로 셀을 바꿔도 다시 계산되지 않는다."),
@@ -4184,6 +4438,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("매도청구 프리미엄", "prem", tm.k_prem, P2, True),
         ("매도청구 복리 횟수 (연)", "kcmp", tm.k_cmp, N0, True),
         ("매도청구 한도", "cw", tm.k_w, P2, True),
+        # 계약 우선순위는 트리 구조를 정한다. 엑셀에서 바꿔도 수식이 따라오지
+        # 않으므로 흰 셀(입력 아님)로 두고 앱에서 고른 것을 적어만 둔다.
+        ("풋·콜 우선순위", "pcord",
+         ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None, False),
         (f"{KW} 전환 시작 (스텝)", "cv30", stp_lo(max(tm.cv_s, tm.k_lock)), N0,
          tm.k_method == 0),
         ("변동성 σ", "sig",
@@ -4444,6 +4702,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     #   ⑮ 트랜치    — 매도청구권을 유무가치비교법으로 잴 때
     #   ⑰~⑳       — 옵션차익 · 혼합할인율
     #   ⑰⑲㉑~㉔   — 옵션차익 · 지분·부채 분리
+    # 풋과 콜이 같은 노드에서 함께 열릴 때의 계약 우선순위. 엔진과 같은 갈래를
+    # 타야 한다 — 콜이 사는 곳(⑮ 트랜치 · ⑯c)에서만 값이 갈린다.
+    _kfirst = int(tm.pc_order) == 1
     # 현금납입 BW 는 지분(신주인수권)과 부채(사채)가 애초에 갈라져 있어 GS 가
     # TF 와 같은 값을 낸다. 조서에 쓸모없는 GS 블록을 넣지 않는다.
     _bwc = bw_cash(tm)
@@ -4704,11 +4965,24 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                         # 평가기준일에는 행사·상환하지 않는다. 엔진의 뿌리와 같다.
                         p(c2, f"={ce}"); p(c3, f"={cb}"); p(c6, '="보유"', tx=True)
                         continue
-                    if _det:
+                    # 사채 쪽 풋·콜 우선순위는 전환사채와 같은 규칙을 따른다.
+                    if _det and _kfirst:
+                        p(c6, f'=IF(MAX({cb},{L}$7)>{L}$8+{TOLX},"상환C",'
+                              f'IF({L}$7>={cb}-{TOLX},"상환P","보유"))', tx=True)
+                        p(c2, f"=MAX({wv},{ce})")
+                        p(c3, f"=MIN(MAX({cb},{L}$7),{L}$8)")
+                    elif _det:
                         p(c6, f'=IF({L}$7>=MIN({cb},{L}$8)-{TOLX},"상환P",'
                               f'IF({cb}<={L}$8+{TOLX},"보유","상환C"))', tx=True)
                         p(c2, f"=MAX({wv},{ce})")
                         p(c3, f"=MAX({L}$7,MIN({cb},{L}$8))")
+                    elif _kfirst:
+                        p(c6, f'=IF(MAX({cb}+{ce},{L}$7+{wv})>{L}$8+{TOLX},"상환C",'
+                              f'IF({L}$7+{wv}>={cb}+{ce}-{TOLX},"상환P","보유"))', tx=True)
+                        p(c2, f'=IF({L}{c6+1+r}="상환C",0,IF({L}{c6+1+r}="상환P",{wv},'
+                              f"MAX({wv},{ce})))")
+                        p(c3, f'=IF({L}{c6+1+r}="상환P",{L}$7,'
+                              f'IF({L}{c6+1+r}="상환C",{L}$8,{cb}))')
                     else:
                         p(c6, f'=IF({L}$7+{wv}>=MIN({cb}+{ce},{L}$8)-{TOLX},"상환P",'
                               f'IF({cb}+{ce}<={L}$8+{TOLX},"보유","상환C"))', tx=True)
@@ -4747,13 +5021,26 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                            f"{L}$2>0,{Q(S1)}!{L}{R0+r}>{K['ipomin']})")
                     _cvx = f'OR({L}{c6+1+r}="전환",{L}{c6+1+r}="상장전환")'
                     p(c4, f"={e}+{b}+{L}$9")
-                    p(c5, f"=IF({_ip},{L}{c1+1+r},"
-                          f"IF({L}$5=1,MAX(MIN({L}{c4+1+r},{L}$8),{L}{c1+1+r},{L}$7),"
-                          f"MAX({L}{c4+1+r},{L}{c1+1+r},{L}$7)))")
-                    p(c6, f'=IF({_ip},"상장전환",'
-                          f'IF({L}{c1+1+r}>=MAX({L}$7,MIN({L}{c4+1+r},{L}$8))+{TOLX},"전환",'
-                          f'IF({L}$7>=MIN({L}{c4+1+r},{L}$8)-{TOLX},"상환P",'
-                          f'IF({L}{c4+1+r}<={L}$8+{TOLX},"보유","상환C"))))', tx=True)
+                    # 계약 우선순위 (pc_order) 에 따라 두 갈래다. 엔진과 같다.
+                    #   투자자 풋 우선 : MAX(전환, 풋, MIN(보유, 콜))
+                    #   발행자 콜 우선 : MAX(전환, MIN(MAX(보유, 풋), 콜))
+                    if _kfirst:
+                        _iv = f"MAX({L}{c4+1+r},{L}$7)"      # 콜이 없을 때 투자자 선택값
+                        p(c5, f"=IF({_ip},{L}{c1+1+r},"
+                              f"IF({L}$5=1,MAX({L}{c1+1+r},MIN({_iv},{L}$8)),"
+                              f"MAX({L}{c4+1+r},{L}{c1+1+r},{L}$7)))")
+                        p(c6, f'=IF({_ip},"상장전환",'
+                              f'IF({L}{c1+1+r}>=MIN({_iv},{L}$8)+{TOLX},"전환",'
+                              f'IF({_iv}>{L}$8+{TOLX},"상환C",'
+                              f'IF({L}$7>={L}{c4+1+r}-{TOLX},"상환P","보유"))))', tx=True)
+                    else:
+                        p(c5, f"=IF({_ip},{L}{c1+1+r},"
+                              f"IF({L}$5=1,MAX(MIN({L}{c4+1+r},{L}$8),{L}{c1+1+r},{L}$7),"
+                              f"MAX({L}{c4+1+r},{L}{c1+1+r},{L}$7)))")
+                        p(c6, f'=IF({_ip},"상장전환",'
+                              f'IF({L}{c1+1+r}>=MAX({L}$7,MIN({L}{c4+1+r},{L}$8))+{TOLX},"전환",'
+                              f'IF({L}$7>=MIN({L}{c4+1+r},{L}$8)-{TOLX},"상환P",'
+                              f'IF({L}{c4+1+r}<={L}$8+{TOLX},"보유","상환C"))))', tx=True)
                     p(c2, f'=IF({_cvx},{L}{c1+1+r},'
                           f'IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),0,{e}))')
                     p(c3, f'=IF({L}{c6+1+r}="상환P",{L}$7,IF({L}{c6+1+r}="상환C",{L}$8,'
@@ -4780,9 +5067,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                     else:
                         p(c9, f"={Ln}{c10+1+r}*{L}$16*EXP(-{Ln}{c8+1+r}*{K['dt']})"
                               f"+{Ln}{c10+2+r}*{L}$17*EXP(-{Ln}{c8+2+r}*{K['dt']})+{L}$9")
+                        _gcall = (f"MAX({L}{c1+1+r},MIN(MAX({L}{c9+1+r},{L}$7),{L}$8))"
+                                  if _kfirst else
+                                  f"MAX(MIN({L}{c9+1+r},{L}$8),{L}{c1+1+r},{L}$7)")
                         p(c10, f"=IF(AND({K['ipoon']}=1,{K['ipocv']}=1,{L}$2={K['ipos']},"
                                f"{L}$2>0,{Q(S1)}!{L}{R0+r}>{K['ipomin']}),{L}{c1+1+r},"
-                               f"IF({L}$5=1,MAX(MIN({L}{c9+1+r},{L}$8),{L}{c1+1+r},{L}$7),"
+                               f"IF({L}$5=1,{_gcall},"
                                f"MAX({L}{c9+1+r},{L}{c1+1+r},{L}$7)))")
                         p(c7, f"=IF({L}{c10+1+r}={L}{c1+1+r},1,"
                               f"IF(OR({L}{c10+1+r}={L}$7,{L}{c10+1+r}={L}$8),0,"
@@ -4870,8 +5160,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             g(12, f"=IF({L}$11=1,IF({K['prem']}>0,"
                   f"100*(1+{xl_prem(K['prem'], K['cpn'], K['kcmp'], yr)}),"
                   f"100*(1+MAX(0,-{K['cpn']}*{yr}))),999999)", N2)
+            _cont = f"{Ln}13*EXP(-{L}$10*{K['dt']})+{L}$8"
             g(13, (f"=MAX({L}$7,{L}$9)+{L}$8" if i == n else
-                   f"=MAX({L}$7,MIN({Ln}13*EXP(-{L}$10*{K['dt']})+{L}$8,{L}$12))"), N2)
+                   (f"=MIN(MAX({_cont},{L}$7),{L}$12)" if _kfirst else
+                    f"=MAX({L}$7,MIN({_cont},{L}$12))")), N2)
         put(Dc, 15, 2, "부채요소 + 발행자 상환권 (t=0)", bold=True)
         put(Dc, 15, 3, "=C13", bold=True, fmt=N2, align="right")
 
@@ -5417,7 +5709,24 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                  "따라 전환채무상품의 자본요소를 분리하기 전에 내재된 콜옵션이나 "
                  "풋옵션이 주채무계약과 밀접하게 관련되어 있는지를 판단하라고 정한다.",
         color=GREY, size=9)
+    # 격자 의사결정의 설계도. 계약을 표로 편 뒤에 분리 판단이 온다.
+    for _c, _w in zip("BCDEFG", (20, 16, 22, 26, 34, 20)):
+        J.column_dimensions[_c].width = _w
     _r = 5
+    sec(J, _r, "계약상 권리 — 격자 의사결정의 설계도", span=6); _r += 1
+    for _i, _c in enumerate(RIGHT_COLS):
+        put(J, _r, 2+_i, _c, bold=True, fill=LIGHT, align="center", border=True, size=9)
+    _r += 1
+    for _row in rights_table(tm):
+        for _i, _v in enumerate(_row):
+            put(J, _r, 2+_i, _v, border=True, size=9, bold=(_i == 0))
+        _r += 1
+    put(J, _r, 2, "조기상환청구권과 매도청구권이 같은 노드에서 함께 열릴 때 누가 먼저 "
+                  "움직이는지는 계약이 정한다 — 수식이 정하는 것이 아니다. 이 조서는 "
+                  + ("「발행자 매도청구 우선」" if int(tm.pc_order) == 1
+                     else "「투자자 조기상환 우선」")
+                  + " 으로 계산했다. 두 행사금액이 다르고 행사기간이 겹치는 자리에서만 "
+                    "값이 갈린다.", color=GREY, size=9); _r += 2
     for _k, _nm in (("put", "조기상환청구권"), ("call", "매도청구권")):
         _d = SP[_k]
         sec(J, _r, _nm, span=2); _r += 1
@@ -5436,9 +5745,32 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                            ("예" if _v is True else "아니오" if _v is False
                             else f"{_v:,.4f}")), border=True); _r += 1
         _r += 1
+    # 판정과 실제 회계처리 설정이 어긋나면 이 조서 안에서 「분리 판단」 시트와
+    # 「회계처리」 시트가 서로 다른 말을 하게 된다. 그 사실을 여기 적어 둔다.
+    _mis = [(_nm, SP[_k]) for _k, _nm in
+            (("put", "조기상환청구권"), ("call", "매도청구권"))
+            if not SP[_k].get("설정일치", True)]
+    sec(J, _r, "판정과 회계처리 설정이 맞는가", span=6); _r += 1
+    if _mis:
+        for _nm, _d in _mis:
+            _set = ((("분리 · 파생상품부채" if int(tm.p_sep) else "분리하지 않음 · 부채요소에 포함")
+                     if _nm == "조기상환청구권" else
+                     ("별도 금융상품" if tm.k_sep else "복합내재파생에 포함")))
+            put(J, _r, 2, f"★ {_nm}", bold=True, color=RED, border=True)
+            put(J, _r, 3, f"판정은 「{_d['결론']}」 인데 이 조서의 회계처리 설정은 "
+                          f"「{_set}」 이다. 배분표와 분개가 위 판정과 다르게 나온다 — "
+                          "어느 쪽이 계약에 맞는지 정하고 근거를 남겨야 한다.",
+                color=RED, border=True); _r += 1
+    else:
+        put(J, _r, 2, "일치", bold=True, border=True)
+        put(J, _r, 3, "위 판정과 이 조서의 회계처리 설정이 같다. 배분표·분개·상각표가 "
+                      "판정대로 만들어졌다.", border=True); _r += 1
+    _r += 1
     put(J, _r, 2, "이 시트는 앱의 「분리 판단」 화면과 같은 함수가 만든다. 계약 조항 "
                   "확인 항목을 **앱에서** 바꾸면 결론과 문안이 함께 바뀐다. "
-                  "이 시트는 그 결과를 옮겨 적은 것이라 수식이 없다.",
+                  "이 시트는 그 결과를 옮겨 적은 것이라 수식이 없다.  판정에 쓰는 "
+                  "상각후원가는 문단 B4.3.5(5)(가) 대로 **주계약(B0)** 기준이라 "
+                  "분리 여부 설정과 무관하다.",
         color=GREY, size=9)
     for _row in J.iter_rows(min_row=5, max_row=_r, min_col=3, max_col=3):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
@@ -5474,6 +5806,17 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
       ("사실", "05·06은 같은 열의 09를 보지만, 07은 다음 열의 05·06을 본다."),
       ("결과", "오른쪽 열이 먼저 확정되고 왼쪽으로 오므로 고리가 닫히지 않는다."),
       ("확인", "아무 칸에서 F2를 누르면 참조 테두리가 오른쪽이나 같은 열에만 생긴다."),
+      ("", ""),
+      ("노드에서 무엇을 고르는가", ""),
+      ("투자자 권리", "전환 · 조기상환청구 · 보유. 셋 중 자기에게 가장 유리한 것을 고른다."),
+      ("발행자 권리", "매도청구. 투자자 가치를 눌러 내리는 쪽으로만 쓴다."),
+      ("적용한 식", "MAX(전환, MIN(MAX(보유, 조기상환), 매도청구))　— 발행자 매도청구 우선" if int(tm.pc_order) == 1 else "MAX(전환, 조기상환, MIN(보유, 매도청구))　— 투자자 조기상환 우선"),
+      ("우선순위", "두 권리가 같은 노드에서 함께 열릴 때 누가 먼저 움직이는지는 "
+              "계약이 정한다 — 수식이 정하는 것이 아니다. 두 행사금액이 다르고 "
+              "행사기간이 겹치는 자리에서만 값이 갈린다. 「분리 판단」 시트의 "
+              "「계약상 권리」 표에 고른 근거를 남겨야 한다."),
+      ("만기 노드", "매도청구는 없다. 전환가치와 현금(MAX(조기상환금액, 만기상환금액) + 이자) "
+              "둘만 견준다."),
       ("", ""),
       ("동점을 어떻게 깨는가", ""),
       ("언제 생기나", "리픽싱이 주가로 재설정되는 날에는 전환가액 = 주가이므로 "
@@ -6554,6 +6897,26 @@ with st.sidebar:
                   st.caption("콜을 넣고 뺀 두 평가액의 차이로 봅니다. 의무보유 효과가 콜 값에 "
                              "포함됩니다.")
 
+          # 풋과 콜이 같은 노드에서 함께 열릴 때 누가 먼저인가. 계약이 정하는
+          # 것이지 수식이 정하는 것이 아니다. 콜이 없으면 물을 것도 없다.
+          if t.k_w > 0:
+              t.pc_order = int(st.selectbox(
+                  "조기상환청구권과 겹칠 때", [0, 1], index=int(t.pc_order),
+                  format_func=lambda i: ["투자자 조기상환 우선", "발행자 매도청구 우선"][i],
+                  help="같은 날 두 권리가 모두 열릴 때의 계약상 우선순위입니다.\n\n"
+                       "**투자자 조기상환 우선** — 통지한 조기상환을 매도청구로 막지 "
+                       "못합니다. 한국 사모 전환사채의 매도청구권은 사채 «일부를 "
+                       "매수»하는 권리이지 상환이 아니라는 읽기입니다.\n\n"
+                       "**발행자 매도청구 우선** — 매도청구가 유효하게 행사되면 "
+                       "투자자는 전환으로만 대응할 수 있습니다. 미국식 callable "
+                       "convertible 의 표준 처리입니다.\n\n"
+                       "두 행사금액이 다르고 행사기간이 겹칠 때만 값이 갈립니다. "
+                       "겹치지 않으면 어느 쪽을 고르셔도 같은 답이 나옵니다."))
+              st.caption("계약서에 「이미 통지된 조기상환청구는 매도청구로 "
+                         "번복할 수 없다」 같은 조항이 있으면 첫 번째입니다. "
+                         "**계약 우선순위가 수식보다 먼저입니다** — 고른 근거를 "
+                         "조서에 남기십시오.")
+
         with st.expander("기말 재평가 · 전기 장부금액"):
             st.caption("평가기준일이 발행일보다 뒤인 **결산 평가**라면 전기말 장부금액을 넣으십시오. "
                        "회계처리 탭에 당기 평가손익과 분개가 나옵니다. 발행 시점 평가면 비워 두십시오.")
@@ -7599,6 +7962,21 @@ with tabs[2]:
                "내재된 콜옵션이나 풋옵션이 주채무계약과 밀접하게 관련되어 "
                "있는지를 판단한다\" 고 못박습니다.")
 
+    # 격자 로직의 설계도. 모델을 짜기 전에 이 표부터 채워야 노드 의사결정이
+    # 계약을 옮긴 것이 된다.
+    st.markdown("**계약상 권리** — 이 표가 격자 의사결정의 설계도입니다")
+    st.dataframe(pd.DataFrame(rights_table(t), columns=RIGHT_COLS),
+                 use_container_width=True, hide_index=True)
+    _ov = [x for x in pc_overlap(t) if x[2] > x[3] + 1e-9] if t.k_w > 0 else []
+    if _ov:
+        st.caption(f"조기상환청구권과 매도청구권이 **{len(_ov)}개 노드에서 함께 열리고** "
+                   f"그 자리의 조기상환금액이 더 큽니다 (첫 자리 "
+                   f"{_ov[0][1]:,.0f}개월 · {_ov[0][2]:,.4f} 대 {_ov[0][3]:,.4f}). "
+                   "**우선순위가 값을 가릅니다** — 아래 비교표를 보십시오.")
+    elif t.k_w > 0 and pc_overlap(t):
+        st.caption("두 권리가 함께 열리는 노드가 있으나 매도청구금액이 늘 크거나 같아 "
+                   "**어느 우선순위를 고르셔도 같은 답**이 나옵니다.")
+    st.divider()
     st.markdown("**계약 조항 확인** — 사이드바에 없는 사실만 여기서 받습니다")
     f1, f2 = st.columns(2)
     # RCPS 는 사이드바의 「콜옵션」 갈래가 이 둘을 정한다 (derive 가 덮어쓴다).
@@ -7764,6 +8142,34 @@ with tabs[2]:
                    "콜옵션 자체만 잽니다. 보고서를 검토하실 때도 어느 방법을 썼는지 "
                    "먼저 확인하셔야 합니다."))
         st.info(inst_text(t, "판정에 따른 권고 — " + _sp["call"]["평가"].replace("**", "")))
+
+        # 계약 우선순위가 값을 얼마나 바꾸는가. 겹치는 노드가 없거나 매도청구금액이
+        # 늘 크면 두 갈래가 같은 답을 내므로 표가 한 줄로 겹친다 — 그것도 정보다.
+        st.markdown(inst_text(t, "#### 조기상환청구권과 겹칠 때 — 누가 먼저인가"))
+        _pv2 = []
+        for _po, _lb in ((0, "투자자 조기상환 우선"), (1, "발행자 매도청구 우선")):
+            _tp = Terms(**asdict(t)); _tp.pc_order = _po; derive(_tp)
+            _f2, _b02, _b12, _b22, _ca2, _cv2 = decompose(_tp)
+            _pv2.append([_lb, _ca2, _cv2, "◀ 적용" if int(t.pc_order) == _po else ""])
+        st.dataframe(pd.DataFrame(
+            _pv2, columns=["우선순위", inst_text(t, "매도청구권"),
+                           inst_text(t, "전환권대가"), "　"]).style.format(
+            {inst_text(t, "매도청구권"): "{:,.4f}",
+             inst_text(t, "전환권대가"): "{:,.4f}"}),
+            use_container_width=True, hide_index=True)
+        _d2 = abs(_pv2[0][1] - _pv2[1][1])
+        if _d2 > 1e-6:
+            st.warning(inst_text(t,
+                f"**우선순위에 따라 매도청구권이 {_d2:,.4f} 만큼 갈립니다.** "
+                "수식이 정하는 것이 아니라 **계약이 정하는 것**입니다 — 계약서의 "
+                "통지기간과 「이미 통지된 조기상환청구를 매도청구로 번복할 수 있는가」 "
+                "조항을 확인하시고, 고른 근거를 조서에 남기십시오. 사이드바 "
+                "매도청구권 칸에서 바꿉니다."))
+        else:
+            st.caption(inst_text(t,
+                "두 우선순위가 같은 답을 냅니다 — 행사기간이 겹치지 않거나, 겹치는 "
+                "자리에서 매도청구금액이 조기상환금액보다 크거나 같기 때문입니다. "
+                "그래도 계약서의 우선순위 조항은 조서에 적어 두십시오."))
     else:
         st.info(inst_text(t, "매도청구권이 없어 판단할 것이 없습니다."))
 
@@ -8021,6 +8427,56 @@ with tabs[8]:
     st.caption("위험중립가중치가 0과 1을 벗어나면 변동성이나 노드 수 설정이 잘못된 것입니다. "
                "구간마다 선도이자율로 다시 계산되므로 **첫 구간만 보아서는 안 됩니다** — "
                "전 구간 범위를 함께 싣습니다.")
+
+    # ── 남이 이 격자를 검토한다면 ──
+    # 격자 모델 리뷰에서 실제로 묻는 것들. 앱이 답할 수 있는 것은 채워 두고,
+    # 계약을 읽어야 답하는 것만 사용자에게 남긴다.
+    with st.expander("이 격자를 남이 검토한다면 — 물어야 할 것들"):
+        _ovq = pc_overlap(t) if t.k_w > 0 else []
+        _ovd = [x for x in _ovq if x[2] > x[3] + 1e-9]
+        # 지분·부채로 갈랐을 때 어느 쪽도 음수가 되면 안 된다. 음수가 나오면
+        # 노드 결정과 D/E 재분류가 어긋났다는 뜻이다.
+        _neg = min([min(o["E"], o["B"]) for o in full["memo"].values()] or [0.0])
+        _flags = sum(1 for i in range(full["n"]+1)
+                     if full["kstrike"](i) is not None)
+        _q = [
+            ("풋과 콜이 동시에 가능한 스텝은 어디인가",
+             ("없다 — 두 행사기간이 겹치지 않는다" if not _ovq else
+              f"{len(_ovq)}개 노드. 첫 자리는 발행일 기준 {_ovq[0][1]:,.0f}개월"
+              f"(스텝 {_ovq[0][0]})")),
+            ("그때 누가 먼저 결정하는가",
+             ("해당 없음" if not _ovq else
+              ("발행자 매도청구 우선" if int(t.pc_order) == 1
+               else "투자자 조기상환 우선"))),
+            ("계약서상 그 우선순위가 맞는가",
+             ("해당 없음" if not _ovq else
+              ("**확인 필요** — 값이 갈리는 자리가 "
+               f"{len(_ovd)}개 있다 (첫 자리 조기상환 {_ovd[0][2]:,.4f} 대 "
+               f"매도청구 {_ovd[0][3]:,.4f})" if _ovd else
+               "겹치지만 매도청구금액이 늘 크거나 같아 값이 갈리지 않는다"))),
+            ("매도청구를 당하면 전환권이 남는가",
+             ("해당 없음 — 매도청구권이 없다" if t.k_w <= 0 else
+              "남는다. 격자가 전환가치와 매도청구금액을 함께 견준다 — "
+              "매도청구가 걸려도 전환이 더 크면 전환을 고른다")),
+            ("조기상환을 고른 뒤 매도청구가 또 작동하지는 않는가",
+             "않는다. 한 노드에서 한 갈래만 고르고 그 자리에서 계약이 끝난다"),
+            ("행사일이 아닌 스텝에서 권리가 작동하지는 않는가",
+             f"작동하지 않는다. 계약일 이후 첫 노드부터 주기마다만 열린다 — "
+             f"매도청구가 열리는 노드는 {_flags}개"),
+            ("최종 상태가 지분·부채로 맞게 갈렸는가",
+             ("모든 노드에서 지분·부채가 0 이상이다 — 전환이면 (전환가치, 0), "
+              "상환이면 (0, 상환금액), 보유면 각각 다른 이자율로 할인한 값"
+              if _neg >= -1e-9 else
+              f"**확인 필요** — 음수가 나온 노드가 있다 (최소 {_neg:,.4f})")),
+        ]
+        st.dataframe(pd.DataFrame(_q, columns=["질문", "답"]),
+                     use_container_width=True, hide_index=True)
+        if _ovd:
+            st.warning("세 번째 줄이 **확인 필요**입니다. 계약서의 통지기간과 "
+                       "우선순위 조항을 보시고, 「분리 판단」 탭의 비교표에서 두 "
+                       "갈래의 값 차이를 확인하십시오.")
+        st.caption("계약을 읽어야 답할 수 있는 것은 세 번째 줄 하나입니다. "
+                   "나머지는 격자 구조가 정하는 것이라 앱이 답합니다.")
 
     st.markdown("**신용스프레드가 발행조건과 맞는가**")
     st.caption(inst_text(t, "발행일에는 투자자가 100 을 내고 사채 + 조기상환권 + 전환권을 삽니다. "

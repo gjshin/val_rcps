@@ -231,6 +231,77 @@ def test_sha_root_immediate_put():
     chk_bool("전 구간 q 를 잰다", "qbad" in R and "qmin" in R)
 
 
+def test_split_metric_independent_of_setting():
+    """분리 판단 지표는 «분리 여부 설정»과 무관해야 한다.
+
+    문단 B4.3.5(5)(가) 의 「채무상품의 상각후원가」는 **주계약**의 상각후원가다.
+    실제로 인식한 배분액에서 상각한 값을 쓰면, 분리하지 않기로 고를수록 출발점이
+    부채요소(B1)로 올라가 행사금액과 가까워지고 → 분리하지 않아도 된다는 결론이
+    나온다. 설정이 판정을 낳고 판정이 설정을 정당화하는 순환이다.
+
+    같은 계약을 p_sep 만 바꿔 두 번 재고, 지표가 같은지 본다.
+    """
+    print("\n[8] 분리 판단 지표가 설정에 의존하지 않는가")
+    if "p_sep" not in Terms.__dataclass_fields__:
+        print("  (건너뜀)"); return
+    got = []
+    for ps in (1, 0):
+        t = Terms(p_sep=ps, carry=1, gap_m=6.0,
+                  rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+                  cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+        derive(t)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        rows_eir = G["eir_table"](t, G["acc_host"](t, full, b0, b1, b2, ca))[1]
+        d = G["split_test"](t, full, b0, b1, b2, ca, rows_eir)["put"]
+        got.append((d["결론"], d["지표"]["같은 시점 상각후원가"], d["지표"]["차이"]))
+        print(f"  p_sep={ps}  결론 «{d['결론']}»  상각후원가 "
+              f"{d['지표']['같은 시점 상각후원가']:.4f}  차이 {d['지표']['차이']:.4f}")
+    chk_bool("두 설정에서 결론이 같다", got[0][0] == got[1][0])
+    chk("두 설정에서 상각후원가가 같다", got[1][1], got[0][1])
+    chk("두 설정에서 차이 비율이 같다", got[1][2], got[0][2])
+    # 주계약(B0) 상각표에서 뽑은 값이어야 한다 — 부채요소(B1) 가 아니다.
+    t0 = Terms(carry=1, gap_m=6.0,
+               rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+               cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    derive(t0)
+    _f, _b0, _b1, _b2, _ca, _cv = G["decompose"](t0)
+    chk_bool(f"상각후원가 {got[0][1]:.4f} 가 B0 {_b0:.4f} 과 B1 {_b1:.4f} 사이이고 "
+             "B1 보다 작다", _b0 - 1e-6 <= got[0][1] < _b1)
+
+
+def test_put_separation_flows_to_accounting():
+    """분리 여부가 배분표·상각표·후속측정까지 정확히 흐르는가.
+
+    분리하면 주계약(B0)과 파생상품부채(B1−B0)가 따로 서고 상각표가 B0 에서
+    출발한다. 분리하지 않으면 파생상품부채가 사라지고 부채요소(B1)가 통째로
+    상각후원가라 상각표가 B1 에서 출발한다. 어느 쪽이든 합계는 100 이고 상각표
+    기말은 만기상환금액이다.
+    """
+    print("\n[9] 조기상환권 분리 여부 → 배분표 · 상각표 · 후속측정")
+    if "p_sep" not in Terms.__dataclass_fields__:
+        print("  (건너뜀)"); return
+    for ps, want_deriv in ((1, True), (0, False)):
+        t = Terms(p_sep=ps, carry=1, gap_m=6.0,
+                  rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+                  cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+        derive(t)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        rows, _ = G["allocate"](t, full, b0, b1, b2, ca)
+        host = G["acc_host"](t, full, b0, b1, b2, ca)
+        r_eir, rows_eir, red, nper = G["eir_table"](t, host)
+        rm = G["remeasure"](t, rows)
+        tag = "분리" if ps else "미분리"
+        has = any("조기상환청구권 · 파생상품부채" in k for k, _ in rows)
+        chk_bool(f"{tag} — 파생상품부채 줄이 "
+                 + ("있다" if want_deriv else "없다"), has == want_deriv)
+        chk(f"{tag} — 상각표 출발", host, b0 if ps else b1)
+        # 기본 설정은 k_sep=1 — 매도청구권이 별도 파생상품자산으로 서므로
+        # 파생상품부채에서 차감하지 않는다. 분리하면 B1 − B0 이 그대로 부채다.
+        chk(f"{tag} — 후속 재평가 대상", rm["fv_liab"], (b1-b0) if ps else 0.0)
+        chk(f"{tag} — 배분 합계", rows[-1][1], 100.0)
+        chk(f"{tag} — 상각표 기말 = 만기상환금액", rows_eir[-1][-1], red)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -240,6 +311,8 @@ def main():
     test_refix_weighted_average_on_reset_date()
     test_bw_inherits_engine_fixes()
     test_sha_root_immediate_put()
+    test_split_metric_independent_of_setting()
+    test_put_separation_flows_to_accounting()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
