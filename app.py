@@ -6447,86 +6447,11 @@ with tabs[9]:
         st.caption("버튼이 보이지 않거나 눌러도 반응이 없으면 브라우저의 팝업·다운로드 차단을 확인하십시오.")
 
     st.divider()
-    st.subheader("부속 리포트")
-    st.write("평가 인풋이 어디서 나왔는지 보여 주는 산출내역입니다. 조서와 함께 철하면 "
-             "감사인이 인풋까지 따라올 수 있습니다. 둘 다 계산이 수식으로 들어갑니다.")
-    MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-    rc1, rc2, rc3 = st.columns(3)
-    with rc1:
-        st.markdown("**변동성 산출내역**")
-        _peers = st.session_state.get("peers") or []
-        _own = st.session_state.get("prices") or []
-        _opt = st.session_state.get("vol_opt") or {}
-        if _peers:
-            st.caption(f"피어 {len(_peers)}개로 만듭니다 — "
-                       + " · ".join(n for n, _ in _peers))
-        elif _own:
-            st.caption(f"대상회사 종가 {len(_own)}개로 만듭니다 "
-                       f"({st.session_state.get('px_src', '')}).")
-        else:
-            st.caption("먼저 왼쪽 변동성 칸에서 주가를 수집하거나 파일을 넣으십시오.")
-        if st.button("변동성 리포트 만들기", use_container_width=True,
-                     disabled=not (_peers or _own)):
-            try:
-                ser = _peers or [(st.session_state.get("px_src") or "대상회사", _own)]
-                st.session_state.rep_vol = (
-                    f"변동성_산출내역_{dt.date.today()}.xlsx",
-                    build_xlsx_vol(ser, tdays=_opt.get("tdays", 250),
-                                   drop=_opt.get("drop", True),
-                                   pick=_opt.get("pick", "median"),
-                                   applied=t.sig,
-                                   asof=dt.date.fromisoformat(t.d_base)))
-            except Exception as ex:
-                st.error(f"만들지 못했습니다 — {ex}")
-        rv = st.session_state.get("rep_vol")
-        if rv:
-            st.download_button(f"{rv[0]}  ({len(rv[1])/1024:,.0f} KB)", rv[1], rv[0],
-                               MIME, key="dl_vol", use_container_width=True)
-
-    with rc2:
-        st.markdown("**이자율 산출내역**")
-        st.caption("입력 곡선 → 부트스트래핑 → 연속복리 현물 → 구간 선도. "
-                   "조서 트리 시트 11·12행의 값이 어디서 나왔는지 펼쳐 보여 줍니다.")
-        if st.button("이자율 리포트 만들기", use_container_width=True,
-                     disabled=not (len(t.rf_curve) >= 2 and len(credit_curve(t)) >= 2)):
-            try:
-                st.session_state.rep_rate = (
-                    f"이자율_산출내역_{dt.date.today()}.xlsx",
-                    build_xlsx_rate(t, st.session_state.get("rate_how") or ""))
-            except Exception as ex:
-                st.error(f"만들지 못했습니다 — {ex}")
-        rr_ = st.session_state.get("rep_rate")
-        if rr_:
-            st.download_button(f"{rr_[0]}  ({len(rr_[1])/1024:,.0f} KB)", rr_[1], rr_[0],
-                               MIME, key="dl_rate", use_container_width=True)
-
-    with rc3:
-        st.markdown("**금리변동성 산출내역**")
-        _rser = st.session_state.get("rate_series") or []
-        _rop = st.session_state.get("rate_opt") or {}
-        _rhow = st.session_state.get("rate_how") or ""
-        if not put_bdt_on(t):
-            st.caption(rcps_text(t, "조기상환권을 BDT 로 재지 않으므로 σ 가 값에 들어가지 "
-                       "않습니다. 이 리포트는 필요하지 않습니다."))
-        elif _rser:
-            st.caption(f"금리 {len(_rser)}개로 만듭니다 — {_rhow}")
-        else:
-            st.caption("BDT 의 σ 를 쓰고 있는데 산출근거가 없습니다. 왼쪽 "
-                       "조기상환청구권 칸에서 금리 시계열을 넣으십시오.")
-        if st.button("금리변동성 리포트 만들기", use_container_width=True,
-                     disabled=not _rser):
-            try:
-                st.session_state.rep_rvol = (
-                    f"금리변동성_산출내역_{dt.date.today()}.xlsx",
-                    build_xlsx_vol([("기준 금리 시계열", _rser)],
-                                   tdays=_rop.get("tdays", 250),
-                                   drop=_rop.get("drop", True),
-                                   applied=t.bdt_sig, kind="rate", how=_rhow,
-                                   asof=dt.date.fromisoformat(t.d_base)))
-            except Exception as ex:
-                st.error(f"만들지 못했습니다 — {ex}")
-        rq_ = st.session_state.get("rep_rvol")
-        if rq_:
-            st.download_button(f"{rq_[0]}  ({len(rq_[1])/1024:,.0f} KB)", rq_[1], rq_[0],
-                               MIME, key="dl_rvol", use_container_width=True)
+    st.caption(
+        "**산출내역은 이 조서 안에 함께 들어갑니다.** 따로 내려받아 철하실 것이 "
+        "없습니다. 조서 뒤쪽에 「σ 표지 · σ 회사별」(변동성), 「σr …」(금리변동성), "
+        "「IR 표지 · IR 입력곡선 · IR 곡선별 산출 · IR 선도이자율」(이자율) 시트가 "
+        "붙습니다. 수식 조서에서는 트리 11·12행이 「IR 선도이자율」 표를 참조하므로, "
+        "고시 수익률을 고치면 부트스트래핑 → 선도이자율 → 트리 → 배분까지 한 파일 "
+        "안에서 따라 움직입니다. 변동성은 산출값과 적용값이 같을 때만 이어 붙입니다 "
+        "— 다르면 값으로 두어 값 조서와 수식 조서가 갈라지지 않게 합니다.")
