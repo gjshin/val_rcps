@@ -31,7 +31,7 @@ class Terms:
     # 100·S/K 로 같아서 격자는 그대로 쓰고, 다른 것은 만기와 콜의 성격뿐이다.
     inst: str = "CB"                # "CB" 전환사채 / "RCPS" 상환전환우선주
     mat_mode: int = 0               # RCPS 존속기간 만료 시 0 보통주 자동전환 / 1 상환
-    issuer_call: int = 0            # RCPS 발행자 상환권 — k_s·k_e·k_f·k_prem·k_cmp 일정을 쓴다
+    issuer_call: int = 0            # RCPS 콜 — 0 없음 / 1 발행자 상환권 / 2 제3자 지정 매도청구권
     div_mode: int = 0               # RCPS 우선배당 0 상환가액에 가산(전체 부채) / 1 재량(부채 현금흐름 제외)
     bs_target: float = 100.0        # 발행가 역산(Backsolve) 목표 — 발행가 100 기준
     prev_deriv: float = -1.0        # 전기말 파생상품부채 장부금액 (100 기준). 음수면 없음
@@ -202,20 +202,44 @@ def derive(tm: Terms) -> Terms:
     gap = max(0.25, tm.gap_m)
     tm.n = max(4, int(round(tm.T*12/gap)))
     if is_rcps(tm):
-        # 제3자 지정 콜·트랜치·의무보유는 CB 의 매도청구권 얘기다. RCPS 의
-        # 발행자 상환권은 거래상대방이 그대로인 내재파생이라 격자 안에서
-        # MIN(보유, 상환가액) 으로 누르고, 전체(100%)에 걸린다.
-        tm.k_w = 1.0 if tm.issuer_call else 0.0
-        tm.k_method = 0; tm.k_lock = 0.0
-        tm.k_third = 0; tm.k_transfer = 0
-        # 발행자 상환권이 있으면 상환청구권과 하나의 복합내재파생으로 묶는다
-        # (문단 B4.3.4). 없으면 상환청구권 하나뿐이라 분리 여부(p_sep)가 산다.
-        tm.k_sep = 0 if tm.issuer_call else 1
+        ic = int(tm.issuer_call)
+        if ic == 2:
+            # 제3자 지정 매도청구권 — 발행회사가 **지정하는 제3자**가 인수인이
+            # 가진 우선주를 사 가는 권리다. 거래상대방이 발행회사가 아니므로
+            # 내재파생이 아니라 **별도의 금융상품**이고 (문단 4.3.1), 기초자산이
+            # 전환권까지 붙은 우선주라 전체 격자에서 잰다 — CB 의 매도청구권과
+            # 같은 길이다. 한도·의무보유·평가방법을 사용자가 정한다.
+            tm.k_third = 1; tm.k_transfer = 0
+            tm.k_sep = 1
+        elif ic == 1:
+            # 발행자 상환권 — 거래상대방이 그대로인 내재파생이라 격자 안에서
+            # MIN(보유, 상환가액) 으로 누르고, 전체(100%)에 걸린다. 상환청구권과
+            # 하나의 복합내재파생으로 묶는다 (문단 B4.3.4).
+            tm.k_w = 1.0
+            tm.k_method = 0; tm.k_lock = 0.0
+            tm.k_third = 0; tm.k_transfer = 0
+            tm.k_sep = 0
+        else:
+            # 콜이 없다. 상환청구권 하나뿐이라 분리 여부(p_sep)가 산다.
+            tm.k_w = 0.0
+            tm.k_method = 0; tm.k_lock = 0.0
+            tm.k_third = 0; tm.k_transfer = 0
+            tm.k_sep = 1
     return tm
 
 
 def is_rcps(tm: Terms) -> bool:
     return (tm.inst or "CB").upper() == "RCPS"
+
+
+def issuer_redeem(tm: Terms) -> bool:
+    """콜을 **발행자 상환권 방식**으로 재는가.
+
+    RCPS 라도 제3자 지정 매도청구권이면 거래상대방이 달라 별도의 금융상품이고,
+    기초자산이 전환권 붙은 우선주라 **전체 격자**에서 잰다 — CB 와 같은 길이다.
+    발행자 상환권만 부채 격자에서 재고(문단 31) 트리·조서도 다르게 그린다.
+    """
+    return is_rcps(tm) and int(tm.issuer_call) == 1
 
 
 def auto_conv(tm: Terms) -> bool:
@@ -237,11 +261,16 @@ def eff_cpn(tm: Terms) -> float:
 def lbl(tm: Terms) -> dict:
     """상품에 따라 갈리는 이름. 화면·조서가 모두 여기서 가져간다."""
     if is_rcps(tm):
+        # 제3자 지정 콜은 계약서에서도 「매도청구권」이라 부른다. 발행자 상환권과
+        # 성격이 다르므로 이름을 바꾸지 않는다.
+        _th = int(tm.issuer_call) == 2
         return dict(inst="상환전환우선주", short="RCPS", face="발행가", cpn="우선배당률",
-                    ipay="배당 지급주기", put="상환청구권", call="발행자 상환권",
+                    ipay="배당 지급주기", put="상환청구권",
+                    call=("매도청구권" if _th else "발행자 상환권"),
                     host="우선주부채 (옵션 없는 부채)", liab="부채요소 (우선주 + 상환청구권)",
                     red="존속기간 만료 시 상환금액", ytm="만료 시 상환 보장수익률",
-                    bond="상환전환우선주부채", callamt="발행자 상환가액",
+                    bond="상환전환우선주부채",
+                    callamt=("매도청구금액" if _th else "발행자 상환가액"),
                     unit="1주 발행가 100 기준")
     return dict(inst="전환사채", short="CB", face="액면", cpn="표면이자율",
                 ipay="이자 지급주기", put="조기상환청구권", call="매도청구권",
@@ -858,7 +887,7 @@ def decompose(tm: Terms):
     # 과대가 되고, 풋보다 커지면 복합내재파생이 음수가 되기도 한다. 그래서 전환권을
     # 자본으로 볼 때의 배분에는 부채 격자(전환권 없음)에서 잰 콜을 쓴다. 전환권이
     # 부채면 전환권·풋·콜을 전체 격자에서 묶어 재므로 ca 그대로다.
-    if is_rcps(tm) and has_call:
+    if issuer_redeem(tm) and has_call:
         _b1p = pick(engine(tm, conv=False, put=True, call=False), tm.model)
         _b1c = pick(engine(tm, conv=False, put=True, call=True), tm.model)
         full["ca_debt"] = max(0.0, _b1p - _b1c)
@@ -903,8 +932,7 @@ def backsolve(tm: Terms, target: float = None, lo: float = None, hi: float = Non
     t2 = Terms(**asdict(tm))
     def f(S):
         t2.S0 = S
-        return pick(engine(t2, call=bool(t2.issuer_call) if is_rcps(t2) else False),
-                    t2.model)
+        return pick(engine(t2, call=issuer_redeem(t2)), t2.model)
     lo = lo if lo is not None else tm.K0*0.02
     hi = hi if hi is not None else tm.K0*5.0
     flo, fhi = f(lo), f(hi)
@@ -1136,11 +1164,13 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         host_acc = (100 + ca) - (b2 - b0)      # 어느 쪽이든 같다
         rows = [("주계약 (잔여)", host_acc),
                 ("복합내재파생상품 · 파생상품부채", deriv)]
-        if sep: rows.append(("매도청구권 · 파생상품자산", -ca))
+        if sep and (ca > 1e-12 or not is_rcps(tm)):
+            rows.append(("매도청구권 · 파생상품자산", -ca))
         note = ("전환권이 파생상품부채이므로 전환권과 조기상환권을 하나의 "
                 "복합내재파생상품으로 묶어 공정가치로 측정하고 주계약을 잔여로 둡니다 "
                 "(기준서 1109 문단 B4.3.4). "
-                + ("매도청구권은 제3자 지정이 가능해 별도의 금융상품이므로 "
+                + ("" if (is_rcps(tm) and ca <= 1e-12) else
+                   "매도청구권은 제3자 지정이 가능해 별도의 금융상품이므로 "
                    "이 묶음에 넣지 않습니다 (문단 4.3.1). 전환사채에 배분된 금액은 "
                    f"{100+ca:,.2f} 입니다."
                    if sep else
@@ -1292,12 +1322,16 @@ def validate(tm: Terms):
                      "우선주는 현금을 인도할 현재의무가 없어 **금융부채가 아니라 자본**입니다 "
                      "(기준서 1032 AG25). 이 앱의 부채요소 → 잔여 배분은 그 계약에 맞지 "
                      "않습니다. 상환청구 기간을 확인하십시오.")
+        if int(tm.issuer_call) == 2 and tm.k_w <= 0:
+            w.append("**제3자 지정 매도청구권의 행사 한도가 0%** 입니다. 계약서의 "
+                     "콜옵션 대상주식 비율(예: 총 발행금액의 20%)을 넣으십시오. "
+                     "0 이면 콜이 없는 것과 같습니다.")
         if int(tm.div_mode) == 1 and tm.cpn > 0:
             w.append(f"우선배당 {tm.cpn:.2%} 를 발행자 재량으로 두어 부채 계산에서 뺐습니다. "
                      "계약이 「미지급 배당을 상환가액에 가산」이면 첫 번째 갈래로 바꾸십시오 "
                      "(1032 AG37).")
     if tm.k_s > tm.k_e: w.append("매도청구 시작이 종료보다 늦습니다.")
-    if tm.k_lock < tm.k_e and not is_rcps(tm) and tm.k_w > 0:
+    if tm.k_lock < tm.k_e and not issuer_redeem(tm) and tm.k_w > 0:
         w.append("의무보유 전환지연이 매도청구 종료보다 이릅니다. 콜이 실효화될 수 있습니다.")
     # 할증금 산식은 보장수익률에서 표면이자율을 뺀다. 보장이 더 낮으면 음수가
     # 되어 상환금액이 액면 밑으로 내려간다. 0 에서 끊고는 있지만 입력 자체가
@@ -2429,28 +2463,55 @@ def build_xlsx_rate(tm: Terms, sig_how: str = ""):
 # ══════════════════════════════════════════════════════════
 # RCPS 조서의 용어. 긴 것부터 바꿔야 「조기상환청구권」이 「조기상환」에 먹히지 않는다.
 # 수식 셀(=로 시작)은 건드리지 않는다 — 의사결정 문자열("상환P" 등)이 들어 있다.
-_RCPS_WORDS = [
+# 앞·뒤 두 토막 사이에 콜 관련 낱말이 낀다. 제3자 지정 매도청구권을 가진 RCPS 는
+# 계약서도 그것을 「매도청구권」이라 부르므로 그 토막만 빼고 바꾼다.
+_RCPS_HEAD = [
     ("전환사채", "상환전환우선주"), ("조기상환청구권", "상환청구권"), ("조기상환권", "상환청구권"),
-    ("조기상환", "상환청구"), ("매도청구권자산", "발행자 상환권 가치"),
+    ("조기상환", "상환청구"),
+]
+_RCPS_CALL = [
+    ("매도청구권자산", "발행자 상환권 가치"),
     ("매도청구 한도", "발행자 상환권 있음(1) / 없음(0)"),
     ("매도청구권", "발행자 상환권"), ("매도청구", "발행자 상환"),
+]
+_RCPS_TAIL = [
     ("표면이자율", "우선배당률"), ("표면이자", "우선배당"), ("이자 지급주기", "배당 지급주기"),
-    ("이자 지급", "배당 지급"), ("쿠폰", "우선배당"), ("만기보장수익률", "만료 시 상환 보장수익률"),
+    ("이자 지급", "배당 지급"), ("지급이자", "지급배당"), ("쿠폰", "우선배당"),
+    ("만기보장수익률", "만료 시 상환 보장수익률"),
+    ("만기보장 복리", "만료 시 상환 보장 복리"),
     ("만기상환금액", "만료 시 상환금액"), ("만기상환", "만료 시 상환"),
-    ("옵션 없는 사채", "옵션 없는 우선주부채"), ("순수사채", "순수 우선주부채"),
-    ("사채 + ", "우선주 + "), ("전자등록금액", "발행가"), ("전자등록총액", "발행총액"),
+    ("옵션 없는 사채", "옵션 없는 우선주부채"),
+    ("순수사채", "순수 우선주부채"), ("순수 사채", "순수 우선주부채"),
+    ("없는 사채", "없는 우선주부채"),
+    ("사채와 독립적으로", "우선주와 독립적으로"),
+    ("사채 + ", "우선주 + "), ("사채요소", "우선주부채"),
+    ("전자등록금액", "발행가"), ("전자등록총액", "발행총액"),
     ("액면 100", "발행가 100"), ("트랜치", "격자"),
 ]
+_RCPS_WORDS = _RCPS_HEAD + _RCPS_CALL + _RCPS_TAIL
 
 
-def relabel_rcps(wb):
+def rcps_words(tm: Terms):
+    """이 계약에 적용할 치환 목록.
+
+    제3자 지정 매도청구권(``issuer_call == 2``)이 있으면 콜은 발행자 상환권이
+    아니라 매도청구권이므로 그 낱말을 건드리지 않는다. 트랜치도 실제로 한도가
+    있는 콜이라 「격자」로 바꾸면 뜻이 사라진다.
+    """
+    if int(tm.issuer_call) == 2:
+        return _RCPS_HEAD + [x for x in _RCPS_TAIL if x[0] != "트랜치"]
+    return _RCPS_WORDS
+
+
+def relabel_rcps(wb, tm: Terms):
     """조서의 글자 셀을 RCPS 용어로 바꾼다. 값·수식은 그대로다."""
+    words = rcps_words(tm)
     for ws in wb.worksheets:
         for row in ws.iter_rows():
             for c in row:
                 v = c.value
                 if not isinstance(v, str) or v.startswith("="): continue
-                for a, b in _RCPS_WORDS:
+                for a, b in words:
                     if a in v: v = v.replace(a, b)
                 if v != c.value: c.value = v
 
@@ -2458,7 +2519,7 @@ def relabel_rcps(wb):
 def rcps_text(tm: Terms, text: str) -> str:
     """화면 문장을 상품 용어로. CB 면 그대로다."""
     if not is_rcps(tm) or not isinstance(text, str): return text
-    for a, b in _RCPS_WORDS:
+    for a, b in rcps_words(tm):
         if a in text: text = text.replace(a, b)
     return text
 
@@ -2564,7 +2625,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     # CB 는 콜 없는 격자를 보이고 매도청구권은 B3 에서만 뺀다 (트랜치 방식).
     # RCPS 의 발행자 상환권은 전체에 걸리는 내재파생이라, 트리는 실제 상품
     # 그대로 — 상환C 가 찍히는 격자 — 를 보이는 편이 읽는 사람에게 맞다.
-    fullv = (engine(tm, call=True) if (is_rcps(tm) and tm.issuer_call and ca > 0)
+    fullv = (engine(tm, call=True) if (issuer_redeem(tm) and ca > 0)
              else full)
     idx = {}
     for k, v in fullv["memo"].items():
@@ -2929,7 +2990,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         put(R, rr2+2+len(_sc), 2, "예상 상장 시점은 가정이다. 첫 줄이 조서에 쓴 가정이고 "
             "나머지는 폭을 보이려고 함께 싣는다. 상장 성공 여부는 그 노드의 주가가 "
             "최소공모가격을 넘는지로 판정한다 (책 [사례 5-5]).", color=GREY, size=9)
-    if is_rcps(tm) and tm.issuer_call and ca > 0:
+    if issuer_redeem(tm) and ca > 0:
         put(R, 10, 2, f"발행자 상환권을 전환권 없는 부채 격자에서 재면 {full.get('ca_debt', 0.0):,.4f} 다. "
             "부채요소·전환권대가 배분에는 이 값을 쓴다 (1032 문단 31 — 비자본 파생 특성은 "
             "부채요소에 포함). 위 B3 의 차액은 전체 격자에서 전환 상승분을 자른 크기다.",
@@ -3230,7 +3291,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         H.cell(row=i, column=3).alignment = Alignment(horizontal="left", vertical="center")
 
     polish_wb(wb)
-    if is_rcps(tm): relabel_rcps(wb)
+    if is_rcps(tm): relabel_rcps(wb, tm)
     bio = io.BytesIO(); wb.save(bio); bio.seek(0)
     return bio.getvalue()
 
@@ -3257,7 +3318,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     el = tm.elapsed_m
     # 트랜치 이름은 계약의 매도청구 한도에서 나온다. 30/70 으로 굳혀 두면
     # 한도가 다른 사채에서 시트 이름이 계약과 어긋난다.
-    if is_rcps(tm):
+    if issuer_redeem(tm):
         KW, KW0 = "발행자 상환권 반영", "발행자 상환권 없음(참고)"
     else:
         KW = f"{tm.k_w*100:,.0f}%"
@@ -3490,11 +3551,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     S5, S6, S7 = "05 지분가치", "06 부채가치", "07 보유가치"
     S8, S9, S10 = "08 금융상품가치", "09 의사결정", "10 주계약가치"
     S11, S12, S13, S14 = "11 GS 전환확률", "12 GS 할인율", "13 GS 보유가치", "14 GS 금융상품가치"
-    S15 = "15 발행자 상환권 반영" if is_rcps(tm) else f"15 {KW} 트랜치"
+    S15 = "15 발행자 상환권 반영" if issuer_redeem(tm) else f"15 {KW} 트랜치"
     S16 = "16 부채요소"
-    _rcps_call = is_rcps(tm) and bool(tm.issuer_call) and tm.k_w > 0
-    # 자본 배분에서 부채요소를 줄이는 콜 — RCPS 는 결과 C26 (부채 격자), CB 는 C22
-    CAE = "C26" if is_rcps(tm) else "C22"
+    _rcps_call = issuer_redeem(tm) and tm.k_w > 0
+    # 자본 배분에서 부채요소를 줄이는 콜 — 발행자 상환권은 결과 C26 (부채 격자),
+    # CB 와 제3자 지정 매도청구권은 C22 (전체 격자)
+    CAE = "C26" if issuer_redeem(tm) else "C22"
     S17, S18 = "17 구성비율", "18 혼합할인율"
     S19, S20 = "19 콜 페이오프", "20 매도청구권가치"
     S21, S22 = "21 방법2 지분보유", "22 방법2 부채보유"
@@ -4128,7 +4190,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
              ("전환권대가 (자본일 때)", f'=IF({K["eqcls"]}=1,100-C17+{CAE},"")'),
              ("복합내재파생상품 (부채일 때)", f'=IF({K["eqcls"]}=0,C10-C16,"")'),
              ("주계약 잔여 (부채일 때)", f'=IF({K["eqcls"]}=0,100+C22-C24,"")')]
-    if is_rcps(tm):
+    if issuer_redeem(tm):
         # 부채 격자에서 잰 발행자 상환권. 자본 배분(전환권대가·회계처리)이 이 값을 쓴다.
         items.append(("매도청구권 · 부채 격자 기준 (자본 배분용)",
                       f"=MAX(0,{Q(S16)}!C13-'{S16C}'!C15)" if _rcps_call else "=0"))
@@ -4514,7 +4576,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         H.cell(row=i, column=3).alignment = Alignment(horizontal="left", vertical="center")
 
     polish_wb(wb)
-    if is_rcps(tm): relabel_rcps(wb)
+    if is_rcps(tm): relabel_rcps(wb, tm)
     bio = io.BytesIO(); wb.save(bio); bio.seek(0)
     return bio.getvalue()
 
@@ -4522,7 +4584,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
 # ══════════════════════════════════════════════════════════
 # 6. 화면
 # ══════════════════════════════════════════════════════════
-st.set_page_config(page_title="전환사채 평가", layout="wide")
+st.set_page_config(page_title="전환사채 · 상환전환우선주 평가", layout="wide")
 st.markdown("""<style>
 .block-container{padding-top:2.2rem;max-width:1250px}
 h1{font-size:1.7rem !important;letter-spacing:-.02em}
@@ -4736,7 +4798,7 @@ with st.sidebar:
         st.markdown("**회계 처리**")
         _psok = (t.conv_class == "equity" and t.k_sep != 0)
         t.p_sep = 1 if st.selectbox(
-            "조기상환권 처리", [1, 0], index=0 if int(t.p_sep) else 1,
+            rcps_text(t, "조기상환권 처리"), [1, 0], index=0 if int(t.p_sep) else 1,
             format_func=lambda x: ("분리 · 파생상품부채" if x
                                    else "분리하지 않음 · 부채요소에 포함"),
             disabled=not _psok,
@@ -4744,11 +4806,11 @@ with st.sidebar:
                  "관련되어 분리하지 않습니다 (기준서 1109 문단 B4.3.5(5)(가)). "
                  "「분리 판단」 탭이 계약 조항으로 이 결론을 내 줍니다.") else 0
         if not _psok:
-            st.caption("전환권을 **자본**으로 두고 매도청구권을 **별도 금융상품**으로 "
-                       "볼 때만 고를 수 있습니다. 매도청구권을 내재파생으로 묶으면 "
-                       "복수의 내재파생을 하나의 복합내재파생으로 다루므로 "
-                       "(문단 B4.3.4) 조기상환권도 함께 분리됩니다. 전환권이 "
-                       "부채여도 같은 이유로 묶음에 들어갑니다.")
+            st.caption(rcps_text(t, "전환권을 **자본**으로 두고 매도청구권을 **별도 "
+                       "금융상품**으로 볼 때만 고를 수 있습니다. 매도청구권을 "
+                       "내재파생으로 묶으면 복수의 내재파생을 하나의 복합내재파생으로 "
+                       "다루므로 (문단 B4.3.4) 조기상환권도 함께 분리됩니다. 전환권이 "
+                       "부채여도 같은 이유로 묶음에 들어갑니다."))
             t.p_sep = 1
         elif int(t.p_sep) == 0:
             st.caption("부채요소(사채 + 조기상환권)를 통째로 상각후원가로 둡니다. "
@@ -4969,13 +5031,25 @@ with st.sidebar:
 
     with st.expander(L["call"]):
       if is_rcps(t):
-        # 발행자 상환권은 발행회사가 행사하는 내재파생이다. 거래상대방이 그대로라
-        # 별도 금융상품이 아니고(문단 4.3.1), 격자 안에서 MIN(보유, 상환가액)으로
-        # 누른다. 트랜치·제3자 지정·세 평가방법은 CB 의 매도청구권 얘기다.
-        t.issuer_call = int(st.checkbox("발행회사의 상환권이 있다", value=bool(t.issuer_call),
-                                        help="발행회사가 먼저 상환할 수 있는 조항. 격자 안에서 "
-                                             "보유가치를 상환가액으로 누릅니다."))
-        if t.issuer_call:
+        # 콜은 두 갈래다. **발행자 상환권**은 발행회사가 우선주를 되사는 조항이라
+        # 거래상대방이 그대로고(문단 4.3.1) 내재파생이므로, 격자 안에서
+        # MIN(보유, 상환가액) 으로 눌러 전체에 걸린다. **제3자 지정 매도청구권**은
+        # 발행회사가 지정한 제3자가 인수인의 우선주를 사 가는 권리라 거래상대방이
+        # 달라져 별도의 금융상품이고, CB 의 매도청구권과 같은 길을 간다 —
+        # 한도·의무보유·세 평가방법이 그대로 살아난다.
+        t.issuer_call = st.selectbox(
+            "콜옵션", [0, 1, 2], index=int(t.issuer_call),
+            format_func=lambda i: ["없음 — 상환권은 투자자만",
+                                   "발행회사의 상환권 (전체에 걸림)",
+                                   "제3자 지정 매도청구권 (한도 %)"][i],
+            help="**발행회사의 상환권**은 회사가 우선주를 되사 가는 조항입니다. "
+                 "거래상대방이 그대로라 내재파생이고, 상환청구권과 하나의 복합내재파생으로 "
+                 "묶습니다 (기준서 1109 문단 B4.3.4).\n\n"
+                 "**제3자 지정 매도청구권**은 발행회사가 **지정하는 제3자**가 인수인에게서 "
+                 "우선주를 사 가는 권리입니다. 거래상대방이 달라지므로 **별도의 금융상품**이고 "
+                 "(문단 4.3.1), 발행회사는 이를 **파생상품자산**으로 따로 인식합니다. "
+                 "실무 계약에서는 총 발행금액의 10~20% 한도로 자주 붙습니다.")
+        if t.issuer_call == 1:
             t.k_s = st.number_input("시작 (개월)", value=float(t.k_s), step=1.0, key="ks")
             t.k_e = st.number_input("종료 (개월)", value=float(t.k_e), step=1.0, key="ke")
             t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
@@ -4987,6 +5061,41 @@ with st.sidebar:
             st.caption("상환청구권과 하나의 **복합내재파생상품**으로 묶어 순액으로 봅니다 "
                        "(기준서 1109 문단 B4.3.4). 전환권을 자본으로 두면 부채요소는 "
                        "「우선주 + 상환청구권 − 발행자 상환권」입니다.")
+        elif t.issuer_call == 2:
+            t.k_s = st.number_input("시작 (개월)", value=float(t.k_s), step=1.0, key="ks")
+            t.k_e = st.number_input("종료 (개월)", value=float(t.k_e), step=1.0, key="ke")
+            t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
+            t.k_prem = st.number_input(
+                "매수대금 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
+                help="매매대금 = 인수대금 × (1 + 보장수익률 복리)^경과연수. "
+                     "계약서의 회차별 매도청구권 행사금액(%) 표와 대조하십시오.")/100
+            t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
+                                          help="공시 행사금액표가 분기복리면 4. " + HLP_CMP))
+            # 콜 갈래를 바꾸면 derive 가 k_w 를 0(없음)이나 1(발행자 상환권)로
+            # 눌러 놓는다. 그 값을 그대로 보이면 한도가 0% 로 뜨므로, 처음
+            # 열릴 때는 실무에서 흔한 20% 를 채워 둔다. 계약서 값으로 고치면 된다.
+            t.k_w = st.number_input(
+                "행사 한도 (%)", value=(t.k_w*100 if 0 < t.k_w < 1 else 20.0),
+                step=5.0,
+                help="콜옵션 대상주식이 총 발행금액에서 차지하는 비율입니다. "
+                     "실무 계약은 10~20% 가 흔합니다. 계약서의 「콜옵션 대상주식」 "
+                     "조항을 그대로 넣으십시오.")/100
+            t.k_lock = st.number_input(
+                "의무보유 전환지연 (개월)", value=float(t.k_lock), step=1.0,
+                help="인수인이 콜옵션 대상주식을 **미전환 상태로 보유**해야 하는 기간입니다. "
+                     "매도청구 종료일까지 두는 계약이 많습니다. "
+                     "**유무가치비교법에서만** 값에 들어갑니다.")
+            t.k_method = st.selectbox("평가방법", [0, 1, 2],
+                                      index=[0, 1, 2].index(t.k_method),
+                                      format_func=lambda i: K_METHODS[i], key="kmeth_rcps")
+            if t.k_method:
+                st.warning("의무보유는 지금 고른 평가방법에서 **값을 움직이지 않습니다.** "
+                           "옵션차익법은 기초자산을 「콜과 그 부속조항을 뺀 우선주」로 "
+                           "보기 때문입니다. 의무보유 효과까지 넣으시려면 "
+                           "**유무가치비교법**을 고르십시오.")
+            st.caption("거래상대방이 발행회사가 아니라 제3자이므로 **별도의 금융상품**입니다 "
+                       "(기준서 1109 문단 4.3.1). 회계처리 탭에서 **파생상품자산**으로 "
+                       "따로 세우고, 상환청구권·전환권 묶음에는 넣지 않습니다.")
         else:
             st.caption("상환권은 투자자만 가집니다.")
       else:
@@ -5378,7 +5487,8 @@ with st.sidebar:
 
     st.download_button("시나리오 저장",
                        json.dumps(asdict(t), ensure_ascii=False, indent=2).encode(),
-                       f"CB평가_시나리오_{dt.date.today()}.json", "application/json",
+                       f"{lbl(t)['short']}평가_시나리오_{dt.date.today()}.json",
+                       "application/json",
                        use_container_width=True)
 
 # ── 계산 ──
@@ -5419,7 +5529,7 @@ with tabs[0]:
         ["B2  전환권 추가", b2, b2-b1, "전환권"
          + (" (존속기간 만료 시 자동전환 포함)" if auto_conv(t) else "")],
         [f"B3  {LB['call']} 반영", b2-ca, -ca,
-         (f"{LB['call']} (전체에 걸림)" if is_rcps(t)
+         (f"{LB['call']} (전체에 걸림)" if issuer_redeem(t)
           else f"{LB['call']} ({t.k_w*100:.0f}% 한도)")]],
         columns=["단계", "가치", "차액", "해당 옵션"])
     st.dataframe(df.style.format({"가치": "{:,.2f}", "차액": "{:+,.2f}"}, na_rep="—"),
@@ -5437,12 +5547,23 @@ with tabs[0]:
                    "넣으십시오 — 감사인이 반드시 묻는 질문의 답이 그 안에 있습니다. "
                    "상장 성공 여부는 그 노드의 주가가 최소공모가격을 넘는지로 판정하므로 "
                    "상장 확률을 따로 넣지 않습니다 (책 [사례 5-5]).")
-    if is_rcps(t) and t.issuer_call and ca > 0:
+    if issuer_redeem(t) and ca > 0:
         st.info(f"발행자 상환권을 **전환권 없는 부채 격자**에서 재면 **{full.get('ca_debt', 0.0):,.4f}** "
                 f"입니다. 부채요소·전환권대가 배분은 이 값을 씁니다 — 기준서 1032 문단 31 은 "
                 "자본요소가 아닌 파생(콜)을 **부채요소 안에** 넣으라고 합니다. 위 B3 의 차액 "
                 f"{ca:,.4f} 은 전체 격자에서 전환 상승분을 자른 크기이고, 전환권을 **부채**로 "
                 "보면 그쪽을 씁니다 (복합내재파생을 전체로 재므로).")
+    if ca < -1e-9:
+        st.warning(
+            f"**{LB['call']} 값이 음수({ca:,.4f})입니다.** 콜을 넣었더니 전체가 오히려 "
+            "커졌다는 뜻이라 계약으로는 설명되지 않습니다. TF 모형에서 콜이 전환을 "
+            "앞당기면 그 노드가 통째로 지분이 되어 **무위험이자율로 할인**되기 때문에 "
+            "생기는 현상이고, 격자가 성글수록 크게 나타납니다. **노드 간격을 1개월로 "
+            "줄여** 보시고, 그래도 음수면 콜의 행사금액·행사기간이 계약과 맞는지 "
+            "확인하십시오. 이 값은 배분표에 그대로 들어가므로, 고치지 않으면 "
+            "파생상품자산이 음수로 실립니다."
+            + ("　발행자 상환권을 부채 격자에서 잰 값(1032 문단 31)은 0 에서 "
+               "끊으므로 자본 배분은 영향을 받지 않습니다." if issuer_redeem(t) else ""))
     st.caption("옵션은 서로 대체 관계라 각각 따로 평가해 더하면 총액이 부풀려집니다. "
                "하나씩 얹으며 차액을 보면 합계가 항상 맞습니다.")
     st.dataframe(pd.DataFrame([
@@ -5611,9 +5732,10 @@ with tabs[1]:
                        "그날 곡선을 넣으셔야 맞습니다.")
 
 with tabs[2]:
-    st.write("조기상환청구권과 매도청구권을 **주계약과 분리해야 하는지**를 계약 "
-             "조항에 근거해 판단하고, 분리한다면 어떤 방법으로 재는지까지 "
-             "정리합니다. 아래 문안을 그대로 조서에 옮기실 수 있습니다.")
+    st.write(rcps_text(t, f"{LB['put']}과 {LB['call']}을 **주계약과 분리해야 "
+                          "하는지**를 계약 조항에 근거해 판단하고, 분리한다면 어떤 "
+                          "방법으로 재는지까지 정리합니다. 아래 문안을 그대로 조서에 "
+                          "옮기실 수 있습니다."))
     st.caption("판단 순서가 정해져 있습니다 — 문단 B4.3.5 말미가 "
                "\"제1032호에 따라 전환채무상품의 자본요소를 분리하기 전에 "
                "내재된 콜옵션이나 풋옵션이 주채무계약과 밀접하게 관련되어 "
@@ -5621,18 +5743,26 @@ with tabs[2]:
 
     st.markdown("**계약 조항 확인** — 사이드바에 없는 사실만 여기서 받습니다")
     f1, f2 = st.columns(2)
+    # RCPS 는 사이드바의 「콜옵션」 갈래가 이 둘을 정한다 (derive 가 덮어쓴다).
+    # 눌러도 소용없는 칸을 살려 두면 판단이 어긋난 것처럼 보이므로 잠근다.
+    _lk = is_rcps(t)
     t.k_third = 1 if f1.checkbox(
-        "매도청구권을 제3자에게 지정할 수 있다", value=bool(t.k_third),
-        help="공시에 \"발행회사 및 발행회사가 지정하는 자\" 로 적혀 있으면 "
-             "해당합니다. 거래상대방이 달라질 수 있어 내재파생상품이 아니라 "
-             "별도의 금융상품입니다 (문단 4.3.1 마지막 문장).") else 0
+        rcps_text(t, "매도청구권을 제3자에게 지정할 수 있다"), value=bool(t.k_third),
+        disabled=_lk,
+        help=("사이드바 「콜옵션」에서 **제3자 지정 매도청구권**을 고르시면 켜집니다."
+              if _lk else
+              "공시에 \"발행회사 및 발행회사가 지정하는 자\" 로 적혀 있으면 "
+              "해당합니다. 거래상대방이 달라질 수 있어 내재파생상품이 아니라 "
+              "별도의 금융상품입니다 (문단 4.3.1 마지막 문장).")) else 0
     t.k_transfer = 1 if f2.checkbox(
-        "매도청구권을 사채와 독립적으로 양도할 수 있다", value=bool(t.k_transfer),
-        help="같은 문단의 다른 갈래입니다. 둘 중 하나만 해당해도 별도의 "
-             "금융상품입니다.") else 0
+        rcps_text(t, "매도청구권을 사채와 독립적으로 양도할 수 있다"),
+        value=bool(t.k_transfer), disabled=_lk,
+        help=("RCPS 는 사이드바 「콜옵션」 갈래가 정합니다." if _lk else
+              "같은 문단의 다른 갈래입니다. 둘 중 하나만 해당해도 별도의 "
+              "금융상품입니다.")) else 0
     f3, f4 = st.columns(2)
     t.p_lost_int = 1 if f3.checkbox(
-        "조기상환 행사금액이 상실이자 보상 수준이다", value=bool(t.p_lost_int),
+        rcps_text(t, "조기상환 행사금액이 상실이자 보상 수준이다"), value=bool(t.p_lost_int),
         help="잔여기간에 못 받게 된 이자의 현재가치를 보상하는 수준이면 주계약과 "
              "밀접하게 관련되어 있어 분리하지 않습니다 (문단 B4.3.5(5)(나)). "
              "국내 사모 CB 는 대개 해당하지 않습니다.") else 0
@@ -5651,7 +5781,7 @@ with tabs[2]:
         _d = _sp[_key]
         st.markdown(f"### {_nm}")
         if not _d["있음"]:
-            st.info(_d["이유"][0]); continue
+            st.info(rcps_text(t, _d["이유"][0])); continue
         _box = (st.success if _d["결론"] in ("분리", "별도의 금융상품", "묶어서 분리")
                 else st.warning)
         _box(rcps_text(t, f"**{_d['결론']}**　—　" + " ".join(_d["이유"])))
@@ -5666,37 +5796,40 @@ with tabs[2]:
         st.markdown("**평가방법** — " + rcps_text(t, _d["평가"]))
 
     if not _sp["put"]["설정일치"]:
-        st.error("사이드바의 **조기상환청구권 → 회계 처리** 설정이 위 판정과 "
+        st.error(rcps_text(t,
+                 "사이드바의 **조기상환청구권 → 회계 처리** 설정이 위 판정과 "
                  f"어긋납니다. 판정은 **{_sp['put']['결론']}** 인데 설정은 "
                  + ("분리 · 파생상품부채" if int(t.p_sep) else "분리하지 않음")
                  + " 입니다. 배분표와 분개가 판정과 다르게 나오므로 사이드바에서 "
-                   "맞추십시오.")
+                   "맞추십시오."))
     elif (_sp["put"].get("스위치") and _sp["put"]["결론"] == "분리하지 않을 여지"):
-        st.info("조기상환권은 **어느 쪽도 설명할 수 있는** 자리입니다. 지금 설정은 "
+        st.info(rcps_text(t,
+                "조기상환권은 **어느 쪽도 설명할 수 있는** 자리입니다. 지금 설정은 "
                 + ("**분리 · 파생상품부채**" if int(t.p_sep)
                    else "**분리하지 않음 · 부채요소에 포함**")
                 + " 입니다. 사이드바 **조기상환청구권 → 회계 처리** 에서 바꿀 수 "
                   "있고, 어느 쪽을 골랐는지와 그 이유를 조서에 적으십시오. "
                   "전환권대가는 어느 쪽이든 같고, 갈리는 것은 부채 표시와 "
                   "후속측정입니다 — 분리하면 파생상품부채를 매기 공정가치로 "
-                  "재평가하고, 분리하지 않으면 부채요소를 상각후원가로 굴립니다.")
+                  "재평가하고, 분리하지 않으면 부채요소를 상각후원가로 굴립니다."))
     if not _sp["call"]["설정일치"]:
-        st.error("사이드바의 **매도청구권 → 회계 처리** 설정이 위 판정과 "
+        st.error(rcps_text(t,
+                 "사이드바의 **매도청구권 → 회계 처리** 설정이 위 판정과 "
                  f"어긋납니다. 판정은 **{_sp['call']['결론']}** 인데 설정은 "
                  + ("별도 금융상품" if t.k_sep else "복합내재파생에 포함")
                  + " 입니다. 배분표와 분개가 판정과 다르게 나오므로 사이드바에서 "
-                   "맞추십시오.")
+                   "맞추십시오."))
 
     st.divider()
     st.markdown("## 평가방법 — 어떻게 잴 것인가")
 
     # ── 조기상환권 : 확정 계산으로 충분한가, 금리모형이 필요한가 ──
-    st.markdown("### 조기상환청구권 — 금리모형(BDT)을 켤 것인가")
-    st.caption("전환을 끄면 격자가 주가와 무관해져 스텝마다 값이 하나뿐입니다. "
+    st.markdown(rcps_text(t, "### 조기상환청구권 — 금리모형(BDT)을 켤 것인가"))
+    st.caption(rcps_text(t, "전환을 끄면 격자가 주가와 무관해져 스텝마다 값이 하나뿐입니다. "
                "즉 지금 조기상환권은 **미리 내다보고 액면이 더 크면 행사한다**는 "
                "확정 계산이고, 옵션의 시간가치가 들어 있지 않습니다. "
                "행사가 뻔하면 그래도 맞는 답이 나오지만, 애매하면 값을 0 에 "
-               "가깝게 잡습니다. 그 자리가 금리모형이 필요한 자리입니다.")
+               "가깝게 잡습니다. 그 자리가 금리모형이 필요한 자리입니다."))
     if t.p_s <= t.p_e and t.T > 0:
         _r0 = engine(t, conv=False, put=False, call=False)
         _dtx = t.T/int(t.n)
@@ -5745,16 +5878,16 @@ with tabs[2]:
                            f"(비율 {min(_rat2):.3f} ~ {max(_rat2):.3f}). 행사가 "
                            "확정적이라 금리를 확률변수로 두어도 판단이 바뀌지 "
                            "않습니다. **확정 격자로 충분합니다.**")
-        st.caption("현재 설정 — 조기상환권을 "
+        st.caption(rcps_text(t, "현재 설정 — 조기상환권을 "
                    + ("**BDT 금리격자**로 잽니다." if put_bdt_on(t) else
                       "**금리 고정 격자**로 잽니다.")
                    + ("" if put_bdt_on(t) else
-                      "  BDT 는 전환권이 자본이고 TF 일 때만 켤 수 있습니다."))
+                      "  BDT 는 전환권이 자본이고 TF 일 때만 켤 수 있습니다.")))
     else:
-        st.info("조기상환청구권이 없어 판단할 것이 없습니다.")
+        st.info(rcps_text(t, "조기상환청구권이 없어 판단할 것이 없습니다."))
 
     # ── 매도청구권 : 세 방법을 나란히 ──
-    st.markdown("### 매도청구권 — 세 방법 중 무엇으로 잴 것인가")
+    st.markdown(rcps_text(t, "### 매도청구권 — 세 방법 중 무엇으로 잴 것인가"))
     if t.k_w > 0:
         _mv = []
         for _km, _lb in ((0, "유무가치비교법"), (1, "옵션차익 · 혼합할인율"),
@@ -5763,14 +5896,14 @@ with tabs[2]:
             _mv.append([_lb, decompose(_tk)[4], "◀ 적용" if t.k_method == _km else ""])
         st.dataframe(pd.DataFrame(_mv, columns=["방법", "값", "　"]).style.format(
             {"값": "{:,.4f}"}), use_container_width=True, hide_index=True)
-        st.caption("**어느 쪽이 옳다기보다 재는 대상이 다릅니다.** 유무가치비교법은 "
+        st.caption(rcps_text(t, "**어느 쪽이 옳다기보다 재는 대상이 다릅니다.** 유무가치비교법은 "
                    "콜을 넣고 뺀 차액이라 **의무보유로 잃는 전환권 가치까지** 값에 "
                    "들어갑니다. 옵션차익혼합할인법은 전환사채를 기초자산으로 하는 "
                    "콜옵션 자체만 잽니다. 보고서를 검토하실 때도 어느 방법을 썼는지 "
-                   "먼저 확인하셔야 합니다.")
-        st.info("판정에 따른 권고 — " + _sp["call"]["평가"].replace("**", ""))
+                   "먼저 확인하셔야 합니다."))
+        st.info(rcps_text(t, "판정에 따른 권고 — " + _sp["call"]["평가"].replace("**", "")))
     else:
-        st.info("매도청구권이 없어 판단할 것이 없습니다.")
+        st.info(rcps_text(t, "매도청구권이 없어 판단할 것이 없습니다."))
 
     # ── 금리 민감도로 본 금리모형 실익 ──
     with st.expander("금리모형이 값을 얼마나 바꾸는가 — 민감도로 본 실익"):
@@ -5830,7 +5963,7 @@ with tabs[2]:
 
     st.divider()
     st.markdown("**조서에 옮길 문안**")
-    st.code(split_memo(_sp), language=None)
+    st.code(rcps_text(t, split_memo(_sp)), language=None)
     st.caption("판단 순서·근거 문단·지표가 함께 들어 있습니다. 결론만 적는 것과 "
                "달리 감사인이 다시 물을 여지를 줄입니다.")
 
@@ -6002,10 +6135,10 @@ with tabs[8]:
     st.caption("위험중립가중치가 0과 1을 벗어나면 변동성이나 노드 수 설정이 잘못된 것입니다.")
 
     st.markdown("**신용스프레드가 발행조건과 맞는가**")
-    st.caption("발행일에는 투자자가 100 을 내고 사채 + 조기상환권 + 전환권을 삽니다. "
+    st.caption(rcps_text(t, "발행일에는 투자자가 100 을 내고 사채 + 조기상환권 + 전환권을 삽니다. "
                "그러니 전체 가치가 100 이어야 합니다. 크게 벗어나면 인풋이 발행조건과 "
                "어긋난 것이고, 대개 위험할인율(신용스프레드) 추정이 원인입니다. "
-               "**전체가 100 이 되는 할인율을 역산해** 넣으신 값과 견줍니다.")
+               "**전체가 100 이 되는 할인율을 역산해** 넣으신 값과 견줍니다."))
     if t.elapsed_m > 0.01:
         st.info(f"평가기준일이 발행일보다 {t.elapsed_m:.1f}개월 뒤입니다. 그 사이 주가와 "
                 "신용도가 바뀌었으므로 전체가 100 을 벗어나는 것이 정상입니다. "
@@ -6025,7 +6158,7 @@ with tabs[8]:
                 # 스프레드를 아무리 올려도 못 내려간다 — 사채요소가 아니라
                 # 전환조건이 값을 떠받치고 있다는 뜻이다.
                 _flr = _tot(_b)
-                st.warning(
+                st.warning(rcps_text(t,
                     f"신용스프레드를 60%p 올려도 전체가 {_flr:,.2f} 아래로 "
                     f"내려가지 않습니다 (현재 {b2:,.2f}). 사채요소를 거의 0 으로 "
                     "만들어도 그만큼이 남는다는 뜻이므로, **원인은 신용이 아니라 "
@@ -6033,7 +6166,7 @@ with tabs[8]:
                     f"{t.S0/max(t.K0,1e-9):.2f}, 변동성 {t.sig:.1%}, "
                     f"리픽싱 {'있음' if t.rfx_mode else '없음'} 을 먼저 보십시오. "
                     "메자닌은 투자자에게 유리하게 발행되는 경우가 많아 실제로 "
-                    "100 을 넘기도 합니다 — 그러면 그 사실을 조서에 적으면 됩니다.")
+                    "100 을 넘기도 합니다 — 그러면 그 사실을 조서에 적으면 됩니다."))
             elif _tot(_a) < 100:
                 st.warning(
                     f"스프레드를 0 까지 낮춰도 전체가 100 에 못 미칩니다 "
@@ -6077,10 +6210,10 @@ with tabs[8]:
                         "있습니다.")
         except Exception as _ex:
             st.info(f"역산하지 못했습니다 — {_ex}")
-        st.caption("역산값을 그대로 쓰라는 뜻은 아닙니다. 시장에서 관측한 등급 "
+        st.caption(rcps_text(t, "역산값을 그대로 쓰라는 뜻은 아닙니다. 시장에서 관측한 등급 "
                    "수익률을 쓰는 것이 원칙이고, 역산은 **인풋이 발행조건과 얼마나 "
                    "떨어져 있는지 재는 자**입니다. 괴리가 크면 등급 추정이나 "
-                   "만기보장수익률 입력을 다시 보십시오.")
+                   "만기보장수익률 입력을 다시 보십시오."))
 
 with tabs[9]:
     st.write("가정 · 트리 시트 · 이자율곡선 · 결과 · 회계처리 · 상각표로 이루어진 조서를 만듭니다. "
@@ -6127,14 +6260,14 @@ with tabs[9]:
                 if kind == "값":
                     data = build_xlsx(t, full, b0, b1, b2, ca, conv,
                                       eir_table(t, acc_host(t, full, b0, b1, b2, ca)))
-                    fn = f"CB평가조서_값_{dt.date.today()}.xlsx"
+                    fn = f"{LB['short']}평가조서_값_{dt.date.today()}.xlsx"
                 else:
                     tf = Terms(**asdict(t))
                     if tf.carry == 0 and tf.rfx_mode > 0: tf.carry = 1
                     ff, f0, f1, f2, fca, fconv = decompose(tf)
                     data = build_xlsx_formula(tf, ff, f0, f1, f2, fca, fconv,
                                               eir_table(tf, acc_host(tf, ff, f0, f1, f2, fca)))
-                    fn = f"CB평가조서_수식_{dt.date.today()}.xlsx"
+                    fn = f"{LB['short']}평가조서_수식_{dt.date.today()}.xlsx"
             st.session_state.report = (fn, data)
         except ModuleNotFoundError:
             st.error("openpyxl 이 없습니다.  pip install openpyxl  을 실행하고 다시 시도하십시오.")
@@ -6210,8 +6343,8 @@ with tabs[9]:
         _rop = st.session_state.get("rate_opt") or {}
         _rhow = st.session_state.get("rate_how") or ""
         if not put_bdt_on(t):
-            st.caption("조기상환권을 BDT 로 재지 않으므로 σ 가 값에 들어가지 "
-                       "않습니다. 이 리포트는 필요하지 않습니다.")
+            st.caption(rcps_text(t, "조기상환권을 BDT 로 재지 않으므로 σ 가 값에 들어가지 "
+                       "않습니다. 이 리포트는 필요하지 않습니다."))
         elif _rser:
             st.caption(f"금리 {len(_rser)}개로 만듭니다 — {_rhow}")
         else:
