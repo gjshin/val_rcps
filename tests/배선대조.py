@@ -26,7 +26,8 @@ WANT = {
     6:  {"roff", "cyc"},                       # Flag(리픽싱)
     7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate"},   # 조기상환금액
     8:  {"prem", "cpn", "kcmp", "dt", "elm"},   # 매도청구금액
-    9:  {"ipay", "cpn", "ipaym"},              # 쿠폰
+    # 지급일은 발행일 기준이라 리픽싱(roff)처럼 첫 지급 스텝을 함께 본다.
+    9:  {"ipay", "payoff", "cpn", "ipaym"},    # 쿠폰
     10: {"n", "red"},                          # 만기상환
 }
 ROWNAME = {3: "Flag(전환)", 4: "Flag(조기상환)", 5: "Flag(매도청구)",
