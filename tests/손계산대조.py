@@ -302,6 +302,178 @@ def test_put_separation_flows_to_accounting():
         chk(f"{tag} — 상각표 기말 = 만기상환금액", rows_eir[-1][-1], red)
 
 
+def test_bw_root_and_call_keep_warrant():
+    """BW 도 뿌리에서 결정하고, 매도청구를 당해도 신주인수권을 잃지 않는다.
+
+    두 가지를 손으로 센다.
+
+    [가] **뿌리 노드.** 평가기준일에 조기상환청구가 이미 열려 있고 행사금액이
+    보유가치보다 크면 그 값이 답이다. 전환사채는 그렇게 하는데 BW 만 「평가일에는
+    행사하지 않는다」로 눌러 두고 있었다. 같은 계약이면 두 상품이 같은 결정을
+    해야 한다.
+
+    [나] **매도청구 노드.** 비분리형이라도 상환 직전에 신주인수권을 행사할 기회는
+    남는다 — 조기상환 갈래는 그 기회를 인정하면서 매도청구 갈래만 버리고 있었다.
+    한 격자가 두 계약을 읽으면 안 된다. 신주인수권 행사가치가 0 보다 큰 매도청구
+    노드가 하나라도 있으면 그 자리의 값은 «매도청구금액 + 행사가치» 여야 한다.
+    """
+    print("\n[10] BW 뿌리 결정과 매도청구 시 신주인수권")
+    if "bw_pay" not in Terms.__dataclass_fields__:
+        print("  (BW 미도입 — 건너뜀)"); return
+
+    # [가] 주가를 낮추고 보장수익률을 붙여 뿌리에서 풋이 유리하게 만든다.
+    base = dict(S0=200., ytm=.08, p_s=0., p_e=48., p_f=6.,
+                p_mode="accrue", p_yield=.08, gap_m=6.,
+                rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+                cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    got = {}
+    for nm, over in (("CB", {}),
+                     ("BW 현금 · 분리", dict(inst="BW", bw_pay=0, bw_detach=1)),
+                     ("BW 현금 · 비분리", dict(inst="BW", bw_pay=0, bw_detach=0))):
+        t = Terms(**{**base, **over}); derive(t)
+        r = engine(t, call=False)
+        root = r["memo"][min(r["memo"].keys(), key=lambda k: (k[0], k[1]))]
+        got[nm] = root
+        chk_bool(f"{nm} · 뿌리에서 조기상환을 고른다 (kind={root['kind']})",
+                 root["kind"] == "put")
+    # 신주인수권이 없는 비분리형은 전환사채와 값까지 같아야 한다.
+    chk("BW 비분리 뿌리 값 = CB 뿌리 값", got["BW 현금 · 비분리"]["V"],
+        got["CB"]["V"])
+
+    # [나] 의무보유를 풀고 매도청구 기간을 전환기간과 겹치게 한다.
+    t = Terms(inst="BW", bw_pay=0, bw_detach=0, k_lock=0., k_s=12., k_e=48.,
+              k_w=1.0, cv_s=6., gap_m=3.,
+              rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+              cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    derive(t)
+    r = engine(t, call=True)
+    calls = [o for o in r["memo"].values() if o["kind"] == "call"]
+    chk_bool(f"매도청구 노드가 있다 ({len(calls)}개)", len(calls) > 0)
+    bad = [o for o in calls if o.get("wv", 0.0) > 1e-9
+           and abs(o["V"] - (o["kv"] + o["wv"])) > 1e-9]
+    chk_bool(f"매도청구 노드가 신주인수권을 버리지 않는다 (어긋남 {len(bad)}개)",
+             not bad)
+
+
+def test_sha_mutual_kill_probabilities_sum_to_one():
+    """상호소멸 계약이면 풋·콜 행사확률의 합이 1 이다.
+
+    한쪽 행사가 다른 쪽을 소멸시키는 계약에서 두 권리를 따로 재면, 「풋은 콜이
+    살아 있다고 보고 콜은 풋이 살아 있다고 보는」 공존할 수 없는 두 미래를 각각
+    값에 넣게 된다. 그 사실은 **행사확률의 합이 1 을 넘는 것**으로 드러난다.
+
+    한 격자에서 함께 풀면 모든 경로가 «풋 행사 · 콜 행사 · 상장소멸 · 만료» 중
+    정확히 하나로 끝나므로 합이 1 이 된다. 그것을 손으로 셀 수 있는 기대값으로
+    삼는다.
+    """
+    print("\n[11] 주주간계약 — 풋·콜 상호소멸")
+    if "sha_kill" not in Terms.__dataclass_fields__:
+        print("  (상호소멸 미도입 — 건너뜀)"); return
+    base = dict(inst="SHA", S0=1000., K0=1000., sha_put_s=12., sha_put_e=60.,
+                sha_put_f=6., sha_put_yield=.08, sha_call_s=24., sha_call_e=60.,
+                sha_call_f=6., sha_call_prem=.10, gap_m=6., sig=.35,
+                rf_curve=[(1, .02), (5, .02)], cr_curve=[(1, .08), (5, .08)])
+    t0 = Terms(**base, sha_kill=0); derive(t0); R0 = G["sha_engine"](t0)
+    t1 = Terms(**base, sha_kill=1); derive(t1); R1 = G["sha_engine"](t1)
+    _s0 = R0["dist_put"]["ex"] + R0["dist_call"]["ex"]
+    _s1 = R1["dist_put"]["ex"] + R1["dist_call"]["ex"]
+    print(f"     독립  풋행사 {R0['dist_put']['ex']:.4f} + 콜행사 "
+          f"{R0['dist_call']['ex']:.4f} = {_s0:.4f}")
+    print(f"     상호소멸 풋행사 {R1['dist_put']['ex']:.4f} + 콜행사 "
+          f"{R1['dist_call']['ex']:.4f} = {_s1:.4f}")
+    chk_bool(f"독립이면 합이 1 을 넘는다 ({_s0:.4f})", _s0 > 1.0 + 1e-6)
+    chk("상호소멸이면 행사확률 합이 1", _s1, 1.0)
+    for nm, R in (("풋", R1["dist_put"]), ("콜", R1["dist_call"])):
+        chk(f"상호소멸 · {nm} 분포 합", R["ex"] + R["counter"] + R["qipo"]
+            + R["expire"], 1.0)
+    # 상호소멸은 **어느 쪽도 비싸게 만들지 않는다** — 상대방 행사로 소멸하는
+    # 갈래가 생기기만 하기 때문이다. 다만 반드시 둘 다 싸지지는 않는다. 풋은
+    # 지분가치가 **낮을 때**, 콜은 **높을 때** 행사되므로 두 행사구역이 거의
+    # 겹치지 않고, 그래서 「풋이 먼저 행사되어 콜이 죽는」 자리의 콜 가치는
+    # 대개 0 에 가깝다. 이 계약이 정확히 그렇다 — 콜은 소수점 여섯 자리까지
+    # 그대로다. 그것을 「콜이 안 움직이니 배선이 끊겼다」로 읽으면 안 된다.
+    chk_bool(f"상호소멸이면 풋이 싸진다 ({R1['put']:.4f} < {R0['put']:.4f})",
+             R1["put"] < R0["put"] - 1e-6)
+    chk_bool(f"상호소멸이 어느 쪽도 비싸게 만들지 않는다 "
+             f"(콜 {R1['call']:.6f} ≤ {R0['call']:.6f})",
+             R1["call"] <= R0["call"] + 1e-9)
+
+
+def test_dividend_yield_and_zero_vol():
+    """배당수익률은 전환권을 싸게 만들고, σ=0 은 격자를 세우지 못한다.
+
+    배당은 주주에게 가고 전환 전 투자자는 받지 못한다. 그래서 위험중립 드리프트가
+    δ 만큼 낮아지고 전환권이 싸진다 — δ 를 0 으로 두면 그만큼 과대평가다.
+    사채 부분(주계약·부채요소)은 주가와 무관하므로 움직이면 안 된다.
+
+    σ=0 이면 u = d = 1 이라 위험중립가중치의 분모가 0 이 된다. 예전에는 그 자리에서
+    ZeroDivisionError 가 났다. 값을 지어내지 말고 왜 안 되는지를 말해야 한다.
+    """
+    print("\n[12] 배당수익률 δ 와 σ=0")
+    if "div_y" not in Terms.__dataclass_fields__:
+        print("  (배당수익률 미도입 — 건너뜀)"); return
+    prev, b0_0, b1_0 = None, None, None
+    for dy in (0.0, .01, .03, .05):
+        t = Terms(div_y=dy,
+                  rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+                  cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+        derive(t)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        if prev is None:
+            b0_0, b1_0 = b0, b1
+        else:
+            chk_bool(f"δ {dy:.0%} 에서 전체가 더 싸다 ({b2:.4f} < {prev:.4f})",
+                     b2 < prev - 1e-6)
+        chk(f"δ {dy:.0%} · 주계약은 그대로", b0, b0_0)
+        chk(f"δ {dy:.0%} · 부채요소는 그대로", b1, b1_0)
+        prev = b2
+    t = Terms(sig=0.0); derive(t)
+    try:
+        engine(t, call=False)
+        chk_bool("σ=0 이면 이유를 말하고 멈춘다", False)
+    except ZeroDivisionError:
+        chk_bool("σ=0 이 ZeroDivisionError 가 아니라 설명으로 막힌다", False)
+    except ValueError as e:
+        chk_bool(f"σ=0 이면 이유를 말하고 멈춘다 ({str(e)[:24]}…)", True)
+
+
+def test_backsolve_net_target():
+    """역산 목표를 「순액」으로 두면 «본체 − 매도청구권» 이 발행가와 같아진다.
+
+    매도청구권은 격자 밖에서 따로 재어 차감하는 파생상품자산이다. 본체만 100 에
+    맞추면 투자자가 실제로 받은 순액은 100 에 못 미친다 — 돈을 내면서 매도청구권을
+    함께 써 주었기 때문이다. 「순액」 기준이면 그 등식이 정확히 성립해야 하고,
+    매도청구권이 값을 가지는 만큼 역산 주가가 더 높아야 한다.
+    """
+    print("\n[13] 역산 목표 — 본체 대 순액")
+    if "bs_net" not in Terms.__dataclass_fields__:
+        print("  (역산 목표 스위치 미도입 — 건너뜀)"); return
+    base = dict(rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+                cr_curve=[(1, .15), (3, .15), (5, .15)])
+    # 격자 값은 주가에 대해 **연속이 아니다.** 어느 노드의 결정(전환·상환·조정일
+    # 갈래)이 뒤집히는 자리에서 계단처럼 튄다. 이 계약은 주가 586.480 과 586.485
+    # 사이에서 본체가 99.9204 → 100.1122 로 0.19 뛴다. 이분법은 그 계단을 넘을
+    # 수 없으므로 목표를 정확히 맞히지 못한다 — 이건 역산의 성질이지 결함이
+    # 아니다. 그래서 허용오차를 계단 크기만큼 둔다.
+    _STEP = 0.25
+    out = {}
+    for net in (0, 1):
+        t = Terms(bs_net=net, **base); derive(t)
+        S, v, it = G["backsolve"](t)
+        t.S0 = S; derive(t)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        out[net] = (S, b2, ca, v)
+        chk(f"bs_net={net} · 목표에 닿았다 (계단 허용)", v, 100.0, tol=_STEP)
+        # 역산이 무엇을 목표에 맞췄는지가 핵심이다. 그 정의가 맞아야 한다.
+        chk(f"bs_net={net} · 역산이 맞춘 값의 정의",
+            (b2 - ca) if net else b2, v, tol=1e-6)
+    chk_bool(f"매도청구권이 있으면 순액 기준 주가가 더 높다 "
+             f"({out[1][0]:,.0f} > {out[0][0]:,.0f})", out[1][0] > out[0][0])
+    # 본체 기준으로 맞추면 투자자가 실제로 받은 순액은 매도청구권만큼 모자란다.
+    chk("본체 기준의 순액 부족분 = 그때의 매도청구권",
+        out[0][3] - (out[0][1] - out[0][2]), out[0][2], tol=1e-6)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -313,6 +485,10 @@ def main():
     test_sha_root_immediate_put()
     test_split_metric_independent_of_setting()
     test_put_separation_flows_to_accounting()
+    test_bw_root_and_call_keep_warrant()
+    test_sha_mutual_kill_probabilities_sum_to_one()
+    test_dividend_yield_and_zero_vol()
+    test_backsolve_net_target()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

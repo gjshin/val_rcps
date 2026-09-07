@@ -62,6 +62,14 @@ class Terms:
     issuer_call: int = 0            # RCPS 콜 — 0 없음 / 1 발행자 상환권 / 2 제3자 지정 매도청구권
     div_mode: int = 0               # RCPS 우선배당 0 상환가액에 가산(전체 부채) / 1 재량(부채 현금흐름 제외)
     bs_target: float = 100.0        # 발행가 역산(Backsolve) 목표 — 발행가 100 기준
+    # 역산 목표를 무엇에 맞출 것인가.
+    #   0 본체 — 매도청구권을 뺀 사채·우선주 본체(B2)를 발행가에 맞춘다.
+    #            매도청구권에 별도 대가가 오갔거나, 발행가가 본체만의 대가일 때.
+    #   1 순액 — 「본체 − 매도청구권」 을 발행가에 맞춘다. 투자자는 돈을 내면서
+    #            매도청구권을 함께 써 주었으므로, 실제로 받은 것은 그 차감 후
+    #            순액이다. 발행가가 패키지 전체의 대가일 때가 이쪽이다.
+    # 매도청구권이 유의적일 때만 값이 갈린다. validate() 가 그 자리를 짚는다.
+    bs_net: int = 0                 # 0 본체 / 1 매도청구권 차감 순액
     prev_deriv: float = -1.0        # 전기말 파생상품부채 장부금액 (100 기준). 음수면 없음
     prev_host: float = -1.0         # 전기말 주계약(부채) 장부금액 (100 기준). 음수면 없음
     issue_cost: float = 0.0         # 발행 거래원가 (원). 1032 문단 38 로 요소별 배분
@@ -113,6 +121,17 @@ class Terms:
     #                    V = MAX(전환, MIN(MAX(보유, 풋), 콜))
     # 두 금액이 다르고 행사기간이 겹칠 때만 값이 갈린다. validate() 가 그 자리를 짚는다.
     pc_order: int = 0             # 0 투자자 풋 우선 / 1 발행자 콜 우선
+    # 보통주 배당수익률. 위험중립 드리프트에서 빠진다 — 배당을 받지 못하는
+    # 전환권·신주인수권은 그만큼 값이 낮아진다. 비상장 성장기업은 0 이 보통이나
+    # 상장 배당기업의 CB·BW 를 재려면 반드시 넣어야 한다 (0 이면 과대평가).
+    div_y: float = 0.0            # 배당수익률 δ (연, 연속복리)
+    # 주주간계약에서 한쪽이 행사하면 계약이 끝나 다른 쪽 권리도 소멸하는가.
+    #   0 독립 — 두 권리를 각각 따로 잰다. 개별 옵션의 공정가치를 각 당사자
+    #            입장에서 재는 목적이면 이쪽이다.
+    #   1 상호소멸 — 투자자가 풋을 행사하면 최대주주 콜이, 최대주주가 콜을
+    #            행사하면 투자자 풋이 그 자리에서 사라진다. 두 권리가 경제적으로
+    #            독립이 아니므로 한 격자에서 함께 풀어야 한다.
+    sha_kill: int = 0             # 0 독립 / 1 상호소멸
     p_lost_int: int = 0           # 조기상환 행사금액이 상실이자 보상 수준인가
     fvpl_whole: int = 0           # 복합계약 전체를 당기손익-공정가치로 지정했는가
     k_method: int = 0
@@ -543,6 +562,31 @@ def credit_curve(tm: Terms):
     return tm.cr_curve
 
 
+def lattice_ud(tm: Terms, dt_: float):
+    """CRR 격자의 상승·하락계수. σ 가 0 이면 격자 자체가 서지 않는다.
+
+    ``u = exp(σ√Δt)``, ``d = 1/u`` 이므로 σ = 0 이면 ``u = d = 1`` 이 되어
+    위험중립가중치의 분모가 0 이 된다. 예전에는 그 자리에서 ZeroDivisionError
+    가 났다 — 화면은 σ 를 막고 있었지만 엔진을 직접 부르면 그대로 터졌다.
+
+    변동성이 없는 계약은 격자로 풀 이유가 없다. 주가가 확정이면 전환할지 말지도
+    확정이라 현금흐름을 할인하면 끝이다. 그래서 여기서는 값을 지어내지 않고
+    왜 안 되는지를 말한다.
+
+    σ 가 0 은 아니지만 지나치게 작아도 격자가 드리프트를 담지 못한다.
+    ``d < exp((r−δ)Δt) < u`` 여야 하는데 σ√Δt 가 |(r−δ)Δt| 보다 작으면 q 가
+    0~1 을 벗어난다. 그쪽은 이미 ``qbad`` 가 전 구간을 재어 화면·조서에
+    알리므로 여기서 막지 않는다 — 어느 구간이 어긋났는지가 더 쓸모 있다.
+    """
+    if not (tm.sig > 0) or tm.sig*math.sqrt(max(dt_, 0.0)) <= 1e-12:
+        raise ValueError(
+            "변동성 σ 가 0 이라 이항격자를 만들 수 없습니다 (u = d = 1). "
+            "주가가 확정이면 전환 여부도 확정이므로 격자가 아니라 현금흐름 "
+            "할인으로 재야 합니다. σ 를 0 보다 크게 넣으십시오.")
+    u = math.exp(tm.sig*math.sqrt(dt_))
+    return u, 1/u
+
+
 def curves(tm: Terms):
     """무위험·위험 모두 만기수익률 곡선을 부트스트래핑해 쓴다."""
     cc = credit_curve(tm)
@@ -572,9 +616,11 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
     # 계약상 개월 → 노드 번호. 시작은 계약일 이후 첫 노드, 종료는 이전 마지막 노드.
     st_lo, st_hi = step_mapper(tm, n, dt_)
     ey = el/12                               # 경과 연수
-    u = math.exp(tm.sig*math.sqrt(dt_)); d = 1/u
+    u, d = lattice_ud(tm, dt_)
     fwd = lambda F, i: (F((i+1)*dt_)*(i+1)*dt_ - F(i*dt_)*i*dt_)/dt_
-    qi = lambda i: (math.exp(fwd(RF, i)*dt_) - d)/(u - d)
+    # 배당수익률은 위험중립 드리프트에서 빠진다. 배당은 주주에게 가고 전환 전
+    # 투자자는 받지 못하므로, 같은 주가라도 전환권 가치가 그만큼 낮아진다.
+    qi = lambda i: (math.exp((fwd(RF, i) - tm.div_y)*dt_) - d)/(u - d)
     # 위험중립가중치는 구간마다 선도이자율로 다시 계산된다. 첫 구간만 보고
     # 넘어가면 뒤쪽 곡선이 가파를 때 q 가 0~1 을 벗어난 채로 계산이 끝난다.
     # 여기서 전 구간을 미리 재어 화면·조서가 함께 보게 한다.
@@ -775,11 +821,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
                 _wx = 1.0 if (wv > 0 and wv >= E - TOL) else 0.0
                 ex = dict(hold=E+B, cv=cv, K=KK, pv=pv, kv=kv, Vc=E+B,
                           up=ku, dn=kd, wv=wv)
-                if i == 0:
-                    # 평가기준일 그 자리에서 행사·상환하는 갈래는 두지 않는다.
-                    # 전환사채 격자의 뿌리와 같은 취급이다.
-                    o = dict(E=E, B=B, V=E+B, P=0.0, kind="hold", wx=0.0, **ex)
-                elif bwd:
+                if bwd:
                     # 분리형 — 신주인수권증권이 따로 유통되므로 사채를 상환받아도
                     # 남는다. 두 결정이 서로를 건드리지 않는다.
                     # 사채 쪽 풋·콜 우선순위는 전환사채와 같은 규칙을 따른다.
@@ -798,23 +840,29 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
                         o = dict(E=En, B=kv, V=En+kv, P=0.0, kind="call", wx=_wx, **ex)
                 else:
                     # 비분리형 — 사채가 소멸하면 미행사 신주인수권도 소멸한다.
-                    # 그래서 조기상환청구는 신주인수권을 버리는 값까지 치르고
-                    # 고르는 결정이 된다. 상환 직전에 행사할 기회는 남아 있다.
-                    holdT, putT = B + En, pv + wv
-                    if int(tm.pc_order) == 1 and max(holdT, putT) > kv + TOL:
-                        o = dict(E=0.0, B=kv, V=kv, P=0.0, kind="call", wx=0.0, **ex)
+                    # 다만 **상환 직전에 행사할 기회는 남아 있다** (통지기간).
+                    # 그 읽기는 조기상환과 매도청구에 똑같이 적용해야 한다.
+                    # 한쪽만 인정하면 같은 격자가 두 계약을 읽는 셈이 된다.
+                    #
+                    # 매도청구도 마찬가지다. 발행자가 사채를 매수해 가면 투자자는
+                    # 그 직전에 신주인수권을 행사해 wv 를 챙기므로 실제로 받는 값은
+                    # kv 가 아니라 kv + wv 다. 그러면 **콜 행사 판단 자체도** 그
+                    # 금액과 견줘야 한다 — 발행자는 투자자 가치를 눌러 내리는
+                    # 쪽으로만 콜하기 때문이다. wv 가 0 이면 예전 식과 같아진다.
+                    holdT, putT, callT = B + En, pv + wv, kv + wv
+                    _cx = 1.0 if wv > 0 else 0.0
+                    if int(tm.pc_order) == 1 and max(holdT, putT) > callT + TOL:
+                        o = dict(E=wv, B=kv, V=callT, P=0.0, kind="call", wx=_cx, **ex)
                     elif int(tm.pc_order) == 1 and putT >= holdT - TOL:
-                        o = dict(E=wv, B=pv, V=putT, P=0.0, kind="put",
-                                 wx=1.0 if wv > 0 else 0.0, **ex)
+                        o = dict(E=wv, B=pv, V=putT, P=0.0, kind="put", wx=_cx, **ex)
                     elif int(tm.pc_order) == 1:
                         o = dict(E=En, B=B, V=holdT, P=0.0, kind="hold", wx=_wx, **ex)
-                    elif putT >= min(holdT, kv) - TOL:
-                        o = dict(E=wv, B=pv, V=putT, P=0.0, kind="put",
-                                 wx=1.0 if wv > 0 else 0.0, **ex)
-                    elif holdT <= kv + TOL:
+                    elif putT >= min(holdT, callT) - TOL:
+                        o = dict(E=wv, B=pv, V=putT, P=0.0, kind="put", wx=_cx, **ex)
+                    elif holdT <= callT + TOL:
                         o = dict(E=En, B=B, V=holdT, P=0.0, kind="hold", wx=_wx, **ex)
                     else:
-                        o = dict(E=0.0, B=kv, V=kv, P=0.0, kind="call", wx=0.0, **ex)
+                        o = dict(E=wv, B=kv, V=callT, P=0.0, kind="call", wx=_cx, **ex)
                 memo[key] = o
                 return o
             hold = E + B; inner = min(hold, kv)
@@ -979,9 +1027,10 @@ def sha_engine(tm: Terms):
     mper = n/(T*12)
     ey = tm.elapsed_m/12                     # 발행일 → 평가기준일 경과 연수
     st_lo, st_hi = step_mapper(tm, n, dt_)
-    u = math.exp(tm.sig*math.sqrt(dt_)); d = 1/u
+    u, d = lattice_ud(tm, dt_)
     fwd = lambda F, i: (F((i+1)*dt_)*(i+1)*dt_ - F(i*dt_)*i*dt_)/dt_
-    qi = lambda i: (math.exp(fwd(RF, i)*dt_) - d)/(u - d)
+    # 지분가치 격자도 사채 격자와 같은 드리프트를 쓴다.
+    qi = lambda i: (math.exp((fwd(RF, i) - tm.div_y)*dt_) - d)/(u - d)
     # 위험중립가중치는 구간마다 다시 계산된다. 첫 구간만 보면 뒤쪽 곡선이
     # 가파를 때 q 가 0~1 을 벗어난 채로 계산이 끝난다 — 사채 격자와 같다.
     qs = [qi(i) for i in range(n)]
@@ -1015,11 +1064,38 @@ def sha_engine(tm: Terms):
     # 뒤에서부터 한 열씩. 두 격자를 나란히 굴린다.
     P = [[0.0]*(n+1) for _ in range(n+1)]    # 투자자 풋
     C = [[0.0]*(n+1) for _ in range(n+1)]    # 최대주주 콜
+    # 한쪽 행사가 다른 쪽을 소멸시키는 계약인가. 그렇다면 두 권리는 경제적으로
+    # 독립이 아니다 — 따로 재면 「풋은 콜이 살아 있다고 보고, 콜은 풋이 살아
+    # 있다고 보는」 공존할 수 없는 두 미래를 각각 값에 넣게 된다.
+    #
+    # 다행히 두 행사구역은 상태공간에서 대체로 겹치지 않는다. 투자자는 지분가치가
+    # **낮을 때** 풋을 행사하고 최대주주는 **높을 때** 콜을 행사한다. 그래서 한
+    # 번의 후진 계산으로 풀린다 — 각 노드에서 누가 행사하는지 정하고, 행사가
+    # 일어나면 상대방 격자를 그 자리에서 0 으로 흡수한다. 두 할인율(풋은 의무자
+    # 신용, 콜은 무위험)은 각자 자기 격자에 그대로 남는다.
+    #
+    # 두 구역이 겹치는 자리(풋 행사금액 > 콜 행사금액)에서만 누가 먼저인지가
+    # 문제가 되는데, 그건 전환사채와 같은 계약 문제라 pc_order 를 따른다.
+    _kill = int(tm.sha_kill) == 1
+    _pfirst = int(tm.pc_order) == 0
+    KIND = [["hold"]*(n+1) for _ in range(n+1)]
+
+    def settle(i, j, pe, ce, pc, cc):
+        """그 노드에서 누가 행사하는가. 상호소멸일 때만 부른다."""
+        _p = pe > 1e-12 and pe >= pc - 1e-12
+        _c = ce > 1e-12 and ce >= cc - 1e-12
+        if _p and _c: _p, _c = _pfirst, not _pfirst
+        if _p:  return pe, 0.0, "put"
+        if _c:  return 0.0, ce, "call"
+        return pc, cc, "hold"
+
     for j in range(n+1):
-        P[n][j] = max(pk(n) - eq(n, j), 0.0) if p_on(n) else 0.0
-        C[n][j] = max(eq(n, j) - ck(n), 0.0) if c_on(n) else 0.0
+        pe = max(pk(n) - eq(n, j), 0.0) if p_on(n) else 0.0
+        ce = max(eq(n, j) - ck(n), 0.0) if c_on(n) else 0.0
+        if _kill: P[n][j], C[n][j], KIND[n][j] = settle(n, j, pe, ce, 0.0, 0.0)
+        else:     P[n][j], C[n][j] = pe, ce
         if qipo(n, j):
-            P[n][j] = 0.0
+            P[n][j] = 0.0; KIND[n][j] = "qipo"
             if int(tm.sha_qipo_kill): C[n][j] = 0.0
     for i in range(n-1, -1, -1):
         q = qi(i)
@@ -1028,15 +1104,24 @@ def sha_engine(tm: Terms):
             cc = (q*C[i+1][j+1] + (1-q)*C[i+1][j]) * math.exp(-rf(i)*dt_)
             pe = max(pk(i) - eq(i, j), 0.0) if p_on(i) else 0.0
             ce = max(eq(i, j) - ck(i), 0.0) if c_on(i) else 0.0
-            P[i][j] = max(pc, pe)
-            C[i][j] = max(cc, ce)
+            if _kill:
+                P[i][j], C[i][j], KIND[i][j] = settle(i, j, pe, ce, pc, cc)
+            else:
+                P[i][j] = max(pc, pe)
+                C[i][j] = max(cc, ce)
             if qipo(i, j):
-                P[i][j] = 0.0
+                P[i][j] = 0.0; KIND[i][j] = "qipo"
                 if int(tm.sha_qipo_kill): C[i][j] = 0.0
 
     # 행사·소멸 확률. 앞에서부터 한 칸씩 굴리며 흡수한다.
-    def walk(V, ex_on, ex_val, kill_it):
-        prob = dict(ex=0.0, tex=0.0, qipo=0.0, expire=0.0)
+    def walk(V, ex_on, ex_val, kill_it, mine=None):
+        """행사·소멸 분포. ``mine`` 은 상호소멸일 때 이 격자의 행사 이름이다.
+
+        상호소멸 계약에서는 **상대방이 먼저 행사해 내 권리가 사라지는** 갈래가
+        따로 있다. 그 자리를 「상대방 행사로 소멸」로 흡수하지 않으면 계속보유로
+        새어 나가 분포가 1 을 넘거나 모자란다.
+        """
+        prob = dict(ex=0.0, tex=0.0, qipo=0.0, expire=0.0, counter=0.0)
         lay = {0: 1.0}
         for i in range(n+1):
             nxt = {}
@@ -1044,9 +1129,15 @@ def sha_engine(tm: Terms):
             for j, p_ in lay.items():
                 if qipo(i, j) and kill_it:
                     prob["qipo"] += p_; continue
+                if mine is not None and KIND[i][j] not in ("hold", "qipo"):
+                    if KIND[i][j] == mine:
+                        prob["ex"] += p_; prob["tex"] += p_*i
+                    else:
+                        prob["counter"] += p_
+                    continue
                 # 평가기준일(i=0)도 예외가 아니다. 그날 행사가 최적이면 그
                 # 유형이 100% 다 — i>0 예외를 두면 루트 행사가 분포에서 사라진다.
-                if ex_on(i) and ex_val(i, j) > 1e-12 \
+                if mine is None and ex_on(i) and ex_val(i, j) > 1e-12 \
                         and abs(V[i][j] - ex_val(i, j)) < 1e-12:
                     prob["ex"] += p_; prob["tex"] += p_*i; continue
                 if i == n:
@@ -1056,9 +1147,10 @@ def sha_engine(tm: Terms):
             lay = nxt
         return prob
 
-    pw = walk(P, p_on, lambda i, j: max(pk(i) - eq(i, j), 0.0), True)
+    pw = walk(P, p_on, lambda i, j: max(pk(i) - eq(i, j), 0.0), True,
+              mine=("put" if _kill else None))
     cw = walk(C, c_on, lambda i, j: max(eq(i, j) - ck(i), 0.0),
-              bool(int(tm.sha_qipo_kill)))
+              bool(int(tm.sha_qipo_kill)), mine=("call" if _kill else None))
 
     # 1032 문단 23 — 발행회사가 자기지분상품을 매입할 의무를 지면 **옵션
     # 공정가치가 아니라** 상환금액의 현재가치를 총액으로 부채에 싣는다.
@@ -1074,7 +1166,8 @@ def sha_engine(tm: Terms):
             df *= math.exp(-pdisc(i)*dt_)
         gross = dict(step=first_p, t=first_p*dt_, strike=pk(first_p),
                      pv=pk(first_p)*df, df=df)
-    return dict(put=P[0][0], call=C[0][0], P=P, C=C, S=S, eq=eq,
+    return dict(put=P[0][0], call=C[0][0], P=P, C=C, S=S, eq=eq, KIND=KIND,
+                kill=_kill,
                 pk=pk, ck=ck, p_on=p_on, c_on=c_on, qipo=qipo,
                 qi_step=qi_step, n=n, dt=dt_, mper=mper, u=u, d=d,
                 q=qi(0), qs=qs, qbad=qbad, qmin=min(qs), qmax=max(qs),
@@ -1502,13 +1595,29 @@ def backsolve(tm: Terms, target: float = None, lo: float = None, hi: float = Non
     공정가치다」 라고 놓고, 전체 가치(B2)가 발행가(100)가 되는 주가를 격자에서
     찾는다. 전체 가치는 주가에 단조증가하므로 이분법으로 충분하다.
 
-    돌려주는 것은 (주가, 그 주가에서의 B2, 반복 횟수). 격자가 목표에 못 닿으면
+    **무엇을 발행가에 맞출 것인가**는 계약이 정한다 (``bs_net``). 매도청구권은
+    격자 밖에서 따로 재어 차감하는 파생상품자산이라, 본체(B2)만 100 에 맞추면
+    투자자가 실제로 받은 순액은 100 에 못 미친다 — 돈을 내면서 매도청구권까지
+    써 주었기 때문이다. 발행가가 패키지 전체의 대가라면 「본체 − 매도청구권」 을
+    100 에 맞춰야 하고, 그러면 역산 주가가 올라간다.
+
+    반대로 매도청구권에 별도 대가가 오갔거나 최초인식 차이(Day-1)가 따로 있다면
+    본체 기준이 맞다. 그래서 고르게 두고 기본값은 현행(본체)을 지킨다.
+
+    돌려주는 것은 (주가, 그 주가에서의 목표값, 반복 횟수). 격자가 목표에 못 닿으면
     가장 가까운 끝값을 돌려주고 반복 횟수를 −1 로 표시한다.
     """
     target = tm.bs_target if target is None else target
     t2 = Terms(**asdict(tm))
+    _net = int(tm.bs_net) == 1 and tm.k_w > 0
+
     def f(S):
         t2.S0 = S
+        if _net:
+            # 매도청구권까지 재려면 분해가 필요하다. 본체보다 느리지만 이분법
+            # 스무 번 남짓이라 견딜 만하다.
+            _f, _b0, _b1, _b2, _ca, _cv = decompose(t2)
+            return _b2 - _ca
         return pick(engine(t2, call=issuer_redeem(t2)), t2.model)
     lo = lo if lo is not None else tm.K0*0.02
     hi = hi if hi is not None else tm.K0*5.0
@@ -3154,8 +3263,9 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
                "바꿔 리포트를 다시 만들어야 한다 — 표의 길이는 구조라 수식으로 늘지 않는다.")
     r += 1
     note(C, r, "주가 변동성 σ 는 이자율 산출에 쓰이지 않는다. 선도이자율 시트의 "
-               "위험중립가중치 q = [exp(f·Δt) − d] ÷ (u − d) 에서 u·d 를 만드는 데만 "
-               "쓴다 — q 가 이자율과 주가를 잇는 자리라 여기 함께 적어 둔다.")
+               "위험중립가중치 q = [exp((f − δ)·Δt) − d] ÷ (u − d) 에서 u·d 를 만드는 "
+               "데만 쓴다 — q 가 이자율과 주가를 잇는 자리라 여기 함께 적어 둔다. "
+               "보통주 배당수익률 δ 는 그 드리프트에서만 빠지고 할인율에는 닿지 않는다.")
     r += 1
     if put_bdt_on(tm):
         note(C, r, "BDT 단기이자율 변동성 σ 는 조기상환권을 재는 금리격자에만 쓴다. "
@@ -3686,7 +3796,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("풋·콜 우선순위", ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None),
         ("매도청구권 회계 처리",
          "별도 금융상품" if tm.k_sep else "복합내재파생에 포함", None)]),
-      ("5. 시장 인풋", [("변동성 σ", tm.sig, P2)]
+      ("5. 시장 인풋", [("변동성 σ", tm.sig, P2),
+                     ("보통주 배당수익률 δ", tm.div_y, P2)]
         + ([("조기상환권 평가", "BDT 금리격자", None),
             ("BDT 단기이자율 변동성 σ", tm.bdt_sig, P2),
             ("BDT 기준 곡선", ("위험 곡선에 직접" if tm.bdt_base == 0
@@ -4446,9 +4557,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
          tm.k_method == 0),
         ("변동성 σ", "sig",
          (f"={_volref}" if _volref else tm.sig), P2, not _volref),
+        # 배당수익률은 드리프트에서만 빠진다 — 할인율에는 손대지 않는다.
+        ("보통주 배당수익률 δ", "divy", tm.div_y, P2, True),
         ("상승계수 u", "u", "@=EXP(C{sig}*SQRT(C{dt}))", N4, False),
         ("하락계수 d", "dd", "@=1/C{u}", N4, False),
-        ("위험중립가중치 q", "q", "@=(EXP(C{rfc}*C{dt})-C{dd})/(C{u}-C{dd})", N4, False),
+        ("위험중립가중치 q", "q",
+         "@=(EXP((C{rfc}-C{divy})*C{dt})-C{dd})/(C{u}-C{dd})", N4, False),
         ("1 − q", "q1", "@=1-C{q}", N4, False),
         ("리픽싱 반영 (1/0)", "rfx", 1 if tm.rfx_mode > 0 else 0, N0, True),
         ("상향 조정 (1/0)", "up", 1 if tm.rfx_mode == 2 else 0, N0, True),
@@ -4570,7 +4684,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                 else:
                     g(11, forward_rate(RF, i*dt_, (i+1)*dt_), P2, AMB)
                     g(12, forward_rate(CR, i*dt_, (i+1)*dt_), P2, AMB)
-                g(16, f"=(EXP({L}$11*{K['dt']})-{L}$15)/({L}$14-{L}$15)", N4)
+                g(16, f"=(EXP(({L}$11-{K['divy']})*{K['dt']})-{L}$15)"
+                      f"/({L}$14-{L}$15)", N4)
                 g(17, f"=1-{L}$16", N4)
             else:
                 g(16, f"={K['q']}", N4); g(17, f"={K['q1']}", N4)
@@ -4745,10 +4860,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                      f"{S4} · 다음 열 {S5}" + ("" if _det else f" · {S9}"), call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
             f"={WV(L, r)}" if i == n else
-            f"={CE(L, r, Ln)}" if i == 0 else
             f"=MAX({WV(L, r)},{CE(L, r, Ln)})" if _det else
-            f'=IF({DEC(L, r)}="상환C",0,IF({DEC(L, r)}="상환P",{WV(L, r)},'
-            f"MAX({WV(L, r)},{CE(L, r, Ln)})))"))
+            # 사채가 소멸하는 노드(상환P·상환C)에서는 통지기간 안에 행사할 기회가
+            # 남아 있어 그 자리의 행사가치를 챙긴다. 조기상환과 매도청구가 같다.
+            f'=IF(OR({DEC(L, r)}="상환P",{DEC(L, r)}="상환C"),{WV(L, r)},'
+            f"MAX({WV(L, r)},{CE(L, r, Ln)}))"))
 
         W = newsheet(S6, "⑥ 사채가치트리",
                      "신주인수권과 무관하게 남는 사채다. 조기상환금액과 계속보유를 견주고, "
@@ -4756,7 +4872,6 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                      f"다음 열 {S6}" + (f" · {S9}" if not _det else ""), call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
             f"=MAX({L}$7,{L}$10)+{L}$9" if i == n else
-            f"={CB(L, r, Ln)}" if i == 0 else
             f"=MAX({L}$7,MIN({CB(L, r, Ln)},{L}$8))" if _det else
             f'=IF({DEC(L, r)}="상환P",{L}$7,IF({DEC(L, r)}="상환C",{L}$8,'
             f"{CB(L, r, Ln)}))"))
@@ -4779,20 +4894,27 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                      + ("  분리형이라 사채가 소멸해도 신주인수권은 남으므로 두 판단이 "
                         "서로를 건드리지 않는다."
                         if _det else
-                        "  비분리형이라 조기상환은 미행사 신주인수권을 버리는 값까지 "
-                        "치르고 고르는 결정이다."),
+                        "  비분리형이라 사채가 소멸하면 신주인수권도 소멸한다. 다만 "
+                        "통지기간 안에 행사할 기회는 남으므로 조기상환금액에도 "
+                        "매도청구금액에도 그 자리의 행사가치를 더해 견준다."),
                      f"다음 열 {S5} · {S6}", call_on=False)
         if _det:
             _D = lambda L, r, Ln: (
                 f'IF({L}$7>=MIN({CB(L, r, Ln)},{L}$8)-{TOLX},"상환P",'
                 f'IF({CB(L, r, Ln)}<={L}$8+{TOLX},"보유","상환C"))')
         else:
+            # 매도청구금액에도 행사기회를 더한다 — 발행자가 사채를 매수해 가도
+            # 투자자는 그 직전에 신주인수권을 행사해 그 값을 챙기므로, 콜이
+            # 투자자 가치를 눌러 내리는지는 «매도청구금액 + 행사가치» 와 견줘야
+            # 안다. 조기상환 쪽 «+ 행사가치» 와 같은 읽기다.
             _D = lambda L, r, Ln: (
-                f'IF({L}$7+{WV(L, r)}>=MIN({CB(L, r, Ln)}+{CE(L, r, Ln)},{L}$8)-{TOLX},'
-                f'"상환P",IF({CB(L, r, Ln)}+{CE(L, r, Ln)}<={L}$8+{TOLX},"보유","상환C"))')
+                f'IF({L}$7+{WV(L, r)}>=MIN({CB(L, r, Ln)}+{CE(L, r, Ln)},'
+                f'{L}$8+{WV(L, r)})-{TOLX},"상환P",'
+                f'IF({CB(L, r, Ln)}+{CE(L, r, Ln)}<={L}$8+{WV(L, r)}+{TOLX},'
+                f'"보유","상환C"))')
         fill(W, lambda i, r, L, Lp, Ln: (
             f'=IF({L}$7>{L}$10+{TOLX},"상환P","만기상환")' if i == n else
-            '="보유"' if i == 0 else f"={_D(L, r, Ln)}"), txt=True)
+            f"={_D(L, r, Ln)}"), txt=True)
 
     elif _needTF:
         W = newsheet(S5, "⑤ 지분가치트리",
@@ -4961,10 +5083,6 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                           f"*EXP(-{L}$12*{K['dt']})+{L}$9")
                     p(c4, f"={ce}+{cb}")
                     p(c5, f"={L}{c2+1+r}+{L}{c3+1+r}")
-                    if i == 0:
-                        # 평가기준일에는 행사·상환하지 않는다. 엔진의 뿌리와 같다.
-                        p(c2, f"={ce}"); p(c3, f"={cb}"); p(c6, '="보유"', tx=True)
-                        continue
                     # 사채 쪽 풋·콜 우선순위는 전환사채와 같은 규칙을 따른다.
                     if _det and _kfirst:
                         p(c6, f'=IF(MAX({cb},{L}$7)>{L}$8+{TOLX},"상환C",'
@@ -4977,17 +5095,19 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                         p(c2, f"=MAX({wv},{ce})")
                         p(c3, f"=MAX({L}$7,MIN({cb},{L}$8))")
                     elif _kfirst:
-                        p(c6, f'=IF(MAX({cb}+{ce},{L}$7+{wv})>{L}$8+{TOLX},"상환C",'
+                        # 비분리형이라도 상환 직전에 신주인수권을 행사할 기회는
+                        # 남는다. 매도청구금액도 «{L}$8 + 행사가치» 로 견준다.
+                        p(c6, f'=IF(MAX({cb}+{ce},{L}$7+{wv})>{L}$8+{wv}+{TOLX},"상환C",'
                               f'IF({L}$7+{wv}>={cb}+{ce}-{TOLX},"상환P","보유"))', tx=True)
-                        p(c2, f'=IF({L}{c6+1+r}="상환C",0,IF({L}{c6+1+r}="상환P",{wv},'
-                              f"MAX({wv},{ce})))")
+                        p(c2, f'=IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),{wv},'
+                              f"MAX({wv},{ce}))")
                         p(c3, f'=IF({L}{c6+1+r}="상환P",{L}$7,'
                               f'IF({L}{c6+1+r}="상환C",{L}$8,{cb}))')
                     else:
-                        p(c6, f'=IF({L}$7+{wv}>=MIN({cb}+{ce},{L}$8)-{TOLX},"상환P",'
-                              f'IF({cb}+{ce}<={L}$8+{TOLX},"보유","상환C"))', tx=True)
-                        p(c2, f'=IF({L}{c6+1+r}="상환C",0,IF({L}{c6+1+r}="상환P",{wv},'
-                              f"MAX({wv},{ce})))")
+                        p(c6, f'=IF({L}$7+{wv}>=MIN({cb}+{ce},{L}$8+{wv})-{TOLX},"상환P",'
+                              f'IF({cb}+{ce}<={L}$8+{wv}+{TOLX},"보유","상환C"))', tx=True)
+                        p(c2, f'=IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),{wv},'
+                              f"MAX({wv},{ce}))")
                         p(c3, f'=IF({L}{c6+1+r}="상환P",{L}$7,'
                               f'IF({L}{c6+1+r}="상환C",{L}$8,{cb}))')
         elif not _gs:
@@ -5997,12 +6117,16 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None):
     kv(35, "적격 판정 최소 주가 (원)", tm.ipo_min, N2,
        "그 노드 주가가 이 값을 넘으면 상장 성공", "ipomin")
     kv(36, "상장 시 콜도 소멸 (1)", int(tm.sha_qipo_kill), N0, "", "qkill")
-    kv(37, "풋 할인 기준", ["무위험", "위험 곡선", "무위험 + 스프레드"][int(tm.sha_disc)],
+    kv(37, "한쪽 행사 시 상대 권리 (0 존속 / 1 소멸)", int(tm.sha_kill), N0,
+       ("한 격자에서 함께 푼다 — 행사확률 합이 1 이다" if int(tm.sha_kill)
+        else "두 권리를 따로 잰다 — 행사확률 합이 1 을 넘을 수 있다"),
+       yellow=False)
+    kv(38, "풋 할인 기준", ["무위험", "위험 곡선", "무위험 + 스프레드"][int(tm.sha_disc)],
        None, "선도이자율은 트리 8행에 값으로 들어 있다", yellow=False)
-    kv(38, "풋 의무자", ["최대주주", "발행회사", "최대주주 · 발행회사 연대"][int(tm.sha_writer)],
+    kv(39, "풋 의무자", ["최대주주", "발행회사", "최대주주 · 발행회사 연대"][int(tm.sha_writer)],
        None, "발행회사면 1032 문단 23 총액 부채", yellow=False)
-    kv(39, "투자원금 총액 (원)", tm.face_total, N0, "", "face")
-    note(A, 41, "스텝은 계약상 개월을 노드 번호로 옮긴 것이다. 시작은 계약일 "
+    kv(40, "투자원금 총액 (원)", tm.face_total, N0, "", "face")
+    note(A, 42, "스텝은 계약상 개월을 노드 번호로 옮긴 것이다. 시작은 계약일 "
          "이후 첫 노드, 종료는 그 이전 마지막 노드다 — 계약일 전에 행사가 열리지 "
          "않게 한다.", span=4)
 
@@ -6363,6 +6487,20 @@ with st.sidebar:
         t.bs_target = bc1.number_input(f"역산 목표 ({L['face']} 100 기준)",
                                        value=float(t.bs_target), step=1.0,
                                        help="발행 시점 평가면 100. 할인·할증 발행이면 그 값.")
+        # 무엇을 목표에 맞출 것인가. 매도청구권은 격자 밖에서 따로 재어 차감하는
+        # 파생상품자산이라, 본체만 맞추면 투자자가 실제로 받은 순액은 목표에
+        # 못 미친다 — 돈을 내면서 매도청구권까지 써 주었기 때문이다.
+        if not _SHA and t.k_w > 0:
+            t.bs_net = int(st.selectbox(
+                "역산 목표를 무엇에 맞추나", [0, 1], index=int(t.bs_net),
+                format_func=lambda x: (
+                    f"본체 — {L['call']}을 빼기 전 값" if x == 0
+                    else f"순액 — 본체 − {L['call']}"),
+                help="발행가가 패키지 전체의 대가라면 「순액」 입니다. 투자자는 돈을 "
+                     "내면서 매도청구권까지 써 주었으므로, 실제로 받은 것은 그 차감 "
+                     "후 순액이기 때문입니다. 매도청구권에 별도 대가가 오갔거나 "
+                     "최초인식 차이를 따로 보고 있다면 「본체」 입니다. 매도청구권이 "
+                     "클수록 두 답이 벌어집니다."))
         if bc2.button(("투자원금으로 지분 역산" if _SHA else "발행가로 주가 역산"),
                       use_container_width=True,
                       help=("«지분가치 + 풋 − 콜» 이 목표와 같아지는 주가를 이분법으로 "
@@ -6382,7 +6520,22 @@ with st.sidebar:
                          "전환가액·변동성·상환 조건을 확인하십시오.")
             else:
                 t.S0 = float(_S)
-                st.session_state.px_src = f"발행가 역산 (목표 {t.bs_target:,.2f})"
+                # 격자 값은 주가에 대해 연속이 아니다. 어느 노드의 결정이
+                # 뒤집히는 자리에서 계단처럼 튀므로 이분법이 목표를 정확히
+                # 맞히지 못할 수 있다. 얼마나 못 맞혔는지는 말해 주어야 한다.
+                if abs(_v - t.bs_target) > 0.05:
+                    st.warning(
+                        f"역산이 목표 {t.bs_target:,.2f} 에 **{_v:,.4f}** 로 "
+                        f"멈췄습니다 (차이 {_v - t.bs_target:+,.4f}). 격자 값은 "
+                        "주가에 대해 연속이 아니라 어느 노드의 결정이 뒤집히는 "
+                        "자리에서 계단처럼 뜁니다 — 이분법이 그 계단을 넘을 수 "
+                        "없어서 생기는 한계이지 오류가 아닙니다. 노드를 촘촘히 "
+                        "하면 계단이 잘아집니다.")
+                _tg = ("순액" if (not _SHA and t.k_w > 0 and int(t.bs_net))
+                       else "본체")
+                st.session_state.px_src = (
+                    f"발행가 역산 (목표 {t.bs_target:,.2f})" if _SHA else
+                    f"발행가 역산 (목표 {t.bs_target:,.2f} · {_tg} 기준)")
                 st.rerun()
         if (st.session_state.get("px_src") or "").startswith("발행가 역산"):
             st.success(f"주가 {t.S0:,.2f}원 — {st.session_state.px_src}. 조서에 "
@@ -6993,6 +7146,18 @@ with st.sidebar:
                 "콜 가산 복리 횟수 (연)", value=int(t.sha_call_cmp), step=1,
                 min_value=0, max_value=12, help=HLP_CMP))
 
+        # 두 권리가 서로를 소멸시키는가. 따로 재면 공존할 수 없는 두 미래를
+        # 각각 값에 넣게 된다 — 행사확률 합이 1 을 넘는 것으로 드러난다.
+        t.sha_kill = int(st.selectbox(
+            "한쪽이 행사하면 다른 쪽은", [0, 1], index=int(t.sha_kill),
+            format_func=lambda x: ("그대로 남는다 — 두 권리를 따로 잰다" if x == 0
+                                   else "함께 소멸한다 — 한 격자에서 함께 푼다"),
+            help="계약서에 「풋 행사로 주식이 이전되면 콜은 소멸한다」 같은 조항이 "
+                 "있으면 두 권리는 경제적으로 독립이 아닙니다. 따로 재면 「풋은 콜이 "
+                 "살아 있다고 보고, 콜은 풋이 살아 있다고 보는」 공존할 수 없는 두 "
+                 "미래를 각각 값에 넣게 됩니다. 「검산」 탭의 행사확률 합이 1 을 "
+                 "넘으면 그 증거입니다."))
+
         with st.expander("적격상장(Q-IPO) 연계", expanded=True):
             t.ipo_on = int(st.checkbox("적격상장 조항을 격자에 넣는다",
                                        value=bool(t.ipo_on)))
@@ -7170,6 +7335,15 @@ with st.sidebar:
         st.session_state.vol_opt = dict(tdays=tdays, drop=drop, pick=vpick,
                                         asof=asof.isoformat())
         t.sig = st.number_input("변동성 (%)", value=t.sig*100, step=0.5)/100
+        # 배당수익률은 위험중립 드리프트에서 빠진다. 배당은 주주에게 가고
+        # 전환 전 투자자는 받지 못하므로 전환권·신주인수권이 그만큼 싸진다.
+        # 비상장 성장기업은 0 이 보통이지만 상장 배당기업이면 넣어야 한다.
+        t.div_y = st.number_input(
+            "보통주 배당수익률 δ (%)", value=t.div_y*100, step=0.1,
+            min_value=0.0,
+            help="배당은 주주에게 가고 전환 전 투자자는 받지 못합니다. "
+                 "0 으로 두면 전환권·신주인수권을 그만큼 과대평가합니다. "
+                 "위험중립 드리프트에서만 빠지고 할인율에는 닿지 않습니다.")/100
 
     with st.expander("이자율", expanded=True):
         st.caption("무위험·위험 모두 만기수익률(YTM) 곡선을 넣습니다. "
@@ -7497,23 +7671,37 @@ if is_sha(t):
         st.write("위험중립확률로 잰 행사·소멸 분포입니다. **실제 행사 예측이 아닙니다** "
                  "— 격자의 확률은 기준일 주가와 변동성이 정한 것입니다.")
         _dp, _dc = R["dist_put"], R["dist_call"]
-        def _tab(dd, nm):
-            tot = dd["ex"] + dd["qipo"] + dd["expire"] or 1
-            return [[f"{nm} 행사", dd["ex"]/tot,
-                     dd["tex"]/dd["ex"]/R["mper"] if dd["ex"] else None],
-                    ["적격상장으로 소멸", dd["qipo"]/tot, t.ipo_m if t.ipo_on else None],
-                    ["행사기간 만료", dd["expire"]/tot, t.T*12 + t.elapsed_m]]
+        def _tab(dd, nm, other):
+            _ct = dd.get("counter", 0.0)
+            tot = dd["ex"] + dd["qipo"] + dd["expire"] + _ct or 1
+            rows = [[f"{nm} 행사", dd["ex"]/tot,
+                     dd["tex"]/dd["ex"]/R["mper"] if dd["ex"] else None]]
+            if _ct > 1e-12:
+                rows.append([f"{other} 행사로 소멸", _ct/tot, None])
+            rows += [["적격상장으로 소멸", dd["qipo"]/tot, t.ipo_m if t.ipo_on else None],
+                     ["행사기간 만료", dd["expire"]/tot, t.T*12 + t.elapsed_m]]
+            return rows
         st.markdown("#### 투자자 풋옵션")
-        st.dataframe(pd.DataFrame(_tab(_dp, "풋"),
+        st.dataframe(pd.DataFrame(_tab(_dp, "풋", "콜"),
             columns=["유형", "비중", "평균 시점(개월)"]).style.format(
             {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
             use_container_width=True, hide_index=True)
         if _hascall:
             st.markdown("#### 최대주주 콜옵션")
-            st.dataframe(pd.DataFrame(_tab(_dc, "콜"),
+            st.dataframe(pd.DataFrame(_tab(_dc, "콜", "풋"),
                 columns=["유형", "비중", "평균 시점(개월)"]).style.format(
                 {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
                 use_container_width=True, hide_index=True)
+        if _hascall and not int(t.sha_kill):
+            _sum = R["dist_put"]["ex"] + R["dist_call"]["ex"]
+            if _sum > 1.0 + 1e-9:
+                st.warning(
+                    f"풋 행사확률 {R['dist_put']['ex']:.1%} 과 콜 행사확률 "
+                    f"{R['dist_call']['ex']:.1%} 을 더하면 **{_sum:.1%}** 입니다. "
+                    "두 권리를 따로 재고 있어서, 「풋은 콜이 살아 있다고 보고 콜은 "
+                    "풋이 살아 있다고 보는」 공존할 수 없는 두 미래가 각각 값에 "
+                    "들어 있다는 뜻입니다. 계약서에 한쪽 행사로 다른 쪽이 소멸한다는 "
+                    "조항이 있으면 콜옵션 칸에서 「함께 소멸한다」로 바꾸십시오.")
         st.caption("풋 행사확률이 높다는 것은 그만큼 투자자의 하방이 막혀 있다는 "
                    "뜻입니다. 발행회사가 의무자라면 그 계약은 지분이 아니라 사실상 "
                    "부채이므로, 회계처리 탭의 총액 부채를 함께 보십시오.")
