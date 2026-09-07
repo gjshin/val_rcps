@@ -52,6 +52,14 @@ CASES += [(cls, km, "TF", 1, None, dict(_CHA, issuer_call=ic))
           for cls in ("equity", "liability")
           for ic, km in ((0, 0), (1, 0), (2, 0), (2, 1), (2, 2))]
 
+# 신주인수권부사채 — 대용납입(전환사채와 같은 격자)과 현금납입(사채 + 신주인수권).
+# 현금납입은 분리형·비분리형이 갈리고, 모형을 GS 로 골라도 TF 와 같은 값이 나온다.
+CASES += [(cls, 0, md, 1, None, dict(inst="BW", bw_pay=bp, bw_detach=bd, k_w=kw))
+          for cls in ("equity", "liability")
+          for md in ("TF", "GS")
+          for bp, bd in ((1, 0), (0, 0), (0, 1))
+          for kw in (0.0, 0.30)]
+
 
 def main():
     G = load_app()

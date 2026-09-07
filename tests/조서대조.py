@@ -181,6 +181,24 @@ CASES = [
      dict(_gap=1., model="GS", d_issue="2025-05-23", d_base="2025-06-30",
           d_mat="2027-08-23", cv_s=12., cv_e=26., p_s=12., p_e=24.,
           k_s=6., k_e=18., k_lock=20., rfx_cyc=7.)),
+    # ── 신주인수권부사채 ────────────────────────────────────────
+    # 대용납입은 사채를 권면액만큼 납입에 갈음하므로 전환사채와 같은 격자다.
+    # 현금납입은 행사해도 사채가 남아 사채와 신주인수권을 따로 재어 더한다.
+    ("BW 대용납입", dict(inst="BW", bw_pay=1, k_w=0.)),
+    ("BW 대용납입 · 콜 30%", dict(inst="BW", bw_pay=1)),
+    ("BW 현금납입 · 분리형", dict(inst="BW", bw_pay=0, bw_detach=1, k_w=0.)),
+    ("BW 현금납입 · 비분리형", dict(inst="BW", bw_pay=0, bw_detach=0, k_w=0.)),
+    ("BW 현금납입 · 분리형 · 콜 30%", dict(inst="BW", bw_pay=0, bw_detach=1)),
+    ("BW 현금납입 · 비분리형 · 콜 30%", dict(inst="BW", bw_pay=0, bw_detach=0)),
+    ("BW 현금납입 · 리픽싱 없음",
+     dict(inst="BW", bw_pay=0, bw_detach=1, rfx_mode=0, k_w=0.)),
+    ("BW 현금납입 · 표면 3% · 보장 7%",
+     dict(inst="BW", bw_pay=0, bw_detach=0, cpn=.03, ytm=.07, ipay=6., ytm_cmp=2,
+          p_mode="accrue", p_yield=.07, k_w=0.)),
+    ("BW 현금납입 · 신주인수권 부채",
+     dict(inst="BW", bw_pay=0, bw_detach=1, conv_class="liability", k_w=0.)),
+    ("BW 현금납입 · 중간평가",
+     dict(inst="BW", bw_pay=0, bw_detach=0, d_base="2025-12-31", k_w=0.)),
 ]
 
 
@@ -291,8 +309,8 @@ def main():
         # 유무가치비교법일 때만 30% 트랜치가 조서에 있다
         # 유무가치비교법일 때만 30% 트랜치가 조서에 있다. RCPS 는 발행자 상환권이
         # 있을 때만 그 시트(⑮)가 생긴다 — 없으면 k_w=0 이라 C11 이 비어 있다.
-        if over.get("k_method", 0) == 0 and (over.get("inst") != "RCPS"
-                                              or over.get("issuer_call")):
+        if (over.get("k_method", 0) == 0 and over.get("k_w", 1) != 0
+                and (over.get("inst") != "RCPS" or over.get("issuer_call"))):
             ROWS = ROWS + [("적용 30% 트랜치", "C11", "b3")]
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "wb.xlsx")

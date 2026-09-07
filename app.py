@@ -29,7 +29,13 @@ class Terms:
     # ── 상품 스위치 ─────────────────────────────────────────
     # CB 는 액면 100, RCPS 는 1주 발행가 100 을 기준으로 잰다. 전환가치가
     # 100·S/K 로 같아서 격자는 그대로 쓰고, 다른 것은 만기와 콜의 성격뿐이다.
-    inst: str = "CB"                # "CB" 전환사채 / "RCPS" 상환전환우선주
+    inst: str = "CB"                # "CB" 전환사채 / "RCPS" 상환전환우선주 / "BW" 신주인수권부사채
+    # BW — 신주인수권을 행사할 때 무엇으로 대금을 내는가가 계약을 가른다.
+    #   대용납입: 사채를 권면액만큼 납입에 갈음한다. 사채가 소멸하고 주식을 받으므로
+    #             전환사채와 수학적으로 같다. 격자를 그대로 쓴다.
+    #   현금납입: 현금을 따로 내고 사채는 남는다. 사채와 신주인수권을 따로 재어 더한다.
+    bw_pay: int = 0                 # BW 행사대금 0 현금납입 / 1 사채 대용납입
+    bw_detach: int = 0              # BW 신주인수권 0 비분리형 / 1 분리형
     mat_mode: int = 0               # RCPS 존속기간 만료 시 0 보통주 자동전환 / 1 상환
     issuer_call: int = 0            # RCPS 콜 — 0 없음 / 1 발행자 상환권 / 2 제3자 지정 매도청구권
     div_mode: int = 0               # RCPS 우선배당 0 상환가액에 가산(전체 부채) / 1 재량(부채 현금흐름 제외)
@@ -201,6 +207,15 @@ def derive(tm: Terms) -> Terms:
     tm.T = max(1e-6, (dm-db).days/365)
     gap = max(0.25, tm.gap_m)
     tm.n = max(4, int(round(tm.T*12/gap)))
+    if is_bw(tm):
+        # 신주인수권부사채는 우선주가 아니므로 RCPS 전용 스위치를 모두 끈다.
+        tm.mat_mode = 1          # 만기에 자동전환되는 갈래가 없다
+        tm.issuer_call = 0       # 발행자 상환권·제3자 지정은 RCPS 전용 스위치다
+        tm.div_mode = 0
+        if int(tm.bw_pay) == 1:
+            # 대용납입 — 사채를 권면액만큼 납입에 갈음한다. 사채가 소멸하므로
+            # 분리·비분리 구분이 격자에 남기는 흔적이 없다.
+            tm.bw_detach = 0
     if is_rcps(tm):
         ic = int(tm.issuer_call)
         if ic == 2:
@@ -230,6 +245,30 @@ def derive(tm: Terms) -> Terms:
 
 def is_rcps(tm: Terms) -> bool:
     return (tm.inst or "CB").upper() == "RCPS"
+
+
+def is_bw(tm: Terms) -> bool:
+    return (tm.inst or "CB").upper() == "BW"
+
+
+def bw_cash(tm: Terms) -> bool:
+    """신주인수권 행사대금을 **현금으로** 내는 BW 인가.
+
+    현금납입이면 행사해도 사채가 남는다. 그래서 격자가 갈린다 — 사채와
+    신주인수권을 따로 재어 더한다. 대용납입이면 사채를 권면액만큼 납입에
+    갈음해 사채가 소멸하므로 전환사채와 완전히 같은 계산이 된다.
+    """
+    return is_bw(tm) and int(tm.bw_pay) == 0
+
+
+def bw_alive(tm: Terms) -> bool:
+    """사채가 소멸해도 신주인수권이 살아남는가 (분리형).
+
+    분리형이면 신주인수권증권이 따로 유통되므로 사채를 조기상환받아도
+    신주인수권은 행사기간 끝까지 남는다. 비분리형이면 사채에 붙어 있어
+    사채가 소멸할 때 함께 소멸한다 — 상환 직전에 행사할 기회는 있다.
+    """
+    return bw_cash(tm) and int(tm.bw_detach) == 1
 
 
 def issuer_redeem(tm: Terms) -> bool:
@@ -272,6 +311,15 @@ def lbl(tm: Terms) -> dict:
                     bond="상환전환우선주부채",
                     callamt=("매도청구금액" if _th else "발행자 상환가액"),
                     unit="1주 발행가 100 기준")
+    if is_bw(tm):
+        # 신주인수권부사채. 사채는 CB 와 같고 갈리는 것은 지분요소의 이름과
+        # 행사대금 납입 방식이다. 대용납입이면 사채가 소멸해 전환사채와 같고,
+        # 현금납입이면 사채가 남아 사채와 신주인수권을 따로 재어 더한다.
+        return dict(inst="신주인수권부사채", short="BW", face="액면", cpn="표면이자율",
+                    ipay="이자 지급주기", put="조기상환청구권", call="매도청구권",
+                    host="주계약 (옵션 없는 사채)", liab="부채요소 (사채 + 조기상환권)",
+                    red="만기상환금액", ytm="만기보장수익률", bond="신주인수권부사채",
+                    callamt="매도청구금액", unit="전자등록금액 100 기준")
     return dict(inst="전환사채", short="CB", face="액면", cpn="표면이자율",
                 ipay="이자 지급주기", put="조기상환청구권", call="매도청구권",
                 host="주계약 (옵션 없는 사채)", liab="부채요소 (사채 + 조기상환권)",
@@ -473,6 +521,16 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
     call_a = lambda i: (kstrike(i) if (call and in_set(i, tm.k_s, tm.k_e, tm.k_f))
                         else math.inf)
     conv_ok = lambda i: conv and st_lo(cs) <= i <= st_hi(tm.cv_e)
+    # ── BW 현금납입 ──
+    # 신주인수권을 현금으로 행사하면 사채가 그대로 남는다. 그래서 「사채를 내주고
+    # 주식을 받는」 전환 갈래가 없다. 대신 지분요소가 신주인수권 하나가 되어
+    #     신주인수권 행사가치 = 100 × 주가/행사가격 − 100 = 전환가치 − 100
+    # 이 되고 (권면액 100 만큼 현금을 내고 그 값어치 주식을 받는다), 부채요소는
+    # 전환권 없는 사채가 조기상환청구권·매도청구권만 달고 남는다.
+    # 대용납입이면 사채가 권면액만큼 소멸하므로 전환사채와 완전히 같아 이 갈래를
+    # 타지 않는다. 부채요소만 재는 격자(conv=False)도 마찬가지다.
+    bwc = bw_cash(tm) and conv
+    bwd = bwc and int(tm.bw_detach) == 1     # 분리형 — 사채가 소멸해도 남는다
     # ── IPO (책 [사례 5-5]) ──
     # 상장은 특정 스텝에서 조건부로 전환가격을 자르는 사건이다. 상장 성공 여부는
     # 그 노드의 주가로 판정한다 — 최소공모가격에 못 미치면 상장 자체가 무산되므로
@@ -529,6 +587,19 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
         if key in memo: return memo[key]
         if i == n:
             KK = K if exact else Kg[n][j]
+            if bwc:
+                # 사채는 만기상환(또는 그날 열려 있는 조기상환)으로 끝나고,
+                # 신주인수권은 내가격이면 행사한다. 둘은 서로를 막지 않는다.
+                cv = 100*S(n, j)/KK if conv_ok(n) else 0.0
+                wv = max(cv - 100, 0.0) if conv_ok(n) else 0.0
+                cm = cpn_amt if is_pay(n) else 0.0
+                pv = put_a(n)
+                cash = max(pv, red) + cm
+                o = dict(E=wv, B=cash, V=wv+cash, P=0.0, wx=1.0 if wv > 0 else 0.0,
+                         kind=("put" if pv > red + TOL else "mat"),
+                         hold=red, cv=cv, K=KK)
+                memo[key] = o
+                return o
             if conv and auto_conv(tm):
                 # 존속기간이 끝나면 보통주가 된다. 전환기간 밖이어도, 내가격이
                 # 아니어도 그렇다 — 상법이 우선주의 존속기간 만료를 그렇게 정해
@@ -597,6 +668,42 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
             KK = K if exact else Kg[i][j]
             cv = 100*S(i, j)/KK if conv_ok(i) else 0.0
             pv, kv = put_a(i), call_a(i)
+            if bwc:
+                # 신주인수권은 행사해도 사채가 남으므로 사채 결정과 별개다.
+                # 미국형이라 「지금 행사」와 「계속 보유」 중 큰 쪽을 고른다.
+                wv = max(cv - 100, 0.0) if conv_ok(i) else 0.0
+                En = max(E, wv)
+                _wx = 1.0 if (wv > 0 and wv >= E - TOL) else 0.0
+                ex = dict(hold=E+B, cv=cv, K=KK, pv=pv, kv=kv, Vc=E+B,
+                          up=ku, dn=kd, wv=wv)
+                if i == 0:
+                    # 평가기준일 그 자리에서 행사·상환하는 갈래는 두지 않는다.
+                    # 전환사채 격자의 뿌리와 같은 취급이다.
+                    o = dict(E=E, B=B, V=E+B, P=0.0, kind="hold", wx=0.0, **ex)
+                elif bwd:
+                    # 분리형 — 신주인수권증권이 따로 유통되므로 사채를 상환받아도
+                    # 남는다. 두 결정이 서로를 건드리지 않는다.
+                    inner = min(B, kv)
+                    if pv >= inner - TOL:
+                        o = dict(E=En, B=pv, V=En+pv, P=0.0, kind="put", wx=_wx, **ex)
+                    elif B <= kv + TOL:
+                        o = dict(E=En, B=B, V=En+B, P=0.0, kind="hold", wx=_wx, **ex)
+                    else:
+                        o = dict(E=En, B=kv, V=En+kv, P=0.0, kind="call", wx=_wx, **ex)
+                else:
+                    # 비분리형 — 사채가 소멸하면 미행사 신주인수권도 소멸한다.
+                    # 그래서 조기상환청구는 신주인수권을 버리는 값까지 치르고
+                    # 고르는 결정이 된다. 상환 직전에 행사할 기회는 남아 있다.
+                    holdT, putT = B + En, pv + wv
+                    if putT >= min(holdT, kv) - TOL:
+                        o = dict(E=wv, B=pv, V=putT, P=0.0, kind="put",
+                                 wx=1.0 if wv > 0 else 0.0, **ex)
+                    elif holdT <= kv + TOL:
+                        o = dict(E=En, B=B, V=holdT, P=0.0, kind="hold", wx=_wx, **ex)
+                    else:
+                        o = dict(E=0.0, B=kv, V=kv, P=0.0, kind="call", wx=0.0, **ex)
+                memo[key] = o
+                return o
             hold = E + B; inner = min(hold, kv)
             Vg = max(cv, pv, min(Vc, kv))
             # GS 의 전환확률은 GS 자신의 판단을 따른다. TF 와 다른 갈래를 고를 수 있다.
@@ -645,6 +752,42 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
                     nxt[kk] = (pp, KK, jj)
         layer = nxt
     dist["mat"] = sum(v[0] for v in layer.values())
+
+    # 신주인수권 행사확률. 사채 정산 분포와 걷는 길이 다르다 — 분리형이면 사채를
+    # 상환받아도 신주인수권이 남고, 비분리형이면 사채가 소멸할 때 함께 소멸한다.
+    # 그래서 한 번 더 걷는다. 사채 쪽 분포(dist)는 그대로 둔다.
+    if bwc:
+        wp = wt = 0.0
+        lay = {((0, 0, round(tm.K0, 6)) if exact else (0, 0)): (1.0, tm.K0, 0)}
+        for i in range(n):
+            nxt, q = {}, qi(i)
+            for key, (p_, K, j) in lay.items():
+                o = memo.get(key)
+                if o is None: continue
+                if i > 0:
+                    if o.get("wx", 0.0) > 0:
+                        wp += p_; wt += p_*i; continue
+                    if (not bwd) and o["kind"] in ("put", "call"):
+                        continue          # 사채와 함께 소멸한다 — 행사하지 못한다
+                def nk3(s):
+                    if tm.rfx_mode == 0: return tm.K0
+                    if not is_rfx(i+1): return K
+                    return clip(s) if tm.rfx_mode == 2 else clip(min(K, s))
+                KU = nk3(S(i, j)*u) if exact else Kg[i+1][j+1]
+                KD = nk3(S(i, j)*d) if exact else Kg[i+1][j]
+                for kk, pp, jj, KK in (
+                    ((i+1, j+1, round(KU, 6)) if exact else (i+1, j+1), p_*q, j+1, KU),
+                    ((i+1, j, round(KD, 6)) if exact else (i+1, j), p_*(1-q), j, KD)):
+                    if kk in nxt:
+                        a0, b0, c0 = nxt[kk]; nxt[kk] = (a0+pp, b0, c0)
+                    else:
+                        nxt[kk] = (pp, KK, jj)
+            lay = nxt
+        for key, (p_, K, j) in lay.items():
+            o = memo.get(key)
+            if o is not None and o.get("wx", 0.0) > 0:
+                wp += p_; wt += p_*n
+        dist["wex"], dist["tw"] = wp, wt
 
     root = (0, 0, round(tm.K0, 6)) if exact else (0, 0)
     return dict(TF=r0["E"]+r0["B"], E=r0["E"], B=r0["B"], GS=r0["V"], P=r0["P"],
@@ -1102,6 +1245,56 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                                  "제3자 지정 가능": bool(tm.k_third),
                                  "독립 양도 가능": bool(tm.k_transfer)})
 
+    # ── 신주인수권 (BW) ──────────────────────────────────────
+    if is_bw(tm):
+        why, cite = [], []
+        if int(tm.bw_pay) == 1:
+            res = "복합금융상품의 자본요소" if not liab else "복합내재파생상품"
+            why.append("신주인수권을 행사할 때 사채를 권면액만큼 납입에 갈음하므로 "
+                       "(대용납입) 사채가 소멸하고 주식을 받습니다. 전환사채의 "
+                       "전환권과 경제적 실질이 같아 격자도 같은 것을 씁니다.")
+            cite.append("1032 문단 28~32")
+        elif int(tm.bw_detach) == 1:
+            res = "별도의 금융상품" if liab else "복합금융상품의 자본요소"
+            why.append("분리형이라 신주인수권증권이 사채와 독립적으로 양도됩니다. "
+                       "내재파생상품이 아니므로 분리 요건(밀접한 관련성)을 따질 것 "
+                       "없이 처음부터 따로 인식합니다. 다만 사채와 **함께 발행된** "
+                       "복합금융상품이므로 발행금액 배분은 부채요소를 먼저 공정가치로 "
+                       "정하고 나머지를 신주인수권에 두는 방법을 그대로 씁니다.")
+            cite += ["1109 문단 4.3.1 마지막 문장", "1032 문단 28~32"]
+        else:
+            res = "복합금융상품의 자본요소" if not liab else "복합내재파생상품"
+            why.append("비분리형이라 신주인수권이 사채에 붙어 있습니다. 행사대금을 "
+                       "현금으로 내므로 사채는 행사 뒤에도 남고, 조기상환을 받으면 "
+                       "미행사 신주인수권도 함께 소멸합니다.")
+            cite.append("1032 문단 28~32")
+        if liab:
+            why.append("행사가격 조정(리픽싱) 등으로 「확정 수량의 주식을 확정 금액의 "
+                       "현금과 교환」하는 조건을 충족하지 못하면 자본이 아니라 "
+                       "파생상품부채입니다.")
+            cite.append("1032 문단 16(2)(나) · 문단 AG27")
+        else:
+            why.append("확정 수량의 주식을 확정 금액의 현금과 교환하므로 지분상품의 "
+                       "정의를 충족합니다.")
+            cite.append("1032 문단 16(2)(나)")
+        val = ("행사대금을 사채로 갈음하므로 전환사채와 같은 격자에서 재고, "
+               "부채요소를 먼저 정한 뒤 나머지를 신주인수권대가로 둡니다."
+               if int(tm.bw_pay) == 1 else
+               "행사해도 사채가 남으므로 사채와 신주인수권을 따로 재어 더합니다. "
+               "신주인수권 행사가치는 «주식가치 − 권면액» 입니다."
+               + ("" if int(tm.bw_detach) == 1 else
+                  " 비분리형이라 사채가 소멸하는 노드에서 미행사분이 함께 "
+                  "사라지는 것까지 격자에 넣었습니다."))
+        out["warrant"] = dict(있음=True, 결론=res, 이유=why, 근거=cite, 평가=val,
+                              지표={"행사대금 납입": ("사채 대용납입"
+                                                 if int(tm.bw_pay) == 1 else "현금"),
+                                    "신주인수권증권": ("분리형"
+                                                  if int(tm.bw_detach) == 1
+                                                  else "비분리형"),
+                                    "신주인수권 공정가치": b2 - b1,
+                                    "신주인수권대가 (잔여)": 100 - b1})
+        out["warrant"]["설정일치"] = True
+
     # 화면에서 고른 회계 처리와 판정이 어긋나면 알린다
     want = 1 if out["call"]["결론"] == "별도의 금융상품" else 0
     out["call"]["설정일치"] = (not out["call"]["있음"]) or (tm.k_sep == want)
@@ -1122,8 +1315,10 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
 def split_memo(sp) -> str:
     """분리 판단을 조서에 옮길 글로 편다. 화면과 조서가 같은 문안을 쓴다."""
     out = []
-    for key, nm in (("put", "조기상환청구권"), ("call", "매도청구권")):
-        d = sp[key]
+    for key, nm in (("warrant", "신주인수권"), ("put", "조기상환청구권"),
+                    ("call", "매도청구권")):
+        d = sp.get(key)
+        if d is None: continue
         if not d["있음"]:
             out.append(f"[{nm}] {d['이유'][0]}"); continue
         out.append(f"[{nm}] 결론 — {d['결론']}\n"
@@ -1330,6 +1525,32 @@ def validate(tm: Terms):
             w.append(f"우선배당 {tm.cpn:.2%} 를 발행자 재량으로 두어 부채 계산에서 뺐습니다. "
                      "계약이 「미지급 배당을 상환가액에 가산」이면 첫 번째 갈래로 바꾸십시오 "
                      "(1032 AG37).")
+    if is_bw(tm):
+        if int(tm.bw_pay) == 0 and tm.cv_e > horizon - 0.5 + 1e-9 and int(tm.bw_detach) == 0:
+            w.append("비분리형인데 신주인수권 행사기간이 사채 만기까지 걸쳐 있습니다. "
+                     "만기에 사채가 소멸하면 신주인수권도 함께 소멸하므로, 계약서의 "
+                     "행사 종료일이 만기 **전**인지 확인하십시오.")
+        if int(tm.bw_pay) == 0 and tm.ytm > 0:
+            w.append(f"현금납입형이라 신주인수권을 행사해도 사채가 남습니다. 그래서 "
+                     f"만기보장수익률 {tm.ytm:.2%} 가 붙은 상환금액이 **모든 경로에서** "
+                     "지급됩니다 — 대용납입형과 달리 상환할증금이 사라지지 않으므로 "
+                     "부채요소가 그만큼 큽니다. 계약서의 납입 방식을 확인하십시오.")
+        if int(tm.bw_pay) == 1 and int(tm.bw_detach) == 1:
+            w.append("대용납입형에는 분리·비분리 구분이 격자에 남기는 흔적이 없어 "
+                     "비분리형으로 계산했습니다 — 사채를 납입에 갈음하므로 사채와 "
+                     "신주인수권이 함께 소멸합니다.")
+        if int(tm.bw_pay) == 0 and tm.k_w > 0:
+            w.append("**매도청구권을 «사채»에 대한 권리로 재고 있습니다.** 현금납입형 "
+                     "BW 의 콜옵션이 계약서상 «신주인수권증권»을 되사는 권리라면 "
+                     "기초자산이 달라 이 값이 맞지 않습니다 — 그때는 매도청구 한도를 "
+                     "0 으로 두고 신주인수권증권 매도청구권을 별도로 평가해 조서에 "
+                     "붙이십시오. 계약서의 콜옵션 대상이 무엇인지 확인하십시오.")
+        if tm.rfx_mode > 0 and tm.conv_class == "equity":
+            w.append("행사가격 조정(리픽싱)이 있는데 신주인수권을 **자본**으로 두었습니다. "
+                     "발행할 주식 수가 확정되지 않으면 「확정 수량 ↔ 확정 금액」 요건을 "
+                     "충족하지 못해 파생상품부채가 됩니다 (1032 문단 16(2)(나)). "
+                     "모든 주주에게 동등하게 적용되는 희석방지조항이라 자본으로 본다면 "
+                     "그 근거를 조서에 남기십시오.")
     if tm.k_s > tm.k_e: w.append("매도청구 시작이 종료보다 늦습니다.")
     if tm.k_lock < tm.k_e and not issuer_redeem(tm) and tm.k_w > 0:
         w.append("의무보유 전환지연이 매도청구 종료보다 이릅니다. 콜이 실효화될 수 있습니다.")
@@ -2508,27 +2729,49 @@ _RCPS_TAIL = [
 ]
 _RCPS_WORDS = _RCPS_HEAD + _RCPS_CALL + _RCPS_TAIL
 
+# BW 는 지분요소의 이름만 갈린다. 사채 쪽 낱말은 CB 와 같다. 긴 낱말을 먼저
+# 두어야 「전환권대가」가 「신주인수권대가」로 한 번에 바뀐다.
+_BW_WORDS = [
+    ("전환사채", "신주인수권부사채"),
+    ("전환권대가", "신주인수권대가"), ("전환권조정", "신주인수권조정"),
+    ("전환권", "신주인수권"),
+    ("전환가격", "행사가격"), ("전환가치", "행사가치"), ("전환비율", "행사비율"),
+    ("전환청구기간", "행사기간"), ("전환기간", "행사기간"),
+    ("전환청구", "신주인수권 행사"), ("전환확률", "행사확률"),
+    ("전환", "행사"),
+]
 
-def rcps_words(tm: Terms):
+# 의사결정 트리가 쓰는 낱말. 값 조서는 이것을 글자로 담고 수식 조서는 수식이
+# 만들어 내므로, 글자만 바꾸면 두 조서가 어긋난다. 그래서 건드리지 않는다.
+_DECISIONS = {"전환", "자동전환", "상장전환", "보유", "상환P", "상환C", "행사"}
+
+
+def inst_words(tm: Terms):
     """이 계약에 적용할 치환 목록.
 
     제3자 지정 매도청구권(``issuer_call == 2``)이 있으면 콜은 발행자 상환권이
     아니라 매도청구권이므로 그 낱말을 건드리지 않는다. 트랜치도 실제로 한도가
     있는 콜이라 「격자」로 바꾸면 뜻이 사라진다.
     """
+    if is_bw(tm):
+        return _BW_WORDS
+    if not is_rcps(tm):
+        return []
     if int(tm.issuer_call) == 2:
         return _RCPS_HEAD + [x for x in _RCPS_TAIL if x[0] != "트랜치"]
     return _RCPS_WORDS
 
 
-def relabel_rcps(wb, tm: Terms):
-    """조서의 글자 셀을 RCPS 용어로 바꾼다. 값·수식은 그대로다."""
-    words = rcps_words(tm)
+def relabel_inst(wb, tm: Terms):
+    """조서의 글자 셀을 그 상품의 용어로 바꾼다. 값·수식은 그대로다."""
+    words = inst_words(tm)
+    if not words: return
     for ws in wb.worksheets:
         for row in ws.iter_rows():
             for c in row:
                 v = c.value
                 if not isinstance(v, str) or v.startswith("="): continue
+                if v.strip() in _DECISIONS: continue
                 for a, b in words:
                     if a in v: v = v.replace(a, b)
                 if v != c.value: c.value = v
@@ -2546,10 +2789,10 @@ def _stamp(tm: Terms, kind: str = "") -> str:
         (kind + json.dumps(d, sort_keys=True, default=str)).encode()).hexdigest()
 
 
-def rcps_text(tm: Terms, text: str) -> str:
+def inst_text(tm: Terms, text: str) -> str:
     """화면 문장을 상품 용어로. CB 면 그대로다."""
-    if not is_rcps(tm) or not isinstance(text, str): return text
-    for a, b in rcps_words(tm):
+    if not isinstance(text, str): return text
+    for a, b in inst_words(tm):
         if a in text: text = text.replace(a, b)
     return text
 
@@ -2890,30 +3133,50 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
 
     # 앱에서 고른 모형의 트리만 만든다. 값 조서의 GS 시트는 memo 에서 값을 직접
     # 받으므로 TF 트리를 참조하지 않는다. 그래서 서로 독립적으로 넣고 뺄 수 있다.
-    _tf = tm.model != "GS"
+    # 현금납입 BW 는 지분과 부채가 애초에 갈라져 있어 GS 가 TF 와 같은 값을 낸다.
+    # 쓸모없는 GS 시트를 넣지 않고 TF 자리에 신주인수권·사채 트리를 담는다.
+    _bwc = bw_cash(tm)
+    _tf = tm.model != "GS" or _bwc
     if _tf:
-        T05 = newsheet("05 지분가치", "⑤ 지분가치트리  주식으로 받게 될 부분",
-            "전환하면 전환가치, 상환하면 0, 보유하면 다음 열 값을 무위험이자율로 할인한 값이다.",
+        T05 = newsheet("05 지분가치",
+            ("⑤ 신주인수권가치트리  행사가치 − 100" if _bwc else
+             "⑤ 지분가치트리  주식으로 받게 될 부분"),
+            ("권면액 100 만큼 현금을 내고 그 값어치 주식을 받는다. 지금 행사와 계속 보유 "
+             "중 큰 쪽이고, 계속 보유는 다음 열 값을 무위험이자율로 할인한 값이다."
+             if _bwc else
+             "전환하면 전환가치, 상환하면 0, 보유하면 다음 열 값을 무위험이자율로 할인한 값이다."),
             "04 · 08 · 다음 열 05")
         fill_tree(T05, lambda i, r: (round(node(i, r)["E"], 2) if node(i, r) else None))
 
-        T06 = newsheet("06 부채가치", "⑥ 부채가치트리  현금으로 받게 될 부분",
-            "전환하면 0, 상환하면 그 금액, 보유하면 다음 열 값을 위험 선도이자율로 할인한 값이다.",
+        T06 = newsheet("06 부채가치",
+            ("⑥ 사채가치트리  신주인수권과 무관하게 남는 사채" if _bwc else
+             "⑥ 부채가치트리  현금으로 받게 될 부분"),
+            ("조기상환금액과 계속보유를 견주고, 매도청구가 걸리면 그 금액에서 잘린다."
+             if _bwc else
+             "전환하면 0, 상환하면 그 금액, 보유하면 다음 열 값을 위험 선도이자율로 할인한 값이다."),
             "08 · 다음 열 06")
         fill_tree(T06, lambda i, r: (round(node(i, r)["B"], 2) if node(i, r) else None))
 
         T07 = newsheet("07 보유가치", "⑦ 보유가치트리  지금 행사하지 않을 때의 값",
-            "지분은 무위험, 부채는 위험 선도이자율로 따로 할인해 더한다. 이것이 TF 모형이다.",
+            ("신주인수권은 무위험, 사채는 위험 선도이자율로 따로 할인해 더한다."
+             if _bwc else
+             "지분은 무위험, 부채는 위험 선도이자율로 따로 할인해 더한다. 이것이 TF 모형이다."),
             "다음 열 05 · 06")
         fill_tree(T07, lambda i, r: (round(node(i, r)["hold"], 2) if node(i, r) else None))
 
-        T08 = newsheet("08 의사결정", "⑧ 의사결정트리  전환 · 상환P · 상환C · 보유",
-            "위쪽은 전환, 아래쪽은 상환이 몰린다. 매도청구는 중간 띠에 나타난다.", "04 · 07")
+        T08 = newsheet("08 의사결정",
+            ("⑧ 의사결정트리  상환P · 상환C · 보유 — 사채가 어떻게 끝나는가" if _bwc else
+             "⑧ 의사결정트리  전환 · 상환P · 상환C · 보유"),
+            ("신주인수권 행사 여부는 ⑤ 를 보라 — 그 칸이 «행사가치 − 100» 과 같으면 "
+             "그 노드에서 행사한다." if _bwc else
+             "위쪽은 전환, 아래쪽은 상환이 몰린다. 매도청구는 중간 띠에 나타난다."), "04 · 07")
         lab = {"conv": "전환", "put": "상환P", "call": "상환C", "hold": "보유",
                "mat": "만기상환", "auto": "자동전환", "ipo": "상장전환"}
         fill_tree(T08, lambda i, r: (lab.get(node(i, r)["kind"], "") if node(i, r) else None), txt=True)
 
-        T09 = newsheet("09 금융상품가치", "⑨ 금융상품가치트리 = 지분가치 + 부채가치",
+        T09 = newsheet("09 금융상품가치",
+            ("⑨ 금융상품가치트리 = 신주인수권 + 사채" if _bwc else
+             "⑨ 금융상품가치트리 = 지분가치 + 부채가치"),
             "네 갈래 중 최적을 고른 뒤의 값이다. 07과 비교하면 어디서 행사가 일어났는지 보인다.",
             "05 · 06")
         fill_tree(T09, lambda i, r: (round(node(i, r)["E"]+node(i, r)["B"], 2) if node(i, r) else None))
@@ -3085,7 +3348,9 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             "부채요소에 포함). 위 B3 의 차액은 전체 격자에서 전환 상승분을 자른 크기다.",
             color=GREY, size=9)
     # 앱에서 고른 모형만 싣는다.
-    sec(R, 11, "2. 신용위험 처리 — " + ("TF · 값을 쪼갠다" if _tf else "GS · 할인율을 섞는다"),
+    sec(R, 11, "2. 신용위험 처리 — "
+        + ("지분·부채 분리 — 현금납입 BW 는 TF 와 GS 가 같은 값을 낸다" if _bwc else
+           "TF · 값을 쪼갠다" if _tf else "GS · 할인율을 섞는다"),
         span=5)
     for i, h in enumerate(["모형", "전체", "지분", "부채", "전환확률"]):
         put(R, 12, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
@@ -3390,7 +3655,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         _tail = [w for w in wb._sheets if w.title in _attached]
         wb._sheets = _rest + _tail
     polish_wb(wb)
-    if is_rcps(tm): relabel_rcps(wb, tm)
+    relabel_inst(wb, tm)
     bio = io.BytesIO(); wb.save(bio); bio.seek(0)
     return bio.getvalue()
 
@@ -3760,7 +4025,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     #   ⑮ 트랜치    — 매도청구권을 유무가치비교법으로 잴 때
     #   ⑰~⑳       — 옵션차익 · 혼합할인율
     #   ⑰⑲㉑~㉔   — 옵션차익 · 지분·부채 분리
-    _gs = tm.model == "GS"
+    # 현금납입 BW 는 지분(신주인수권)과 부채(사채)가 애초에 갈라져 있어 GS 가
+    # TF 와 같은 값을 낸다. 조서에 쓸모없는 GS 블록을 넣지 않는다.
+    _bwc = bw_cash(tm)
+    _gs = tm.model == "GS" and not _bwc
     _hascall = tm.k_w > 0
     _km = tm.k_method
     _need15 = _hascall and _km == 0
@@ -3771,7 +4039,82 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 그때는 남긴다. GS + 유무가치비교법이면 쓰이지 않으므로 만들지 않는다.
     _needTF = (not _gs) or _need1 or _need2
     _bdt = put_bdt_on(tm)      # 조기상환권을 BDT 로 재는가
-    if _needTF:
+    if _bwc:
+        # ── 현금납입 BW ──
+        # 신주인수권을 행사해도 사채가 남으므로 「사채를 내주고 주식을 받는」
+        # 전환 갈래가 없다. ⑤ 는 신주인수권, ⑥ 은 사채가 되고, 둘을 더한 것이
+        # ⑧ 이다. 분리형이면 두 결정이 서로를 건드리지 않아 ⑤ 가 ⑨ 를 참조조차
+        # 하지 않는다. 비분리형이면 사채가 소멸할 때 미행사분이 함께 사라지므로
+        # ⑨ 가 둘을 묶어 판단한다.
+        _dt = K["dt"]
+        WV = lambda L, r: f"MAX({Q(S4)}!{L}{R0+r}-100,0)"
+        CE = lambda L, r, Ln: (f"({Q(S5)}!{Ln}{R0+r}*{L}$16+{Q(S5)}!{Ln}{R0+r+1}"
+                               f"*{L}$17)*EXP(-{L}$11*{_dt})")
+        CB = lambda L, r, Ln: (f"({Q(S6)}!{Ln}{R0+r}*{L}$16+{Q(S6)}!{Ln}{R0+r+1}"
+                               f"*{L}$17)*EXP(-{L}$12*{_dt})+{L}$9")
+        _det = int(tm.bw_detach) == 1
+        DEC = lambda L, r: f"{Q(S9)}!{L}{R0+r}"
+
+        W = newsheet(S5, "⑤ 신주인수권가치트리",
+                     "행사가치는 «행사가치트리 − 100» 이다 — 권면액 100 만큼 현금을 내고 "
+                     "그 값어치 주식을 받는다. 지금 행사와 계속 보유 중 큰 쪽을 고르고, "
+                     "계속 보유는 다음 열을 무위험이자율로 할인한다."
+                     + ("  분리형이라 사채가 소멸해도 남는다."
+                        if _det else
+                        "  비분리형이라 사채가 소멸하는 노드에서는 그 자리의 행사가치로 끝난다."),
+                     f"{S4} · 다음 열 {S5}" + ("" if _det else f" · {S9}"), call_on=False)
+        fill(W, lambda i, r, L, Lp, Ln: (
+            f"={WV(L, r)}" if i == n else
+            f"={CE(L, r, Ln)}" if i == 0 else
+            f"=MAX({WV(L, r)},{CE(L, r, Ln)})" if _det else
+            f'=IF({DEC(L, r)}="상환C",0,IF({DEC(L, r)}="상환P",{WV(L, r)},'
+            f"MAX({WV(L, r)},{CE(L, r, Ln)})))"))
+
+        W = newsheet(S6, "⑥ 사채가치트리",
+                     "신주인수권과 무관하게 남는 사채다. 조기상환금액과 계속보유를 견주고, "
+                     "매도청구가 걸리면 그 금액에서 잘린다.",
+                     f"다음 열 {S6}" + (f" · {S9}" if not _det else ""), call_on=False)
+        fill(W, lambda i, r, L, Lp, Ln: (
+            f"=MAX({L}$7,{L}$10)+{L}$9" if i == n else
+            f"={CB(L, r, Ln)}" if i == 0 else
+            f"=MAX({L}$7,MIN({CB(L, r, Ln)},{L}$8))" if _det else
+            f'=IF({DEC(L, r)}="상환P",{L}$7,IF({DEC(L, r)}="상환C",{L}$8,'
+            f"{CB(L, r, Ln)}))"))
+
+        W = newsheet(S7, "⑦ 보유가치트리",
+                     "신주인수권은 무위험, 사채는 위험 선도이자율로 따로 할인해 더한다.",
+                     f"다음 열 {S5} · {S6}", call_on=False)
+        fill(W, lambda i, r, L, Lp, Ln: (
+            f"={L}$10" if i == n else f"={CE(L, r, Ln)}+{CB(L, r, Ln)}"))
+
+        W = newsheet(S8, "⑧ 금융상품가치트리 = 신주인수권 + 사채",
+                     f"{KW0} 트랜치 — 매도청구권이 걸리지 않는다. 콜은 ⑮에서만 반영한다.",
+                     f"{S5} · {S6}", call_on=False)
+        fill(W, lambda i, r, L, Lp, Ln:
+             f"={Q(S5)}!{L}{R0+r}+{Q(S6)}!{L}{R0+r}")
+
+        W = newsheet(S9, "⑨ 의사결정트리  상환P · 상환C · 보유",
+                     "**사채**가 어떻게 끝나는지다. 신주인수권 행사 여부는 ⑤ 를 보라 — "
+                     "그 칸이 «행사가치 − 100» 과 같으면 그 노드에서 행사한다."
+                     + ("  분리형이라 사채가 소멸해도 신주인수권은 남으므로 두 판단이 "
+                        "서로를 건드리지 않는다."
+                        if _det else
+                        "  비분리형이라 조기상환은 미행사 신주인수권을 버리는 값까지 "
+                        "치르고 고르는 결정이다."),
+                     f"다음 열 {S5} · {S6}", call_on=False)
+        if _det:
+            _D = lambda L, r, Ln: (
+                f'IF({L}$7>=MIN({CB(L, r, Ln)},{L}$8)-{TOLX},"상환P",'
+                f'IF({CB(L, r, Ln)}<={L}$8+{TOLX},"보유","상환C"))')
+        else:
+            _D = lambda L, r, Ln: (
+                f'IF({L}$7+{WV(L, r)}>=MIN({CB(L, r, Ln)}+{CE(L, r, Ln)},{L}$8)-{TOLX},'
+                f'"상환P",IF({CB(L, r, Ln)}+{CE(L, r, Ln)}<={L}$8+{TOLX},"보유","상환C"))')
+        fill(W, lambda i, r, L, Lp, Ln: (
+            f'=IF({L}$7>{L}$10+{TOLX},"상환P","만기상환")' if i == n else
+            '="보유"' if i == 0 else f"={_D(L, r, Ln)}"), txt=True)
+
+    elif _needTF:
         W = newsheet(S5, "⑤ 지분가치트리",
                      "전환이면 전환가치, 상환이면 0, 보유면 다음 열을 무위험이자율로 할인.",
                      f"{S4} · {S9} · 다음 열 {S5}", call_on=False)
@@ -3908,7 +4251,53 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                     f"=IF({L}$3=1,{Q(S1)}!{L}{R0+r}*{Q(S3)}!{L}{R0+r},0)",
                     fmt=N2, size=8, align="right")
 
-        if not _gs:
+        if _bwc:
+            # 현금납입 BW 의 트랜치. ⑤~⑨ 와 같은 구조인데 매도청구권이 살아 있고
+            # (L$5 · L$8), 의무보유 때문에 행사 시작이 늦다 (L$3).
+            c2 = blk("신주인수권가치")
+            c3 = blk("사채가치")
+            c4 = blk("보유가치")
+            c5 = blk("금융상품가치")
+            c6 = blk("의사결정")
+            last = c5
+            _det = int(tm.bw_detach) == 1
+            for i in range(n+1):
+                L = gl(3+i); Ln = gl(4+i) if i < n else None
+                for r in range(i+1):
+                    p = lambda base, v, fm=N2, tx=False: put(W, base+1+r, 3+i, v,
+                            fmt=(None if tx else fm), size=8,
+                            align=("center" if tx else "right"))
+                    wv = f"MAX({L}{c1+1+r}-100,0)"
+                    if i == n:
+                        p(c2, f"={wv}")
+                        p(c3, f"=MAX({L}$7,{L}$10)+{L}$9")
+                        p(c4, f"={L}$10")
+                        p(c5, f"={L}{c2+1+r}+{L}{c3+1+r}")
+                        p(c6, f'=IF({L}$7>{L}$10+{TOLX},"상환P","만기상환")', tx=True)
+                        continue
+                    ce = (f"({Ln}{c2+1+r}*{L}$16+{Ln}{c2+2+r}*{L}$17)"
+                          f"*EXP(-{L}$11*{K['dt']})")
+                    cb = (f"({Ln}{c3+1+r}*{L}$16+{Ln}{c3+2+r}*{L}$17)"
+                          f"*EXP(-{L}$12*{K['dt']})+{L}$9")
+                    p(c4, f"={ce}+{cb}")
+                    p(c5, f"={L}{c2+1+r}+{L}{c3+1+r}")
+                    if i == 0:
+                        # 평가기준일에는 행사·상환하지 않는다. 엔진의 뿌리와 같다.
+                        p(c2, f"={ce}"); p(c3, f"={cb}"); p(c6, '="보유"', tx=True)
+                        continue
+                    if _det:
+                        p(c6, f'=IF({L}$7>=MIN({cb},{L}$8)-{TOLX},"상환P",'
+                              f'IF({cb}<={L}$8+{TOLX},"보유","상환C"))', tx=True)
+                        p(c2, f"=MAX({wv},{ce})")
+                        p(c3, f"=MAX({L}$7,MIN({cb},{L}$8))")
+                    else:
+                        p(c6, f'=IF({L}$7+{wv}>=MIN({cb}+{ce},{L}$8)-{TOLX},"상환P",'
+                              f'IF({cb}+{ce}<={L}$8+{TOLX},"보유","상환C"))', tx=True)
+                        p(c2, f'=IF({L}{c6+1+r}="상환C",0,IF({L}{c6+1+r}="상환P",{wv},'
+                              f"MAX({wv},{ce})))")
+                        p(c3, f'=IF({L}{c6+1+r}="상환P",{L}$7,'
+                              f'IF({L}{c6+1+r}="상환C",{L}$8,{cb}))')
+        elif not _gs:
             c2 = blk("지분가치")
             c3 = blk("부채가치")
             c4 = blk("보유가치")
@@ -4700,7 +5089,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         _tail = [w for w in wb._sheets if w.title in _attached]
         wb._sheets = _rest + _tail
     polish_wb(wb)
-    if is_rcps(tm): relabel_rcps(wb, tm)
+    relabel_inst(wb, tm)
     bio = io.BytesIO(); wb.save(bio); bio.seek(0)
     return bio.getvalue()
 
@@ -4708,7 +5097,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
 # ══════════════════════════════════════════════════════════
 # 6. 화면
 # ══════════════════════════════════════════════════════════
-st.set_page_config(page_title="전환사채 · 상환전환우선주 평가", layout="wide")
+st.set_page_config(page_title="복합금융상품 평가 — CB · BW · RCPS", layout="wide")
 st.markdown("""<style>
 .block-container{padding-top:2.2rem;max-width:1250px}
 h1{font-size:1.7rem !important;letter-spacing:-.02em}
@@ -4759,27 +5148,56 @@ with st.sidebar:
     t = st.session_state.tm
 
     with st.expander("모형", expanded=True):
+        _INSTS = ["CB", "BW", "RCPS"]
         t.inst = st.selectbox(
-            "상품", ["CB", "RCPS"], index=1 if is_rcps(t) else 0,
-            format_func=lambda x: ("전환사채 (CB) · 액면 100 기준" if x == "CB"
-                                   else "상환전환우선주 (RCPS) · 1주 발행가 100 기준"),
+            "상품", _INSTS,
+            index=_INSTS.index(t.inst if t.inst in _INSTS else "CB"),
+            format_func=lambda x: {"CB": "전환사채 (CB) · 액면 100 기준",
+                                   "BW": "신주인수권부사채 (BW) · 액면 100 기준",
+                                   "RCPS": "상환전환우선주 (RCPS) · 1주 발행가 100 기준"}[x],
             help="격자·이자율·변동성·조서 기계는 같습니다. RCPS 를 고르면 우선배당·"
                  "존속기간 만료 처리·발행자 상환권·발행가 역산이 열리고, 매도청구권의 "
-                 "트랜치·제3자 지정·세 평가방법은 닫힙니다.")
+                 "트랜치·제3자 지정·세 평가방법은 닫힙니다. BW 를 고르면 행사대금 "
+                 "납입 방식과 신주인수권증권의 분리 여부가 열립니다.")
+        if is_bw(t):
+            # 행사대금을 무엇으로 내는가가 격자를 가른다. 대용납입이면 사채가
+            # 소멸해 전환사채와 같아지고, 현금납입이면 사채가 남아 따로 잰다.
+            t.bw_pay = st.selectbox(
+                "신주인수권 행사대금", [0, 1], index=int(t.bw_pay),
+                format_func=lambda i: ["현금납입 — 현금을 내고 사채는 남는다",
+                                       "사채 대용납입 — 사채를 권면액만큼 납입에 갈음"][i],
+                help="대용납입이면 사채가 소멸하고 주식을 받으므로 전환사채와 "
+                     "수학적으로 같습니다. 현금납입이면 사채와 신주인수권을 따로 "
+                     "재어 더합니다.")
+            if int(t.bw_pay) == 0:
+                t.bw_detach = st.selectbox(
+                    "신주인수권증권", [0, 1], index=int(t.bw_detach),
+                    format_func=lambda i: ["비분리형 — 사채가 소멸하면 함께 소멸",
+                                           "분리형 — 사채와 따로 유통"][i],
+                    help="분리형이면 사채를 조기상환받아도 신주인수권이 행사기간 "
+                         "끝까지 남습니다. 비분리형이면 사채가 소멸할 때 미행사분이 "
+                         "함께 사라집니다 — 상환 직전에 행사할 기회는 있습니다.")
         L = lbl(t)
         if is_rcps(t):
             st.caption("모든 금액은 **1주 발행가 = 100** 기준입니다. 전환가치는 "
                        "100 × 주가 ÷ 전환가격 — 전환가격이 발행가와 같으면 1 : 1 전환입니다.")
+        if bw_cash(t):
+            st.caption("현금납입형이라 **사채 + 신주인수권**으로 나누어 잽니다. "
+                       "신주인수권 행사가치는 100 × 주가 ÷ 행사가격 − 100 — "
+                       "권면액 100 만큼 현금을 내고 그 값어치 주식을 받습니다. "
+                       "지분과 부채가 애초에 갈라져 있어 TF 와 GS 가 같은 값을 냅니다.")
         t.model = st.selectbox("신용위험 처리", ["TF", "GS"],
                                index=0 if t.model == "TF" else 1,
                                format_func=lambda x: "TF · 값을 쪼갠다" if x == "TF" else "GS · 할인율을 섞는다")
         t.carry = st.selectbox("조정일 아닌 시점", [0, 1, 2, 3], index=t.carry,
                                format_func=lambda i: ["상태확장 (정확)", "경로가중치",
                                                       "확률가중평균", "특정노드선택"][i])
-        t.conv_class = st.selectbox("전환권 회계 분류", ["equity", "liability"],
+        t.conv_class = st.selectbox(inst_text(t, "전환권 회계 분류"),
+                                    ["equity", "liability"],
                                     index=0 if t.conv_class == "equity" else 1,
-                                    format_func=lambda x: "자본 · 전환권대가를 잔여로"
-                                    if x == "equity" else "파생상품부채 · 주계약을 잔여로")
+                                    format_func=lambda x: inst_text(
+                                        t, "자본 · 전환권대가를 잔여로") if x == "equity"
+                                    else "파생상품부채 · 주계약을 잔여로")
         st.caption("분류에 따라 무엇을 공정가치로 재고 무엇을 잔여로 두는지가 뒤바뀝니다.")
 
     with st.expander("날짜 · 기간", expanded=True):
@@ -4826,7 +5244,8 @@ with st.sidebar:
             st.success(f"주가 {t.S0:,.2f}원 — {st.session_state.px_src}. 조서에 "
                        "그대로 적힙니다. 기말 재평가에는 쓰지 마십시오 — 그때는 "
                        "발행가가 기준이 아닙니다.")
-        t.K0 = st.number_input("현재 전환가액 (원)", value=float(t.K0), step=1.0,
+        t.K0 = st.number_input(inst_text(t, "현재 전환가액 (원)"),
+                               value=float(t.K0), step=1.0,
                                help="리픽싱이 이미 일어났으면 조정된 값을 넣으십시오.")
         t.cpn = st.number_input(f"{L['cpn']} (%)", value=t.cpn*100, step=0.5,
                                 help=("확정 배당률을 표면이자처럼 현금흐름으로 봅니다. "
@@ -4876,10 +5295,12 @@ with st.sidebar:
                    + ("계약서의 상환가액 산식과 대조하십시오." if is_rcps(t)
                       else "공시 만기상환율과 대조하십시오."))
 
-    with st.expander("전환 · 조정"):
+    with st.expander(inst_text(t, "전환 · 조정")):
         st.caption("모두 **발행일 기준 개월**입니다. 계약서 그대로 넣으십시오.")
-        t.cv_s = st.number_input("전환 시작 (개월)", value=float(t.cv_s), step=1.0)
-        t.cv_e = st.number_input("전환 종료 (개월)", value=float(t.cv_e), step=1.0)
+        t.cv_s = st.number_input(inst_text(t, "전환 시작 (개월)"),
+                                 value=float(t.cv_s), step=1.0)
+        t.cv_e = st.number_input(inst_text(t, "전환 종료 (개월)"),
+                                 value=float(t.cv_e), step=1.0)
         t.rfx_mode = st.selectbox("조정 방식", [2, 1, 0], index=[2, 1, 0].index(t.rfx_mode),
                                   format_func=lambda i: ["조정 없음", "하향만", "하향 + 상향"][i])
         t.rfx_cyc = st.number_input("조정 주기 (개월)", value=float(t.rfx_cyc), step=1.0)
@@ -4939,7 +5360,7 @@ with st.sidebar:
         st.markdown("**회계 처리**")
         _psok = (t.conv_class == "equity" and t.k_sep != 0)
         t.p_sep = 1 if st.selectbox(
-            rcps_text(t, "조기상환권 처리"), [1, 0], index=0 if int(t.p_sep) else 1,
+            inst_text(t, "조기상환권 처리"), [1, 0], index=0 if int(t.p_sep) else 1,
             format_func=lambda x: ("분리 · 파생상품부채" if x
                                    else "분리하지 않음 · 부채요소에 포함"),
             disabled=not _psok,
@@ -4947,7 +5368,7 @@ with st.sidebar:
                  "관련되어 분리하지 않습니다 (기준서 1109 문단 B4.3.5(5)(가)). "
                  "「분리 판단」 탭이 계약 조항으로 이 결론을 내 줍니다.") else 0
         if not _psok:
-            st.caption(rcps_text(t, "전환권을 **자본**으로 두고 매도청구권을 **별도 "
+            st.caption(inst_text(t, "전환권을 **자본**으로 두고 매도청구권을 **별도 "
                        "금융상품**으로 볼 때만 고를 수 있습니다. 매도청구권을 "
                        "내재파생으로 묶으면 복수의 내재파생을 하나의 복합내재파생으로 "
                        "다루므로 (문단 B4.3.4) 조기상환권도 함께 분리됩니다. 전환권이 "
@@ -5667,8 +6088,10 @@ with tabs[0]:
     df = pd.DataFrame([
         [f"B0  {LB['host'].split(' (')[0]} — 옵션 없음", b0, None, "—"],
         [f"B1  {LB['put']} 추가", b1, b1-b0, LB["put"]],
-        ["B2  전환권 추가", b2, b2-b1, "전환권"
-         + (" (존속기간 만료 시 자동전환 포함)" if auto_conv(t) else "")],
+        [inst_text(t, "B2  전환권 추가"), b2, b2-b1,
+         inst_text(t, "전환권")
+         + (" (존속기간 만료 시 자동전환 포함)" if auto_conv(t) else "")
+         + (" — 행사해도 사채가 남는다" if bw_cash(t) else "")],
         [f"B3  {LB['call']} 반영", b2-ca, -ca,
          (f"{LB['call']} (전체에 걸림)" if issuer_redeem(t)
           else f"{LB['call']} ({t.k_w*100:.0f}% 한도)")]],
@@ -5707,17 +6130,32 @@ with tabs[0]:
                "끊으므로 자본 배분은 영향을 받지 않습니다." if issuer_redeem(t) else ""))
     st.caption("옵션은 서로 대체 관계라 각각 따로 평가해 더하면 총액이 부풀려집니다. "
                "하나씩 얹으며 차액을 보면 합계가 항상 맞습니다.")
-    st.dataframe(pd.DataFrame([
-        ["TF · 값을 쪼갠다", full["TF"], full["E"], full["B"], None],
-        ["GS · 할인율을 섞는다", full["GS"], full["GS"]*full["P"], full["GS"]*(1-full["P"]), full["P"]],
-        ["차이", full["TF"]-full["GS"], None, None, None]],
-        columns=["모형", "전체", "지분", "부채", "전환확률"]).style.format(
-        {"전체": "{:,.2f}", "지분": "{:,.2f}", "부채": "{:,.2f}", "전환확률": "{:.4f}"}, na_rep=""),
-        use_container_width=True, hide_index=True)
-    st.caption("전환확률이 0과 1 사이 중간이면 두 모형이 갈립니다. "
-               "한쪽으로 몰리면 사실상 같은 값이 나옵니다."
-               if 0.15 < full["P"] < 0.85 else
-               "전환확률이 한쪽으로 몰려 두 모형이 사실상 같은 값을 냅니다.")
+    if bw_cash(t):
+        # 현금납입형은 지분(신주인수권)과 부채(사채)가 애초에 갈라져 있다.
+        # 지분이 될 확률로 할인율을 섞을 자리가 없어 GS 가 TF 와 같은 값이 된다.
+        st.dataframe(pd.DataFrame([
+            ["신주인수권 (지분요소)", full["E"], "무위험이자율"],
+            ["사채 (부채요소)", full["B"], "위험이자율"],
+            ["합계", full["TF"], "—"]],
+            columns=["요소", "가치", "할인율"]).style.format({"가치": "{:,.2f}"}),
+            use_container_width=True, hide_index=True)
+        st.caption("현금납입형은 행사해도 사채가 남으므로 지분과 부채가 처음부터 "
+                   "갈라져 있습니다. 지분이 될 확률로 할인율을 섞을 자리가 없어 "
+                   "**TF 와 GS 가 같은 값**을 냅니다 — 신용위험 처리를 무엇으로 "
+                   "고르셔도 결과가 바뀌지 않습니다.")
+    else:
+        st.dataframe(pd.DataFrame([
+            ["TF · 값을 쪼갠다", full["TF"], full["E"], full["B"], None],
+            ["GS · 할인율을 섞는다", full["GS"], full["GS"]*full["P"], full["GS"]*(1-full["P"]), full["P"]],
+            ["차이", full["TF"]-full["GS"], None, None, None]],
+            columns=["모형", "전체", "지분", "부채", inst_text(t, "전환확률")]).style.format(
+            {"전체": "{:,.2f}", "지분": "{:,.2f}", "부채": "{:,.2f}",
+             inst_text(t, "전환확률"): "{:.4f}"}, na_rep=""),
+            use_container_width=True, hide_index=True)
+        st.caption(inst_text(t, "전환확률이 0과 1 사이 중간이면 두 모형이 갈립니다. "
+                             "한쪽으로 몰리면 사실상 같은 값이 나옵니다."
+                             if 0.15 < full["P"] < 0.85 else
+                             "전환확률이 한쪽으로 몰려 두 모형이 사실상 같은 값을 냅니다."))
 
 with tabs[1]:
     alloc_rows, alloc_note = allocate(t, full, b0, b1, b2, ca)
@@ -5733,7 +6171,7 @@ with tabs[1]:
         _F = t.face_total/100
         st.markdown("### 거래원가 배분")
         st.dataframe(pd.DataFrame(
-            [[rcps_text(t, k), v, c, c*_F, how] for k, v, c, how in _cs]
+            [[inst_text(t, k), v, c, c*_F, how] for k, v, c, how in _cs]
             + [["합계", sum(v for _, v, _, _ in _cs), _c100, _c100*_F, ""]],
             columns=["요소", "배분액 (100)", "거래원가 몫 (100)", "몫 (원)", "처리"]
             ).style.format({"배분액 (100)": "{:,.2f}", "거래원가 몫 (100)": "{:,.4f}",
@@ -5748,7 +6186,7 @@ with tabs[1]:
     # 차변으로 가고 나머지는 대변이다. 따로 쓰면 두 표가 어긋난다.
     _je = [("현금", 100.0, None)]
     for _k, _v in alloc_rows[:-1]:
-        _nm = rcps_text(t, _k.split(" · ")[0])
+        _nm = inst_text(t, _k.split(" · ")[0])
         if _v < 0: _je.append((f"파생상품자산 ({_nm})", -_v, None))
         else:      _je.append((f"    {_nm}", None, _v))
     _w = max(len(k) for k, _, _ in _je) + 2
@@ -5757,7 +6195,7 @@ with tabs[1]:
     _sd = sum(dr for _, dr, _ in _je if dr); _sc = sum(cr for _, _, cr in _je if cr)
     je = ("[최초 인식]\n" + "\n".join(_ln)
           + f"\n{'합계':<{_w+4}} 차변 {_sd:,.4f} = 대변 {_sc:,.4f}\n\n[후속 결산]\n"
-          + rcps_text(t, "차) 이자비용                   주계약 × 유효이자율\n"
+          + inst_text(t, "차) 이자비용                   주계약 × 유효이자율\n"
                          "    대) 전환사채 (주계약)\n")
           + ("차) 파생상품평가손익            매 결산 공정가치로 재측정\n"
              "    대) 파생상품부채\n"
@@ -5814,7 +6252,7 @@ with tabs[1]:
             {"기초": "{:,.4f}", "유효이자": "{:,.4f}", "지급이자": "{:,.4f}", "기말": "{:,.4f}"}),
             use_container_width=True, hide_index=True)
         _ti = sum(x[2] for x in _ar); _tc = sum(x[3] for x in _ar)
-        st.code(rcps_text(t,
+        st.code(inst_text(t,
             f"차) 이자비용                    {_ti:>12,.4f}\n"
             + (f"    대) 현금 (표면이자)             {_tc:>12,.4f}\n" if _tc > 0 else "")
             + f"    대) 전환사채 (주계약)            {_ti-_tc:>12,.4f}"), language=None)
@@ -5826,19 +6264,37 @@ with tabs[1]:
     # ── 전환·상환 시 분개 ──
     _fvl = remeasure(t, alloc_rows)["fv_liab"]
     _host_bv = _end if _ar else (t.prev_host if t.prev_host >= 0 else alloc_rows[0][1])
-    with st.expander("전환·상환 시 분개"):
-        st.markdown("**전환될 때** — 기업회계기준서 제1032호 문단 AG32")
-        st.caption("발행자는 부채를 제거하고 자본으로 인식한다. 최초 인식시점의 자본요소는 "
-                   "자본의 다른 항목으로 대체될 수 있지만 계속 자본으로 유지된다. "
-                   "**전환에 따라 인식할 손익은 없다.**")
-        st.code(rcps_text(t,
-            f"차) 전환사채 (주계약)             {_host_bv:>12,.4f}\n"
-            + (f"차) 파생상품부채                 {_fvl:>12,.4f}\n" if _fvl > 1e-9 else "")
-            + (f"차) 전환권대가 (자본)            {conv:>12,.4f}\n"
-               if t.conv_class == "equity" else "")
-            + f"    대) 자본금 + 주식발행초과금       "
-              f"{_host_bv + max(0.0, _fvl) + (conv if t.conv_class == 'equity' else 0):>12,.4f}"),
-            language=None)
+    with st.expander(inst_text(t, "전환·상환 시 분개")):
+        if bw_cash(t):
+            # 현금납입형은 행사해도 사채가 남는다. 사채를 제거하는 갈래가 없고,
+            # 들어온 현금과 자본요소만 자본으로 넘어간다.
+            st.markdown("**신주인수권이 행사될 때** — 기업회계기준서 제1032호 문단 AG32")
+            st.caption("행사대금을 현금으로 받으므로 **사채는 그대로 남는다.** 자본으로 "
+                       "넘어가는 것은 받은 현금과 신주인수권대가(또는 그때까지 재평가한 "
+                       "파생상품부채)뿐이고, 행사에 따라 인식할 손익은 없다. 사채는 "
+                       "만기까지 상각후원가로 굴러간다.")
+            st.code(
+                f"차) 현금 (행사대금)               {100.0:>12,.4f}\n"
+                + (f"차) 파생상품부채 (신주인수권)      {_fvl:>12,.4f}\n" if _fvl > 1e-9
+                   else f"차) 신주인수권대가 (자본)         {conv:>12,.4f}\n"
+                        if t.conv_class == "equity" else "")
+                + f"    대) 자본금 + 주식발행초과금       "
+                  f"{100.0 + (max(0.0, _fvl) if _fvl > 1e-9 else (conv if t.conv_class == 'equity' else 0)):>12,.4f}\n"
+                + "※ 신주인수권부사채(주계약)는 분개에 나오지 않는다 — 행사해도 소멸하지 "
+                  "않는다.", language=None)
+        else:
+            st.markdown("**전환될 때** — 기업회계기준서 제1032호 문단 AG32")
+            st.caption("발행자는 부채를 제거하고 자본으로 인식한다. 최초 인식시점의 자본요소는 "
+                       "자본의 다른 항목으로 대체될 수 있지만 계속 자본으로 유지된다. "
+                       "**전환에 따라 인식할 손익은 없다.**")
+            st.code(inst_text(t,
+                f"차) 전환사채 (주계약)             {_host_bv:>12,.4f}\n"
+                + (f"차) 파생상품부채                 {_fvl:>12,.4f}\n" if _fvl > 1e-9 else "")
+                + (f"차) 전환권대가 (자본)            {conv:>12,.4f}\n"
+                   if t.conv_class == "equity" else "")
+                + f"    대) 자본금 + 주식발행초과금       "
+                  f"{_host_bv + max(0.0, _fvl) + (conv if t.conv_class == 'equity' else 0):>12,.4f}"),
+                language=None)
         st.markdown("**상환·재매입될 때** — 문단 AG33 · AG34")
         st.caption("지급한 대가를 발행 시점과 **일관된 방법**으로 부채요소와 자본요소에 "
                    "배분한다. 부채요소에 관련된 손익은 당기손익, 자본요소와 관련된 대가는 "
@@ -5861,7 +6317,7 @@ with tabs[1]:
                 {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
                 use_container_width=True, hide_index=True)
             _pl = _ss["pl"]
-            st.code(rcps_text(t,
+            st.code(inst_text(t,
                 f"차) 전환사채 (주계약)             {_ss['liab_bv']:>12,.4f}\n"
                 f"차) 자본 (전환권대가 등)          {_ss['eq']:>12,.4f}\n"
                 + (f"차) 상환손실                    {-_pl:>12,.4f}\n" if _pl < 0 else "")
@@ -5873,10 +6329,16 @@ with tabs[1]:
                        "그날 곡선을 넣으셔야 맞습니다.")
 
 with tabs[2]:
-    st.write(rcps_text(t, f"{LB['put']}과 {LB['call']}을 **주계약과 분리해야 "
-                          "하는지**를 계약 조항에 근거해 판단하고, 분리한다면 어떤 "
-                          "방법으로 재는지까지 정리합니다. 아래 문안을 그대로 조서에 "
-                          "옮기실 수 있습니다."))
+    if is_bw(t):
+        st.write("**신주인수권**이 별도의 금융상품인지 복합금융상품의 자본요소인지, "
+                 "그리고 조기상환청구권·매도청구권을 주계약과 분리해야 하는지를 "
+                 "계약 조항에 근거해 판단합니다. 아래 문안을 그대로 조서에 "
+                 "옮기실 수 있습니다.")
+    else:
+        st.write(inst_text(t, f"{LB['put']}과 {LB['call']}을 **주계약과 분리해야 "
+                              "하는지**를 계약 조항에 근거해 판단하고, 분리한다면 어떤 "
+                              "방법으로 재는지까지 정리합니다. 아래 문안을 그대로 조서에 "
+                              "옮기실 수 있습니다."))
     st.caption("판단 순서가 정해져 있습니다 — 문단 B4.3.5 말미가 "
                "\"제1032호에 따라 전환채무상품의 자본요소를 분리하기 전에 "
                "내재된 콜옵션이나 풋옵션이 주채무계약과 밀접하게 관련되어 "
@@ -5888,7 +6350,7 @@ with tabs[2]:
     # 눌러도 소용없는 칸을 살려 두면 판단이 어긋난 것처럼 보이므로 잠근다.
     _lk = is_rcps(t)
     t.k_third = 1 if f1.checkbox(
-        rcps_text(t, "매도청구권을 제3자에게 지정할 수 있다"), value=bool(t.k_third),
+        inst_text(t, "매도청구권을 제3자에게 지정할 수 있다"), value=bool(t.k_third),
         disabled=_lk,
         help=("사이드바 「콜옵션」에서 **제3자 지정 매도청구권**을 고르시면 켜집니다."
               if _lk else
@@ -5896,14 +6358,14 @@ with tabs[2]:
               "해당합니다. 거래상대방이 달라질 수 있어 내재파생상품이 아니라 "
               "별도의 금융상품입니다 (문단 4.3.1 마지막 문장).")) else 0
     t.k_transfer = 1 if f2.checkbox(
-        rcps_text(t, "매도청구권을 사채와 독립적으로 양도할 수 있다"),
+        inst_text(t, "매도청구권을 사채와 독립적으로 양도할 수 있다"),
         value=bool(t.k_transfer), disabled=_lk,
         help=("RCPS 는 사이드바 「콜옵션」 갈래가 정합니다." if _lk else
               "같은 문단의 다른 갈래입니다. 둘 중 하나만 해당해도 별도의 "
               "금융상품입니다.")) else 0
     f3, f4 = st.columns(2)
     t.p_lost_int = 1 if f3.checkbox(
-        rcps_text(t, "조기상환 행사금액이 상실이자 보상 수준이다"), value=bool(t.p_lost_int),
+        inst_text(t, "조기상환 행사금액이 상실이자 보상 수준이다"), value=bool(t.p_lost_int),
         help="잔여기간에 못 받게 된 이자의 현재가치를 보상하는 수준이면 주계약과 "
              "밀접하게 관련되어 있어 분리하지 않습니다 (문단 B4.3.5(5)(나)). "
              "국내 사모 CB 는 대개 해당하지 않습니다.") else 0
@@ -5918,33 +6380,37 @@ with tabs[2]:
                      eir_table(t, acc_host(t, full, b0, b1, b2, ca))[1])
     st.divider()
 
-    for _key, _nm in (("put", LB["put"]), ("call", LB["call"])):
-        _d = _sp[_key]
+    _items = ([("warrant", "신주인수권")] if is_bw(t) else []) + \
+             [("put", LB["put"]), ("call", LB["call"])]
+    for _key, _nm in _items:
+        _d = _sp.get(_key)
+        if _d is None: continue
         st.markdown(f"### {_nm}")
         if not _d["있음"]:
-            st.info(rcps_text(t, _d["이유"][0])); continue
+            st.info(inst_text(t, _d["이유"][0])); continue
         _box = (st.success if _d["결론"] in ("분리", "별도의 금융상품", "묶어서 분리")
                 else st.warning)
-        _box(rcps_text(t, f"**{_d['결론']}**　—　" + " ".join(_d["이유"])))
+        _box(inst_text(t, f"**{_d['결론']}**　—　" + " ".join(_d["이유"])))
         if _d["근거"]:
             st.caption("근거 · " + " · ".join(_d["근거"]))
         if _d["지표"]:
             st.dataframe(pd.DataFrame(
                 [[k2, (f"{v2*100:.1f}%" if k2 == "차이" else
-                       ("예" if v2 is True else "아니오" if v2 is False
-                        else f"{v2:,.4f}"))] for k2, v2 in _d["지표"].items()],
+                       "예" if v2 is True else "아니오" if v2 is False
+                       else v2 if isinstance(v2, str) else f"{v2:,.4f}")]
+                 for k2, v2 in _d["지표"].items()],
                 columns=["항목", "값"]), use_container_width=True, hide_index=True)
-        st.markdown("**평가방법** — " + rcps_text(t, _d["평가"]))
+        st.markdown("**평가방법** — " + inst_text(t, _d["평가"]))
 
     if not _sp["put"]["설정일치"]:
-        st.error(rcps_text(t,
+        st.error(inst_text(t,
                  "사이드바의 **조기상환청구권 → 회계 처리** 설정이 위 판정과 "
                  f"어긋납니다. 판정은 **{_sp['put']['결론']}** 인데 설정은 "
                  + ("분리 · 파생상품부채" if int(t.p_sep) else "분리하지 않음")
                  + " 입니다. 배분표와 분개가 판정과 다르게 나오므로 사이드바에서 "
                    "맞추십시오."))
     elif (_sp["put"].get("스위치") and _sp["put"]["결론"] == "분리하지 않을 여지"):
-        st.info(rcps_text(t,
+        st.info(inst_text(t,
                 "조기상환권은 **어느 쪽도 설명할 수 있는** 자리입니다. 지금 설정은 "
                 + ("**분리 · 파생상품부채**" if int(t.p_sep)
                    else "**분리하지 않음 · 부채요소에 포함**")
@@ -5954,7 +6420,7 @@ with tabs[2]:
                   "후속측정입니다 — 분리하면 파생상품부채를 매기 공정가치로 "
                   "재평가하고, 분리하지 않으면 부채요소를 상각후원가로 굴립니다."))
     if not _sp["call"]["설정일치"]:
-        st.error(rcps_text(t,
+        st.error(inst_text(t,
                  "사이드바의 **매도청구권 → 회계 처리** 설정이 위 판정과 "
                  f"어긋납니다. 판정은 **{_sp['call']['결론']}** 인데 설정은 "
                  + ("별도 금융상품" if t.k_sep else "복합내재파생에 포함")
@@ -5965,8 +6431,8 @@ with tabs[2]:
     st.markdown("## 평가방법 — 어떻게 잴 것인가")
 
     # ── 조기상환권 : 확정 계산으로 충분한가, 금리모형이 필요한가 ──
-    st.markdown(rcps_text(t, "### 조기상환청구권 — 금리모형(BDT)을 켤 것인가"))
-    st.caption(rcps_text(t, "전환을 끄면 격자가 주가와 무관해져 스텝마다 값이 하나뿐입니다. "
+    st.markdown(inst_text(t, "### 조기상환청구권 — 금리모형(BDT)을 켤 것인가"))
+    st.caption(inst_text(t, "전환을 끄면 격자가 주가와 무관해져 스텝마다 값이 하나뿐입니다. "
                "즉 지금 조기상환권은 **미리 내다보고 액면이 더 크면 행사한다**는 "
                "확정 계산이고, 옵션의 시간가치가 들어 있지 않습니다. "
                "행사가 뻔하면 그래도 맞는 답이 나오지만, 애매하면 값을 0 에 "
@@ -6019,16 +6485,16 @@ with tabs[2]:
                            f"(비율 {min(_rat2):.3f} ~ {max(_rat2):.3f}). 행사가 "
                            "확정적이라 금리를 확률변수로 두어도 판단이 바뀌지 "
                            "않습니다. **확정 격자로 충분합니다.**")
-        st.caption(rcps_text(t, "현재 설정 — 조기상환권을 "
+        st.caption(inst_text(t, "현재 설정 — 조기상환권을 "
                    + ("**BDT 금리격자**로 잽니다." if put_bdt_on(t) else
                       "**금리 고정 격자**로 잽니다.")
                    + ("" if put_bdt_on(t) else
                       "  BDT 는 전환권이 자본이고 TF 일 때만 켤 수 있습니다.")))
     else:
-        st.info(rcps_text(t, "조기상환청구권이 없어 판단할 것이 없습니다."))
+        st.info(inst_text(t, "조기상환청구권이 없어 판단할 것이 없습니다."))
 
     # ── 매도청구권 : 세 방법을 나란히 ──
-    st.markdown(rcps_text(t, "### 매도청구권 — 세 방법 중 무엇으로 잴 것인가"))
+    st.markdown(inst_text(t, "### 매도청구권 — 세 방법 중 무엇으로 잴 것인가"))
     if t.k_w > 0:
         _mv = []
         for _km, _lb in ((0, "유무가치비교법"), (1, "옵션차익 · 혼합할인율"),
@@ -6037,14 +6503,14 @@ with tabs[2]:
             _mv.append([_lb, decompose(_tk)[4], "◀ 적용" if t.k_method == _km else ""])
         st.dataframe(pd.DataFrame(_mv, columns=["방법", "값", "　"]).style.format(
             {"값": "{:,.4f}"}), use_container_width=True, hide_index=True)
-        st.caption(rcps_text(t, "**어느 쪽이 옳다기보다 재는 대상이 다릅니다.** 유무가치비교법은 "
+        st.caption(inst_text(t, "**어느 쪽이 옳다기보다 재는 대상이 다릅니다.** 유무가치비교법은 "
                    "콜을 넣고 뺀 차액이라 **의무보유로 잃는 전환권 가치까지** 값에 "
                    "들어갑니다. 옵션차익혼합할인법은 전환사채를 기초자산으로 하는 "
                    "콜옵션 자체만 잽니다. 보고서를 검토하실 때도 어느 방법을 썼는지 "
                    "먼저 확인하셔야 합니다."))
-        st.info(rcps_text(t, "판정에 따른 권고 — " + _sp["call"]["평가"].replace("**", "")))
+        st.info(inst_text(t, "판정에 따른 권고 — " + _sp["call"]["평가"].replace("**", "")))
     else:
-        st.info(rcps_text(t, "매도청구권이 없어 판단할 것이 없습니다."))
+        st.info(inst_text(t, "매도청구권이 없어 판단할 것이 없습니다."))
 
     # ── 금리 민감도로 본 금리모형 실익 ──
     with st.expander("금리모형이 값을 얼마나 바꾸는가 — 민감도로 본 실익"):
@@ -6104,7 +6570,7 @@ with tabs[2]:
 
     st.divider()
     st.markdown("**조서에 옮길 문안**")
-    st.code(rcps_text(t, split_memo(_sp)), language=None)
+    st.code(inst_text(t, split_memo(_sp)), language=None)
     st.caption("판단 순서·근거 문단·지표가 함께 들어 있습니다. 결론만 적는 것과 "
                "달리 감사인이 다시 물을 여지를 줄입니다.")
 
@@ -6208,16 +6674,37 @@ with tabs[5]:
                    "한 줄을 넣으십시오. 다만 apt 설치가 실패하면 앱이 아예 뜨지 "
                    "않으므로, 넣으신 뒤 재시작이 되는지 확인하십시오.")
     D = full["dist"]; tot = D["conv"]+D["put"]+D["call"]+D["mat"] or 1
-    st.dataframe(pd.DataFrame([
-        ["전환", D["conv"]/tot, D["tc"]/D["conv"]/full["mper"] if D["conv"] else None],
-        [LB["put"], D["put"]/tot, D["tp"]/D["put"]/full["mper"] if D["put"] else None],
-        [LB["call"], D["call"]/tot, D["tk"]/D["call"]/full["mper"] if D["call"] else None],
-        [("존속기간 만료 · 자동전환" if auto_conv(t) else "만기 상환"), D["mat"]/tot, t.T*12]],
-        columns=["유형", "비중", "평균 시점(개월)"]).style.format(
-        {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
-        use_container_width=True, hide_index=True)
-    st.caption("거의 모든 경로가 만기 전에 끝나면 기대만기가 계약만기보다 짧다는 뜻이고, "
-               "장기 할인율의 영향이 줄어듭니다.")
+    if bw_cash(t):
+        # 사채가 어떻게 끝나는지와 신주인수권을 행사하는지는 다른 사건이다.
+        # 분리형이면 사채를 상환받아도 신주인수권이 남아 둘이 겹칠 수 있다.
+        _w, _tw = D.get("wex", 0.0), D.get("tw", 0.0)
+        st.dataframe(pd.DataFrame([
+            [LB["put"], D["put"]/tot, D["tp"]/D["put"]/full["mper"] if D["put"] else None],
+            [LB["call"], D["call"]/tot, D["tk"]/D["call"]/full["mper"] if D["call"] else None],
+            ["만기 상환", D["mat"]/tot, t.T*12],
+            ["— 신주인수권 행사 (사채와 별개)", _w,
+             _tw/_w/full["mper"] if _w else None]],
+            columns=["유형", "비중", "평균 시점(개월)"]).style.format(
+            {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
+            use_container_width=True, hide_index=True)
+        st.caption("위 세 줄은 **사채**가 어떻게 끝나는지의 분포이고 합이 100% 입니다. "
+                   "마지막 줄은 **신주인수권**을 행사할 확률로, 행사해도 사채가 남으므로 "
+                   "위 분포와 따로 셉니다"
+                   + (" — 분리형이라 사채를 상환받아도 신주인수권은 남습니다."
+                      if int(t.bw_detach) == 1 else
+                      " — 비분리형이라 사채가 소멸하는 순간 미행사분은 사라집니다.")
+                   + " 기준일 주가에서 잰 위험중립확률이라 실제 행사 예측이 아닙니다.")
+    else:
+        st.dataframe(pd.DataFrame([
+            ["전환", D["conv"]/tot, D["tc"]/D["conv"]/full["mper"] if D["conv"] else None],
+            [LB["put"], D["put"]/tot, D["tp"]/D["put"]/full["mper"] if D["put"] else None],
+            [LB["call"], D["call"]/tot, D["tk"]/D["call"]/full["mper"] if D["call"] else None],
+            [("존속기간 만료 · 자동전환" if auto_conv(t) else "만기 상환"), D["mat"]/tot, t.T*12]],
+            columns=["유형", "비중", "평균 시점(개월)"]).style.format(
+            {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
+            use_container_width=True, hide_index=True)
+        st.caption("거의 모든 경로가 만기 전에 끝나면 기대만기가 계약만기보다 짧다는 뜻이고, "
+                   "장기 할인율의 영향이 줄어듭니다.")
 
 with tabs[6]:
     r_eir, rows_eir, red, nper = eir_table(t, acc_host(t, full, b0, b1, b2, ca))
@@ -6276,7 +6763,7 @@ with tabs[8]:
     st.caption("위험중립가중치가 0과 1을 벗어나면 변동성이나 노드 수 설정이 잘못된 것입니다.")
 
     st.markdown("**신용스프레드가 발행조건과 맞는가**")
-    st.caption(rcps_text(t, "발행일에는 투자자가 100 을 내고 사채 + 조기상환권 + 전환권을 삽니다. "
+    st.caption(inst_text(t, "발행일에는 투자자가 100 을 내고 사채 + 조기상환권 + 전환권을 삽니다. "
                "그러니 전체 가치가 100 이어야 합니다. 크게 벗어나면 인풋이 발행조건과 "
                "어긋난 것이고, 대개 위험할인율(신용스프레드) 추정이 원인입니다. "
                "**전체가 100 이 되는 할인율을 역산해** 넣으신 값과 견줍니다."))
@@ -6299,7 +6786,7 @@ with tabs[8]:
                 # 스프레드를 아무리 올려도 못 내려간다 — 사채요소가 아니라
                 # 전환조건이 값을 떠받치고 있다는 뜻이다.
                 _flr = _tot(_b)
-                st.warning(rcps_text(t,
+                st.warning(inst_text(t,
                     f"신용스프레드를 60%p 올려도 전체가 {_flr:,.2f} 아래로 "
                     f"내려가지 않습니다 (현재 {b2:,.2f}). 사채요소를 거의 0 으로 "
                     "만들어도 그만큼이 남는다는 뜻이므로, **원인은 신용이 아니라 "
@@ -6351,7 +6838,7 @@ with tabs[8]:
                         "있습니다.")
         except Exception as _ex:
             st.info(f"역산하지 못했습니다 — {_ex}")
-        st.caption(rcps_text(t, "역산값을 그대로 쓰라는 뜻은 아닙니다. 시장에서 관측한 등급 "
+        st.caption(inst_text(t, "역산값을 그대로 쓰라는 뜻은 아닙니다. 시장에서 관측한 등급 "
                    "수익률을 쓰는 것이 원칙이고, 역산은 **인풋이 발행조건과 얼마나 "
                    "떨어져 있는지 재는 자**입니다. 괴리가 크면 등급 추정이나 "
                    "만기보장수익률 입력을 다시 보십시오."))
