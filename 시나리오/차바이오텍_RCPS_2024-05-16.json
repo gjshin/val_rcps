@@ -1,0 +1,112 @@
+{
+  "S0": 15647.0,
+  "K0": 17354.0,
+  "d_issue": "2024-05-16",
+  "d_base": "2024-05-16",
+  "d_mat": "2029-05-16",
+  "inst": "RCPS",
+  "mat_mode": 0,
+  "issuer_call": 2,
+  "div_mode": 0,
+  "bs_target": 100.0,
+  "prev_deriv": -1.0,
+  "prev_host": -1.0,
+  "issue_cost": 354599783.0,
+  "eir_issue": -1.0,
+  "cur_periods": 0,
+  "settle_amt": -1.0,
+  "ipo_on": 0,
+  "ipo_m": 24.0,
+  "ipo_px": 0.0,
+  "ipo_mult": 0.7,
+  "ipo_min": 0.0,
+  "ipo_conv": 1,
+  "gap_m": 1.0,
+  "T": 5.002739726027397,
+  "n": 60,
+  "elapsed_m": 0.0,
+  "cpn": 0.0002881180131381814,
+  "ipay": 12.0,
+  "ytm": 0.015,
+  "ytm_cmp": 4,
+  "cv_s": 12.0,
+  "cv_e": 59.0,
+  "rfx_mode": 2,
+  "rfx_cyc": 7.0,
+  "floor": 12148.0,
+  "par": 500.0,
+  "carry": 0,
+  "p_s": 24.0,
+  "p_e": 59.0,
+  "p_f": 1.0,
+  "p_rate": 100.0,
+  "k_s": 12.0,
+  "k_e": 24.0,
+  "k_f": 1.0,
+  "k_prem": 0.015,
+  "k_cmp": 4,
+  "k_w": 0.2,
+  "k_lock": 24.0,
+  "k_third": 1,
+  "k_transfer": 0,
+  "p_lost_int": 0,
+  "fvpl_whole": 0,
+  "k_method": 0,
+  "p_sep": 1,
+  "k_sep": 1,
+  "sig": 0.2112,
+  "model": "TF",
+  "conv_class": "liability",
+  "cmp_rf": 2,
+  "cmp_cr": 1,
+  "p_mode": "accrue",
+  "p_yield": 0.015,
+  "p_cmp": 4,
+  "face_total": 44499682128.0,
+  "rate_mode": "direct",
+  "cr_src": "주계약이 상환청구 종료일 상환가액에 도달하도록 역산 (14.998%)",
+  "rt_a": "BBB+",
+  "rt_b": "BBB-",
+  "rt_tgt": "BBB0",
+  "cr_curve_b": [],
+  "put_bdt": 0,
+  "bdt_sig": 0.2,
+  "bdt_base": 0,
+  "y_type": "par",
+  "rf_curve": [
+    [
+      1,
+      0.0344
+    ],
+    [
+      2,
+      0.0342
+    ],
+    [
+      3,
+      0.0341
+    ],
+    [
+      5,
+      0.0344
+    ]
+  ],
+  "cr_curve": [
+    [
+      1,
+      0.15
+    ],
+    [
+      2,
+      0.15
+    ],
+    [
+      3,
+      0.15
+    ],
+    [
+      5,
+      0.15
+    ]
+  ]
+}

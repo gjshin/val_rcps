@@ -25,15 +25,32 @@ def load_app():
     return m.__dict__
 
 
-# 마지막 칸은 BDT 변동성이다. None 이면 조기상환권을 금리 고정 격자로 잰다.
-CASES = [(cls, km, md, ks, None)
+# 네 번째 칸까지가 (전환권 분류, 평가방법, 모형, 매도청구권 처리) 이고,
+# 다섯 번째는 BDT 변동성 (None 이면 금리 고정 격자), 여섯 번째는 계약을 통째로
+# 갈아 끼우는 덮어쓰기다.
+CASES = [(cls, km, md, ks, None, {})
          for cls in ("equity", "liability")
          for km in (0, 1, 2)
          for md in ("TF", "GS")
          for ks in (1, 0)]
 # 조기상환권을 BDT 로 잴 때. 자본·TF 에서만 열리므로 그 조합만 더한다.
 # σ=0 은 확정 격자와 같은 값이 나와야 하고, σ>0 은 BDT 시트가 결과와 맞아야 한다.
-CASES += [("equity", km, "TF", 1, sg) for km in (0, 1) for sg in (0.0, 0.20)]
+CASES += [("equity", km, "TF", 1, sg, {}) for km in (0, 1) for sg in (0.0, 0.20)]
+
+# 실제 발행 사례 — 차바이오텍 2024-05-16 상환전환우선주. 콜 세 갈래를 모두 본다.
+# derive() 가 k_sep·k_third 를 콜 갈래에 맞춰 덮어쓰므로 ks 는 무시된다.
+_CHA = dict(inst="RCPS", mat_mode=0, S0=15647., K0=17354., floor=12148., par=500.,
+            d_issue="2024-05-16", d_base="2024-05-16", d_mat="2029-05-16", gap_m=3.,
+            cpn=0.01*500/17354., ipay=12., div_mode=0, ytm=.015, ytm_cmp=4,
+            cv_s=12., cv_e=59., rfx_mode=2, rfx_cyc=7., carry=0,
+            p_s=24., p_e=59., p_f=1., p_mode="accrue", p_yield=.015, p_cmp=4,
+            k_s=12., k_e=24., k_f=3., k_prem=.015, k_cmp=4, k_w=.20, k_lock=24.,
+            sig=.2112,
+            rf_curve=[(1, .0344), (2, .0342), (3, .0341), (5, .0344)],
+            cr_curve=[(1, .15), (2, .15), (3, .15), (5, .15)])
+CASES += [(cls, km, "TF", 1, None, dict(_CHA, issuer_call=ic))
+          for cls in ("equity", "liability")
+          for ic, km in ((0, 0), (1, 0), (2, 0), (2, 1), (2, 2))]
 
 
 def main():
@@ -48,11 +65,12 @@ def main():
                  "OK" if ok else "★"))
         if not ok: bad.append(tag)
 
-    for cls, km, md, ks, bsg in CASES:
+    for cls, km, md, ks, bsg, over in CASES:
         t = G["Terms"]()
         t.rf_curve = [(1, .0226), (3, .0240), (5, .0252)]
         t.cr_curve = [(1, .1409), (3, .1740), (5, .1905)]
         t.conv_class, t.k_method, t.model, t.k_sep = cls, km, md, ks
+        for _k, _v in over.items(): setattr(t, _k, _v)
         t.put_bdt = 1 if bsg is not None else 0
         if bsg is not None: t.bdt_sig = bsg
         t.face_total = 9_000_000_000
@@ -65,7 +83,8 @@ def main():
             G["build_xlsx"](t, full, b0, b1, b2, ca, conv, G["eir_table"](t, host))),
             data_only=True)
         E, R = wb["회계처리"], wb["결과"]
-        print(f"\n[{cls} · 방법{km} · {md} · {'별도' if ks else '내재파생'}"
+        print(f"\n[{'RCPS 콜%d · ' % int(t.issuer_call) if over else ''}"
+              f"{cls} · 방법{km} · {md} · {'별도' if t.k_sep else '내재파생'}"
               + (f" · BDT σ{bsg:.0%}" if bsg is not None else "") + "]")
         # BDT 를 켰으면 그 시트가 결과와 맞아야 한다. 옵션 없는 사채는 ⑩ 주계약과
         # 같아야 하고 — 곡선을 정확히 되돌린다는 뜻이다.

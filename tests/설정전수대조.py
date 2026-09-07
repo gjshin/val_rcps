@@ -84,6 +84,12 @@ CASES = [
     ("RCPS · 발행자콜", dict(inst="RCPS", issuer_call=1), None),
     ("RCPS · 만료 상환 · 발행자콜", dict(inst="RCPS", mat_mode=1, issuer_call=1), None),
     ("RCPS · 배당 재량", dict(inst="RCPS", issuer_call=0, div_mode=1, cpn=.02), None),
+    # 제3자 지정 매도청구권 — 거래상대방이 발행회사가 아니라 별도의 금융상품이다
+    # (1109 4.3.1). 전체 격자에서 재어 파생상품자산으로 세우므로 CB 와 같은 길이다.
+    ("RCPS · 제3자 지정 콜 20%",
+     dict(inst="RCPS", issuer_call=2, k_w=.20, k_lock=24.), None),
+    ("RCPS · 제3자 지정 콜 · 방법1",
+     dict(inst="RCPS", issuer_call=2, k_w=.20, k_lock=24., k_method=1), None),
     ("단리 상환가액", dict(ytm=.08, ytm_cmp=0, p_mode="accrue", p_yield=.08, p_cmp=0), None),
     ("RCPS · IPO 강제전환",
      dict(inst="RCPS", ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=800.), None),
