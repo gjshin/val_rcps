@@ -183,6 +183,54 @@ def test_refix_weighted_average_on_reset_date():
     chk_bool(f"선행 노드 하나만 집지 않는다 (확인 노드 {hits}개)", hits > 0)
 
 
+def test_bw_inherits_engine_fixes():
+    """BW 는 별도 엔진이 없다. 사채 격자를 그대로 쓰므로 같은 답이 나와야 한다.
+
+    [1] 과 같은 계약을 상품만 바꿔 넣는다. 대용납입·현금납입·분리형 모두
+    사채 쪽 계산은 같으므로 B0 는 셋 다 112 다. 새 상품을 더할 때 사채 격자를
+    복사해 가면 이 테스트가 잡는다.
+    """
+    print("\n[6] BW 가 고쳐진 사채 격자를 쓰는가")
+    base = dict(d_issue="2025-01-01", d_base="2025-02-01", d_mat="2026-01-01",
+                cpn=.12, ipay=3., ytm=0., ytm_cmp=0, gap_m=1., sig=.20,
+                rfx_mode=0, cv_s=1., cv_e=11., p_s=99., p_e=0., K0=1000.,
+                S0=100., par=100., floor=100., k_w=0.,
+                rf_curve=[(1, 0.0), (5, 0.0)], cr_curve=[(1, 0.0), (5, 0.0)])
+    if "bw_pay" not in Terms.__dataclass_fields__:
+        print("  (BW 미도입 — 건너뜀)"); return
+    for nm, over in (("대용납입", dict(inst="BW", bw_pay=1)),
+                     ("현금납입 · 비분리", dict(inst="BW", bw_pay=0, bw_detach=0)),
+                     ("현금납입 · 분리", dict(inst="BW", bw_pay=0, bw_detach=1))):
+        t = Terms(**{**base, **over}); derive(t)
+        r = engine(t, conv=False, put=False, call=False)
+        chk(f"BW {nm} · B0", r["TF"], 112.0)
+        chk_bool(f"BW {nm} · 전 구간 q 를 잰다", "qbad" in r)
+
+
+def test_sha_root_immediate_put():
+    """주주간계약 풋도 평가기준일에 행사할 수 있으면 그 값이다.
+
+    투자 2년 뒤 결산 평가. 주가가 인수가액의 20% 로 떨어져 풋이 깊은 내가격이고
+    행사기간이 이미 열려 있다. 풋 가치는 즉시 행사가치 이상이어야 하고, 정산
+    분포에서 **루트 행사가 100%** 로 잡혀야 한다.
+    """
+    print("\n[7] 주주간계약 — 루트 즉시 행사")
+    if "sha_put_s" not in Terms.__dataclass_fields__:
+        print("  (SHA 미도입 — 건너뜀)"); return
+    t = Terms(inst="SHA", S0=200., K0=1000., d_issue="2024-01-01",
+              d_base="2026-01-01", d_mat="2030-01-01", gap_m=6.0, sig=.40,
+              face_total=1e10, sha_put_s=12., sha_put_e=60., sha_put_f=6.,
+              sha_put_yield=.08, sha_put_cmp=1, sha_call_s=0., sha_call_e=0.,
+              sha_disc=0, rf_curve=[(1, .02), (5, .02)],
+              cr_curve=[(1, .05), (5, .05)])
+    derive(t)
+    R = G["sha_engine"](t)
+    imm = max(R["pk"](0) - 100*t.S0/t.K0, 0.0)
+    chk_bool(f"풋 {R['put']:.4f} ≥ 즉시 행사가치 {imm:.4f}", R["put"] >= imm - 1e-9)
+    chk("정산 분포 · 풋 행사확률", R["dist_put"]["ex"], 1.0)
+    chk_bool("전 구간 q 를 잰다", "qbad" in R and "qmin" in R)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -190,6 +238,8 @@ def main():
     test_all_step_risk_neutral_probabilities()
     test_current_k_and_original_cap()
     test_refix_weighted_average_on_reset_date()
+    test_bw_inherits_engine_fixes()
+    test_sha_root_immediate_put()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
