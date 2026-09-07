@@ -26,6 +26,15 @@ class Terms:
     d_issue: str = "2025-03-31"     # 발행일
     d_base: str = "2025-03-31"      # 평가기준일
     d_mat: str = "2030-03-31"       # 만기일
+    # ── 상품 스위치 ─────────────────────────────────────────
+    # CB 는 액면 100, RCPS 는 1주 발행가 100 을 기준으로 잰다. 전환가치가
+    # 100·S/K 로 같아서 격자는 그대로 쓰고, 다른 것은 만기와 콜의 성격뿐이다.
+    inst: str = "CB"                # "CB" 전환사채 / "RCPS" 상환전환우선주
+    mat_mode: int = 0               # RCPS 존속기간 만료 시 0 보통주 자동전환 / 1 상환
+    issuer_call: int = 0            # RCPS 발행자 상환권 — k_s·k_e·k_f·k_prem·k_cmp 일정을 쓴다
+    bs_target: float = 100.0        # 발행가 역산(Backsolve) 목표 — 발행가 100 기준
+    prev_deriv: float = -1.0        # 전기말 파생상품부채 장부금액 (100 기준). 음수면 없음
+    prev_host: float = -1.0         # 전기말 주계약(부채) 장부금액 (100 기준). 음수면 없음
     gap_m: float = 1.0              # 노드 간격 (개월)
     T: float = 5.0                  # 잔존기간 — derive() 가 채운다
     n: int = 60                     # 노드 수 — derive() 가 채운다
@@ -165,7 +174,42 @@ def derive(tm: Terms) -> Terms:
     tm.T = max(1e-6, (dm-db).days/365)
     gap = max(0.25, tm.gap_m)
     tm.n = max(4, int(round(tm.T*12/gap)))
+    if is_rcps(tm):
+        # 제3자 지정 콜·트랜치·의무보유는 CB 의 매도청구권 얘기다. RCPS 의
+        # 발행자 상환권은 거래상대방이 그대로인 내재파생이라 격자 안에서
+        # MIN(보유, 상환가액) 으로 누르고, 전체(100%)에 걸린다.
+        tm.k_w = 1.0 if tm.issuer_call else 0.0
+        tm.k_method = 0; tm.k_lock = 0.0
+        tm.k_third = 0; tm.k_transfer = 0
+        # 발행자 상환권이 있으면 상환청구권과 하나의 복합내재파생으로 묶는다
+        # (문단 B4.3.4). 없으면 상환청구권 하나뿐이라 분리 여부(p_sep)가 산다.
+        tm.k_sep = 0 if tm.issuer_call else 1
     return tm
+
+
+def is_rcps(tm: Terms) -> bool:
+    return (tm.inst or "CB").upper() == "RCPS"
+
+
+def auto_conv(tm: Terms) -> bool:
+    """존속기간 만료 시 보통주로 자동전환되는 RCPS 인가."""
+    return is_rcps(tm) and int(tm.mat_mode) == 0
+
+
+def lbl(tm: Terms) -> dict:
+    """상품에 따라 갈리는 이름. 화면·조서가 모두 여기서 가져간다."""
+    if is_rcps(tm):
+        return dict(inst="상환전환우선주", short="RCPS", face="발행가", cpn="우선배당률",
+                    ipay="배당 지급주기", put="상환청구권", call="발행자 상환권",
+                    host="우선주부채 (옵션 없는 부채)", liab="부채요소 (우선주 + 상환청구권)",
+                    red="존속기간 만료 시 상환금액", ytm="만료 시 상환 보장수익률",
+                    bond="상환전환우선주부채", callamt="발행자 상환가액",
+                    unit="1주 발행가 100 기준")
+    return dict(inst="전환사채", short="CB", face="액면", cpn="표면이자율",
+                ipay="이자 지급주기", put="조기상환청구권", call="매도청구권",
+                host="주계약 (옵션 없는 사채)", liab="부채요소 (사채 + 조기상환권)",
+                red="만기상환금액", ytm="만기보장수익률", bond="전환사채",
+                callamt="매도청구금액", unit="전자등록금액 100 기준")
 
 
 # ══════════════════════════════════════════════════════════
@@ -406,6 +450,19 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
         if key in memo: return memo[key]
         if i == n:
             KK = K if exact else Kg[n][j]
+            if conv and auto_conv(tm):
+                # 존속기간이 끝나면 보통주가 된다. 전환기간 밖이어도, 내가격이
+                # 아니어도 그렇다 — 상법이 우선주의 존속기간 만료를 그렇게 정해
+                # 두었다. 상환은 상환청구기간 안에서만 일어나므로 만기에는
+                # 현금 갈래가 없다. 받는 것은 주식이라 그날 배당은 없다.
+                # 전환권을 뺀 부채 격자(conv=False)는 이 갈래를 타지 않는다 —
+                # 전환권이 없는 부채는 보통주가 될 수 없으니 상환가액으로 끝난다.
+                # 그래서 부채요소는 「상환받는다」는 전제로 재고, 자동전환은
+                # 전환권의 한 갈래로 전체 가치에만 들어간다.
+                cv = 100*S(n, j)/KK
+                o = dict(E=cv, B=0.0, V=cv, P=1.0, kind="auto", hold=cv, cv=cv, K=KK)
+                memo[key] = o
+                return o
             cv = 100*S(n, j)/KK if conv_ok(n) else 0.0
             pv = put_a(n)
             # 만기에도 이자 지급일이면 이자를 함께 받는다 (책 5-7 만기 현금흐름).
@@ -471,7 +528,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
             o = memo.get(key)
             if o is None: continue
             if i > 0 and o["kind"] != "hold":
-                if o["kind"] == "conv": dist["conv"] += p_; dist["tc"] += p_*i
+                if o["kind"] in ("conv", "auto"): dist["conv"] += p_; dist["tc"] += p_*i
                 elif o["kind"] == "put": dist["put"] += p_; dist["tp"] += p_*i
                 elif o["kind"] == "call": dist["call"] += p_; dist["tk"] += p_*i
                 continue
@@ -701,6 +758,9 @@ def put_bdt_on(tm: Terms) -> bool:
 
 def decompose(tm: Terms):
     derive(tm)
+    # RCPS 도 같은 길을 간다. derive 가 k_w(=발행자 상환권 유무)·k_sep·k_lock 을
+    # 고정해 두었으므로 「B0 → +상환청구권 → +전환권 → −발행자상환권」 순차 차감이
+    # CB 의 유무가치비교법(100%)과 정확히 같은 계산이 된다.
     full = engine(tm, call=False)
     b0 = pick(engine(tm, conv=False, put=False, call=False), tm.model)
     b1 = pick(engine(tm, conv=False, put=True, call=False), tm.model)
@@ -725,6 +785,35 @@ def decompose(tm: Terms):
         ca = tm.k_w*(b2-b3)
     resid = 100 - b1 + ca          # 전환권이 자본일 때의 잔여 (전환권대가)
     return full, b0, b1, b2, ca, resid
+
+def backsolve(tm: Terms, target: float = None, lo: float = None, hi: float = None):
+    """발행가로 주가를 역산한다 (책 [사례 5-1] TF모형 with Backsolve).
+
+    비상장 발행회사는 관측 주가가 없다. 대신 「이 조건으로 발행된 값이 곧
+    공정가치다」 라고 놓고, 전체 가치(B2)가 발행가(100)가 되는 주가를 격자에서
+    찾는다. 전체 가치는 주가에 단조증가하므로 이분법으로 충분하다.
+
+    돌려주는 것은 (주가, 그 주가에서의 B2, 반복 횟수). 격자가 목표에 못 닿으면
+    가장 가까운 끝값을 돌려주고 반복 횟수를 −1 로 표시한다.
+    """
+    target = tm.bs_target if target is None else target
+    t2 = Terms(**asdict(tm))
+    def f(S):
+        t2.S0 = S
+        return pick(engine(t2, call=bool(t2.issuer_call) if is_rcps(t2) else False),
+                    t2.model)
+    lo = lo if lo is not None else tm.K0*0.02
+    hi = hi if hi is not None else tm.K0*5.0
+    flo, fhi = f(lo), f(hi)
+    if flo >= target: return lo, flo, -1
+    if fhi <= target: return hi, fhi, -1
+    for k in range(80):
+        mid = 0.5*(lo+hi); fm = f(mid)
+        if abs(fm - target) < 1e-7 or hi-lo < 1e-6*max(1.0, mid): return mid, fm, k+1
+        if fm < target: lo = mid
+        else: hi = mid
+    return mid, fm, 80
+
 
 # 분리 판단에서 "행사가격이 상각후원가와 거의 같다" 로 볼 문턱.
 # 기준서는 "거의 같다" 라고만 하고 수치를 주지 않는다. 실무에서 널리 쓰는
@@ -956,9 +1045,10 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
     elif not psep:
         # 조기상환권이 주계약과 밀접하게 관련되어 분리하지 않는다. 부채요소를
         # 통째로 상각후원가로 두고, 파생상품부채를 세우지 않는다.
-        rows = [("부채요소 (사채 + 조기상환권)", b1),
-                ("매도청구권 · 파생상품자산", -ca),
-                ("전환권대가 · 자본", 100-b1+ca)]
+        rows = [("부채요소 (사채 + 조기상환권)", b1)]
+        if ca > 1e-12 or not is_rcps(tm):
+            rows.append(("매도청구권 · 파생상품자산", -ca))
+        rows.append(("전환권대가 · 자본", 100-b1+ca))
         note = ("기업회계기준서 제1032호 문단 31 — 부채요소를 먼저 정하고 나머지를 자본에 "
                 "배분합니다. 최초 인식에는 손익이 생기지 않습니다. "
                 "조기상환청구권은 주계약과 밀접하게 관련되어 분리하지 않으므로 "
@@ -968,7 +1058,8 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
     else:
         rows = [("주계약 (옵션 없는 사채)", b0),
                 ("조기상환청구권 · 파생상품부채", (b1-b0) if sep else (b1-b0-ca))]
-        if sep: rows.append(("매도청구권 · 파생상품자산", -ca))
+        if sep and (ca > 1e-12 or not is_rcps(tm)):
+            rows.append(("매도청구권 · 파생상품자산", -ca))
         if not sep:
             rows[1] = ("복합내재파생상품 · 파생상품부채", b1-b0-ca)
         rows.append(("전환권대가 · 자본", 100-b1+ca))
