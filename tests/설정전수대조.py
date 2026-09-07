@@ -83,6 +83,7 @@ CASES = [
     ("RCPS · 자동전환", dict(inst="RCPS", issuer_call=0), None),
     ("RCPS · 발행자콜", dict(inst="RCPS", issuer_call=1), None),
     ("RCPS · 만료 상환 · 발행자콜", dict(inst="RCPS", mat_mode=1, issuer_call=1), None),
+    ("RCPS · 배당 재량", dict(inst="RCPS", issuer_call=0, div_mode=1, cpn=.02), None),
     ("조기상환권 미분리", dict(p_sep=0),
      "트랜치·주계약·부채요소·매도청구권은 그대로다. 바뀌는 것은 배분표와 분개이고 "
      "그 둘은 매 케이스마다 따로 확인한다."),

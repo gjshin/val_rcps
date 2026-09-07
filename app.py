@@ -32,6 +32,7 @@ class Terms:
     inst: str = "CB"                # "CB" 전환사채 / "RCPS" 상환전환우선주
     mat_mode: int = 0               # RCPS 존속기간 만료 시 0 보통주 자동전환 / 1 상환
     issuer_call: int = 0            # RCPS 발행자 상환권 — k_s·k_e·k_f·k_prem·k_cmp 일정을 쓴다
+    div_mode: int = 0               # RCPS 우선배당 0 상환가액에 가산(전체 부채) / 1 재량(부채 현금흐름 제외)
     bs_target: float = 100.0        # 발행가 역산(Backsolve) 목표 — 발행가 100 기준
     prev_deriv: float = -1.0        # 전기말 파생상품부채 장부금액 (100 기준). 음수면 없음
     prev_host: float = -1.0         # 전기말 주계약(부채) 장부금액 (100 기준). 음수면 없음
@@ -194,6 +195,17 @@ def is_rcps(tm: Terms) -> bool:
 def auto_conv(tm: Terms) -> bool:
     """존속기간 만료 시 보통주로 자동전환되는 RCPS 인가."""
     return is_rcps(tm) and int(tm.mat_mode) == 0
+
+
+def eff_cpn(tm: Terms) -> float:
+    """계산에 쓰는 정기 지급률.
+
+    CB 의 표면이자는 채무라 늘 들어간다. RCPS 의 우선배당은 계약에 따라 갈린다
+    (1032 AG37) — 미지급분을 상환가액에 가산하면 전체가 부채고 배당은 이자비용
+    (그대로 쓴다). 배당이 발행자 재량이고 상환가액과 무관하면 배당은 자본요소의
+    이익분배라 부채 현금흐름에서 빼고, 상환가액 산식도 배당을 차감하지 않는다(0).
+    """
+    return 0.0 if (is_rcps(tm) and int(tm.div_mode) == 1) else tm.cpn
 
 
 def lbl(tm: Terms) -> dict:
@@ -387,20 +399,20 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
     is_rfx = lambda i: (tm.rfx_mode > 0 and i > 0 and i >= rfx_off
                         and (i-rfx_off) % rfx_per == 0)
     pay_per = max(1, int(round(tm.ipay*mper)))
-    is_pay = lambda i: tm.cpn > 0 and i > 0 and i % pay_per == 0
-    cpn_amt = 100*tm.cpn*tm.ipay/12
-    red = 100*(1 + accrue_rate(T + ey, tm.ytm, tm.cpn, tm.ytm_cmp))
+    is_pay = lambda i: eff_cpn(tm) > 0 and i > 0 and i % pay_per == 0
+    cpn_amt = 100*eff_cpn(tm)*tm.ipay/12
+    red = 100*(1 + accrue_rate(T + ey, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
     S = lambda i, j: tm.S0 * u**j * d**(i-j)
     clip = lambda s: min(max(s, tm.floor, tm.par), tm.K0)
     def put_amt(i):
         """행사금액은 발행일부터 붙는다. 경과분을 더해 계산한다."""
         if tm.p_mode == "accrue":
-            return 100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, tm.cpn, tm.p_cmp))
+            return 100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, eff_cpn(tm), tm.p_cmp))
         return tm.p_rate
     put_a = lambda i: put_amt(i) if (put and in_set(i, tm.p_s, tm.p_e, tm.p_f)) else 0.0
     # kstrike 는 콜 스위치와 무관한 행사금액이다. 행사기간이 아니면 None.
     # call_a 는 call=False 면 항상 inf 라 제3자 콜옵션 평가에 쓸 수 없다.
-    kstrike = lambda i: (100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, tm.cpn,
+    kstrike = lambda i: (100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, eff_cpn(tm),
                                              tm.k_cmp))
                          if in_set(i, tm.k_s, tm.k_e, tm.k_f) else None)
     call_a = lambda i: (kstrike(i) if (call and in_set(i, tm.k_s, tm.k_e, tm.k_f))
@@ -696,14 +708,14 @@ def bdt_parts(tm: Terms):
         rt, ab = bdt_tree(RF, T, n, tm.bdt_sig)
         add = [forward_rate(CR, i*dt_, (i+1)*dt_) - forward_rate(RF, i*dt_, (i+1)*dt_)
                for i in range(n)]
-    red = 100*(1 + accrue_rate(T + ey, tm.ytm, tm.cpn, tm.ytm_cmp))
-    cpn_amt = 100*tm.cpn*tm.ipay/12
+    red = 100*(1 + accrue_rate(T + ey, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
+    cpn_amt = 100*eff_cpn(tm)*tm.ipay/12
     pay_per = max(1, int(round(tm.ipay*mper)))
-    is_pay = lambda i: tm.cpn > 0 and i > 0 and i % pay_per == 0
+    is_pay = lambda i: eff_cpn(tm) > 0 and i > 0 and i % pay_per == 0
     p_lo, p_hi = st_lo(tm.p_s), st_hi(tm.p_e)
     p_per = max(1, int(round(tm.p_f*mper)))
     in_put = lambda i: (max(p_lo, 0) <= i <= p_hi and (i-p_lo) % p_per == 0)
-    put_a = lambda i: ((100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, tm.cpn, tm.p_cmp))
+    put_a = lambda i: ((100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, eff_cpn(tm), tm.p_cmp))
                         if tm.p_mode == "accrue" else tm.p_rate)
                        if in_put(i) else 0.0)
     # 캘리브레이션 검산 재료 — 도달가격 Q 와 시장 할인계수.
@@ -873,7 +885,7 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                           이유=["계약에 조기상환청구권이 없습니다."],
                           근거=[], 평가="—", 지표={})
     else:
-        pv = (100*(1 + accrue_rate(tm.p_s/12, tm.p_yield, tm.cpn, tm.p_cmp))
+        pv = (100*(1 + accrue_rate(tm.p_s/12, tm.p_yield, eff_cpn(tm), tm.p_cmp))
               if tm.p_mode == "accrue" else tm.p_rate)
         bv = amort_at(max(0.0, (tm.p_s - tm.elapsed_m)/12))
         gap, close = _close_test(pv, bv)
@@ -1124,9 +1136,9 @@ def pay_index(tm: Terms, t_year: float) -> int:
 
 
 def eir_table(tm: Terms, host):
-    c = 100*tm.cpn*tm.ipay/12
+    c = 100*eff_cpn(tm)*tm.ipay/12
     per = max(1e-6, tm.ipay/12)
-    red = 100*(1 + accrue_rate(tm.T + tm.elapsed_m/12, tm.ytm, tm.cpn, tm.ytm_cmp))
+    red = 100*(1 + accrue_rate(tm.T + tm.elapsed_m/12, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
     # 지급일은 계약상 일정이므로 **발행일**부터 센다. 평가기준일이 발행일보다
     # 뒤이면 첫 회차만 짧아지고 나머지는 온전한 한 주기다. 평가기준일에서
     # 세면 지급일이 계약과 어긋나 이자비용이 회차마다 밀린다.
@@ -1163,20 +1175,31 @@ def validate(tm: Terms):
     horizon = tm.T*12 + tm.elapsed_m + 0.5      # 발행일 기준 총 개월
     if tm.cv_e > horizon: w.append(f"전환 종료({tm.cv_e:.0f}개월)가 만기({horizon:.0f}개월)를 넘습니다.")
     if tm.p_s > tm.p_e: w.append("조기상환 시작이 종료보다 늦습니다.")
+    if is_rcps(tm):
+        _lo, _hi = step_mapper(tm, int(tm.n), tm.T/int(tm.n))
+        if tm.p_s > tm.p_e or _lo(tm.p_s) > _hi(tm.p_e):
+            w.append("**투자자 상환청구권이 없습니다.** 발행회사에게만 상환 권리가 있는 "
+                     "우선주는 현금을 인도할 현재의무가 없어 **금융부채가 아니라 자본**입니다 "
+                     "(기준서 1032 AG25). 이 앱의 부채요소 → 잔여 배분은 그 계약에 맞지 "
+                     "않습니다. 상환청구 기간을 확인하십시오.")
+        if int(tm.div_mode) == 1 and tm.cpn > 0:
+            w.append(f"우선배당 {tm.cpn:.2%} 를 발행자 재량으로 두어 부채 계산에서 뺐습니다. "
+                     "계약이 「미지급 배당을 상환가액에 가산」이면 첫 번째 갈래로 바꾸십시오 "
+                     "(1032 AG37).")
     if tm.k_s > tm.k_e: w.append("매도청구 시작이 종료보다 늦습니다.")
     if tm.k_lock < tm.k_e and not is_rcps(tm) and tm.k_w > 0:
         w.append("의무보유 전환지연이 매도청구 종료보다 이릅니다. 콜이 실효화될 수 있습니다.")
     # 할증금 산식은 보장수익률에서 표면이자율을 뺀다. 보장이 더 낮으면 음수가
     # 되어 상환금액이 액면 밑으로 내려간다. 0 에서 끊고는 있지만 입력 자체가
     # 계약과 맞지 않으므로 알려 준다.
-    if tm.ytm > 0 and tm.ytm < tm.cpn - 1e-9:
-        w.append(f"만기보장수익률({tm.ytm:.2%})이 표면이자율({tm.cpn:.2%})보다 낮습니다. "
+    if tm.ytm > 0 and tm.ytm < eff_cpn(tm) - 1e-9:
+        w.append(f"만기보장수익률({tm.ytm:.2%})이 표면이자율({eff_cpn(tm):.2%})보다 낮습니다. "
                  "상환할증금이 음수가 되어 0 으로 끊었습니다. 계약서를 확인하십시오.")
-    if tm.p_mode == "accrue" and tm.p_yield > 0 and tm.p_yield < tm.cpn - 1e-9:
-        w.append(f"조기상환 보장수익률({tm.p_yield:.2%})이 표면이자율({tm.cpn:.2%})보다 "
+    if tm.p_mode == "accrue" and tm.p_yield > 0 and tm.p_yield < eff_cpn(tm) - 1e-9:
+        w.append(f"조기상환 보장수익률({tm.p_yield:.2%})이 표면이자율({eff_cpn(tm):.2%})보다 "
                  "낮습니다. 조기상환금액이 액면 밑으로 내려갑니다.")
-    if tm.k_w > 0 and tm.k_prem > 0 and tm.k_prem < tm.cpn - 1e-9:
-        w.append(f"매도청구 프리미엄({tm.k_prem:.2%})이 표면이자율({tm.cpn:.2%})보다 "
+    if tm.k_w > 0 and tm.k_prem > 0 and tm.k_prem < eff_cpn(tm) - 1e-9:
+        w.append(f"매도청구 프리미엄({tm.k_prem:.2%})이 표면이자율({eff_cpn(tm):.2%})보다 "
                  "낮습니다. 매도청구금액이 액면 밑으로 내려갑니다.")
     # 신용스프레드가 너무 얇으면 곡선을 잘못 골랐다는 신호다. 실제로 고시표에서
     # 「특수채·공사채 AAA」 줄을 눌러 국고채와 사실상 같은 곡선이 들어간 일이
@@ -2406,20 +2429,20 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     is_rfx = lambda i: (tm.rfx_mode > 0 and i > 0 and i >= rfx_off
                         and (i-rfx_off) % rfx_per == 0)
     REFIXC = {i for i in range(1, n+1) if is_rfx(i)}
-    cpn_amt = 100*tm.cpn*tm.ipay/12
+    cpn_amt = 100*eff_cpn(tm)*tm.ipay/12
     ey = tm.elapsed_m/12                     # 경과 연수 — 행사금액은 발행일부터 붙는다
-    red = 100*(1 + accrue_rate(tm.T + ey, tm.ytm, tm.cpn, tm.ytm_cmp))
+    red = 100*(1 + accrue_rate(tm.T + ey, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
     def in_set(i, a, b, fr):
         lo, hi = stp_lo(a), stp_hi(b)
         return lo <= i <= hi and (i-lo) % per_(fr) == 0
     def put_amt(i):
         if not in_set(i, tm.p_s, tm.p_e, tm.p_f): return 0.0
         if tm.p_mode == "accrue":
-            return 100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, tm.cpn, tm.p_cmp))
+            return 100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, eff_cpn(tm), tm.p_cmp))
         return tm.p_rate
     def call_amt(i, on=True):
         if not on or not in_set(i, tm.k_s, tm.k_e, tm.k_f): return 999999
-        return 100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, tm.cpn, tm.k_cmp))
+        return 100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, eff_cpn(tm), tm.k_cmp))
 
     HEAD = ["Date", "time-step", "Flag(전환)", "Flag(조기상환)", "Flag(매도청구)",
             "Flag(리픽싱)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환",
@@ -2444,7 +2467,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
             g(6, 1 if i in REFIXC else 0, N0, RED)
             g(7, round(put_amt(i), 4), N2)
             g(8, round(call_amt(i, call_on), 4), N2)
-            g(9, round(cpn_amt if (tm.cpn > 0 and i > 0
+            g(9, round(cpn_amt if (eff_cpn(tm) > 0 and i > 0
                                    and i % per_(tm.ipay) == 0) else 0.0, 4), N2)
             g(10, round(red if i == n else 0.0, 4), N2)
             if i < n:
@@ -2487,7 +2510,12 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         ("만기일", tm.d_mat, None), ("경과기간 (개월)", tm.elapsed_m, N2),
         ("평가기준일 주가", tm.S0, N2), ("현재 전환가액", tm.K0, N2),
         ("잔존기간 (년)", tm.T, N4), ("노드 수", tm.n, N0), ("Δt", dt_, N4),
-        ("표면이자율", tm.cpn, P2), ("이자 지급주기 (개월)", tm.ipay, N0),
+        ("표면이자율", tm.cpn, P2)]
+        + ([("우선배당 처리", ("발행자 재량 — 부채 현금흐름에서 제외 (1032 AG37)"
+                              if int(tm.div_mode) == 1 else
+                              "미지급분을 상환가액에 가산 — 전체 부채 · 배당은 이자비용"), None)]
+           if is_rcps(tm) else [])
+        + [("이자 지급주기 (개월)", tm.ipay, N0),
         ("만기보장수익률", tm.ytm, P2), ("만기상환금액", red, N2)]),
       ("3. 전환가액 조정", [("조정 방식", ["조정 없음", "하향만", "하향+상향"][tm.rfx_mode], None),
         ("조정 주기 (개월)", tm.rfx_cyc, N0), ("최저 조정가액", tm.floor, N2), ("액면가", tm.par, N2)]),
@@ -3094,6 +3122,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         ("전기말 파생상품부채 장부금액 (음수 = 없음)", "pdrv", tm.prev_deriv, N4, True),
         ("전기말 주계약 장부금액 (음수 = 없음)", "phst", tm.prev_host, N4, True),
         ("무위험 (연속, 평탄)", "rfc", RF(tm.T), P2, False)]
+    if is_rcps(tm):
+        # 계산에 쓰는 배당률은 「계약 배당률 × (재량이면 0)」 이다. 엑셀에서 처리
+        # 스위치를 바꾸면 모든 트리와 상환가액 산식이 따라온다.
+        _i = next(i for i, x in enumerate(spec) if x[1] == "cpn")
+        spec[_i:_i+1] = [
+            ("표면이자율 (계약)", "cpnc", tm.cpn, P2, True),
+            ("우선배당 처리 (0 상환가액 가산 / 1 재량)", "dmode", int(tm.div_mode), N0, True),
+            ("표면이자율 (계산에 쓰는 값)", "cpn", "@=IF(C{dmode}=1,0,C{cpnc})", P2, False)]
     ROWN = {key: 3+i for i, (_, key, _, _, _) in enumerate(spec)}
     K = {key: f"가정!$C${r}" for key, r in ROWN.items()}
     for i, (nm, key, v, fm, inp) in enumerate(spec):
@@ -4291,6 +4327,19 @@ with st.sidebar:
                                       if is_rcps(t) else None))/100
         t.ipay = st.number_input(f"{L['ipay']} (개월)", value=float(t.ipay), step=1.0)
         if is_rcps(t):
+            t.div_mode = st.selectbox(
+                "우선배당의 성격", [0, 1], index=int(t.div_mode),
+                format_func=lambda x: ("미지급분을 상환가액에 가산 — 전체 부채 · 배당은 이자비용"
+                                       if x == 0 else
+                                       "발행자 재량 · 상환가액과 무관 — 부채 현금흐름에서 제외"),
+                help="기준서 1032 AG37. 지급되지 않은 배당을 상환금액에 가산하면 금융상품 "
+                     "전체가 부채이고 배당은 이자비용입니다 (보장수익률 − 배당률 산식이 이 "
+                     "경우). 배당이 발행자 재량이고 상환가액과 무관하면 배당은 자본요소의 "
+                     "이익분배라 부채 계산에서 뺍니다.")
+            if t.div_mode == 1 and t.cpn > 0:
+                st.caption(f"배당률 {t.cpn:.2%} 는 조서에 계약 조건으로 남고, 격자와 상환가액 "
+                           "산식에는 **0** 으로 들어갑니다. 회계처리에서 배당은 이익잉여금의 "
+                           "처분입니다.")
             t.mat_mode = st.selectbox(
                 "존속기간 만료 시", [0, 1], index=int(t.mat_mode),
                 format_func=lambda x: ("보통주로 자동전환" if x == 0
@@ -4309,7 +4358,7 @@ with st.sidebar:
             ("발행총액 (원)" if is_rcps(t) else "전자등록총액 (원)"),
             value=float(t.face_total), step=1e8, format="%.0f",
             help="회계처리 탭의 전액 기준 금액을 계산합니다.")
-        st.caption(f"{L['red']} = {100*(1+accrue_rate(t.T+t.elapsed_m/12, t.ytm, t.cpn, t.ytm_cmp)):,.4f}   "
+        st.caption(f"{L['red']} = {100*(1+accrue_rate(t.T+t.elapsed_m/12, t.ytm, eff_cpn(t), t.ytm_cmp)):,.4f}   "
                    + ("계약서의 상환가액 산식과 대조하십시오." if is_rcps(t)
                       else "공시 만기상환율과 대조하십시오."))
 
@@ -5196,7 +5245,7 @@ with tabs[2]:
             if (_i3-_s2) % _pr or _i3 not in _at2: continue
             _hold = _at2[_i3]["E"] + _at2[_i3]["B"]
             _amt = (100*(1 + accrue_rate(_i3*_dtx + t.elapsed_m/12, t.p_yield,
-                                         t.cpn, t.p_cmp))
+                                         eff_cpn(t), t.p_cmp))
                     if t.p_mode == "accrue" else t.p_rate)
             _rat2.append(_amt/max(_hold, 1e-9))
             _rows2.append([_i3, round(t.elapsed_m + _i3*_dtx*12), _amt, _hold,
@@ -5433,7 +5482,7 @@ with tabs[6]:
     r_eir, rows_eir, red, nper = eir_table(t, acc_host(t, full, b0, b1, b2, ca))
     st.dataframe(pd.DataFrame([
         ["주계약 (옵션 없는 사채)", f"{b0:,.2f}"], ["만기상환금액", f"{red:,.2f}"],
-        ["표면이자 (회당)", f"{100*t.cpn*t.ipay/12:,.2f}"], ["상각 횟수", f"{nper}회"],
+        ["표면이자 (회당)", f"{100*eff_cpn(t)*t.ipay/12:,.2f}"], ["상각 횟수", f"{nper}회"],
         ["유효이자율 (연, 이산복리)", f"{r_eir:.2%}"]], columns=["항목", "값"]),
         use_container_width=True, hide_index=True)
     amdf = pd.DataFrame(rows_eir, columns=["회차", "경과연수", "기초 장부금액",

@@ -37,6 +37,13 @@ CASES = [
     ("RCPS · 자동전환 · 전환권 부채", dict(inst="RCPS", issuer_call=1, conv_class="liability")),
     ("RCPS · 자동전환 · GS", dict(inst="RCPS", issuer_call=1, model="GS")),
     ("RCPS · 상환청구권 미분리", dict(inst="RCPS", issuer_call=0, p_sep=0)),
+    # 우선배당이 발행자 재량이면 부채 현금흐름에서 뺀다 (1032 AG37).
+    ("RCPS · 배당 재량 (부채에서 제외)",
+     dict(inst="RCPS", issuer_call=0, div_mode=1, cpn=.02, ytm=.06, ipay=3., ytm_cmp=4,
+          p_mode="accrue", p_yield=.06, p_cmp=4)),
+    ("RCPS · 배당 재량 · 발행자콜",
+     dict(inst="RCPS", issuer_call=1, div_mode=1, cpn=.02, ytm=.06, ipay=3., ytm_cmp=4,
+          p_mode="accrue", p_yield=.06, p_cmp=4, k_prem=.06)),
     ("RCPS · 우선배당 2% · 보장 6%",
      dict(inst="RCPS", issuer_call=1, cpn=.02, ytm=.06, ipay=3., ytm_cmp=4,
           p_mode="accrue", p_yield=.06, p_cmp=4, k_prem=.06)),
