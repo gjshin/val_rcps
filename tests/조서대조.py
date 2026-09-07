@@ -98,6 +98,31 @@ CASES = [
     ("BDT · 표면3% 보장7%",
      dict(put_bdt=1, bdt_sig=.20, cpn=.03, ytm=.07, ipay=6., ytm_cmp=2,
           p_mode="accrue", p_yield=.07)),
+    # ── 실제 발행 사례 — 차바이오텍 2024-05-16 상환전환우선주 ──────────
+    # 공시(주요사항보고서 유상증자결정 2024-05-08, 최초 조건) 그대로 옮긴 조건이다.
+    # 존속기간 만료 시 자동전환 · 발행자 상환권 없음 · 상환청구 2년 후부터 ·
+    # 상환가액 분기복리 1.5% · 리픽싱 7개월 주기 · 하한 70%(12,148원) ·
+    # 우선배당 액면 500원의 1%. 격자가 성긴 검사용이라 노드 간격만 3개월로 둔다.
+    ("차바이오텍 RCPS (2024-05-16 실제 발행조건)",
+     dict(inst="RCPS", mat_mode=0, issuer_call=0, _gap=3.,
+          S0=15647., K0=17354., floor=12148., par=500.,
+          d_issue="2024-05-16", d_base="2024-05-16", d_mat="2029-05-16",
+          cpn=0.01*500/17354., ipay=12., div_mode=0, ytm=0., ytm_cmp=4,
+          cv_s=12., cv_e=59., rfx_mode=2, rfx_cyc=7.,
+          p_s=24., p_e=59., p_f=1., p_mode="accrue", p_yield=.015, p_cmp=4,
+          sig=.3902, face_total=44_499_682_128.,
+          _rf=[(1, .0344), (2, .0342), (3, .0341), (5, .0344)],
+          _cr=[(1, .0870), (2, .1000), (3, .1090), (5, .1160)])),
+    ("차바이오텍 RCPS · 전환권 부채",
+     dict(inst="RCPS", mat_mode=0, issuer_call=0, conv_class="liability", _gap=3.,
+          S0=15647., K0=17354., floor=12148., par=500.,
+          d_issue="2024-05-16", d_base="2024-05-16", d_mat="2029-05-16",
+          cpn=0.01*500/17354., ipay=12., div_mode=0, ytm=0., ytm_cmp=4,
+          cv_s=12., cv_e=59., rfx_mode=2, rfx_cyc=7.,
+          p_s=24., p_e=59., p_f=1., p_mode="accrue", p_yield=.015, p_cmp=4,
+          sig=.3902, face_total=44_499_682_128.,
+          _rf=[(1, .0344), (2, .0342), (3, .0341), (5, .0344)],
+          _cr=[(1, .0870), (2, .1000), (3, .1090), (5, .1160)])),
     ("월 노드 · 리픽싱 7스텝 · GS",
      dict(_gap=1., model="GS", d_issue="2025-05-23", d_base="2025-06-30",
           d_mat="2027-08-23", cv_s=12., cv_e=26., p_s=12., p_e=24.,
@@ -139,12 +164,13 @@ def build(G, over, path):
     T, derive, decompose = G["Terms"], G["derive"], G["decompose"]
     t = T(); t.rf_curve = [(1, .0226), (3, .0240), (5, .0252)]
     t.cr_curve = [(1, .1409), (3, .1740), (5, .1905)]
+    if "_rf" in over: t.rf_curve = over["_rf"]
     # _gap 은 노드 간격만 바꾸는 검사용 키다. 리픽싱 주기가 살아나는
     # 촘촘한 격자를 만들 때 쓴다.
     t.carry = 1; t.gap_m = over.get("_gap", 6.0)
     if "_cr" in over: t.cr_curve = over["_cr"]
     for k, v in over.items():
-        if k not in ("_gap", "_cr"): setattr(t, k, v)
+        if k not in ("_gap", "_cr", "_rf"): setattr(t, k, v)
     derive(t)
     full, b0, b1, b2, ca, conv = decompose(t)
     b3 = G["pick"](G["engine"](t, conv=True, put=True, call=True,
@@ -201,7 +227,10 @@ def main():
             ("부채요소", "C17", "b1"), ("조기상환청구권", "C18", None),
             ("매도청구권 적용값", "C22", "ca")]
     bad = 0
+    # 인자를 주면 이름에 그 글자가 든 케이스만 돌린다. 한 건만 확인할 때 쓴다.
+    only = sys.argv[1] if len(sys.argv) > 1 else ""
     for lbl, over in CASES:
+        if only and only not in lbl: continue
         # 전환권대가는 자본으로 분류할 때만 나온다. 부채면 조서가 빈칸이 맞다.
         ROWS = BASE + ([("전환권대가", "C23", "conv")]
                        if over.get("conv_class", "equity") == "equity" else [])
