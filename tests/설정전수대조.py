@@ -84,6 +84,14 @@ CASES = [
     ("RCPS · 발행자콜", dict(inst="RCPS", issuer_call=1), None),
     ("RCPS · 만료 상환 · 발행자콜", dict(inst="RCPS", mat_mode=1, issuer_call=1), None),
     ("RCPS · 배당 재량", dict(inst="RCPS", issuer_call=0, div_mode=1, cpn=.02), None),
+    ("단리 상환가액", dict(ytm=.08, ytm_cmp=0, p_mode="accrue", p_yield=.08, p_cmp=0), None),
+    ("RCPS · IPO 강제전환",
+     dict(inst="RCPS", ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=800.), None),
+    ("RCPS · IPO 리픽싱만",
+     dict(inst="RCPS", ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=800., ipo_conv=0), None),
+    ("거래원가 5억", dict(issue_cost=5e8),
+     "트랜치·주계약·부채요소·매도청구권은 그대로다. 바뀌는 것은 거래원가 배분표와 "
+     "상각표 출발액이고, 배분 합계와 분개 대차는 매 케이스마다 따로 확인한다."),
     ("조기상환권 미분리", dict(p_sep=0),
      "트랜치·주계약·부채요소·매도청구권은 그대로다. 바뀌는 것은 배분표와 분개이고 "
      "그 둘은 매 케이스마다 따로 확인한다."),
