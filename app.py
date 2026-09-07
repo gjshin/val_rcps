@@ -37,6 +37,9 @@ class Terms:
     prev_deriv: float = -1.0        # 전기말 파생상품부채 장부금액 (100 기준). 음수면 없음
     prev_host: float = -1.0         # 전기말 주계약(부채) 장부금액 (100 기준). 음수면 없음
     issue_cost: float = 0.0         # 발행 거래원가 (원). 1032 문단 38 로 요소별 배분
+    eir_issue: float = -1.0         # 발행일 유효이자율 (연, 이산복리). 음수면 없음
+    cur_periods: int = 0            # 당기 이자 회차 수. 0 이면 12 ÷ 지급주기
+    settle_amt: float = -1.0        # 상환·재매입 지급대가 (100 기준). 음수면 없음
     gap_m: float = 1.0              # 노드 간격 (개월)
     T: float = 5.0                  # 잔존기간 — derive() 가 채운다
     n: int = 60                     # 노드 수 — derive() 가 채운다
@@ -2407,6 +2410,46 @@ def rcps_text(tm: Terms, text: str) -> str:
     return text
 
 
+def amort_year(tm: Terms):
+    """전기말 장부금액을 **발행일 유효이자율**로 당기만큼 굴린다.
+
+    이 앱의 상각표는 평가기준일 배분액에서 출발하므로 최초 인식 평가에만 맞는다.
+    결산 평가에서 필요한 것은 발행일에 정한 유효이자율로 굴려 온 장부금액이라,
+    그 둘(전기말 장부금액·발행일 유효이자율)을 받아 당기 회차를 다시 만든다.
+
+    돌려주는 것은 [(회차, 기초, 유효이자, 지급이자, 기말)] 와 기말 장부금액이다.
+    """
+    if tm.eir_issue < 0 or tm.prev_host < 0: return [], None
+    r = float(tm.eir_issue)
+    per = max(1e-6, tm.ipay/12)
+    c = 100*eff_cpn(tm)*tm.ipay/12
+    k = int(tm.cur_periods) or max(1, int(round(12/max(1e-6, tm.ipay))))
+    rows, bv = [], float(tm.prev_host)
+    for i in range(1, k+1):
+        it = bv*((1+r)**per - 1); end = bv + it - c
+        rows.append((i, bv, it, c, end)); bv = end
+    return rows, bv
+
+
+def settle_split(tm: Terms, liab_fv: float, liab_bv: float):
+    """상환·재매입 대가의 배분 (1032 문단 AG33·AG34).
+
+    > 지급한 대가와 거래원가를 **발행 시점에 배분한 방법과 일관되게** 부채요소와
+    > 자본요소에 배분한다. … 부채요소에 관련된 손익은 **당기손익**, 자본요소와
+    > 관련된 대가는 **자본**으로 인식한다.
+
+    발행 시점과 일관된 방법이란 「부채요소를 먼저 공정가치로 정하고 나머지를
+    자본에 배분」이다 (문단 31·32). 그래서 대가 중 부채 몫은 상환일 부채요소의
+    공정가치이고, 나머지가 자본 몫이다. 부채 장부금액과 부채 몫의 차이가
+    상환손익이다 — 장부금액이 더 크면 이익이다.
+    """
+    if tm.settle_amt < 0: return None
+    pay = float(tm.settle_amt)
+    eq = pay - liab_fv
+    return dict(pay=pay, liab_fv=liab_fv, eq=eq, liab_bv=liab_bv,
+                pl=liab_bv - liab_fv)
+
+
 def remeasure(tm: Terms, rows):
     """기말 재평가. 배분표에서 파생상품부채 줄을 모아 당기 공정가치를 잡고
     전기말 장부금액과 견준다. 부채가 늘면 발행회사에는 평가손실이다.
@@ -2951,6 +2994,51 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         put(E, rj, 4, abs(_pl)/100*fac, fmt=N0, align="right", bold=True)
         put(E, rj+1, 2, "주계약은 발행일 유효이자율로 상각한 장부금액을 쓴다. 이 조서의 상각표는 "
             "평가기준일 배분액에서 출발하므로 최초 인식 평가에만 맞는다.", color=GREY, size=9)
+        tr2 = rj+3
+    # ── 당기 이자비용 — 발행일 유효이자율 ──
+    _ar, _end = amort_year(tm)
+    if _ar:
+        ra = tr2+2
+        sec(E, ra, "당기 이자비용 — 발행일 유효이자율", span=6)
+        for i, h in enumerate(["회차", "기초", "유효이자", "지급이자", "기말"]):
+            put(E, ra+1, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+        for i, row in enumerate(_ar):
+            for j2, v in enumerate(row):
+                put(E, ra+2+i, 2+j2, v, fmt=(N0 if j2 == 0 else N4),
+                    align=("center" if j2 == 0 else "right"), border=True, size=9)
+        rz = ra+2+len(_ar)
+        put(E, rz, 2, "합계", bold=True, fill=BAND, border=True)
+        for j2, v in enumerate([sum(x[2] for x in _ar), sum(x[3] for x in _ar)]):
+            put(E, rz, 4+j2, v, bold=True, fill=BAND, fmt=N4, align="right", border=True)
+        put(E, rz+1, 2, f"전기말 {tm.prev_host:,.4f} → 당기말 {_end:,.4f} · "
+            f"유효이자율 {tm.eir_issue:.4%} · {len(_ar)}회차. 상각표 시트는 평가기준일 "
+            "배분액에서 출발하므로 결산에는 이 표를 쓴다.", color=GREY, size=9)
+        tr2 = rz+3
+    # ── 상환·재매입 대가 배분 (AG33·AG34) ──
+    _hbv = (_end if _ar else (tm.prev_host if tm.prev_host >= 0 else al[0][1]))
+    _ss = settle_split(tm, b1, _hbv)
+    if _ss:
+        rs = tr2+2
+        sec(E, rs, "상환·재매입 대가 배분 (1032 문단 AG33·AG34)", span=5)
+        for i, h in enumerate(["항목", "100 기준", "전액 기준 (원)"]):
+            put(E, rs+1, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+        _pl = _ss["pl"]
+        for i, (k, v) in enumerate([
+                ("지급대가", _ss["pay"]),
+                ("부채 몫 — 상환일 부채요소 공정가치", _ss["liab_fv"]),
+                ("자본 몫 — 잔여", _ss["eq"]),
+                ("부채 장부금액", _ss["liab_bv"]),
+                (("상환이익 (당기손익)" if _pl >= 0 else "상환손실 (당기손익)"), abs(_pl))]):
+            r = rs+2+i
+            put(E, r, 2, k, border=True, bold=(i == 4), fill=(BAND if i == 4 else None))
+            put(E, r, 3, v, fmt=N4, align="right", border=True, bold=(i == 4),
+                fill=(BAND if i == 4 else None))
+            put(E, r, 4, v/100*fac, fmt=N0, align="right", border=True, bold=(i == 4),
+                fill=(BAND if i == 4 else None))
+        put(E, rs+8, 2, "발행 시점과 일관되게 — 부채요소를 먼저 공정가치로 정하고 나머지를 "
+            "자본에 배분한다 (문단 31·32). 부채요소 관련 손익은 당기손익, 자본요소 관련 "
+            "대가는 자본이다 (문단 AG34). 부채 몫은 **상환일**에 다시 잰 값이어야 하므로 "
+            "평가기준일을 상환일로 맞추고 그날 곡선을 넣어야 한다.", color=GREY, size=9)
 
     # ── 상각표 ──
     r_eir, rows_eir, redm, nper = eir
@@ -4333,13 +4421,12 @@ h1{font-size:1.7rem !important;letter-spacing:-.02em}
 [data-testid="stMetricValue"]{font-size:1.9rem}
 </style>""", unsafe_allow_html=True)
 
-# 제목은 상품에 따라 갈린다. Terms 는 아래에서 만들어지므로 세션에서 먼저 본다.
-_L0 = lbl(st.session_state.tm) if "tm" in st.session_state else lbl(Terms())
 HLP_CMP = ("0 이면 **단리**입니다 — 「발행가에 연 X% 단리를 가산」 계약이 적지 않습니다. "
            "1 연복리 · 2 반기 · 4 분기.")
-st.title(f"{_L0['inst']} 평가")
-st.caption("계약조건과 시장자료를 넣으면 이항격자로 옵션을 분리해 계산하고 조서를 엑셀로 내보냅니다. "
-           f"금액은 {_L0['unit']}입니다.")
+# 제목은 상품에 따라 갈리는데 상품은 사이드바에서 정해진다. 사이드바가 아래에서
+# 그려지므로 자리만 잡아 두고 값이 정해진 뒤에 채운다 — 그러지 않으면 시나리오를
+# 불러온 그 순간의 제목이 한 박자 늦는다.
+_HEAD = st.empty()
 
 if "tm" not in st.session_state: st.session_state.tm = Terms()
 if "prices" not in st.session_state: st.session_state.prices = []
@@ -4814,8 +4901,26 @@ with st.sidebar:
                                           value=max(0.0, float(t.prev_host)), step=0.01,
                                           format="%.4f",
                                           help="상각후원가 장부금액. 당기 상각표의 기초와 대조합니다.")
+            _e = st.number_input("발행일 유효이자율 (%)",
+                                 value=(t.eir_issue*100 if t.eir_issue >= 0 else 0.0),
+                                 step=0.1, min_value=0.0, format="%.4f",
+                                 help="**발행 시점 조서**의 상각표에서 역산한 값입니다. "
+                                      "이 앱의 상각표는 평가기준일 배분액에서 출발해 최초 "
+                                      "인식에만 맞으므로, 결산 평가에서는 이 값을 넣어야 "
+                                      "당기 이자비용이 나옵니다.")
+            t.eir_issue = _e/100 if _e > 0 else -1.0
+            t.cur_periods = int(st.number_input(
+                "당기 이자 회차 수", value=int(t.cur_periods), step=1, min_value=0,
+                help=f"0 이면 1년치({max(1, int(round(12/max(1e-6, t.ipay))))}회)로 봅니다."))
         else:
-            t.prev_deriv = -1.0; t.prev_host = -1.0
+            t.prev_deriv = -1.0; t.prev_host = -1.0; t.eir_issue = -1.0
+        _sa = st.number_input(
+            "상환·재매입 지급대가 (100 기준)",
+            value=(t.settle_amt if t.settle_amt >= 0 else 0.0), step=1.0, min_value=0.0,
+            format="%.4f",
+            help="만기 전에 상환하거나 되사는 경우입니다. 0 이면 표시하지 않습니다. "
+                 "대가를 부채·자본에 배분해 상환손익을 냅니다 (1032 문단 AG33·AG34).")
+        t.settle_amt = _sa if _sa > 0 else -1.0
 
     with st.expander("변동성", expanded=True):
         c1, c2 = st.columns([2, 1])
@@ -5154,6 +5259,10 @@ dv = full["GS"]*(1-full["P"]) if t.model == "GS" else full["B"]
 
 c1, c2, c3 = st.columns([2, 1, 1])
 LB = lbl(t)
+with _HEAD.container():
+    st.title(f"{LB['inst']} 평가")
+    st.caption("계약조건과 시장자료를 넣으면 이항격자로 옵션을 분리해 계산하고 조서를 "
+               f"엑셀로 내보냅니다. 금액은 {LB['unit']}입니다.")
 c1.metric(f"{LB['inst']} 공정가치 · {t.model}", f"{b2:,.2f}",
           help=f"{LB['call']} 미반영 기준 (B2). 반영한 값은 구성요소 탭의 B3.")
 c2.metric("지분가치", f"{eq:,.2f}", help="주식으로 받게 될 부분")
@@ -5277,6 +5386,75 @@ with tabs[1]:
         if (st.session_state.get("px_src") or "").startswith("발행가 역산"):
             st.error("주가가 **발행가 역산**값입니다. 기말 재평가에서는 발행가가 기준이 아니므로 "
                      "평가기준일 주가를 직접 넣으십시오.")
+
+    # ── 당기 이자비용 — 발행일 유효이자율로 굴린다 ──
+    _ar, _end = amort_year(t)
+    if _ar:
+        _F = t.face_total/100
+        st.markdown("### 당기 이자비용 — 발행일 유효이자율")
+        st.dataframe(pd.DataFrame(
+            [[i, bv, it, c, end] for i, bv, it, c, end in _ar],
+            columns=["회차", "기초", "유효이자", "지급이자", "기말"]).style.format(
+            {"기초": "{:,.4f}", "유효이자": "{:,.4f}", "지급이자": "{:,.4f}", "기말": "{:,.4f}"}),
+            use_container_width=True, hide_index=True)
+        _ti = sum(x[2] for x in _ar); _tc = sum(x[3] for x in _ar)
+        st.code(rcps_text(t,
+            f"차) 이자비용                    {_ti:>12,.4f}\n"
+            + (f"    대) 현금 (표면이자)             {_tc:>12,.4f}\n" if _tc > 0 else "")
+            + f"    대) 전환사채 (주계약)            {_ti-_tc:>12,.4f}"), language=None)
+        st.caption(f"전기말 {t.prev_host:,.4f} → 당기말 **{_end:,.4f}** "
+                   f"(전액 {_end*_F:,.0f}원). 유효이자율 {t.eir_issue:.4%} · {len(_ar)}회차. "
+                   "이 앱의 상각표(다음 탭)는 평가기준일 배분액에서 출발하므로 결산에는 "
+                   "이 표를 쓰십시오.")
+
+    # ── 전환·상환 시 분개 ──
+    _fvl = remeasure(t, alloc_rows)["fv_liab"]
+    _host_bv = _end if _ar else (t.prev_host if t.prev_host >= 0 else alloc_rows[0][1])
+    with st.expander("전환·상환 시 분개"):
+        st.markdown("**전환될 때** — 기업회계기준서 제1032호 문단 AG32")
+        st.caption("발행자는 부채를 제거하고 자본으로 인식한다. 최초 인식시점의 자본요소는 "
+                   "자본의 다른 항목으로 대체될 수 있지만 계속 자본으로 유지된다. "
+                   "**전환에 따라 인식할 손익은 없다.**")
+        st.code(rcps_text(t,
+            f"차) 전환사채 (주계약)             {_host_bv:>12,.4f}\n"
+            + (f"차) 파생상품부채                 {_fvl:>12,.4f}\n" if _fvl > 1e-9 else "")
+            + (f"차) 전환권대가 (자본)            {conv:>12,.4f}\n"
+               if t.conv_class == "equity" else "")
+            + f"    대) 자본금 + 주식발행초과금       "
+              f"{_host_bv + max(0.0, _fvl) + (conv if t.conv_class == 'equity' else 0):>12,.4f}"),
+            language=None)
+        st.markdown("**상환·재매입될 때** — 문단 AG33 · AG34")
+        st.caption("지급한 대가를 발행 시점과 **일관된 방법**으로 부채요소와 자본요소에 "
+                   "배분한다. 부채요소에 관련된 손익은 당기손익, 자본요소와 관련된 대가는 "
+                   "자본으로 인식한다. 발행 시점의 방법이 「부채요소를 먼저 공정가치로 정하고 "
+                   "나머지를 자본에」이므로, 대가 중 부채 몫은 **상환일 부채요소 공정가치**이고 "
+                   "나머지가 자본 몫이다.")
+        _ss = settle_split(t, b1, _host_bv)
+        if _ss is None:
+            st.info("사이드바 **기말 재평가 · 전기 장부금액 → 상환·재매입 지급대가** 에 "
+                    "지급액을 넣으면 배분표와 분개가 나옵니다.")
+        else:
+            st.dataframe(pd.DataFrame([
+                ["지급대가", _ss["pay"], _ss["pay"]*t.face_total/100],
+                ["부채 몫 — 상환일 부채요소 공정가치", _ss["liab_fv"], _ss["liab_fv"]*t.face_total/100],
+                ["자본 몫 — 잔여", _ss["eq"], _ss["eq"]*t.face_total/100],
+                ["부채 장부금액", _ss["liab_bv"], _ss["liab_bv"]*t.face_total/100],
+                [("상환이익 (장부 > 부채 몫)" if _ss["pl"] >= 0 else "상환손실"),
+                 abs(_ss["pl"]), abs(_ss["pl"])*t.face_total/100]],
+                columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
+                {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
+                use_container_width=True, hide_index=True)
+            _pl = _ss["pl"]
+            st.code(rcps_text(t,
+                f"차) 전환사채 (주계약)             {_ss['liab_bv']:>12,.4f}\n"
+                f"차) 자본 (전환권대가 등)          {_ss['eq']:>12,.4f}\n"
+                + (f"차) 상환손실                    {-_pl:>12,.4f}\n" if _pl < 0 else "")
+                + f"    대) 현금                       {_ss['pay']:>12,.4f}\n"
+                + (f"    대) 상환이익                   {_pl:>12,.4f}" if _pl > 0 else "")),
+                language=None)
+            st.caption("부채 몫은 상환일에 다시 잰 부채요소 공정가치입니다 — 지금 화면의 "
+                       f"부채요소 **{b1:,.4f}** 를 씁니다. 평가기준일을 상환일로 맞추고 "
+                       "그날 곡선을 넣으셔야 맞습니다.")
 
 with tabs[2]:
     st.write("조기상환청구권과 매도청구권을 **주계약과 분리해야 하는지**를 계약 "
