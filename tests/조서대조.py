@@ -59,6 +59,17 @@ CASES = [
     # 거래원가 (1032 문단 38)
     ("거래원가 5억", dict(issue_cost=5e8)),
     ("거래원가 · RCPS 발행자콜", dict(inst="RCPS", issuer_call=1, issue_cost=5e8)),
+    # IPO 조항 (책 [사례 5-5]) — 상장 스텝에서 조건부 리픽싱 + 강제전환
+    ("RCPS · IPO 24개월 · 강제전환",
+     dict(inst="RCPS", ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=800.)),
+    ("RCPS · IPO · 강제전환 안 함",
+     dict(inst="RCPS", ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=800., ipo_conv=0)),
+    ("RCPS · IPO · 발행자콜",
+     dict(inst="RCPS", issuer_call=1, ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=800.)),
+    ("RCPS · IPO · GS",
+     dict(inst="RCPS", model="GS", ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=800.)),
+    ("RCPS · IPO · 전환권 부채",
+     dict(inst="RCPS", conv_class="liability", ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=800.)),
     ("조기상환권 미분리", dict(p_sep=0)),
     ("조기상환권 미분리 · 방법1", dict(p_sep=0, k_method=1)),
     ("조기상환권 미분리 · 콜 내재파생 (스위치 꺼짐)", dict(p_sep=0, k_sep=0)),

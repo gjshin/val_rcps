@@ -40,6 +40,13 @@ class Terms:
     eir_issue: float = -1.0         # 발행일 유효이자율 (연, 이산복리). 음수면 없음
     cur_periods: int = 0            # 당기 이자 회차 수. 0 이면 12 ÷ 지급주기
     settle_amt: float = -1.0        # 상환·재매입 지급대가 (100 기준). 음수면 없음
+    # ── IPO 조항 (책 [사례 5-5]) ─────────────────────────────
+    ipo_on: int = 0                 # 상장 조항을 격자에 넣는가
+    ipo_m: float = 24.0             # 예상 상장 시점 (발행일 기준 개월)
+    ipo_px: float = 0.0             # 공모가액 (원)
+    ipo_mult: float = 0.70          # 공모가 배수 — 조정후 전환가격 = 공모가 × 배수
+    ipo_min: float = 0.0            # 최소공모가격 (원). 주가가 이 밑이면 상장 무산
+    ipo_conv: int = 1               # 상장하면 보통주로 강제전환하는가
     gap_m: float = 1.0              # 노드 간격 (개월)
     T: float = 5.0                  # 잔존기간 — derive() 가 채운다
     n: int = 60                     # 노드 수 — derive() 가 채운다
@@ -437,7 +444,16 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
     call_a = lambda i: (kstrike(i) if (call and in_set(i, tm.k_s, tm.k_e, tm.k_f))
                         else math.inf)
     conv_ok = lambda i: conv and st_lo(cs) <= i <= st_hi(tm.cv_e)
-    exact = (tm.rfx_mode > 0 and tm.carry == 0)
+    # ── IPO (책 [사례 5-5]) ──
+    # 상장은 특정 스텝에서 조건부로 전환가격을 자르는 사건이다. 상장 성공 여부는
+    # 그 노드의 주가로 판정한다 — 최소공모가격에 못 미치면 상장 자체가 무산되므로
+    # 조정도 없다. 강제전환은 만기 자동전환과 같은 규칙으로 전환권이 있는 격자에서만
+    # 탄다 (전환권을 뺀 부채는 주식이 될 수 없다).
+    ipo_i = (st_lo(tm.ipo_m) if (int(tm.ipo_on) and tm.ipo_px > 0) else -1)
+    ipo_k = tm.ipo_px*tm.ipo_mult
+    ipo_hit = lambda i, j: (i == ipo_i and 0 < i <= n and S(i, j) > tm.ipo_min)
+    ipo_adj = lambda i, j, k: (clip(min(k, ipo_k)) if ipo_hit(i, j) else k)
+    exact = ((tm.rfx_mode > 0 or ipo_i > 0) and tm.carry == 0)
 
     # 도달확률. 위험중립가중치 q 가 구간마다 다르므로 이항계수 한 방에 셀 수
     # 없다. COMBIN(i,j)·q^j·(1−q)^(i−j) 는 q 가 모든 구간에서 같을 때만 맞고,
@@ -460,19 +476,22 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
             row = []
             for j in range(i+1):
                 if tm.rfx_mode == 0:
-                    row.append(tm.K0); continue
-                if is_rfx(i):
+                    kv = Kg[i-1][min(j, i-1)]        # 주기 조정이 없으면 그대로 이월
+                elif is_rfx(i):
                     base = S(i, j) if tm.rfx_mode == 2 else min(Kg[i-1][min(j, i-1)], S(i, j))
-                    row.append(clip(base)); continue
-                up = Kg[i-1][j-1] if j-1 >= 0 else None
-                dn = Kg[i-1][j] if j <= i-1 else None
-                if up is None: row.append(dn); continue
-                if dn is None: row.append(up); continue
-                if tm.carry == 3: row.append(dn)
-                elif tm.carry == 2: row.append(up*q + dn*(1-q))
+                    kv = clip(base)
                 else:
-                    wu, wd = Preach[i-1][j-1]*q, Preach[i-1][j]*(1-q)
-                    row.append((up*wu + dn*wd)/(wu+wd) if wu+wd > 0 else dn)
+                    up = Kg[i-1][j-1] if j-1 >= 0 else None
+                    dn = Kg[i-1][j] if j <= i-1 else None
+                    if up is None: kv = dn
+                    elif dn is None: kv = up
+                    elif tm.carry == 3: kv = dn
+                    elif tm.carry == 2: kv = up*q + dn*(1-q)
+                    else:
+                        wu, wd = Preach[i-1][j-1]*q, Preach[i-1][j]*(1-q)
+                        kv = (up*wu + dn*wd)/(wu+wd) if wu+wd > 0 else dn
+                # 상장하면 공모가 × 배수로 자른다. 낮아질 때만 조정된다.
+                row.append(ipo_adj(i, j, kv))
             Kg.append(row)
 
     memo = {}
@@ -515,11 +534,23 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
             else:
                 o = dict(E=0.0, B=cash, V=cash, P=0.0, kind="mat",
                          hold=red, cv=cv, K=KK)
+        elif conv and int(tm.ipo_conv) and ipo_hit(i, j):
+            # 상장하면 보통주가 된다. 그 자리에서 주식으로 끝난다 — 상환청구권도
+            # 발행자 상환권도 함께 사라진다. 받는 것은 주식이라 그날 배당은 없다.
+            KK = K if exact else Kg[i][j]
+            cv = 100*S(i, j)/KK
+            o = dict(E=cv, B=0.0, V=cv, P=1.0, kind="ipo", hold=cv, cv=cv, K=KK)
+            memo[key] = o
+            return o
         else:
             def nk(s):
-                if tm.rfx_mode == 0: return tm.K0
-                if not is_rfx(i+1): return K
-                return clip(s) if tm.rfx_mode == 2 else clip(min(K, s))
+                if tm.rfx_mode == 0: k2 = K
+                elif not is_rfx(i+1): k2 = K
+                else: k2 = clip(s) if tm.rfx_mode == 2 else clip(min(K, s))
+                # 자식이 상장 스텝이고 그 주가가 최소공모가격을 넘으면 자른다.
+                if i+1 == ipo_i and s > tm.ipo_min and ipo_k > 0:
+                    k2 = clip(min(k2, ipo_k))
+                return k2
             KU = nk(S(i, j)*u) if exact else Kg[i+1][j+1]
             KD = nk(S(i, j)*d) if exact else Kg[i+1][j]
             ku = (i+1, j+1, round(KU, 6)) if exact else (i+1, j+1)
@@ -566,7 +597,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
             o = memo.get(key)
             if o is None: continue
             if i > 0 and o["kind"] != "hold":
-                if o["kind"] in ("conv", "auto"): dist["conv"] += p_; dist["tc"] += p_*i
+                if o["kind"] in ("conv", "auto", "ipo"): dist["conv"] += p_; dist["tc"] += p_*i
                 elif o["kind"] == "put": dist["put"] += p_; dist["tp"] += p_*i
                 elif o["kind"] == "call": dist["call"] += p_; dist["tk"] += p_*i
                 continue
@@ -835,6 +866,28 @@ def decompose(tm: Terms):
     else:
         resid = 100 - b1 + ca      # 전환권이 자본일 때의 잔여 (전환권대가)
     return full, b0, b1, b2, ca, resid
+
+def ipo_scenarios(tm: Terms, months=None):
+    """상장 시점을 바꿔 가며 값을 낸다.
+
+    예상 상장 시점은 **가정**이다. 한 값만 내면 그 가정이 조서에서 사라지므로,
+    여러 시점과 「상장 없음」을 나란히 실어 감사인이 폭을 보게 한다.
+    """
+    if not (is_rcps(tm) and tm.ipo_on and tm.ipo_px > 0): return []
+    base = [float(tm.ipo_m)] + [float(tm.ipo_m)+12, float(tm.ipo_m)+24]
+    months = months if months is not None else sorted({m for m in base
+                                                       if 0 < m < tm.T*12 + tm.elapsed_m})
+    out = []
+    for m in list(months) + [None]:
+        t2 = Terms(**asdict(tm))
+        if m is None: t2.ipo_on = 0
+        else: t2.ipo_m = m
+        derive(t2)
+        full, b0, b1, b2, ca, conv = decompose(t2)
+        out.append(("상장 없음" if m is None else f"{m:,.0f}개월 상장",
+                    b2, b2-ca, conv, (b2 - (out[0][1] if out else b2))))
+    return out
+
 
 def backsolve(tm: Terms, target: float = None, lo: float = None, hi: float = None):
     """발행가로 주가를 역산한다 (책 [사례 5-1] TF모형 with Backsolve).
@@ -2617,7 +2670,15 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         ("보장 복리", ("단리" if int(tm.ytm_cmp) <= 0 else f"연 {int(tm.ytm_cmp)}회 복리"), None),
         ("만기상환금액", red, N2)]),
       ("3. 전환가액 조정", [("조정 방식", ["조정 없음", "하향만", "하향+상향"][tm.rfx_mode], None),
-        ("조정 주기 (개월)", tm.rfx_cyc, N0), ("최저 조정가액", tm.floor, N2), ("액면가", tm.par, N2)]),
+        ("조정 주기 (개월)", tm.rfx_cyc, N0), ("최저 조정가액", tm.floor, N2), ("액면가", tm.par, N2)]
+        + ([("IPO 조항", "반영" if tm.ipo_on and tm.ipo_px > 0 else "없음", None)]
+           + ([("예상 상장 시점 (개월)", tm.ipo_m, N0),
+               ("공모가액", tm.ipo_px, N2), ("공모가 배수", tm.ipo_mult, P2),
+               ("조정후 전환가격", tm.ipo_px*tm.ipo_mult, N2),
+               ("최소공모가격", tm.ipo_min, N2),
+               ("상장 시 강제전환", "예" if tm.ipo_conv else "아니오", None)]
+              if (tm.ipo_on and tm.ipo_px > 0) else [])
+           if is_rcps(tm) else [])),
       ("4. 옵션", [("전환 시작 / 종료 (개월)", tm.cv_s, N0), ("　", tm.cv_e, N0),
         ("조기상환 시작 / 종료 / 주기", tm.p_s, N0), ("　", tm.p_e, N0), ("　 ", tm.p_f, N0),
         ("조기상환 행사금액 산정", "보장수익률 복리" if tm.p_mode == "accrue" else "고정률", None),
@@ -2699,7 +2760,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         T08 = newsheet("08 의사결정", "⑧ 의사결정트리  전환 · 상환P · 상환C · 보유",
             "위쪽은 전환, 아래쪽은 상환이 몰린다. 매도청구는 중간 띠에 나타난다.", "04 · 07")
         lab = {"conv": "전환", "put": "상환P", "call": "상환C", "hold": "보유",
-               "mat": "만기상환", "auto": "자동전환"}
+               "mat": "만기상환", "auto": "자동전환", "ipo": "상장전환"}
         fill_tree(T08, lambda i, r: (lab.get(node(i, r)["kind"], "") if node(i, r) else None), txt=True)
 
         T09 = newsheet("09 금융상품가치", "⑨ 금융상품가치트리 = 지분가치 + 부채가치",
@@ -2853,6 +2914,21 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         put(R, 6+i, 4, dv if dv is not None else "", bold=last, fill=fl, fmt=N2,
             align="right", border=True)
         put(R, 6+i, 5, nm, bold=last, fill=fl, border=True)
+    _sc = ipo_scenarios(tm)
+    if _sc:
+        rr2 = 36
+        sec(R, rr2, "4. 상장 시점 가정", span=5)
+        for i, h in enumerate(["가정", "전체 (B2)", "발행자 상환권 반영 (B3)", "전환권대가"]):
+            put(R, rr2+1, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+        for i, (nm, v, v3, cvv, _d) in enumerate(_sc):
+            put(R, rr2+2+i, 2, nm, border=True, bold=(i == 0),
+                fill=(BAND if i == 0 else None))
+            for j2, x in enumerate([v, v3, cvv]):
+                put(R, rr2+2+i, 3+j2, x, fmt=N2, align="right", border=True,
+                    bold=(i == 0), fill=(BAND if i == 0 else None))
+        put(R, rr2+2+len(_sc), 2, "예상 상장 시점은 가정이다. 첫 줄이 조서에 쓴 가정이고 "
+            "나머지는 폭을 보이려고 함께 싣는다. 상장 성공 여부는 그 노드의 주가가 "
+            "최소공모가격을 넘는지로 판정한다 (책 [사례 5-5]).", color=GREY, size=9)
     if is_rcps(tm) and tm.issuer_call and ca > 0:
         put(R, 10, 2, f"발행자 상환권을 전환권 없는 부채 격자에서 재면 {full.get('ca_debt', 0.0):,.4f} 다. "
             "부채요소·전환권대가 배분에는 이 값을 쓴다 (1032 문단 31 — 비자본 파생 특성은 "
@@ -3279,6 +3355,16 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         # 존속기간 만료 시 보통주 자동전환. 만기 노드 수식이 모두 이 셀을 보므로
         # 엑셀에서 바꿔도 따라온다. CB 는 0 이다.
         ("존속기간 만료 시 자동전환 (1/0)", "auto", 1 if auto_conv(tm) else 0, N0, True),
+        # IPO 조항 (책 [사례 5-5]). 상장 스텝은 격자 구조가 아니라 조건이라
+        # 엑셀에서 바꿔도 트리가 따라온다.
+        ("IPO 반영 (1/0)", "ipoon",
+         1 if (is_rcps(tm) and tm.ipo_on and tm.ipo_px > 0) else 0, N0, True),
+        ("상장 스텝", "ipos", stp_lo(tm.ipo_m), N0, True),
+        ("공모가액", "ipopx", tm.ipo_px, N2, True),
+        ("공모가 배수", "ipomul", tm.ipo_mult, P2, True),
+        ("조정후 전환가격", "ipok", "@=C{ipopx}*C{ipomul}", N2, False),
+        ("최소공모가격", "ipomin", tm.ipo_min, N2, True),
+        ("상장 시 강제전환 (1/0)", "ipocv", int(tm.ipo_conv), N0, True),
         ("매도청구권 평가방법 (0 유무가치 / 1 혼합할인율 / 2 지분·부채 분리)",
          "kmeth", tm.k_method, N0, False),
         ("조기상환권 처리 (1 분리 / 0 부채요소에 포함)", "psep", int(tm.p_sep), N0, True),
@@ -3475,7 +3561,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
                   f"/({uP}*{Lp}$16+{dP}*{Lp}$17)")
             m2 = f"({up}*{Lp}$16+{dn}*{Lp}$17)"
             carry = f"IF({K['mth']}=1,{m1},IF({K['mth']}=2,{m2},{dn}))"
-        return f"=IF({K['rfx']}=0,{K['K0']},IF({L}$6=1,{clip},{carry}))"
+        # 주기 조정이 없으면 이월만 한다 (IPO 조정은 그 위에 걸린다).
+        nrm = f"IF({K['rfx']}=0,{carry or K['K0']},IF({L}$6=1,{clip},{carry}))"
+        # 상장 스텝이고 그 주가가 최소공모가격을 넘으면 공모가 × 배수로 자른다.
+        # 낮아질 때만 조정되고, 최저 조정가액·액면가 하한이 그대로 걸린다.
+        hit = (f"AND({K['ipoon']}=1,{L}$2={K['ipos']},"
+               f"{Q(S1)}!{L}{R0+r}>{K['ipomin']})")
+        return (f"=IF({hit},MIN(MAX(MIN({nrm},{K['ipok']}),{K['flr']},{K['par']}),"
+                f"{K['cap']}),{nrm})")
     fill(W, kf, N2)
 
     W = newsheet(S3, "③ 전환비율트리  100 ÷ 전환가격", "받게 될 주식 수다.", S2)
@@ -3510,10 +3603,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         # 열려 있으면 그 금액(+배당)과 견줘 큰 쪽이다. CASH 는 그 상환 갈래다.
         AU = K["auto"]
         CASH = lambda L: f"IF({L}$7>0,{L}$7+{L}$9,0)"
-        _CV = lambda L, r: (f'OR({Q(S9)}!{L}{R0+r}="전환",{Q(S9)}!{L}{R0+r}="자동전환")')
+        _CV = lambda L, r: (f'OR({Q(S9)}!{L}{R0+r}="전환",{Q(S9)}!{L}{R0+r}="자동전환",'
+                            f'{Q(S9)}!{L}{R0+r}="상장전환")')
+        # 상장 스텝에서 주가가 최소공모가격을 넘으면 그 자리에서 주식이 된다.
+        _IPO = lambda L, r: (f"AND({K['ipoon']}=1,{K['ipocv']}=1,{L}$2={K['ipos']},"
+                             f"{L}$2>0,{Q(S1)}!{L}{R0+r}>{K['ipomin']})")
         fill(W, lambda i, r, L, Lp, Ln: (
             f'=IF({_CV(L, r)},{Q(S4)}!{L}{R0+r},0)' if i == n else
-            f'=IF({Q(S9)}!{L}{R0+r}="전환",{Q(S4)}!{L}{R0+r},'
+            f'=IF({_CV(L, r)},{Q(S4)}!{L}{R0+r},'
             f'IF(OR({Q(S9)}!{L}{R0+r}="상환P",{Q(S9)}!{L}{R0+r}="상환C"),0,'
             f'({Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17)*EXP(-{L}$11*{K["dt"]})))'))
 
@@ -3523,7 +3620,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         fill(W, lambda i, r, L, Lp, Ln: (
             f'=IF({_CV(L, r)},0,IF({AU}=1,{L}$7+{L}$9,MAX({L}$7,{L}$10)+{L}$9))' if i == n else
             f'=IF({Q(S9)}!{L}{R0+r}="상환P",{L}$7,IF({Q(S9)}!{L}{R0+r}="상환C",{L}$8,'
-            f'IF({Q(S9)}!{L}{R0+r}="전환",0,'
+            f'IF({_CV(L, r)},0,'
             f'({Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17)*EXP(-{L}$12*{K["dt"]})+{L}$9)))'))
 
         W = newsheet(S7, "⑦ 보유가치트리",
@@ -3542,7 +3639,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         fill(W, lambda i, r, L, Lp, Ln: (
              f"=IF({AU}=1,MAX({Q(S4)}!{L}{R0+r},{CASH(L)}),"
              f"MAX({Q(S7)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7+{L}$9))" if i == n else
-             f"=MAX({Q(S7)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7)"))
+             f"=IF({_IPO(L, r)},{Q(S4)}!{L}{R0+r},"
+             f"MAX({Q(S7)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7))"))
 
         W = newsheet(S9, "⑨ 의사결정트리",
                      f"전환가치·조기상환금액·보유가치를 직접 견준다. {KW0} 트랜치라 "
@@ -3554,7 +3652,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
              f'IF({L}$7>={Q(S7)}!{L}{R0+r}-{TOLX},"상환P","보유"))')
         fill(W, lambda i, r, L, Lp, Ln: (
              f'=IF({AU}=1,IF({Q(S4)}!{L}{R0+r}>={CASH(L)}+{TOLX},"자동전환","상환P"),'
-             f'{_DEC(L, r)})' if i == n else f"={_DEC(L, r)}"), txt=True)
+             f'{_DEC(L, r)})' if i == n else
+             f'=IF({_IPO(L, r)},"상장전환",{_DEC(L, r)})'), txt=True)
 
     W = newsheet(S10, "⑩ 주계약가치트리  옵션이 전혀 없는 순수 사채",
                  "주가와 무관하므로 같은 열의 값이 모두 같다.", "가정")
@@ -3593,7 +3692,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         fill(W, lambda i, r, L, Lp, Ln: (
              f"=IF({K['auto']}=1,MAX({Q(S4)}!{L}{R0+r},IF({L}$7>0,{L}$7+{L}$9,0)),"
              f"MAX({Q(S13)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7+{L}$9))" if i == n else
-             f"=MAX({Q(S13)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7)"))
+             f"=IF(AND({K['ipoon']}=1,{K['ipocv']}=1,{L}$2={K['ipos']},{L}$2>0,"
+             f"{Q(S1)}!{L}{R0+r}>{K['ipomin']}),{Q(S4)}!{L}{R0+r},"
+             f"MAX({Q(S13)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7))"))
 
     if _need15:
         # ── 15 트랜치 ──
@@ -3658,16 +3759,21 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
                         continue
                     e = f"({Ln}{c2+1+r}*{L}$16+{Ln}{c2+2+r}*{L}$17)*EXP(-{L}$11*{K['dt']})"
                     b = f"({Ln}{c3+1+r}*{L}$16+{Ln}{c3+2+r}*{L}$17)*EXP(-{L}$12*{K['dt']})"
+                    _ip = (f"AND({K['ipoon']}=1,{K['ipocv']}=1,{L}$2={K['ipos']},"
+                           f"{L}$2>0,{Q(S1)}!{L}{R0+r}>{K['ipomin']})")
+                    _cvx = f'OR({L}{c6+1+r}="전환",{L}{c6+1+r}="상장전환")'
                     p(c4, f"={e}+{b}+{L}$9")
-                    p(c5, f"=IF({L}$5=1,MAX(MIN({L}{c4+1+r},{L}$8),{L}{c1+1+r},{L}$7),"
-                          f"MAX({L}{c4+1+r},{L}{c1+1+r},{L}$7))")
-                    p(c6, f'=IF({L}{c1+1+r}>=MAX({L}$7,MIN({L}{c4+1+r},{L}$8))+{TOLX},"전환",'
+                    p(c5, f"=IF({_ip},{L}{c1+1+r},"
+                          f"IF({L}$5=1,MAX(MIN({L}{c4+1+r},{L}$8),{L}{c1+1+r},{L}$7),"
+                          f"MAX({L}{c4+1+r},{L}{c1+1+r},{L}$7)))")
+                    p(c6, f'=IF({_ip},"상장전환",'
+                          f'IF({L}{c1+1+r}>=MAX({L}$7,MIN({L}{c4+1+r},{L}$8))+{TOLX},"전환",'
                           f'IF({L}$7>=MIN({L}{c4+1+r},{L}$8)-{TOLX},"상환P",'
-                          f'IF({L}{c4+1+r}<={L}$8+{TOLX},"보유","상환C")))', tx=True)
-                    p(c2, f'=IF({L}{c6+1+r}="전환",{L}{c1+1+r},'
+                          f'IF({L}{c4+1+r}<={L}$8+{TOLX},"보유","상환C"))))', tx=True)
+                    p(c2, f'=IF({_cvx},{L}{c1+1+r},'
                           f'IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),0,{e}))')
                     p(c3, f'=IF({L}{c6+1+r}="상환P",{L}$7,IF({L}{c6+1+r}="상환C",{L}$8,'
-                          f'IF({L}{c6+1+r}="전환",0,{b}+{L}$9)))')
+                          f'IF({_cvx},0,{b}+{L}$9)))')
         else:
             # ⑪~⑭ 와 같은 순서지만 트랜치 자신의 헤더와 전환가치를 쓴다.
             c7 = blk("[GS] 전환확률")
@@ -3690,8 +3796,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
                     else:
                         p(c9, f"={Ln}{c10+1+r}*{L}$16*EXP(-{Ln}{c8+1+r}*{K['dt']})"
                               f"+{Ln}{c10+2+r}*{L}$17*EXP(-{Ln}{c8+2+r}*{K['dt']})+{L}$9")
-                        p(c10, f"=IF({L}$5=1,MAX(MIN({L}{c9+1+r},{L}$8),{L}{c1+1+r},{L}$7),"
-                               f"MAX({L}{c9+1+r},{L}{c1+1+r},{L}$7))")
+                        p(c10, f"=IF(AND({K['ipoon']}=1,{K['ipocv']}=1,{L}$2={K['ipos']},"
+                               f"{L}$2>0,{Q(S1)}!{L}{R0+r}>{K['ipomin']}),{L}{c1+1+r},"
+                               f"IF({L}$5=1,MAX(MIN({L}{c9+1+r},{L}$8),{L}{c1+1+r},{L}$7),"
+                               f"MAX({L}{c9+1+r},{L}{c1+1+r},{L}$7)))")
                         p(c7, f"=IF({L}{c10+1+r}={L}{c1+1+r},1,"
                               f"IF(OR({L}{c10+1+r}={L}$7,{L}{c10+1+r}={L}$8),0,"
                               f"{Ln}{c7+1+r}*{L}$16+{Ln}{c7+2+r}*{L}$17))", N4)
@@ -4573,7 +4681,40 @@ with st.sidebar:
                                   format_func=lambda i: ["조정 없음", "하향만", "하향 + 상향"][i])
         t.rfx_cyc = st.number_input("조정 주기 (개월)", value=float(t.rfx_cyc), step=1.0)
         t.floor = st.number_input("최저 조정가액 (원)", value=float(t.floor), step=1.0)
-        t.par = st.number_input("액면가 (원)", value=float(t.par), step=100.0)
+        t.par = st.number_input(("액면가 (원)" if not is_rcps(t) else "액면가 (원) — 조정 하한"),
+                                value=float(t.par), step=100.0)
+        if is_rcps(t):
+            st.divider()
+            st.markdown("**IPO 조항**")
+            t.ipo_on = int(st.checkbox(
+                "상장 조항을 격자에 넣는다", value=bool(t.ipo_on),
+                help="국내 RCPS 계약에 거의 빠짐없이 들어갑니다 — 상장 시 보통주 "
+                     "자동전환과 공모가 연동 전환가격 조정. 책 [사례 5-5] 의 산식을 씁니다."))
+            if t.ipo_on:
+                t.ipo_m = st.number_input("예상 상장 시점 (개월)", value=float(t.ipo_m),
+                                          step=1.0, min_value=1.0,
+                                          help="발행일 기준입니다. **가정**이므로 여러 시점을 "
+                                               "돌려 조서에 나란히 싣는 편이 정직합니다.")
+                t.ipo_px = st.number_input("공모가액 (원)", value=float(t.ipo_px), step=100.0,
+                                           min_value=0.0)
+                t.ipo_mult = st.number_input("공모가 배수 (%)", value=t.ipo_mult*100,
+                                             step=5.0, min_value=1.0)/100
+                t.ipo_min = st.number_input("최소공모가격 (원)", value=float(t.ipo_min),
+                                            step=100.0, min_value=0.0,
+                                            help="그 시점 주가가 이 값에 못 미치면 **상장 자체가 "
+                                                 "무산**된 것으로 봅니다. 격자가 노드마다 주가를 "
+                                                 "가지고 있으므로 상장 확률을 따로 넣지 않습니다.")
+                t.ipo_conv = int(st.checkbox("상장하면 보통주로 강제전환", value=bool(t.ipo_conv),
+                                             help="상장 요건상 우선주를 남겨 둘 수 없어 대부분 "
+                                                  "강제전환입니다. 그 자리에서 주식으로 끝나므로 "
+                                                  "상환청구권도 발행자 상환권도 함께 사라집니다."))
+                if t.ipo_px > 0:
+                    st.caption(f"조정후 전환가격 = {t.ipo_px:,.0f} × {t.ipo_mult:.0%} = "
+                               f"**{t.ipo_px*t.ipo_mult:,.0f}원** (지금 전환가액 {t.K0:,.0f}원보다 "
+                               + ("낮아 조정됩니다" if t.ipo_px*t.ipo_mult < t.K0 else "높아 조정되지 않습니다")
+                               + "). 최저 조정가액·액면가 하한이 그대로 걸립니다.")
+                else:
+                    st.warning("공모가액이 0 이라 IPO 조항이 작동하지 않습니다.")
 
     with st.expander(L["put"]):
         t.p_s = st.number_input("시작 (개월)", value=float(t.p_s), step=1.0, key="ps")
@@ -5283,6 +5424,19 @@ with tabs[0]:
         columns=["단계", "가치", "차액", "해당 옵션"])
     st.dataframe(df.style.format({"가치": "{:,.2f}", "차액": "{:+,.2f}"}, na_rep="—"),
                  use_container_width=True, hide_index=True)
+    _sc = ipo_scenarios(t)
+    if _sc:
+        st.markdown("### 상장 시점 가정")
+        st.dataframe(pd.DataFrame(
+            [[nm, v, v3, cvv, d] for nm, v, v3, cvv, d in _sc],
+            columns=["가정", "전체 (B2)", "발행자 상환권 반영 (B3)", "전환권대가", "기준 대비"]
+            ).style.format({"전체 (B2)": "{:,.4f}", "발행자 상환권 반영 (B3)": "{:,.4f}",
+                            "전환권대가": "{:,.4f}", "기준 대비": "{:+,.4f}"}),
+            use_container_width=True, hide_index=True)
+        st.caption("예상 상장 시점은 **가정**입니다. 한 값만 싣지 말고 이 표를 조서에 함께 "
+                   "넣으십시오 — 감사인이 반드시 묻는 질문의 답이 그 안에 있습니다. "
+                   "상장 성공 여부는 그 노드의 주가가 최소공모가격을 넘는지로 판정하므로 "
+                   "상장 확률을 따로 넣지 않습니다 (책 [사례 5-5]).")
     if is_rcps(t) and t.issuer_call and ca > 0:
         st.info(f"발행자 상환권을 **전환권 없는 부채 격자**에서 재면 **{full.get('ca_debt', 0.0):,.4f}** "
                 f"입니다. 부채요소·전환권대가 배분은 이 값을 씁니다 — 기준서 1032 문단 31 은 "
@@ -5760,7 +5914,7 @@ with tabs[5]:
     for k, v in full["memo"].items():
         kk = (k[0], k[1])
         if kk not in idx: idx[kk] = v
-    code_map = {"conv": 1, "auto": 1, "put": 2, "call": 3, "hold": 4, "mat": 5}
+    code_map = {"conv": 1, "auto": 1, "ipo": 1, "put": 2, "call": 3, "hold": 4, "mat": 5}
     grid = np.full((n+1, n+1), np.nan)
     for (i, j), o in idx.items():
         if j <= i: grid[n-j, i] = code_map[o["kind"]]
