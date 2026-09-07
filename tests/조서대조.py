@@ -51,6 +51,14 @@ CASES = [
      dict(inst="RCPS", issuer_call=1, _gap=1., d_issue="2025-05-23", d_base="2025-06-30",
           d_mat="2027-08-23", cv_s=12., cv_e=20., p_s=12., p_e=24., k_s=6., k_e=18.,
           rfx_cyc=7.)),
+    # 단리 상환가액 — 복리 횟수 0
+    ("단리 · 보장 8%", dict(ytm=.08, ytm_cmp=0, p_mode="accrue", p_yield=.08, p_cmp=0,
+                          k_prem=.08, k_cmp=0)),
+    ("단리 · 표면 2%", dict(cpn=.02, ipay=3., ytm=.08, ytm_cmp=0, p_mode="accrue",
+                         p_yield=.08, p_cmp=0)),
+    # 거래원가 (1032 문단 38)
+    ("거래원가 5억", dict(issue_cost=5e8)),
+    ("거래원가 · RCPS 발행자콜", dict(inst="RCPS", issuer_call=1, issue_cost=5e8)),
     ("조기상환권 미분리", dict(p_sep=0)),
     ("조기상환권 미분리 · 방법1", dict(p_sep=0, k_method=1)),
     ("조기상환권 미분리 · 콜 내재파생 (스위치 꺼짐)", dict(p_sep=0, k_sep=0)),

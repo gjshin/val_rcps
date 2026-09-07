@@ -36,6 +36,7 @@ class Terms:
     bs_target: float = 100.0        # 발행가 역산(Backsolve) 목표 — 발행가 100 기준
     prev_deriv: float = -1.0        # 전기말 파생상품부채 장부금액 (100 기준). 음수면 없음
     prev_host: float = -1.0         # 전기말 주계약(부채) 장부금액 (100 기준). 음수면 없음
+    issue_cost: float = 0.0         # 발행 거래원가 (원). 1032 문단 38 로 요소별 배분
     gap_m: float = 1.0              # 노드 간격 (개월)
     T: float = 5.0                  # 잔존기간 — derive() 가 채운다
     n: int = 60                     # 노드 수 — derive() 가 채운다
@@ -104,11 +105,26 @@ def accrue_rate(t_year: float, g: float, c: float, m: int) -> float:
     수익률을 채워 주려고 **더** 얹는 돈이라 음수가 될 수 없다 — 이미 지급한
     이자를 만기에 되돌려 받는 계약은 없다. 그래서 0 에서 끊는다. 그런
     입력은 애초에 잘못이므로 validate() 가 따로 경고한다.
+
+    복리 횟수 m 이 0 이면 **단리**다. 「발행가에 연 X% 단리를 가산」이라고 쓴
+    계약이 적지 않다. 그때 할증금은 (g − c)·t 로, 이미 지급한 이자만 빼면 된다.
     """
     if t_year <= 0: return 0.0
-    m = max(1, int(m))
+    m = int(m)
+    if m <= 0: return max(0.0, (g - c)*t_year)      # 단리
     if g <= 1e-12: return max(0.0, (g - c)*t_year)   # g → 0 극한
     return max(0.0, (g - c)/g * ((1 + g/m)**(m*t_year) - 1))
+
+
+def xl_prem(g: str, c: str, m: str, yr: str) -> str:
+    """상환할증금률의 엑셀 식. 엔진의 accrue_rate 와 같은 갈래를 탄다.
+
+    복리 횟수 셀이 0 이면 단리 (g − c)·t 다. 거짓 갈래도 파서가 훑고 지나가므로
+    나눗셈에 MAX(1, m) 을 씌워 0 으로 나누는 일이 없게 한다.
+    """
+    mm = f"MAX(1,{m})"
+    return (f"IF({m}<=0,MAX(0,({g}-{c})*{yr}),"
+            f"MAX(0,({g}-{c})/{g}*((1+{g}/{mm})^({mm}*{yr})-1)))")
 
 
 def step_mapper(tm: "Terms", n: int, dt_: float):
@@ -1116,7 +1132,45 @@ def acc_host(tm: Terms, full, b0, b1, b2, ca):
     떨어진 금액이 인식된다. 상각후원가는 최초 인식액에서 출발해야 하므로
     이론값이 아니라 배분액으로 유효이자율을 역산한다.
     """
-    return allocate(tm, full, b0, b1, b2, ca)[0][0][1]
+    rows = allocate(tm, full, b0, b1, b2, ca)[0]
+    # 거래원가 중 부채요소 몫은 부채에서 차감하므로 상각도 그만큼 낮은 데서 출발한다.
+    return rows[0][1] - cost_host(tm, rows)
+
+
+def cost_split(tm: Terms, rows):
+    """거래원가를 요소별로 배분한다 (1032 문단 38).
+
+    > 복합금융상품 발행과 관련된 거래원가는 **배분된 발행금액에 비례하여**
+    > 부채요소와 자본요소로 배분한다.
+
+    비율의 분모는 복합금융상품에 배분된 금액이다. 매도청구권 자산은 별도의
+    금융상품이라(문단 4.3.1) 복합금융상품이 아니므로 분모에서 뺀다.
+
+    배분한 몫의 처리는 그 요소에 적용하는 회계원칙을 따른다.
+
+    * 주계약·부채요소 — 상각후원가라 부채에서 차감하고 유효이자율에 녹인다
+    * 파생상품부채 — 당기손익-공정가치라 거래원가를 얹을 자리가 없어 즉시 비용
+      (제1109호 문단 5.1.1)
+    * 전환권대가 — 자본에서 직접 차감
+
+    돌려주는 것은 [(항목, 배분액, 몫, 처리)] 와 합계다.
+    """
+    cost = max(0.0, float(tm.issue_cost or 0.0))/max(1e-9, tm.face_total)*100
+    base = [(k, v) for k, v in rows[:-1] if v > 0]
+    tot = sum(v for _, v in base) or 1.0
+    out = []
+    for k, v in base:
+        how = ("자본에서 차감" if "자본" in k else
+               "즉시 비용 (당기손익-공정가치)" if "파생상품부채" in k else
+               "부채에서 차감 — 유효이자율에 반영")
+        out.append((k, v, cost*v/tot, how))
+    return out, cost
+
+
+def cost_host(tm: Terms, rows) -> float:
+    """주계약(부채요소)에 배분된 거래원가 몫. 상각표가 여기서 출발한다."""
+    return sum(c for k, _, c, _ in cost_split(tm, rows)[0]
+               if "자본" not in k and "파생상품부채" not in k)
 
 
 def allocate_full(tm: Terms, rows):
@@ -2516,7 +2570,9 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
                               "미지급분을 상환가액에 가산 — 전체 부채 · 배당은 이자비용"), None)]
            if is_rcps(tm) else [])
         + [("이자 지급주기 (개월)", tm.ipay, N0),
-        ("만기보장수익률", tm.ytm, P2), ("만기상환금액", red, N2)]),
+        ("만기보장수익률", tm.ytm, P2),
+        ("보장 복리", ("단리" if int(tm.ytm_cmp) <= 0 else f"연 {int(tm.ytm_cmp)}회 복리"), None),
+        ("만기상환금액", red, N2)]),
       ("3. 전환가액 조정", [("조정 방식", ["조정 없음", "하향만", "하향+상향"][tm.rfx_mode], None),
         ("조정 주기 (개월)", tm.rfx_cyc, N0), ("최저 조정가액", tm.floor, N2), ("액면가", tm.par, N2)]),
       ("4. 옵션", [("전환 시작 / 종료 (개월)", tm.cv_s, N0), ("　", tm.cv_e, N0),
@@ -2847,9 +2903,32 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         color=GREY, size=9)
     put(E, tr+3, 2, "전환권 분류: " + ("파생상품부채 — 주계약을 잔여로"
         if tm.conv_class == "liability" else "자본 — 전환권대가를 잔여로"), color=GREY, size=9)
+    # (아래 tr2 가 거래원가 블록 유무에 따라 다음 절의 시작 행을 정한다)
+    tr2 = tr+3
+    if tm.issue_cost > 0:
+        _cs, _c100 = cost_split(tm, al)
+        rc = tr+5
+        sec(E, rc, "거래원가 배분 (1032 문단 38)", span=6)
+        for i, h in enumerate(["요소", "배분액 (100)", "거래원가 몫 (100)", "몫 (원)", "처리"]):
+            put(E, rc+1, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+        for i, (k, v, c, how) in enumerate(_cs):
+            put(E, rc+2+i, 2, k, border=True, size=9)
+            put(E, rc+2+i, 3, v, fmt=N2, align="right", border=True)
+            put(E, rc+2+i, 4, c, fmt=N4, align="right", border=True)
+            put(E, rc+2+i, 5, c/100*fac, fmt=N0, align="right", border=True)
+            put(E, rc+2+i, 6, how, border=True, size=9)
+        rt2 = rc+2+len(_cs)
+        put(E, rt2, 2, "합계", bold=True, fill=BAND, border=True)
+        put(E, rt2, 4, _c100, bold=True, fill=BAND, fmt=N4, align="right", border=True)
+        put(E, rt2, 5, _c100/100*fac, bold=True, fill=BAND, fmt=N0, align="right", border=True)
+        put(E, rt2+1, 2, "배분된 발행금액에 비례해 나눈다. 매도청구권 자산은 별도의 금융상품이라 "
+            "(문단 4.3.1) 분모에서 뺐다. 주계약 몫은 부채에서 차감해 유효이자율에 녹이고, "
+            "파생상품부채 몫은 당기손익-공정가치라 즉시 비용, 자본 몫은 자본에서 직접 뺀다.",
+            color=GREY, size=9)
+        tr2 = rt2+3
     _rm = remeasure(tm, al)
     if _rm["has"]:
-        rq = tr+5
+        rq = tr2+2
         sec(E, rq, "3. 기말 재평가 — 파생상품부채", span=5)
         for i, h in enumerate(["항목", "100 기준", "전액 기준 (원)"]):
             put(E, rq+1, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
@@ -2883,7 +2962,9 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     put(M, 3, 2, "지급일은 계약상 일정이므로 발행일부터 센다. 회차 수는 노드가 아니라 "
         "이자 지급주기를 따른다.", color=GREY, size=9)
     sec(M, 4, "유효이자율 역산", span=7)
-    for i, (k, v, fm) in enumerate([("주계약 (인식액)", rows_eir[0][2] if rows_eir else b0, N2),
+    for i, (k, v, fm) in enumerate([("주계약 (인식액, 거래원가 차감 후)"
+                                    if tm.issue_cost > 0 else "주계약 (인식액)",
+                                    rows_eir[0][2] if rows_eir else b0, N2),
                                     ("만기상환금액", redm, N2),
                                     ("표면이자 (회당)", cpn_amt, N2), ("상각 횟수", nper, N0)]):
         put(M, 5+i, 2, k, border=True); put(M, 5+i, 3, v, fmt=fm, align="right", border=True)
@@ -3073,8 +3154,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         ("만기상환금액", "red",
          # 할증금은 음수가 될 수 없다. 엔진의 accrue_rate 와 같이 0 에서 끊는다.
          "@=IF(C{ytm}<=0,100*(1+MAX(0,(C{ytm}-C{cpn})*(C{T}+C{elm}/12))),"
-         "100*(1+MAX(0,(C{ytm}-C{cpn})/C{ytm}*"
-         "((1+C{ytm}/C{ycm})^(C{ycm}*(C{T}+C{elm}/12))-1))))", N2, False),
+         "100*(1+IF(C{ycm}<=0,MAX(0,(C{ytm}-C{cpn})*(C{T}+C{elm}/12)),"
+         "MAX(0,(C{ytm}-C{cpn})/C{ytm}*"
+         "((1+C{ytm}/MAX(1,C{ycm}))^(MAX(1,C{ycm})*(C{T}+C{elm}/12))-1)))))", N2, False),
         ("최저 조정가액", "flr", tm.floor, N2, True),
         ("액면가", "par", tm.par, N2, True),
         ("리픽싱 상한", "cap", "@=C{K0}", N2, False),
@@ -3119,6 +3201,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         ("BDT 기준 (0 위험곡선 / 1 무위험+스프레드)", "bbase", tm.bdt_base, N0, False),
         ("전자등록총액 (원)", "face", tm.face_total, N0, True),
         # 기말 재평가. 음수면 「없음」이다 — 발행 시점 평가.
+        ("발행 거래원가 (원)", "cost", tm.issue_cost, N0, True),
         ("전기말 파생상품부채 장부금액 (음수 = 없음)", "pdrv", tm.prev_deriv, N4, True),
         ("전기말 주계약 장부금액 (음수 = 없음)", "phst", tm.prev_host, N4, True),
         ("무위험 (연속, 평탄)", "rfc", RF(tm.T), P2, False)]
@@ -3188,12 +3271,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
                  f"MOD({st}-{K['roff']},{K['cyc']})=0),1,0)", N0, RED)
             # 상환할증금 = (g−c)/g × ((1+g/m)^(m·t) − 1).  g 가 0 이면 (g−c)·t
             g(7, f"=IF({L}$4=1,IF({K['pyld']}>0,"
-                 f"100*(1+MAX(0,({K['pyld']}-{K['cpn']})/{K['pyld']}*"
-                 f"((1+{K['pyld']}/{K['pcmp']})^({K['pcmp']}*{yr})-1))),"
+                 f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
                  f"{K['prate']}),0)", N2)
             g(8, f"=IF({L}$5=1,IF({K['prem']}>0,"
-                 f"100*(1+MAX(0,({K['prem']}-{K['cpn']})/{K['prem']}*"
-                 f"((1+{K['prem']}/{K['kcmp']})^({K['kcmp']}*{yr})-1))),"
+                 f"100*(1+{xl_prem(K['prem'], K['cpn'], K['kcmp'], yr)}),"
                  f"100*(1+MAX(0,-{K['cpn']}*{yr}))),999999)", N2)
             g(9, f"=IF(AND({st}>0,MOD({st},{K['ipay']})=0),"
                  f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
@@ -3557,8 +3638,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
              f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
         g(7, f"=IF({L}$6=1,IF({K['pyld']}>0,"
-             f"100*(1+MAX(0,({K['pyld']}-{K['cpn']})/{K['pyld']}*"
-             f"((1+{K['pyld']}/{K['pcmp']})^({K['pcmp']}*{yr})-1))),"
+             f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
              f"{K['prate']}),0)", N2)
         g(8, f"=IF(AND({st}>0,MOD({st},{K['ipay']})=0),"
              f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
@@ -3597,8 +3677,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
             g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
                  f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
             g(7, f"=IF({L}$6=1,IF({K['pyld']}>0,"
-                 f"100*(1+MAX(0,({K['pyld']}-{K['cpn']})/{K['pyld']}*"
-                 f"((1+{K['pyld']}/{K['pcmp']})^({K['pcmp']}*{yr})-1))),"
+                 f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
                  f"{K['prate']}),0)", N2)
             g(8, f"=IF(AND({st}>0,MOD({st},{K['ipay']})=0),"
                  f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
@@ -3607,8 +3686,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
             g(11, f"=IF(AND({st}>={K['kst']},{st}<={K['ken']},"
                   f"MOD({st}-{K['kst']},{K['kfrq']})=0),1,0)", N0)
             g(12, f"=IF({L}$11=1,IF({K['prem']}>0,"
-                  f"100*(1+MAX(0,({K['prem']}-{K['cpn']})/{K['prem']}*"
-                  f"((1+{K['prem']}/{K['kcmp']})^({K['kcmp']}*{yr})-1))),"
+                  f"100*(1+{xl_prem(K['prem'], K['cpn'], K['kcmp'], yr)}),"
                   f"100*(1+MAX(0,-{K['cpn']}*{yr}))),999999)", N2)
             g(13, (f"=MAX({L}$7,{L}$9)+{L}$8" if i == n else
                    f"=MAX({L}$7,MIN({Ln}13*EXP(-{L}$10*{K['dt']})+{L}$8,{L}$12))"), N2)
@@ -3644,8 +3722,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
                 g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
                      f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
                 g(7, f"=IF({L}$6=1,IF({K['pyld']}>0,"
-                     f"100*(1+MAX(0,({K['pyld']}-{K['cpn']})/{K['pyld']}*"
-                     f"((1+{K['pyld']}/{K['pcmp']})^({K['pcmp']}*{yr})-1))),"
+                     f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
                      f"{K['prate']}),0)", N2)
                 g(8, f"=IF(AND({st}>0,MOD({st},{K['ipay']})=0),"
                      f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
@@ -3955,9 +4032,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     sec(M, 5, "유효이자율 역산", span=6)
     for i, (k, fx, fm, val) in enumerate([
             # 부채로 분류하면 잔여로 떨어진 금액이 인식액이다. 이론값(C16)이 아니다.
-            ("주계약 (인식액)",
+            ("주계약 (인식액, 거래원가 차감 후)",
              f'=IF({K["eqcls"]}=1,IF(AND({K["ksep"]}=1,{K["psep"]}=0),결과!C17,'
-             f'결과!C16),결과!C25)', N2, None),
+             f'결과!C16),결과!C25)-회계처리!D32-회계처리!D33', N2, None),
             ("만기상환금액", f"={K['red']}", N2, None),
             ("표면이자 (회당)", f"=100*{K['cpn']}*{K['ipaym']}/12", N2, None),
             ("상각 횟수", None, N0, nper)]):
@@ -4079,31 +4156,61 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     put(E, 26, 2, "차변과 대변이 일치해야 한다", bold=True, border=True)
     put(E, 26, 3, '=IF(ABS(C25-D25)<0.01,"적합","오류")', align="center", border=True)
     put(E, 28, 2, "최초 인식에는 어떠한 손익도 생기지 않는다.", color=GREY, size=9)
-    # ── 기말 재평가 — 전기말 장부금액이 있을 때만 값이 찬다 (수식은 늘 산다) ──
-    sec(E, 30, "3. 기말 재평가 — 파생상품부채", span=5)
-    for i, h in enumerate(["항목", "100 기준", "전액 기준 (원)"]):
+    # ── 거래원가 배분 (1032 문단 38) ── 가정의 거래원가 셀을 바꾸면 따라온다
+    sec(E, 30, "3. 거래원가 배분 (1032 문단 38)", span=6)
+    for i, h in enumerate(["요소", "배분액 (100)", "거래원가 몫 (100)", "몫 (원)", "처리"]):
         put(E, 31, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+    _C100 = f'{K["cost"]}/{K["face"]}*100'
+    # 분모는 복합금융상품에 배분된 양수 줄의 합이다 (매도청구권 자산은 별도 금융상품).
+    _BASE = "SUMIF(C7:C12,\">0\")"
+    _CROWS = [("주계약", "C7", "부채에서 차감 — 유효이자율에 반영"),
+              ("부채요소 (사채 + 조기상환권)", "C8", "부채에서 차감 — 유효이자율에 반영"),
+              ("조기상환청구권 · 파생상품부채", "C9", "즉시 비용 (당기손익-공정가치)"),
+              ("복합내재파생상품 · 파생상품부채", "C10", "즉시 비용 (당기손익-공정가치)"),
+              ("전환권대가 · 자본", "C12", "자본에서 차감")]
+    for i, (nm, cell, how) in enumerate(_CROWS):
+        r = 32+i
+        put(E, r, 2, nm, border=True, size=9)
+        put(E, r, 3, f'=IF(ISNUMBER({cell}),{cell},"")', fmt=N2, align="right", border=True)
+        put(E, r, 4, f'=IF(AND(ISNUMBER({cell}),{cell}>0),{_C100}*{cell}/{_BASE},0)',
+            fmt=N4, align="right", border=True)
+        put(E, r, 5, f'=C{r}/100*{K["face"]}'.replace(f"C{r}", f"D{r}"),
+            fmt=N0, align="right", border=True)
+        put(E, r, 6, how, border=True, size=9)
+    put(E, 37, 2, "합계", bold=True, fill=BAND, border=True)
+    put(E, 37, 4, "=SUM(D32:D36)", bold=True, fill=BAND, fmt=N4, align="right", border=True)
+    put(E, 37, 5, "=SUM(E32:E36)", bold=True, fill=BAND, fmt=N0, align="right", border=True)
+    put(E, 38, 2, "배분된 발행금액에 비례해 나눈다. 매도청구권 자산은 별도의 금융상품이라 "
+        "(문단 4.3.1) 분모에서 뺐다. 상각표는 주계약에서 이 몫을 뺀 금액에서 출발한다.",
+        color=GREY, size=9)
+
+    # ── 기말 재평가 — 전기말 장부금액이 있을 때만 값이 찬다 (수식은 늘 산다) ──
+    RM = 40                                   # 기말 재평가 절 첫 행
+    sec(E, RM, "4. 기말 재평가 — 파생상품부채", span=5)
+    for i, h in enumerate(["항목", "100 기준", "전액 기준 (원)"]):
+        put(E, RM+1, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
     _FVL = (f'IF({K["eqcls"]}=1,IF({NS},0,IF({KS}=1,결과!C18,결과!C18-결과!{CAE})),'
             f'IF({KS}=1,결과!C24,결과!C24-결과!C22))')
     _HAS = f'{K["pdrv"]}>=0'
     for i, (k, fx) in enumerate([
             ("전기말 장부금액 (가정)", f'=IF({_HAS},{K["pdrv"]},"")'),
             ("당기말 공정가치 (배분표의 파생상품부채)", f"={_FVL}"),
-            ("평가손익 (+ 손실 · − 이익)", f'=IF({_HAS},C33-C32,"")'),
+            ("평가손익 (+ 손실 · − 이익)", f'=IF({_HAS},C{RM+3}-C{RM+2},"")'),
             ("주계약 전기말 장부금액 (참고 · 재평가 대상 아님)",
              f'=IF(AND({_HAS},{K["phst"]}>=0),{K["phst"]},"")')]):
-        r = 32+i
+        r = RM+2+i
         put(E, r, 2, k, border=True, bold=(i == 2), fill=(BAND if i == 2 else None))
         put(E, r, 3, fx, fmt=N4, align="right", border=True, bold=(i == 2),
             fill=(BAND if i == 2 else None))
         put(E, r, 4, f'=IF(ISNUMBER(C{r}),C{r}/100*{K["face"]},"")', fmt=N0,
             align="right", border=True, bold=(i == 2), fill=(BAND if i == 2 else None))
-    put(E, 37, 2, '=IF(NOT(ISNUMBER(C34)),"전기말 장부금액이 없어 재평가 없음 (발행 시점 평가)",'
-                  'IF(C34>=0,"차) 파생상품평가손실 / 대) 파생상품부채",'
-                  '"차) 파생상품부채 / 대) 파생상품평가이익"))', bold=True, size=9)
-    put(E, 37, 3, '=IF(ISNUMBER(C34),ABS(C34),"")', fmt=N4, align="right", bold=True)
-    put(E, 37, 4, '=IF(ISNUMBER(D34),ABS(D34),"")', fmt=N0, align="right", bold=True)
-    put(E, 38, 2, "주계약은 발행일 유효이자율로 상각한 장부금액을 쓴다. 이 조서의 상각표는 "
+    _PL, _PLD = f"C{RM+4}", f"D{RM+4}"
+    put(E, RM+7, 2, f'=IF(NOT(ISNUMBER({_PL})),"전기말 장부금액이 없어 재평가 없음 (발행 시점 평가)",'
+                    f'IF({_PL}>=0,"차) 파생상품평가손실 / 대) 파생상품부채",'
+                    '"차) 파생상품부채 / 대) 파생상품평가이익"))', bold=True, size=9)
+    put(E, RM+7, 3, f'=IF(ISNUMBER({_PL}),ABS({_PL}),"")', fmt=N4, align="right", bold=True)
+    put(E, RM+7, 4, f'=IF(ISNUMBER({_PLD}),ABS({_PLD}),"")', fmt=N0, align="right", bold=True)
+    put(E, RM+8, 2, "주계약은 발행일 유효이자율로 상각한 장부금액을 쓴다. 이 조서의 상각표는 "
         "평가기준일 배분액에서 출발하므로 최초 인식 평가에만 맞는다.", color=GREY, size=9)
 
     # ── 분리 판단 ──
@@ -4228,6 +4335,8 @@ h1{font-size:1.7rem !important;letter-spacing:-.02em}
 
 # 제목은 상품에 따라 갈린다. Terms 는 아래에서 만들어지므로 세션에서 먼저 본다.
 _L0 = lbl(st.session_state.tm) if "tm" in st.session_state else lbl(Terms())
+HLP_CMP = ("0 이면 **단리**입니다 — 「발행가에 연 X% 단리를 가산」 계약이 적지 않습니다. "
+           "1 연복리 · 2 반기 · 4 분기.")
 st.title(f"{_L0['inst']} 평가")
 st.caption("계약조건과 시장자료를 넣으면 이항격자로 옵션을 분리해 계산하고 조서를 엑셀로 내보냅니다. "
            f"금액은 {_L0['unit']}입니다.")
@@ -4352,12 +4461,19 @@ with st.sidebar:
                            "것으로 잽니다 — 그래서 이 값이 여전히 필요합니다.")
         t.ytm = st.number_input(f"{L['ytm']} (%)", value=t.ytm*100, step=0.1, format="%.4f")/100
         t.ytm_cmp = int(st.number_input("보장 복리 횟수 (연)", value=int(t.ytm_cmp),
-                                        step=1, min_value=1, max_value=12,
-                                        help="공시 상환율이 분기복리면 4, 반기면 2."))
+                                        step=1, min_value=0, max_value=12,
+                                        help="공시 상환율이 분기복리면 4, 반기면 2. " + HLP_CMP))
         t.face_total = st.number_input(
             ("발행총액 (원)" if is_rcps(t) else "전자등록총액 (원)"),
             value=float(t.face_total), step=1e8, format="%.0f",
             help="회계처리 탭의 전액 기준 금액을 계산합니다.")
+        t.issue_cost = st.number_input(
+            "발행 거래원가 (원)", value=float(t.issue_cost), step=1e6, min_value=0.0,
+            format="%.0f",
+            help="주관수수료·등록비 등. 기업회계기준서 제1032호 문단 38 에 따라 "
+                 "배분된 발행금액에 비례하여 요소별로 나눕니다. 부채요소 몫은 "
+                 "부채에서 차감해 유효이자율에 녹이고, 파생상품부채 몫은 당기손익-"
+                 "공정가치라 즉시 비용, 자본요소 몫은 자본에서 직접 뺍니다.")
         st.caption(f"{L['red']} = {100*(1+accrue_rate(t.T+t.elapsed_m/12, t.ytm, eff_cpn(t), t.ytm_cmp)):,.4f}   "
                    + ("계약서의 상환가액 산식과 대조하십시오." if is_rcps(t)
                       else "공시 만기상환율과 대조하십시오."))
@@ -4384,7 +4500,8 @@ with st.sidebar:
         else:
             t.p_yield = st.number_input(f"{'상환' if is_rcps(t) else '조기상환'} 보장수익률 (%)",
                                         value=t.p_yield*100, step=0.5)/100
-            t.p_cmp = int(st.number_input("복리 횟수 (연)", value=int(t.p_cmp), step=1, min_value=1))
+            t.p_cmp = int(st.number_input("복리 횟수 (연)", value=int(t.p_cmp), step=1,
+                                          min_value=0, help=HLP_CMP))
             st.caption("행사금액 = 100 × (1 + 실효수익률)^경과연수")
 
         st.divider()
@@ -4637,7 +4754,8 @@ with st.sidebar:
             t.k_prem = st.number_input("상환 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
                                        help="발행자 상환가액 = 100 × (1 + 보장수익률 복리)^경과연수 "
                                             "− 기지급배당. 상환청구권과 같은 산식입니다.")/100
-            t.k_cmp = int(st.number_input("복리 횟수 (연)", 1, 12, int(t.k_cmp), 1))
+            t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
+                                          help=HLP_CMP))
             st.caption("상환청구권과 하나의 **복합내재파생상품**으로 묶어 순액으로 봅니다 "
                        "(기준서 1109 문단 B4.3.4). 전환권을 자본으로 두면 부채요소는 "
                        "「우선주 + 상환청구권 − 발행자 상환권」입니다.")
@@ -4648,9 +4766,9 @@ with st.sidebar:
           t.k_e = st.number_input("종료 (개월)", value=float(t.k_e), step=1.0, key="ke")
           t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
           t.k_prem = st.number_input("프리미엄 (연 %)", value=t.k_prem*100, step=0.5)/100
-          t.k_cmp = int(st.number_input("복리 횟수 (연)", 1, 12, int(t.k_cmp), 1,
-                                        help="분기복리 4 · 반기 2 · 연 1. 계약서의 "
-                                             "매수대금 표와 맞는지 확인하십시오."))
+          t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
+                                        help="분기복리 4 · 반기 2 · 연 1. " + HLP_CMP
+                                             + " 계약서의 매수대금 표와 맞는지 확인하십시오."))
           t.k_w = st.number_input("행사 한도 (%)", value=t.k_w*100, step=5.0)/100
           t.k_lock = st.number_input(
               "의무보유 전환지연 (개월)", value=float(t.k_lock), step=1.0,
@@ -5082,8 +5200,25 @@ with tabs[1]:
     st.dataframe(pd.DataFrame(af, columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
         {"100 기준": "{:,.2f}", "전액 기준 (원)": "{:,.0f}"}),
         use_container_width=True, hide_index=True)
-    st.caption(f"전자등록총액 {t.face_total:,.0f}원 기준으로 환산했습니다.")
+    st.caption(f"{'발행총액' if is_rcps(t) else '전자등록총액'} {t.face_total:,.0f}원 "
+               "기준으로 환산했습니다.")
     st.caption(alloc_note)
+    if t.issue_cost > 0:
+        _cs, _c100 = cost_split(t, alloc_rows)
+        _F = t.face_total/100
+        st.markdown("### 거래원가 배분")
+        st.dataframe(pd.DataFrame(
+            [[rcps_text(t, k), v, c, c*_F, how] for k, v, c, how in _cs]
+            + [["합계", sum(v for _, v, _, _ in _cs), _c100, _c100*_F, ""]],
+            columns=["요소", "배분액 (100)", "거래원가 몫 (100)", "몫 (원)", "처리"]
+            ).style.format({"배분액 (100)": "{:,.2f}", "거래원가 몫 (100)": "{:,.4f}",
+                            "몫 (원)": "{:,.0f}"}),
+            use_container_width=True, hide_index=True)
+        st.caption("기업회계기준서 제1032호 문단 38 — 복합금융상품 발행과 관련된 거래원가는 "
+                   "**배분된 발행금액에 비례하여** 부채요소와 자본요소로 배분합니다. "
+                   "매도청구권 자산은 별도의 금융상품이라(문단 4.3.1) 분모에서 뺐습니다. "
+                   f"주계약은 거래원가를 뺀 **{acc_host(t, full, b0, b1, b2, ca):,.4f}** 에서 "
+                   "상각을 시작하므로 유효이자율이 그만큼 높아집니다.")
     # 분개는 배분표를 그대로 뒤집는다 — 조서와 같은 규칙. 음수 줄(자산)만
     # 차변으로 가고 나머지는 대변이다. 따로 쓰면 두 표가 어긋난다.
     _je = [("현금", 100.0, None)]
