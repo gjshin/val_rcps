@@ -181,6 +181,30 @@ CASES = [
      dict(_gap=1., model="GS", d_issue="2025-05-23", d_base="2025-06-30",
           d_mat="2027-08-23", cv_s=12., cv_e=26., p_s=12., p_e=24.,
           k_s=6., k_e=18., k_lock=20., rfx_cyc=7.)),
+    # ── 풋·콜 우선순위 (pc_order) ───────────────────────────────
+    # 조기상환금액이 매도청구금액보다 크고 행사기간이 겹치는 계약에서만 두 갈래가
+    # 갈린다. 「표면 3% · 보장 7%」 가 정확히 그 경우다 (2년 시점 108.51 대 100.00).
+    ("우선순위 · 투자자 풋 우선",
+     dict(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07,
+          pc_order=0)),
+    ("우선순위 · 발행자 콜 우선",
+     dict(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07,
+          pc_order=1)),
+    ("우선순위 · 콜 우선 · GS",
+     dict(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07,
+          pc_order=1, model="GS")),
+    ("우선순위 · 콜 우선 · 전환권 부채",
+     dict(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07,
+          pc_order=1, conv_class="liability")),
+    ("우선순위 · 콜 우선 · RCPS 발행자 상환권",
+     dict(inst="RCPS", issuer_call=1, pc_order=1, cpn=.02, ytm=.06, ipay=3.,
+          ytm_cmp=4, p_mode="accrue", p_yield=.06, p_cmp=4, k_prem=.01)),
+    ("우선순위 · 콜 우선 · BW 비분리형",
+     dict(inst="BW", bw_pay=0, bw_detach=0, pc_order=1,
+          cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07)),
+    ("우선순위 · 콜 우선 · BW 분리형",
+     dict(inst="BW", bw_pay=0, bw_detach=1, pc_order=1,
+          cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07)),
     # ── 신주인수권부사채 ────────────────────────────────────────
     # 대용납입은 사채를 권면액만큼 납입에 갈음하므로 전환사채와 같은 격자다.
     # 현금납입은 행사해도 사채가 남아 사채와 신주인수권을 따로 재어 더한다.

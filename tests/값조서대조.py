@@ -52,6 +52,17 @@ CASES += [(cls, km, "TF", 1, None, dict(_CHA, issuer_call=ic))
           for cls in ("equity", "liability")
           for ic, km in ((0, 0), (1, 0), (2, 0), (2, 1), (2, 2))]
 
+# 풋·콜 우선순위. 조기상환금액이 매도청구금액보다 크고 행사기간이 겹치는 계약에서만
+# 두 갈래가 갈린다 — 「표면 3% · 보장 7%」 가 그 경우다.
+_PC = dict(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07)
+CASES += [(cls, 0, md, 1, None, dict(_PC, pc_order=po))
+          for cls in ("equity", "liability")
+          for md in ("TF", "GS")
+          for po in (0, 1)]
+CASES += [("equity", 0, "TF", 1, None, dict(_PC, pc_order=po, inst="BW",
+                                            bw_pay=0, bw_detach=bd))
+          for po in (0, 1) for bd in (0, 1)]
+
 # 신주인수권부사채 — 대용납입(전환사채와 같은 격자)과 현금납입(사채 + 신주인수권).
 # 현금납입은 분리형·비분리형이 갈리고, 모형을 GS 로 골라도 TF 와 같은 값이 나온다.
 CASES += [(cls, 0, md, 1, None, dict(inst="BW", bw_pay=bp, bw_detach=bd, k_w=kw))
