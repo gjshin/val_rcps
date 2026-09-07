@@ -2023,15 +2023,22 @@ def lerp_formula(t, pts, col, row0, sh=None):
 
 
 def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
-                   applied=None, asof=None, kind="stock", how=None):
-    """변동성 산출내역 리포트. 계산이 전부 수식으로 들어간다.
+                   applied=None, asof=None, kind="stock", how=None,
+                   wb=None, prefix=""):
+    """변동성 산출내역. 계산이 전부 수식으로 들어간다.
 
     series 는 [(이름, [(일자, 종가), …]), …] 다. 하나면 대상회사만,
     여럿이면 비상장 평가에서 쓰는 피어 묶음이다.
     pick 은 여러 회사를 하나로 줄이는 방법 — median · mean · max · min.
+
+    ``wb`` 를 주면 그 조서 안에 시트를 더하고, 산출된 연 변동성이 앉은 셀 주소를
+    돌려준다. 조서의 가정 시트가 그 셀을 참조하면 종가를 고칠 때 σ 가 따라 움직인다.
+    ``prefix`` 는 시트 이름 앞에 붙는다 (조서에 이미 「표지」가 있을 수 있다).
     """
     from openpyxl import Workbook
-    wb = Workbook(); wb.remove(wb.active)
+    _own = wb is None
+    if _own:
+        wb = Workbook(); wb.remove(wb.active)
     K = report_kit(wb)
     put, head, sec, cols, note, sheet = (K[x] for x in
         ("put", "head", "sec", "cols", "note", "sheet"))
@@ -2055,10 +2062,11 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
     HDR = 22 if _rate else 19           # 표 머리
     R0 = HDR + 1                        # 첫 자료행
 
-    names = [f"{i:02d} {_vsafe(nm)}"[:31] for i, (nm, _) in enumerate(series, 1)]
+    P = prefix
+    names = [f"{P}{i:02d} {_vsafe(nm)}"[:31] for i, (nm, _) in enumerate(series, 1)]
 
     # ── 표지 ──
-    C = sheet("표지", tab=RPT["ink"], widths=[24, 20, 18, 18, 16, 16, 16, 16])
+    C = sheet(f"{P}표지", tab=RPT["ink"], widths=[24, 20, 18, 18, 16, 16, 16, 16])
     head(C, 2, ("금리변동성 산출내역" if _rate else "변동성 산출내역"),
          ("BDT 금리격자에 넣을 단기이자율 변동성 σ 를 금리의 로그변화율로 구한 "
           "내역이다. " if _rate else
@@ -2090,7 +2098,7 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
     cols(C, r, ["구분", "연 변동성"], [26, 18]); r += 1
     res = r
     put(C, r, 2, "종합", bold=True, border=True, fill=RPT["warm"])
-    put(C, r, 3, ("='종합'!$C$6" if many else f"='{names[0]}'!$C${R_AN}"),
+    put(C, r, 3, (f"='{P}종합'!$C$6" if many else f"='{names[0]}'!$C${R_AN}"),
         fmt=R_P2, bold=True, border=True, fill=RPT["warm"], align="right")
     r += 1
     if applied is not None:
@@ -2172,7 +2180,7 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
 
     # ── 종합 ──
     if many:
-        S = sheet("종합", tab=RPT["green"], widths=[8, 26, 18, 14, 12])
+        S = sheet(f"{P}종합", tab=RPT["green"], widths=[8, 26, 18, 14, 12])
         head(S, 2, "피어 종합",
              "비상장이라 대상회사 주가가 없을 때, 유사기업의 변동성을 모아 하나로 줄인다.",
              span=5)
@@ -2195,6 +2203,8 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
         note(S, r2+2, "중앙값은 한 회사의 급등락에 덜 흔들린다. 평균을 쓰려면 왜 그 "
                       "회사들이 대상회사와 같은 위험을 진다고 보는지 조서에 남긴다. "
                       "업종·규모·상장기간이 크게 다른 회사는 빼는 편이 낫다.", span=5)
+    # 조서 안에 심은 경우에는 결과 셀 주소를 돌려준다. 가정 시트가 이 셀을 본다.
+    if not _own: return f"'{P}표지'!$C${res}"
     return _save(wb)
 
 
@@ -2240,15 +2250,19 @@ def _save(wb):
     buf = io.BytesIO(); wb.save(buf); return buf.getvalue()
 
 
-def build_xlsx_rate(tm: Terms, sig_how: str = ""):
-    """선도이자율 산출내역 리포트.
+def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
+    """선도이자율 산출내역.
 
     만기수익률 곡선 → 선형보간 → 부트스트래핑 → 연속복리 현물 → 구간 선도.
-    조서 트리 시트 11·12행에 값으로 박히는 선도이자율이 어디서 나왔는지
-    한 장씩 펼쳐 보여 준다. 노란 셀을 고치면 끝까지 따라 움직인다.
+    노란 셀을 고치면 끝까지 따라 움직인다.
+
+    ``wb`` 를 주면 그 조서 안에 시트를 더하고 ``(시트이름, 첫 자료행)`` 을 돌려준다.
+    트리 시트의 11·12행이 그 표의 G·J 열을 참조하면 이자율까지 살아 있는 조서가 된다.
     """
     from openpyxl import Workbook
-    wb = Workbook(); wb.remove(wb.active)
+    _own = wb is None
+    if _own:
+        wb = Workbook(); wb.remove(wb.active)
     K = report_kit(wb)
     put, head, sec, cols, note, sheet = (K[x] for x in
         ("put", "head", "sec", "cols", "note", "sheet"))
@@ -2260,13 +2274,14 @@ def build_xlsx_rate(tm: Terms, sig_how: str = ""):
     if len(tm.rf_curve) < 2 or len(cc) < 2:
         raise ValueError("무위험·위험 곡선을 각각 두 점 이상 넣어야 합니다.")
     spot_in = (tm.y_type == "spot")
-    IN = "입력곡선"
+    P = prefix
+    IN = f"{P}입력곡선"
     R0IN = 8                                   # 입력곡선 첫 자료행
     LEG = [("무위험", tm.rf_curve, int(tm.cmp_rf), "B", "C"),
            ("위험", cc, int(tm.cmp_cr), "E", "F")]
 
     # ── 표지 ──
-    C = sheet("표지", tab=RPT["ink"], widths=[26, 22, 18, 18, 16, 16, 16, 16])
+    C = sheet(f"{P}표지", tab=RPT["ink"], widths=[26, 22, 18, 18, 16, 16, 16, 16])
     head(C, 2, "이자율 산출내역",
          "만기수익률 곡선에서 할인계수를 순차로 풀고(부트스트래핑), 연속복리 "
          "현물이자율로 바꾼 뒤, 격자 한 구간의 선도이자율을 뽑는 과정이다. "
@@ -2358,7 +2373,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = ""):
     # ── 곡선별 산출 ──
     made = {}
     for (lbl, pts, cmp_, mcol, ycol) in LEG:
-        sn = f"{lbl} 산출"
+        sn = f"{P}{lbl} 산출"
         W = sheet(sn, widths=[8, 13, 15, 13, 15, 15, 15], freeze="B9")
         R0 = 9
         if spot_in:
@@ -2414,7 +2429,8 @@ def build_xlsx_rate(tm: Terms, sig_how: str = ""):
         pts = [(x, 0.0) for x, _ in d["pts"]]
         return lerp_formula(t, pts, d["rcol"], d["r0"], d["sh"])
 
-    F = sheet("선도이자율", tab=RPT["green"],
+    FS = f"{P}선도이자율"
+    F = sheet(FS, tab=RPT["green"],
               widths=[8, 13, 13, 14, 14, 14, 14, 14, 14, 14, 12],
               freeze="B10", landscape=True)
     head(F, 2, "구간 선도이자율",
@@ -2455,6 +2471,8 @@ def build_xlsx_rate(tm: Terms, sig_how: str = ""):
     note(F, 10+n+1, "스프레드가 음수인 줄이 있으면 두 곡선을 바꿔 넣은 것이다. "
                     "q 가 0 과 1 밖으로 나가면 변동성이 너무 낮거나 노드가 너무 성긴 "
                     "것이다 — 격자가 무차익 조건을 못 맞춘다.", span=11)
+    # 조서 안에 심은 경우 — 트리 11·12행이 참조할 시트 이름과 첫 자료행
+    if not _own: return (FS, 10)
     return _save(wb)
 
 
@@ -2514,6 +2532,18 @@ def relabel_rcps(wb, tm: Terms):
                 for a, b in words:
                     if a in v: v = v.replace(a, b)
                 if v != c.value: c.value = v
+
+
+def _stamp(tm: Terms, kind: str = "") -> str:
+    """조서를 만든 시점의 인풋 지문.
+
+    조서는 트리·배분·상각표가 한 계약에서 나와야 성립한다. 만든 뒤 인풋이
+    바뀌면 예전 파일은 더 이상 그 계약의 조서가 아니므로 내주지 않는다.
+    """
+    import hashlib
+    d = {k: v for k, v in asdict(tm).items()}
+    return hashlib.md5(
+        (kind + json.dumps(d, sort_keys=True, default=str)).encode()).hexdigest()
 
 
 def rcps_text(tm: Terms, text: str) -> str:
@@ -2581,7 +2611,65 @@ def remeasure(tm: Terms, rows):
                 prev_host=(tm.prev_host if (has and tm.prev_host >= 0) else None))
 
 
-def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
+def attach_reports(wb, tm, px=None, rate=None, rate_how="", ir=True):
+    """산출내역을 조서 **안에** 시트로 붙인다.
+
+    따로 내려받아 철하는 대신 한 권으로 묶으면, 감사인이 종가나 고시 수익률을
+    고쳤을 때 그 결과가 어디까지 번지는지 같은 파일 안에서 따라갈 수 있다.
+
+    돌려주는 것은 (변동성 결과 셀, 금리변동성 결과 셀, (선도이자율 시트, 첫 행)) 다.
+    수식 조서는 이 주소를 가정 시트와 트리 11·12행에 꽂아 살아 있는 사슬을 만든다.
+    붙이지 못한 자리는 None 이라 종전처럼 값으로 들어간다.
+    """
+    volref = rvolref = irref = None
+
+    def _agg(series, o, fn=vol_from):
+        """산출내역이 낼 연 변동성. 적용값과 같을 때만 트리를 여기에 잇는다."""
+        vs = [fn(pxs, o.get("tdays", 250), o.get("drop", True)) for _, pxs in series]
+        ann = sorted(v["annual"] for v in vs if v)
+        if not ann: return None
+        if len(ann) == 1: return ann[0]
+        k = o.get("pick", "median")
+        if k == "mean": return sum(ann)/len(ann)
+        if k == "max": return ann[-1]
+        if k == "min": return ann[0]
+        return ann[len(ann)//2] if len(ann) % 2 else (ann[len(ann)//2-1]+ann[len(ann)//2])/2
+
+    if px:
+        try:
+            o = px[1] or {}
+            volref = build_xlsx_vol(
+                px[0], tdays=o.get("tdays", 250), drop=o.get("drop", True),
+                pick=o.get("pick", "median"), applied=tm.sig,
+                asof=dt.date.fromisoformat(tm.d_base), kind="stock",
+                wb=wb, prefix="σ ")
+            # 산출값과 적용값이 다르면 잇지 않는다. 이으면 조서가 화면과 다른
+            # σ 로 다시 계산되어 「값 조서 = 수식 조서」가 깨진다. 그 경우에도
+            # 시트는 남으므로 산출근거와 차이는 조서에 그대로 보인다.
+            _a = _agg(px[0], o)
+            if _a is None or abs(_a - tm.sig) > 5e-5: volref = None
+        except Exception:
+            volref = None
+    if rate and put_bdt_on(tm):
+        try:
+            o = rate[1] or {}
+            rvolref = build_xlsx_vol(
+                rate[0], tdays=o.get("tdays", 250), drop=o.get("drop", True),
+                applied=tm.bdt_sig, asof=dt.date.fromisoformat(tm.d_base),
+                kind="rate", how=rate_how, wb=wb, prefix="σr ")
+            _a = _agg(rate[0], o, rate_vol)
+            if _a is None or abs(_a - tm.bdt_sig) > 5e-5: rvolref = None
+        except Exception:
+            rvolref = None
+    if ir:
+        try:
+            irref = build_xlsx_rate(tm, rate_how, wb=wb, prefix="IR ")
+        except Exception:
+            irref = None
+    return volref, rvolref, irref
+
+
+def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     """트리 하나에 시트 하나. 엑셀 트리모델과 같은 구조로 내보낸다."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -2603,6 +2691,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     per_ = lambda mth: max(1, int(round(mth*mper)))   # 주기는 뺄 것이 없다
     RF, CR = curves(tm)
     wb = Workbook(); wb.remove(wb.active)
+    # 산출내역은 조서를 다 만든 뒤 뒤쪽에 붙인다 (아래 _tail 에서).
 
     def put(ws, r, c, v, *, bold=False, color="000000", fill=None, fmt=None,
             size=10, align=None, border=False):
@@ -3290,13 +3379,23 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     for i in range(4, r):
         H.cell(row=i, column=3).alignment = Alignment(horizontal="left", vertical="center")
 
+    _attached = []
+    if attach:
+        _pre = list(wb.sheetnames)
+        attach_reports(wb, tm, **attach)
+        _attached = [x for x in wb.sheetnames if x not in _pre]
+    if _attached:
+        # 산출내역은 조서를 다 읽은 뒤에 보는 부록이라 뒤로 보낸다.
+        _rest = [w for w in wb._sheets if w.title not in _attached]
+        _tail = [w for w in wb._sheets if w.title in _attached]
+        wb._sheets = _rest + _tail
     polish_wb(wb)
     if is_rcps(tm): relabel_rcps(wb, tm)
     bio = io.BytesIO(); wb.save(bio); bio.seek(0)
     return bio.getvalue()
 
 
-def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
+def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     """수식 조서 — 트리를 살아 있는 수식으로 내보낸다.
     가정 시트의 노란 셀을 바꾸면 엑셀 안에서 다시 계산된다.
     재결합 격자가 필요하므로 근사 방법에서만 만들 수 있다."""
@@ -3333,6 +3432,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
                         and (i-rfx_off) % rfx_per == 0)
     REFIXSET = {i for i in range(1, n+1) if is_rfx(i)}
     wb = Workbook(); wb.remove(wb.active)
+    # 산출내역을 **먼저** 붙여야 트리 11·12행과 가정 시트가 그 셀을 참조할 수 있다.
+    _volref = _rvolref = _irref = None
+    _attached = []
+    if attach:
+        _pre = list(wb.sheetnames)
+        _volref, _rvolref, _irref = attach_reports(wb, tm, **attach)
+        _attached = [x for x in wb.sheetnames if x not in _pre]
 
     def put(ws, r, c, v, *, bold=False, color="000000", fill=None, fmt=None,
             size=10, align=None, border=False):
@@ -3403,7 +3509,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         ("매도청구 한도", "cw", tm.k_w, P2, True),
         (f"{KW} 전환 시작 (스텝)", "cv30", stp_lo(max(tm.cv_s, tm.k_lock)), N0,
          tm.k_method == 0),
-        ("변동성 σ", "sig", tm.sig, P2, True),
+        ("변동성 σ", "sig",
+         (f"={_volref}" if _volref else tm.sig), P2, not _volref),
         ("상승계수 u", "u", "@=EXP(C{sig}*SQRT(C{dt}))", N4, False),
         ("하락계수 d", "dd", "@=1/C{u}", N4, False),
         ("위험중립가중치 q", "q", "@=(EXP(C{rfc}*C{dt})-C{dd})/(C{u}-C{dd})", N4, False),
@@ -3432,7 +3539,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
         ("매도청구권 처리 (1 별도 금융상품 / 0 내재파생 포함)", "ksep", tm.k_sep, N0, True),
         ("신용위험 처리 (0 TF / 1 GS)", "mdl", 1 if tm.model == "GS" else 0, N0, False),
         ("조기상환권 (0 금리고정 / 1 BDT)", "pbdt", 1 if put_bdt_on(tm) else 0, N0, False),
-        ("BDT 변동성 σ", "bsig", tm.bdt_sig, P2, True),
+        ("BDT 변동성 σ", "bsig",
+         (f"={_rvolref}" if _rvolref else tm.bdt_sig), P2, not _rvolref),
         ("BDT 기준 (0 위험곡선 / 1 무위험+스프레드)", "bbase", tm.bdt_base, N0, False),
         ("전자등록총액 (원)", "face", tm.face_total, N0, True),
         # 기말 재평가. 음수면 「없음」이다 — 발행 시점 평가.
@@ -3515,8 +3623,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
                  f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
             g(10, f"=IF({st}={K['n']},{K['red']},0)", N2)
             if i < n:
-                g(11, forward_rate(RF, i*dt_, (i+1)*dt_), P2, AMB)
-                g(12, forward_rate(CR, i*dt_, (i+1)*dt_), P2, AMB)
+                # 이자율 산출내역을 함께 실었으면 그 표를 가리킨다. 고시 수익률을
+                # 고치면 부트스트래핑 → 선도 → 트리까지 한 파일 안에서 따라온다.
+                if _irref:
+                    g(11, f"='{_irref[0]}'!$G${_irref[1]+i}", P2)
+                    g(12, f"='{_irref[0]}'!$J${_irref[1]+i}", P2)
+                else:
+                    g(11, forward_rate(RF, i*dt_, (i+1)*dt_), P2, AMB)
+                    g(12, forward_rate(CR, i*dt_, (i+1)*dt_), P2, AMB)
                 g(16, f"=(EXP({L}$11*{K['dt']})-{L}$15)/({L}$14-{L}$15)", N4)
                 g(17, f"=1-{L}$16", N4)
             else:
@@ -4225,20 +4339,25 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
             # 앱이 상태확장으로 계산했다면 이 조서는 근사값이므로 그 사실을 밝힌다.
             ("앱 계산값 · 상태확장 격자", (b2 if tm.carry == 0 else ""),
              '=IF(C32="","해당 없음 (앱과 조서가 같은 방법)",'
-             'IF(ABS(C32-C10)<0.01,"적합","★ 조서는 근사값 — 아래 설명"))')]):
+             'IF(ABS(C32-C10)<0.01,"적합","★ 조서는 근사값 — 아래 설명"))'),
+            # 상각표의 유효이자율은 앱이 역산해 **값으로** 박은 것이라, 배분을
+            # 움직이는 인풋이 하나라도 바뀌면 트리와 어긋난다. 그 사실이 상각표
+            # 안에만 있으면 놓치기 쉬워 결과 시트에도 끌어올린다.
+            ("상각표가 이 조서와 같은 계약인가", "=상각표!D21",
+             '=IF(ABS(C33)<0.0001,"적합","★ 상각표가 예전 인풋이다 — 앱에서 다시 만드십시오")')]):
         put(R, 28+i, 2, nm, border=True)
         put(R, 28+i, 3, fx, fmt=N4, align="right", border=True,
             color=(AMB if i == 4 else "000000"))
         put(R, 28+i, 5, jd, align="center", border=True)
     if tm.carry == 0:
-        put(R, 33, 2,
+        put(R, 34, 2,
             "★ 앱은 상태확장 격자로 계산했다. 조정일마다 전환가액이 갈라져 같은 칸에 "
             "여러 값이 존재하므로 엑셀 트리 한 장으로는 옮길 수 없다. 이 조서는 "
             "경로가중치 근사로 다시 계산한 값이다. 위 두 숫자의 차이가 근사 오차이며, "
             "정확한 값은 앱 계산값(주황)이다.", color=RED, size=9)
-    put(R, 34, 2, "이 조서에는 앱에서 고른 방법만 들어 있습니다. 다른 신용위험 처리나 "
+    put(R, 35, 2, "이 조서에는 앱에서 고른 방법만 들어 있습니다. 다른 신용위험 처리나 "
         "다른 매도청구권 평가방법의 값은 이 조서에 없습니다.", color=GREY, size=9)
-    put(R, 35, 2, "주황색 숫자만 값이다. 선도이자율은 부트스트래핑 결과라 엑셀에서 재현하지 않는다.",
+    put(R, 36, 2, "주황색 숫자만 값이다. 선도이자율은 부트스트래핑 결과라 엑셀에서 재현하지 않는다.",
         color=AMB, size=9)
 
     # ── 이자율곡선 ──
@@ -4575,6 +4694,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir):
     for i in range(4, r):
         H.cell(row=i, column=3).alignment = Alignment(horizontal="left", vertical="center")
 
+    if _attached:
+        # 산출내역은 조서를 다 읽은 뒤에 보는 부록이라 뒤로 보낸다.
+        _rest = [w for w in wb._sheets if w.title not in _attached]
+        _tail = [w for w in wb._sheets if w.title in _attached]
+        wb._sheets = _rest + _tail
     polish_wb(wb)
     if is_rcps(tm): relabel_rcps(wb, tm)
     bio = io.BytesIO(); wb.save(bio); bio.seek(0)
@@ -4607,12 +4731,29 @@ with st.sidebar:
     st.subheader("계약조건")
 
     up = st.file_uploader("시나리오 불러오기", type=["json"], key="scen")
-    if up is not None:
+    # 업로더는 지운 뒤에도 같은 파일을 계속 돌려준다. 실행마다 다시 읽으면
+    # 그 뒤에 손으로 바꾼 값이 매번 되돌아가므로 한 번만 읽는다.
+    _sid = (up.name, up.size) if up is not None else None
+    if up is not None and st.session_state.get("scen_id") != _sid:
         try:
+            up.seek(0)
             o = json.load(up)
             st.session_state.tm = Terms(**{k: v for k, v in o.items()
                                            if k in Terms.__dataclass_fields__})
-            st.success("불러왔습니다.")
+            # 이자율 곡선은 아래 텍스트 칸이 실행마다 t.rf_curve·t.cr_curve 를
+            # 통째로 덮어쓴다. 시나리오의 곡선을 그 칸에 직접 써 넣지 않으면
+            # 화면 기본값(국고채·회사채 예시)으로 계산되어 버린다.
+            _tm = st.session_state.tm
+            def _fmt(pts):
+                return "\n".join(f"{float(x):g}\t{float(y)*100:.4f}%" for x, y in pts)
+            if _tm.rf_curve: st.session_state.rf_txt = _fmt(_tm.rf_curve)
+            if _tm.cr_curve:
+                st.session_state.cr_txt = _fmt(_tm.cr_curve)
+                st.session_state.ca_txt = _fmt(_tm.cr_curve)
+            if _tm.cr_curve_b: st.session_state.cb_txt = _fmt(_tm.cr_curve_b)
+            st.session_state.scen_id = _sid
+            st.success("불러왔습니다. 이자율 곡선도 함께 채웠습니다 (만기 단위 = 년).")
+            st.rerun()
         except Exception as ex:
             st.error(f"읽지 못했습니다 — {ex}")
     t = st.session_state.tm
@@ -6257,26 +6398,49 @@ with tabs[9]:
     if c1.button("조서 만들기", type="primary", use_container_width=True):
         try:
             with st.spinner("엑셀 작성 중"):
+                # 산출내역을 조서 안에 함께 싣는다. 수식 조서에서는 종가·고시
+                # 수익률이 트리까지 이어져, 한 파일 안에서 인풋을 흔들 수 있다.
+                _px = st.session_state.get("peers") or (
+                    [(st.session_state.get("px_src") or "대상회사",
+                      st.session_state.prices)]
+                    if st.session_state.get("prices") else None)
+                _rt = ([(st.session_state.get("rate_src") or "금리",
+                         st.session_state.rate_series)]
+                       if st.session_state.get("rate_series") else None)
+                _att = dict(px=(_px, st.session_state.get("vol_opt")) if _px else None,
+                            rate=(_rt, st.session_state.get("rate_opt")) if _rt else None,
+                            rate_how=st.session_state.get("rate_how", ""),
+                            ir=bool(len(t.rf_curve) >= 2 and len(credit_curve(t)) >= 2))
                 if kind == "값":
                     data = build_xlsx(t, full, b0, b1, b2, ca, conv,
-                                      eir_table(t, acc_host(t, full, b0, b1, b2, ca)))
+                                      eir_table(t, acc_host(t, full, b0, b1, b2, ca)),
+                                      attach=_att)
                     fn = f"{LB['short']}평가조서_값_{dt.date.today()}.xlsx"
                 else:
                     tf = Terms(**asdict(t))
                     if tf.carry == 0 and tf.rfx_mode > 0: tf.carry = 1
                     ff, f0, f1, f2, fca, fconv = decompose(tf)
                     data = build_xlsx_formula(tf, ff, f0, f1, f2, fca, fconv,
-                                              eir_table(tf, acc_host(tf, ff, f0, f1, f2, fca)))
+                                              eir_table(tf, acc_host(tf, ff, f0, f1, f2, fca)),
+                                              attach=_att)
                     fn = f"{LB['short']}평가조서_수식_{dt.date.today()}.xlsx"
-            st.session_state.report = (fn, data)
+            st.session_state.report = (fn, data, _stamp(t, kind))
         except ModuleNotFoundError:
             st.error("openpyxl 이 없습니다.  pip install openpyxl  을 실행하고 다시 시도하십시오.")
         except Exception as ex:
             st.error(f"조서를 만들지 못했습니다 — {ex}")
 
     rep = st.session_state.get("report")
+    if rep and len(rep) == 3 and rep[2] != _stamp(t, kind):
+        # 조서를 만든 뒤 인풋이 바뀌었다. 예전 파일을 그대로 내주면 트리와
+        # 상각표가 서로 다른 계약으로 계산된 조서가 손에 남는다.
+        st.warning("**조서를 만든 뒤 인풋이 바뀌었습니다.** 예전 파일은 지웠으니 "
+                   "「조서 만들기」를 다시 누르십시오. 그대로 두면 트리와 상각표가 "
+                   "서로 다른 계약으로 계산된 조서가 나갑니다.")
+        st.session_state.pop("report", None)
+        rep = None
     if rep:
-        fn, data = rep
+        fn, data = rep[0], rep[1]
         st.download_button(f"{fn} 내려받기  ({len(data)/1024:,.0f} KB)", data, fn,
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            type="primary", key="dl_report", use_container_width=True)

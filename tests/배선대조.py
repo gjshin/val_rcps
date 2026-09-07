@@ -246,7 +246,8 @@ def main():
         R = openpyxl.load_workbook(io.BytesIO(
             G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv,
                                     G["eir_table"](t, b0))))["결과"]
-        stamped, warned = R["C32"].value, bool(R["B33"].value)
+        # 33행은 상각표 검산 줄이다. 상태확장 경고는 그 아래 34행에 있다.
+        stamped, warned = R["C32"].value, bool(R["B34"].value)
         if carry == 0:
             ok = (stamped is not None and abs(stamped - b2) < 1e-9 and warned)
             note = "앱 값 %.4f 기재 · 경고 %s" % (stamped or -1, "있음" if warned else "없음")
