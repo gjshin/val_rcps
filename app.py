@@ -5741,8 +5741,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("조정후 전환가격", "ipok", "@=C{ipopx}*C{ipomul}", N2, False),
         ("최소공모가격", "ipomin", tm.ipo_min, N2, True),
         ("상장 시 강제전환 (1/0)", "ipocv", int(tm.ipo_conv), N0, True),
-        ("매도청구권 평가방법 (0 유무가치 / 1 혼합할인율 / 2 지분·부채 분리)",
+        ("매도청구권 평가방법 (0 유무가치 / 1 GS식 전환가중확률할인 / 2 TF식 지분-채권 분리할인)",
          "kmeth", tm.k_method, N0, False),
+        ("지분·채권 구분 기준 (0 비례균등차감법 / 1 본문 4.3.3 GS 전환확률)",
+         "ksplit", int(tm.k_split), N0, False),
+        ("콜옵션 유형 (0 제3자 지정 가능 / 1 제3자 기특정)", "kkind", int(tm.k_kind), N0, False),
+        ("콜 대상물량 의무보유 (1 있음 — 행사기간 종료일까지 존속 / 0 없음)",
+         "khold", int(tm.k_hold), N0, False),
         ("조기상환권 처리 (1 분리 / 0 부채요소에 포함)", "psep", int(tm.p_sep), N0, True),
         ("조기상환 행사금액이 상실이자 보상 수준 (1/0)", "plost", int(tm.p_lost_int), N0, True),
         # 전체 지정이면 배분표가 한 줄이 되고 상각표를 만들지 않는다. 트리는
@@ -5892,7 +5897,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 자본 배분에서 부채요소를 줄이는 콜 — 발행자 상환권은 결과 C26 (부채 격자),
     # CB 와 제3자 지정 매도청구권은 C22 (전체 격자)
     CAE = "C26" if issuer_redeem(tm) else "C22"
+    S11B = "11b 채권확률 (1 − 전환확률)"
     S17, S18 = "17 구성비율", "18 혼합할인율"
+    S17A, S17B = "17a 행사 지분몫", "17b 행사 채권몫"
     S19, S20 = "19 콜 페이오프", "20 매도청구권가치"
     S21, S22 = "21 방법2 지분보유", "22 방법2 부채보유"
     S23, S24 = "23 방법2 지분몫", "24 방법2 부채몫"
@@ -5996,6 +6003,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     _need15 = _hascall and _km == 0
     _need1 = _hascall and _km == 1
     _need2 = _hascall and _km == 2
+    # 지분·채권 구분 기준이 본문 4.3.3(GS 전환확률)이면 옵션차익법이 ⑪ 을 참조한다.
+    # ⑪ 은 ⑫⑬⑭ 와 서로를 참조하므로 TF 를 골랐어도 네 시트를 함께 만든다.
+    _ksplit = int(getattr(tm, "k_split", 0)) == 1 and (_need1 or _need2)
+    _khold = int(getattr(tm, "k_hold", 1)) == 1
 
     # ⑤~⑨ 는 TF 트리다. GS 를 골랐어도 옵션차익법(방법 1·2)의 기초자산이라
     # 그때는 남긴다. GS + 유무가치비교법이면 쓰이지 않으므로 만들지 않는다.
@@ -6149,7 +6160,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
          f"=({Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17)*EXP(-{L}$12*{K['dt']})"
          f"+{L}$9+{L}$10"))
 
-    if _gs:
+    if _gs or _ksplit:
         W = newsheet(S11, "⑪ [GS] 전환확률트리",
                      "전환 1, 현금 0, 보유면 다음 두 칸의 평균.", f"{S14} · 다음 열 {S11}")
         # 현금(상환P·상환C)이 동점이면 0 이다. 전환은 허용오차만큼 앞설 때만 1 이다.
@@ -6160,6 +6171,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             f'IF(ABS({Q(S14)}!{L}{R0+r}-{Q(S4)}!{L}{R0+r})<{TOLX},1,'
             + ('0))' if i == n else
                f'{Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17))')), N4)
+
+        W = newsheet(S11B, "⑪b 채권확률트리  1 − 전환확률",
+                     "cash-or-nothing 풋옵션의 위험중립확률이다 (본문 4.3.3). "
+                     "⑪ 과 더하면 언제나 1 이다 — 전환사채 만기까지 둘 중 하나가 행사되고 "
+                     "하나가 행사되면 다른 하나는 사라지기 때문이다.", S11, call_on=False)
+        fill(W, lambda i, r, L, Lp, Ln: f"=1-{Q(S11)}!{L}{R0+r}", N4)
 
         W = newsheet(S12, "⑫ [GS] 위험조정할인율트리",
                      "이 칸을 직전 시점으로 할인할 때 쓰는 이자율이다. "
@@ -6588,18 +6605,34 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         # 제3자 지정 가능 콜옵션은 전환사채를 기초자산으로 하는 복합옵션이다.
         # 기초자산은 콜과 부속조항(의무보유)을 뺀 ⑧ 이다 (책 4.4.3, 부속예제 4-4).
         W = newsheet(S17, "⑰ 구성비율트리  지분 몫 ÷ 전환사채 가치",
-                     "노드 가치 중 주식에서 온 몫의 비율이다.", f"{S5} · {S8}", call_on=False)
+                     "노드 가치 중 주식에서 온 몫의 비율이다. **비례균등차감법**(지분·채권 구분 "
+                     "기준 0)을 고를 때 쓰는 비중이고, 본문 4.3.3(기준 1)을 고르면 대신 ⑪ "
+                     "전환확률을 쓴다."
+                     + ("  지금 설정은 본문 4.3.3 이라 이 시트는 참고용이다." if _ksplit else ""),
+                     f"{S5} · {S8}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln:
              f"=IF({Q(S8)}!{L}{R0+r}=0,0,{Q(S5)}!{L}{R0+r}/{Q(S8)}!{L}{R0+r})", N4)
 
-        if _need1:                      # ⑱·⑳ 은 혼합할인율(방법 1) 전용이다
-            W = newsheet(S18, "⑱ 혼합할인율트리  구성비율 × 무위험 + (1−구성비율) × 위험",
-                         "이 칸을 직전 시점으로 할인할 때 쓰는 이자율이다. "
-                         "지분 몫에는 무위험, 채권 몫에는 위험 선도이자율을 섞는다.",
-                         S17, call_on=False)
+        if _need1:                      # ⑱·⑳ 은 GS식 전환가중확률할인(방법 1) 전용이다
+            _wsh = S11 if _ksplit else S17
+            W = newsheet(S18, "⑱ 혼합할인율트리  비중 × 무위험 + (1−비중) × 위험",
+                         "이 칸을 직전 시점으로 할인할 때 쓰는 이자율이다. 지분 성격에는 무위험, "
+                         "채권 성격에는 위험 선도이자율을 섞는다. 비중은 "
+                         + ("**⑪ GS 전환확률**(본문 4.3.3)" if _ksplit
+                            else "**⑰ 가치 구성비율**(비례균등차감법)")
+                         + " 이다. 비중이 언제나 0~1 이라 할인율이 무위험과 위험 사이를 벗어나지 "
+                           "않는다.",
+                         _wsh, call_on=False)
             fill(W, lambda i, r, L, Lp, Ln:
-                 (f"={Q(S17)}!{L}{R0+r}*{Lp}$11+(1-{Q(S17)}!{L}{R0+r})*{Lp}$12"
+                 (f"={Q(_wsh)}!{L}{R0+r}*{Lp}$11+(1-{Q(_wsh)}!{L}{R0+r})*{Lp}$12"
                   if i > 0 else "=0"), P2)
+
+        # 의무보유가 없으면 투자자가 전환·조기상환으로 사채를 소멸시키는 자리에서 그것을
+        # 사는 콜도 사라진다. ⑨ 의사결정이 그 자리를 알려 준다 (만기 열은 그대로 둔다).
+        _DEAD = (lambda L, r: f'OR({Q(S9)}!{L}{R0+r}="전환",{Q(S9)}!{L}{R0+r}="자동전환",'
+                              f'{Q(S9)}!{L}{R0+r}="상장전환",{Q(S9)}!{L}{R0+r}="상환P")')
+        _kill = (lambda L, r, body: (f"=IF({_DEAD(L, r)},0,{body[1:]})"
+                                     if not _khold else body))
 
         W = newsheet(S19, "⑲ 콜 페이오프트리  MAX(전환사채 가치 − 매도청구금액, 0)",
                      "매도청구 행사기간에만 값이 생긴다. 기초자산은 ⑧ 이다.", S8)
@@ -6611,11 +6644,31 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                          "자식의 구성비율로 섞은 할인율로 자식을 각각 할인한다.",
                          f"{S18} · {S19} · 다음 열 {S20}")
             fill(W, lambda i, r, L, Lp, Ln: (f"={Q(S19)}!{L}{R0+r}" if i == n else
-                 f"=MAX({Q(S19)}!{L}{R0+r},"
-                 f"{Ln}{R0+r}*{L}$16*EXP(-{Q(S18)}!{Ln}{R0+r}*{K['dt']})"
-                 f"+{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S18)}!{Ln}{R0+r+1}*{K['dt']}))"))
+                 _kill(L, r,
+                       f"=MAX({Q(S19)}!{L}{R0+r},"
+                       f"{Ln}{R0+r}*{L}$16*EXP(-{Q(S18)}!{Ln}{R0+r}*{K['dt']})"
+                       f"+{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S18)}!{Ln}{R0+r+1}*{K['dt']}))")))
             put(W, R0+n+3, 2, "매도청구권 (한도 반영 전, t=0)", bold=True)
             put(W, R0+n+3, 3, f"=C{R0}", bold=True, fmt=N2, align="right")
+
+    if _need2 and _ksplit:
+        # ── 17a·17b 행사가를 GS 전환확률로 분해 (본문 4.3.3) ──
+        # 기초자산의 지분(⑤)·채권(⑥)은 이미 나뉘어 있으나 행사가(8행)는 나뉘어 있지 않다.
+        # asset-or-nothing 콜의 위험중립확률이 GS 전환확률(⑪)이고 cash-or-nothing 풋의
+        # 그것이 1−⑪(⑪b)이므로 행사가를 그 확률로 나눈다. 두 몫의 합은 언제나 ⑲ 다.
+        # 각 몫은 «확률 × (그 시나리오 현가 − 행사가)» 라 상환 시나리오에서 음수가 될 수
+        # 있다 — 콜이 주식으로 갈 시나리오에서만 이득이라는 뜻이지 오류가 아니다.
+        W = newsheet(S17A, "⑰a 행사 지분몫  ⑤ − ⑪ × 매도청구금액",
+                     "행사할 때 페이오프의 지분 성격 몫이다. 행사기간이 아니면 0 이다.",
+                     f"{S5} · {S11}")
+        fill(W, lambda i, r, L, Lp, Ln:
+             f"=IF({L}$5=1,{Q(S5)}!{L}{R0+r}-{Q(S11)}!{L}{R0+r}*{L}$8,0)", N4)
+
+        W = newsheet(S17B, "⑰b 행사 채권몫  ⑥ − (1−⑪) × 매도청구금액",
+                     "행사할 때 페이오프의 채권 성격 몫이다. ⑰a 와 더하면 ⑲ 가 된다.",
+                     f"{S6} · {S11B}")
+        fill(W, lambda i, r, L, Lp, Ln:
+             f"=IF({L}$5=1,{Q(S6)}!{L}{R0+r}-{Q(S11B)}!{L}{R0+r}*{L}$8,0)", N4)
 
     if _need2:
         # ── 21~24 옵션차익혼합할인법 · 방법 2 (지분·부채 분리) ──
@@ -6635,21 +6688,30 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
              f"=({Q(S24)}!{Ln}{R0+r}*{L}$16+{Q(S24)}!{Ln}{R0+r+1}*{L}$17)"
              f"*EXP(-{L}$12*{K['dt']})"), N4)
 
-        ex2 = (lambda L, r: f"{Q(S19)}!{L}{R0+r}>={Q(S21)}!{L}{R0+r}+{Q(S22)}!{L}{R0+r}")
+        # 행사이득이 0 이면 행사하지 않는다 — 몫이 음수일 수 있어 «0 >= 음수» 로 잘못
+        # 행사 판정이 나는 것을 막는다.
+        ex2 = (lambda L, r: f"AND({Q(S19)}!{L}{R0+r}>0,"
+                            f"{Q(S19)}!{L}{R0+r}>={Q(S21)}!{L}{R0+r}+{Q(S22)}!{L}{R0+r})")
+        _eq = ((lambda L, r: f"{Q(S17A)}!{L}{R0+r}") if _ksplit else
+               (lambda L, r: f"{Q(S19)}!{L}{R0+r}*{Q(S17)}!{L}{R0+r}"))
+        _db = ((lambda L, r: f"{Q(S17B)}!{L}{R0+r}") if _ksplit else
+               (lambda L, r: f"{Q(S19)}!{L}{R0+r}*(1-{Q(S17)}!{L}{R0+r})"))
+        _src = (f"{S17A} · {S17B}" if _ksplit else S17) + f" · {S19} · {S21} · {S22}"
+        _how = ("행사가를 GS 전환확률로 나눈 ⑰a" if _ksplit else "페이오프에 구성비율을 곱한 몫")
         W = newsheet(S23, "㉓ [방법2] 매도청구권 · 지분 몫",
-                     "행사하면 페이오프의 지분 몫, 아니면 보유가치의 지분 몫이다. "
-                     "만기에는 보유가치가 0 이라 언제나 페이오프를 쪼갠다.",
-                     f"{S17} · {S19} · {S21} · {S22}")
-        fill(W, lambda i, r, L, Lp, Ln:
-             f"=IF({ex2(L, r)},{Q(S19)}!{L}{R0+r}*{Q(S17)}!{L}{R0+r},"
-             f"{Q(S21)}!{L}{R0+r})", N4)
+                     f"행사하면 {_how}, 아니면 보유가치의 지분 몫이다. "
+                     "만기에는 보유가치가 0 이라 언제나 페이오프를 쪼갠다.", _src)
+        fill(W, lambda i, r, L, Lp, Ln: _kill(L, r,
+             f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})") if i < n else
+             f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})", N4)
 
         W = newsheet(S24, "㉔ [방법2] 매도청구권 · 부채 몫",
-                     "행사 판단은 ㉓ 과 같다. 지분 몫의 나머지가 부채 몫이다.",
-                     f"{S17} · {S19} · {S21} · {S22}")
-        fill(W, lambda i, r, L, Lp, Ln:
-             f"=IF({ex2(L, r)},{Q(S19)}!{L}{R0+r}*(1-{Q(S17)}!{L}{R0+r}),"
-             f"{Q(S22)}!{L}{R0+r})", N4)
+                     "행사 판단은 ㉓ 과 같다. "
+                     + ("행사가의 채권 몫을 뺀 ⑰b 다." if _ksplit else "지분 몫의 나머지가 부채 몫이다."),
+                     _src)
+        fill(W, lambda i, r, L, Lp, Ln: _kill(L, r,
+             f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})") if i < n else
+             f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})", N4)
         put(W, R0+n+3, 2, "매도청구권 · 방법2 (한도 반영 전, t=0)", bold=True)
         put(W, R0+n+3, 3, f"={Q(S23)}!C{R0}+C{R0}", bold=True, fmt=N2, align="right")
 
