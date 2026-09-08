@@ -1,0 +1,124 @@
+{
+ "generated": "2026-09-08 03:53",
+ "head": "d962f94",
+ "app_sha256_12": "dfbfe0101bfa",
+ "quick": true,
+ "python": "3.11.15",
+ "suites": [
+  {
+   "suite": "손계산대조",
+   "cmd": "python3 tests/손계산대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 12.4,
+   "last": "모두 통과",
+   "tail": []
+  },
+  {
+   "suite": "오라클",
+   "cmd": "python3 tests/오라클.py",
+   "ok": true,
+   "code": 0,
+   "sec": 0.8,
+   "last": "모두 통과",
+   "tail": []
+  },
+  {
+   "suite": "분기전수",
+   "cmd": "python3 tests/분기전수.py",
+   "ok": true,
+   "code": 0,
+   "sec": 5.5,
+   "last": "→ tests/output/분기전수.json 289 줄",
+   "tail": []
+  },
+  {
+   "suite": "기능목록",
+   "cmd": "python3 tests/기능목록.py --strict",
+   "ok": true,
+   "code": 0,
+   "sec": 0.5,
+   "last": "   → tests/검증매트릭스.json (310 행)",
+   "tail": []
+  },
+  {
+   "suite": "조합시험",
+   "cmd": "python3 tests/조합시험.py --quick",
+   "ok": true,
+   "code": 0,
+   "sec": 60.2,
+   "last": "→ tests/output/조합시험.json 1800 줄 · 실패 0 (tests/output/조합시험_실패.json) · 60초",
+   "tail": []
+  },
+  {
+   "suite": "배선대조",
+   "cmd": "python3 tests/배선대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 40.5,
+   "last": "배선 이상 없음",
+   "tail": []
+  },
+  {
+   "suite": "리포트대조",
+   "cmd": "python3 tests/리포트대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 29.0,
+   "last": "",
+   "tail": []
+  }
+ ],
+ "baseline": {
+  "주계약": 37.5208,
+  "부채요소": 73.1837,
+  "전체": 114.8781,
+  "매도청구권": 12.2404
+ },
+ "baseline_expected": {
+  "주계약": 37.5208,
+  "부채요소": 73.1837,
+  "전체": 114.8781,
+  "매도청구권": 12.2404
+ },
+ "baseline_ok": true,
+ "matrix": {
+  "CB": {
+   "PASS": 77,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
+  "RCPS": {
+   "PASS": 87,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
+  "BW": {
+   "PASS": 81,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
+  "SHA": {
+   "PASS": 44,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
+  "ALL": {
+   "PASS": 0,
+   "EXPECTED_BLOCK": 5,
+   "KNOWN_LIMITATION": 16,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  }
+ },
+ "all_ok": true,
+ "sec": 149.2
+}

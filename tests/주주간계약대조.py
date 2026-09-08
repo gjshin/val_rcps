@@ -30,6 +30,12 @@ CASES = [
     ("주가 60%", dict(S0=600.)),
     ("풋 의무자 = 발행회사", dict(sha_writer=1)),
     ("월 노드", dict(gap_m=1.0, sha_put_f=3., sha_call_f=3.)),
+    # 상호소멸 — 한쪽이 행사하면 다른 쪽이 그 자리에서 소멸한다. 엔진에만 넣고
+    # 수식 조서에 안 넣었던 적이 있어(조서를 풀면 다른 값이 나왔다) 여기 심는다.
+    ("상호소멸", dict(sha_kill=1)),
+    ("상호소멸 · 적격상장",
+     dict(sha_kill=1, ipo_on=1, ipo_m=36., ipo_min=1200.)),
+    ("상호소멸 · 콜 우선", dict(sha_kill=1, pc_order=1)),
 ]
 BASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2025-03-31",
             d_base="2025-03-31", d_mat="2030-03-31", gap_m=6.0, sig=0.40,

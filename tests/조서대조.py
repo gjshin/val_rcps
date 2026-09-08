@@ -184,6 +184,15 @@ CASES = [
     # ── 풋·콜 우선순위 (pc_order) ───────────────────────────────
     # 조기상환금액이 매도청구금액보다 크고 행사기간이 겹치는 계약에서만 두 갈래가
     # 갈린다. 「표면 3% · 보장 7%」 가 정확히 그 경우다 (2년 시점 108.51 대 100.00).
+    # 복합계약 전체 당기손익-공정가치 지정 — 배분표가 한 줄이 되고 상각표가
+    # 사라진다. 트리는 그대로이므로 트랜치 다섯 값은 안 움직이고, 갈리는 것은
+    # 배분표·분개·거래원가다. 지정은 전환권이 부채일 때만 성립한다 (문단 4.2.2).
+    ("전체 FVPL 지정 · 콜 별도",
+     dict(conv_class="liability", fvpl_whole=1)),
+    ("전체 FVPL 지정 · 콜 내재파생",
+     dict(conv_class="liability", k_sep=0, fvpl_whole=1)),
+    ("전체 FVPL 지정 · 거래원가 5억",
+     dict(conv_class="liability", fvpl_whole=1, issue_cost=5e8)),
     ("우선순위 · 투자자 풋 우선",
      dict(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07,
           pc_order=0)),
@@ -275,7 +284,7 @@ def build(G, over, path):
     ctp2 = G["call_third_party"](t, full, 2)
     open(path, "wb").write(
         G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv,
-                                G["eir_table"](t, G["acc_host"](t, full, b0, b1, b2, ca))))
+                                G["eir_or_none"](t, full, b0, b1, b2, ca)))
 
     import openpyxl
     wb = openpyxl.load_workbook(path)
@@ -294,6 +303,7 @@ def build(G, over, path):
     return dict(b0=b0, b1=b1, b2=b2, gs=full["GS"], b3=b3, ca=ca, conv=conv,
                 ctp1=t.k_w*ctp1, ctp2=t.k_w*ctp2,
                 al=al, eq=(t.conv_class == "equity"), sep=(t.k_sep != 0),
+                fvpl=G["fvpl_on"](t),
                 nosep=(t.conv_class == "equity" and t.k_sep != 0
                        and int(t.p_sep) == 0)), \
         mp["결과"], mp["회계처리"]
@@ -377,7 +387,10 @@ def main():
                  "" if okj else "★"))
         # 배분 각 줄이 allocate() 와 같은가
         # 7 주계약 · 8 부채요소 · 9 조기상환권 · 10 복합내재파생 · 11 매도청구 · 12 전환권대가
-        if eng["eq"] and eng["nosep"]:
+        if eng["fvpl"]:
+            # 전체 지정이면 첫 줄이 복합계약 한 줄이고 나머지 요소별 줄은 빈다.
+            rows_ord = [("복합계약 전체", 7), ("매도청구권", 11)]
+        elif eng["eq"] and eng["nosep"]:
             rows_ord = [("부채요소", 8), ("매도청구권", 11), ("전환권대가", 12)]
         elif eng["eq"]:
             rows_ord = [("주계약", 7), ("조기상환청구권", 9), ("매도청구권", 11),
