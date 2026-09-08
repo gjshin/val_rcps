@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-08 05:47",
- "head": "d8b4ff4",
- "app_sha256_12": "f69246e553e2",
+ "generated": "2026-09-08 07:43",
+ "head": "aa061b7",
+ "app_sha256_12": "ae5d9a61355e",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 14.8,
+   "sec": 33.7,
    "last": "모두 통과",
    "tail": []
   },
@@ -28,39 +28,26 @@
    "cmd": "python3 tests/분기전수.py",
    "ok": true,
    "code": 0,
-   "sec": 6.6,
+   "sec": 7.4,
    "last": "→ tests/output/분기전수.json 289 줄",
    "tail": []
   },
   {
    "suite": "기능목록",
    "cmd": "python3 tests/기능목록.py --strict",
-   "ok": false,
-   "code": 1,
-   "sec": 0.5,
+   "ok": true,
+   "code": 0,
+   "sec": 0.6,
    "last": "   → tests/검증매트릭스.json (310 행)",
-   "tail": [
-    "",
-    "3. 매트릭스",
-    "   상품         전체   PASS    BLOCK    LIMIT   FAIL      미검증",
-    "   CB         77     77        0        0      0        0",
-    "   RCPS       87     87        0        0      0        0",
-    "   BW         81     81        0        0      0        0",
-    "   SHA        44     44        0        0      0        0",
-    "   ALL        21      0        5       16      0        0",
-    "",
-    "   독립 오라클이 붙은 분기 70 / 열거형+권리 289",
-    "",
-    "   → tests/검증매트릭스.json (310 행)"
-   ]
+   "tail": []
   },
   {
    "suite": "조합시험",
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 82.1,
-   "last": "→ tests/output/조합시험.json 1800 줄 · 실패 0 (tests/output/조합시험_실패.json) · 82초",
+   "sec": 83.7,
+   "last": "→ tests/output/조합시험.json 1800 줄 · 실패 0 (tests/output/조합시험_실패.json) · 83초",
    "tail": []
   },
   {
@@ -68,7 +55,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 52.2,
+   "sec": 62.4,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -77,7 +64,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 34.5,
+   "sec": 46.6,
    "last": "",
    "tail": []
   }
@@ -132,6 +119,6 @@
    "NOT_TESTED": 0
   }
  },
- "all_ok": false,
- "sec": 192.0
+ "all_ok": true,
+ "sec": 235.8
 }

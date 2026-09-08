@@ -320,6 +320,8 @@ def collect_coverage(G):
         # 날짜↔개월 변환과 종가 고르기 — 격자 값이 아니라 입력 경로의 시험. step_mapper 를 밟는다.
         "test_date_month_roundtrip": [("CB", "mid", True)],
         "test_pick_close": [("CB", "inst", "CB")],
+        "test_bdt_review_gates": [("CB", "conv_class", "equity"), ("CB", "conv_class", "liability"),
+                                  ("CB", "put_bdt", 1), ("CB", "put_bdt", 0), ("CB", "put", True), ("CB", "put", False)],
     }
     tf = "tests/손계산대조.py"
     src = open(os.path.join(ROOT, tf), encoding="utf-8").read()

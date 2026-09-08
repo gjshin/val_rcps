@@ -2383,6 +2383,140 @@ def eir_or_none(tm: Terms, full, b0, b1, b2, ca):
     return None if host is None else eir_table(tm, host)
 
 
+BDT_GAP_TOL = 0.05      # 보장수익률 대 위험할인율 격차(연 실효, %p). 이보다 작으면 «유의하지 않음»
+BDT_RATIO_TOL = 0.2     # 금리 ±1%p 민감도 ÷ 변동성 ±10%p 민감도. 이보다 작으면 금리가 값을 못 움직인다
+BDT_SPREAD_TOL = 0.7    # 할인율 중 신용스프레드 비중. 이보다 크면 스프레드가 값을 지배한다
+
+
+def rate_signals(tm: Terms):
+    """금리를 확률변수로 둘 실익 — 격자를 네 번 더 돌려 잰다.
+
+    금리 «수준» ±1%p (무위험·위험 곡선 평행), 신용스프레드 ±1%p (위험 곡선만),
+    변동성 ±10%p 의 세 민감도와, 잔존만기 시점의 스프레드 비중. 화면 «분리 판단» 의
+    expander 와 조서 «검산요약» 이 같은 값을 쓴다. 매도청구권은 빼고(call=False) 잰다.
+    """
+    base = pick(engine(tm, call=False), tm.model)
+
+    def _bump(**kw):
+        tt = Terms(**asdict(tm))
+        for k2, v2 in kw.items(): setattr(tt, k2, v2)
+        derive(tt); return pick(engine(tt, call=False), tt.model)
+    _par = lambda d: dict(rf_curve=[(x, y+d) for x, y in tm.rf_curve],
+                          cr_curve=[(x, y+d) for x, y in tm.cr_curve],
+                          cr_curve_b=[(x, y+d) for x, y in tm.cr_curve_b])
+    dl = (_bump(**_par(0.01)) - _bump(**_par(-0.01)))/2
+    ds = (_bump(cr_curve=[(x, y+0.01) for x, y in tm.cr_curve],
+                cr_curve_b=[(x, y+0.01) for x, y in tm.cr_curve_b])
+          - _bump(cr_curve=[(x, y-0.01) for x, y in tm.cr_curve],
+                  cr_curve_b=[(x, y-0.01) for x, y in tm.cr_curve_b]))/2
+    dv = (_bump(sig=tm.sig+0.10) - _bump(sig=max(0.01, tm.sig-0.10)))/2
+    RFc, CRc = curves(tm)
+    spr = CRc(tm.T) - RFc(tm.T)
+    share = spr/CRc(tm.T) if CRc(tm.T) > 1e-9 else 0.0
+    return dict(base=base, dl=dl, ds=ds, dv=dv, ratio=abs(dl)/max(abs(dv), 1e-9),
+                spr=spr, share=share)
+
+
+def bdt_review(tm: Terms, full, b0, b1, b2, ca, sig=None):
+    """이자율모형(BDT) 적용 검토 — 책 3.3.1.4 «검토하여야 한다» 의 네 관문.
+
+    ① 전환권이 자본인가 (부채면 전환권·풋·콜이 한 회계단위라 따로 잴 부채요소가 없다)
+    ② 전환권이 외가격인가 (3.3.2.2 — 외가격이어야 조기상환 지연이 값을 흔든다)
+    ③ 보장수익률과 위험할인율 격차가 작은가 (3.3.1.4 ② — 상환할지 말지가 아슬아슬)
+    ④ 흔들어 보니 값이 움직이는가 (3.3.1.4 ③ — 금리 민감도 대 변동성 민감도)
+
+    넷을 차례로 본다. 하나라도 닫히면 «검토했으나 적용하지 않음» 이고, 넷 다 열리면
+    «이자율모형 적용을 중요하게 검토» 다. 어느 쪽이든 조서에 남길 문안을 함께 돌려준다.
+    돌려주는 것: dict(관문=[(번호, 물음, 값, 통과, 설명)], 결론, 사유, 문안, 지표, 왜곡).
+    """
+    if is_sha(tm):
+        return None
+    has_put = tm.p_s <= tm.p_e
+    RFc, CRc = curves(tm)
+    rd = math.exp(CRc(tm.T)) - 1                      # 위험할인율, 연 실효
+    m = int(tm.ytm_cmp)
+    g = ((1 + tm.ytm/m)**m - 1) if m > 0 else tm.ytm  # 보장수익률, 연 실효 (단리면 그대로)
+    gap = rd - g
+    D = full["dist"]
+    conv_share = D["conv"]
+    mny = tm.S0/tm.K0 if tm.K0 > 0 else float("inf")
+    eq = tm.conv_class == "equity"
+    otm = mny < 1.0
+    small = abs(gap) <= BDT_GAP_TOL
+    rows = [
+        (1, "전환권이 자본으로 분류되는가",
+         "자본" if eq else "파생상품부채", eq,
+         "자본이면 부채요소를 따로 재야 하므로 이자율모형이 붙을 자리가 있다. 부채면 전환권·풋·콜이 "
+         "하나의 복합내재파생이라 따로 잴 대상이 없다 (1109 B4.3.4)."),
+        (2, "전환권이 외가격인가",
+         f"주가 ÷ 전환가액 {mny:,.3f}", otm,
+         "외가격이어야 투자자가 전환 대신 상환 시점을 고민한다 (3.3.2.2). 내가격이면 전환권이 값을 "
+         "지배해 조기상환권이 흔들려도 전체 영향이 작다."),
+        (3, "보장수익률과 위험할인율의 격차가 작은가",
+         f"보장 {g*100:.2f}% · 할인 {rd*100:.2f}% · 격차 {gap*100:+.2f}%p", small,
+         f"연 실효 기준. ±{BDT_GAP_TOL*100:.0f}%p 안이면 «유의하지 않음» — 받는 돈과 할인이 팽팽해 "
+         "금리가 상환 결정을 뒤집을 수 있다 (3.3.1.4 ②)."),
+    ]
+    sig_ok = None
+    if sig is not None:
+        sig_ok = not (sig["ratio"] < BDT_RATIO_TOL or sig["share"] > BDT_SPREAD_TOL)
+        rows.append((4, "흔들어 보니 값이 움직이는가",
+                     f"금리 ±1%p {sig['dl']:+,.4f} · 변동성 ±10%p {sig['dv']:+,.4f} · 비율 {sig['ratio']:.3f} · "
+                     f"스프레드 비중 {sig['share']*100:.0f}%", sig_ok,
+                     f"비율이 {BDT_RATIO_TOL} 미만이거나 스프레드 비중이 {BDT_SPREAD_TOL*100:.0f}% 를 넘으면 "
+                     "금리가 아니라 신용스프레드가 값을 지배한다 (3.3.1.4 ③)."))
+    if not has_put:
+        res, why = "해당 없음", "조기상환청구권이 없어 이자율모형이 값을 바꿀 자리가 없다."
+    elif fvpl_on(tm):
+        res, why = "해당 없음", "복합계약 전체를 당기손익-공정가치로 측정하므로 부채요소를 따로 재지 않는다."
+    else:
+        closed = [r for r in rows if r[3] is False]
+        if closed:
+            res = "검토했으나 적용하지 않음"
+            why = "관문 " + " · ".join(f"{r[0]}({r[1]}: 아니오)" for r in closed) + " 에서 닫힌다."
+        elif sig is None:
+            res, why = "관문 ①~③ 통과 — ④ 민감도 확인 필요", "격자를 네 번 더 돌려 금리 민감도를 재야 한다."
+        else:
+            res = "이자율모형 적용을 중요하게 검토"
+            why = "네 관문이 모두 열린다 (3.3.1.4). 적용하면 3.3.2.2 의 전환권 과소평가 크기를 재어 적어야 한다."
+    # BDT 를 켰으면 왜곡 크기 — BDT 로 잰 부채요소 대 혼합할인율(TF) 부채요소
+    dist = None
+    if put_bdt_on(tm):
+        t0 = Terms(**asdict(tm)); t0.put_bdt = 0; derive(t0)
+        _, _b0, _b1, _b2, _, _ = decompose(t0)
+        dist = dict(bdt=b1, tf=_b1, diff=b1 - _b1)
+    # 조서 문안
+    if dist is not None:
+        res = "이자율모형(BDT) 적용" + ("" if not [r for r in rows if r[3] is False] else " — 관문이 닫힌 채 적용")
+        text = (f"3.3.1.4 의 조건을 검토하여 이자율모형(BDT, 단기이자율 변동성 {tm.bdt_sig*100:.0f}%)을 "
+                f"적용하였다. 이자율모형으로 잰 부채요소 {dist['bdt']:,.4f} 는 혼합할인율(TF) 부채요소 "
+                f"{dist['tf']:,.4f} 보다 {dist['diff']:+,.4f} 만큼 다르며, 그만큼이 잔여인 전환권에서 빠진다 "
+                "(3.3.2.2 의 전환권 과소평가). 이 차이를 조서에 적고 민감도와 함께 공시한다."
+                + (" 다만 " + why + " 적용 근거를 따로 적어야 한다." if [r for r in rows if r[3] is False] else ""))
+    elif res == "해당 없음":
+        text = f"이자율모형 적용 검토 — 해당 없음. {why}"
+    elif res.startswith("검토했으나"):
+        text = (f"『K-IFRS 실무사례와 해설 11』 3.3.1.4 의 세 조건을 검토하였다. 전환권은 "
+                f"{'자본으로' if eq else '파생상품부채로'} 분류되고 주가는 전환가액의 {mny*100:.0f}% 이다. "
+                f"보장수익률(연 실효 {g*100:.2f}%)과 위험할인율({rd*100:.2f}%)의 차이는 {gap*100:+.2f}%p 이며, "
+                f"정산 유형 분포상 전환이 {conv_share*100:.1f}% 를 차지한다"
+                + (f". 금리 ±1%p 민감도 {sig['dl']:+,.4f} 는 변동성 ±10%p 민감도 {sig['dv']:+,.4f} 의 "
+                   f"{sig['ratio']:.2f} 배이고 할인율 중 신용스프레드가 {sig['share']*100:.0f}% 를 차지한다"
+                   if sig is not None else "")
+                + ". 3.3.2.2 에 따라 이자율변동성에 따른 시간가치가 유의하지 않다고 판단하여 이자율을 "
+                  "결정론적으로 두었으며, 금리 ±1%p 민감도를 별도 표시하였다.")
+    else:
+        text = (f"3.3.1.4 의 세 조건을 검토하였다. 전환권은 자본이고 외가격(주가 ÷ 전환가액 {mny:,.3f})이며, "
+                f"보장수익률과 위험할인율의 차이가 {gap*100:+.2f}%p 로 작다"
+                + (f". 금리 ±1%p 민감도 {sig['dl']:+,.4f} 가 변동성 ±10%p 민감도의 {sig['ratio']:.2f} 배로 "
+                   "무시할 수준이 아니다" if sig is not None else "")
+                + ". 이자율을 확률변수로 두는 모형(BDT)의 적용을 검토하여야 하며, 적용한다면 3.3.2.2 의 "
+                  "전환권 과소평가 크기(BDT 부채요소 − 혼합할인율 부채요소)를 함께 적어야 한다.")
+    return dict(관문=rows, 결론=res, 사유=why, 문안=text, 왜곡=dist,
+                지표=dict(rd=rd, g=g, gap=gap, mny=mny, conv_share=conv_share,
+                        put_share=D["put"], pv=b1 - b0, cv=b2 - b1))
+
+
 def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
     """조서와 화면이 함께 싣는 검산 표. [(항목, 값, 판정, 설명)].
 
@@ -2477,7 +2611,7 @@ def sha_checks(tm: Terms, R):
     return out
 
 
-def write_check_sheets(wb, tm: Terms, checks, after="결과"):
+def write_check_sheets(wb, tm: Terms, checks, after="결과", review=None):
     """조서에 «검산요약» 과 «99_모형검증» 두 장을 더한다.
 
     검산요약은 이 계약을 실제로 훑은 결과이고, 99_모형검증은 모형 자체의 알려진 한계와
@@ -2512,6 +2646,36 @@ def write_check_sheets(wb, tm: Terms, checks, after="결과"):
     put(C, r + 1, 2, ("모든 항목 적합" if not bad else "확인 필요 " + str(len(bad)) + "건: " + ", ".join(bad)),
         bold=True, color=(RPT["green"] if not bad else RPT["red"]))
     C.sheet_properties.tabColor = RPT["green"] if not bad else RPT["red"]
+    if review is not None:
+        r += 3
+        put(C, r, 2, "이자율모형(BDT) 적용 검토 — 『K-IFRS 실무사례와 해설 11』 3.3.1.4 · 3.3.2.2", bold=True, size=12); r += 1
+        put(C, r, 2, "책의 문언은 «검토하여야 한다» 다. 네 관문이 모두 열려야 적용을 검토하고, 하나라도 닫히면 "
+            "«검토했으나 적용하지 않음» 으로 남긴다. «검토하지 않았다» 와는 다르다 — 흔적이 없으면 그 자체가 지적사항이다.",
+            size=9, color=RPT["grey"], wrap=True)
+        C.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5); C.row_dimensions[r].height = 30; r += 2
+        for i, h in enumerate(["관문", "값", "열림", "설명"]):
+            put(C, r, 2 + i, h, bold=True, fill=RPT["band"], border=True)
+        r += 1
+        for no, q, v, ok, why in review["관문"]:
+            put(C, r, 2, f"{no}. {q}", border=True); put(C, r, 3, v, border=True, wrap=True)
+            put(C, r, 4, "예" if ok else "아니오", bold=True, border=True,
+                color=(RPT["green"] if ok else RPT["red"]))
+            put(C, r, 5, why, size=9, color=RPT["grey"], border=True, wrap=True); r += 1
+        r += 1
+        _warn = review["결론"].startswith("이자율모형 적용을") or "닫힌 채" in review["결론"]
+        put(C, r, 2, "결론 · " + review["결론"], bold=True, color=(RPT["amber"] if _warn else RPT["green"])); r += 1
+        put(C, r, 2, review["사유"], size=9, color=RPT["grey"], wrap=True)
+        C.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5); r += 1
+        if review["왜곡"]:
+            d = review["왜곡"]
+            put(C, r, 2, "왜곡 크기 (3.3.2.2)", bold=True, border=True)
+            put(C, r, 3, f"BDT 부채요소 {d['bdt']:,.4f} − TF 부채요소 {d['tf']:,.4f} = {d['diff']:+,.4f} → 전환권에서 빠진다",
+                border=True, wrap=True)
+            C.merge_cells(start_row=r, start_column=3, end_row=r, end_column=5); r += 1
+        r += 1
+        put(C, r, 2, "조서 문안", bold=True); r += 1
+        put(C, r, 2, review["문안"], wrap=True)
+        C.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5); C.row_dimensions[r].height = 75
     if after in wb.sheetnames:
         wb.move_sheet("검산요약", offset=wb.sheetnames.index(after) + 1 - wb.sheetnames.index("검산요약"))
 
@@ -5001,7 +5165,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
 
     # ── 해설 ──
-    write_check_sheets(wb, tm, model_checks(tm, full, b0, b1, b2, ca, eir))
+    write_check_sheets(wb, tm, model_checks(tm, full, b0, b1, b2, ca, eir),
+                       review=bdt_review(tm, full, b0, b1, b2, ca, rate_signals(tm)))
 
     H = wb.create_sheet("해설", 0); H.sheet_view.showGridLines = False
     H.column_dimensions["B"].width = 22; H.column_dimensions["C"].width = 96
@@ -6611,7 +6776,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
 
     # ── 해설 ──
-    write_check_sheets(wb, tm, model_checks(tm, full, b0, b1, b2, ca, eir))
+    write_check_sheets(wb, tm, model_checks(tm, full, b0, b1, b2, ca, eir),
+                       review=bdt_review(tm, full, b0, b1, b2, ca, rate_signals(tm)))
 
     H = wb.create_sheet("해설", 0); H.sheet_view.showGridLines = False
     H.column_dimensions["B"].width = 22; H.column_dimensions["C"].width = 96
@@ -9253,48 +9419,39 @@ with tabs[2]:
     else:
         st.info(inst_text(t, "매도청구권이 없어 판단할 것이 없습니다."))
 
-    # ── 금리 민감도로 본 금리모형 실익 ──
-    with st.expander("금리모형이 값을 얼마나 바꾸는가 — 민감도로 본 실익"):
-        RFc, CRc = curves(t)
-
-        def _bump(**kw):
-            tt = Terms(**asdict(t))
-            for k2, v2 in kw.items(): setattr(tt, k2, v2)
-            derive(tt); return pick(engine(tt, call=False), t.model)
-        # BDT 는 금리 "수준" 을 확률변수로 둔다. 두 곡선을 함께 흔들어야 노출을
-        # 제대로 잰다 — 무위험만 흔들면 스프레드와 상쇄되어 크게 과소하게 잡힌다.
-        _par2 = lambda d: dict(rf_curve=[(x, y+d) for x, y in t.rf_curve],
-                               cr_curve=[(x, y+d) for x, y in t.cr_curve],
-                               cr_curve_b=[(x, y+d) for x, y in t.cr_curve_b])
-        _dl = (_bump(**_par2(0.01)) - _bump(**_par2(-0.01)))/2
-        _ds = (_bump(cr_curve=[(x, y+0.01) for x, y in t.cr_curve],
-                     cr_curve_b=[(x, y+0.01) for x, y in t.cr_curve_b])
-               - _bump(cr_curve=[(x, y-0.01) for x, y in t.cr_curve],
-                       cr_curve_b=[(x, y-0.01) for x, y in t.cr_curve_b]))/2
-        _dv = (_bump(sig=t.sig+0.10) - _bump(sig=max(0.01, t.sig-0.10)))/2
-        _ratio = abs(_dl)/max(abs(_dv), 1e-9)
-        _spr = CRc(t.T) - RFc(t.T)
-        _share = _spr/CRc(t.T) if CRc(t.T) > 1e-9 else 0.0
+    # ── 이자율모형 검토 — 네 관문 ──
+    if not is_sha(t):
+      with st.expander("이자율모형(BDT)을 써야 하는가 — 책 3.3.1.4 의 네 관문", expanded=False):
+        st.caption("책의 문언은 «적용하여야 한다» 가 아니라 **«검토하여야 한다»** 입니다. 넷이 다 열려야 "
+                   "적용을 검토하고, 하나라도 닫히면 «검토했으나 적용하지 않음» 으로 조서에 남깁니다. "
+                   "④ 는 격자를 네 번 더 돌려 잽니다.")
+        _sig = rate_signals(t)
+        _bd = bdt_review(t, full, b0, b1, b2, ca, _sig)
+        st.dataframe(pd.DataFrame(
+            [[f"{n_}", q_, v_, ("예" if ok_ else "아니오"), w_] for n_, q_, v_, ok_, w_ in _bd["관문"]],
+            columns=["관문", "물음", "값", "열림", "설명"]), use_container_width=True, hide_index=True)
+        _box = (st.success if _bd["결론"].startswith("검토했으나") or _bd["결론"] == "해당 없음"
+                or _bd["결론"] == "이자율모형(BDT) 적용" else st.warning)
+        _box(f"**{_bd['결론']}** — {_bd['사유']}")
         st.dataframe(pd.DataFrame([
-            ["금리 수준 ±1%p (두 곡선 평행)", f"{_dl:+,.4f}",
-             f"{abs(_dl)/max(b2,1e-9)*100:.2f}%"],
-            ["신용스프레드 ±1%p (위험 곡선만)", f"{_ds:+,.4f}",
-             f"{abs(_ds)/max(b2,1e-9)*100:.2f}%"],
-            ["변동성 ±10%p", f"{_dv:+,.4f}", f"{abs(_dv)/max(b2,1e-9)*100:.2f}%"],
-            ["금리 수준 ÷ 주가 민감도", f"{_ratio:.3f}", ""],
-            [f"{t.T:.2f}년 신용스프레드", f"{_spr*100:.2f}%p",
-             f"할인율 중 {_share*100:.0f}%"]],
-            columns=["항목", "값", "비중"]), use_container_width=True,
-            hide_index=True)
-        if _ratio < 0.2 or _share > 0.7:
-            st.success("금리를 확률변수로 둘 실익이 작습니다. 신용스프레드가 값을 "
-                       "지배하므로 금리 고정 격자로 충분합니다.")
-        else:
-            st.warning("금리 수준 민감도가 무시할 수준이 아닙니다. BDT 적용 여부를 "
-                       "검토하고 그 판단을 조서에 남기십시오.")
-        st.caption("두 곡선을 함께 흔드는 이유 — 부채 부분은 위험이자율로 할인되므로 "
-                   "무위험 곡선만 흔들면 스프레드 변화와 상쇄되어 노출이 최대 수십 배 "
-                   "과소하게 잡힙니다.")
+            ["금리 수준 ±1%p (두 곡선 평행)", f"{_sig['dl']:+,.4f}", f"{abs(_sig['dl'])/max(b2,1e-9)*100:.2f}%"],
+            ["신용스프레드 ±1%p (위험 곡선만)", f"{_sig['ds']:+,.4f}", f"{abs(_sig['ds'])/max(b2,1e-9)*100:.2f}%"],
+            ["변동성 ±10%p", f"{_sig['dv']:+,.4f}", f"{abs(_sig['dv'])/max(b2,1e-9)*100:.2f}%"],
+            ["금리 수준 ÷ 주가 민감도", f"{_sig['ratio']:.3f}", ""],
+            [f"{t.T:.2f}년 신용스프레드", f"{_sig['spr']*100:.2f}%p", f"할인율 중 {_sig['share']*100:.0f}%"],
+            ["정산 분포 — 전환 · 조기상환", f"{_bd['지표']['conv_share']*100:.1f}% · {_bd['지표']['put_share']*100:.1f}%", ""],
+            ["구성요소 — 조기상환권 · 전환권", f"{_bd['지표']['pv']:,.4f} · {_bd['지표']['cv']:,.4f}", ""]],
+            columns=["항목", "값", "비중"]), use_container_width=True, hide_index=True)
+        if _bd["왜곡"]:
+            st.warning(f"BDT 를 적용했습니다. BDT 부채요소 {_bd['왜곡']['bdt']:,.4f} − TF 부채요소 "
+                       f"{_bd['왜곡']['tf']:,.4f} = **{_bd['왜곡']['diff']:+,.4f}** 가 전환권에서 빠져나갑니다 "
+                       "(3.3.2.2 과소평가 경고). 이 크기를 조서에 적으십시오.")
+        st.markdown("**조서 문안** — 「검산요약」 시트에 같은 문장이 실립니다")
+        st.code(_bd["문안"], language=None)
+        st.caption("두 곡선을 함께 흔드는 이유 — 부채 부분은 위험이자율로 할인되므로 무위험 곡선만 흔들면 "
+                   "스프레드 변화와 상쇄되어 노출이 최대 수십 배 과소하게 잡힙니다. "
+                   "«검토하지 않았다» 와 «검토했으나 적용하지 않았다» 는 다릅니다 — 흔적이 없으면 그 자체가 "
+                   "지적사항입니다.")
 
     # ── 회계처리 ──
     st.divider()

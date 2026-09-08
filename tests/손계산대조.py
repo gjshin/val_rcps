@@ -863,6 +863,44 @@ def test_pick_close():
     chk_bool("빈 표면 없음", pc([], "2024-06-30") is None)
 
 
+def test_bdt_review_gates():
+    """이자율모형 검토 네 관문 — 닫히는 자리와 열리는 자리를 손으로 만든 계약으로 확인한다."""
+    print("\n[23] 이자율모형(BDT) 검토 네 관문")
+    RF = [(1, .030), (3, .031), (5, .032)]
+    rev, sigf = G["bdt_review"], G["rate_signals"]
+    def run(**kw):
+        t = Terms(rf_curve=RF, **kw); derive(t)
+        full, b0, b1, b2, ca, _ = G["decompose"](t)
+        return rev(t, full, b0, b1, b2, ca, sigf(t)), t
+    # (가) 국내 사모 CB 전형 — 위험할인율이 보장수익률보다 훨씬 높다 → ③ 닫힘
+    r, _ = run(cr_curve=[(1, .14), (3, .17), (5, .19)], ytm=.0, S0=10000., K0=10000.)
+    g = {no: ok for no, _, _, ok, _ in r["관문"]}
+    chk_bool("전형 CB — ① 자본 열림", g[1]); chk_bool("전형 CB — ③ 격차 닫힘", not g[3])
+    chk_bool("전형 CB — 결론 «검토했으나 적용하지 않음»", r["결론"].startswith("검토했으나"))
+    chk_bool("전형 CB — 문안에 «결정론적» 이 있다", "결정론적" in r["문안"])
+    # (나) 전환권이 부채 → ① 닫힘
+    r, _ = run(cr_curve=[(1, .14), (3, .17), (5, .19)], conv_class="liability")
+    chk_bool("부채 분류 — ① 닫힘", not {no: ok for no, _, _, ok, _ in r["관문"]}[1])
+    # (다) 우량 발행사 — 자본·외가격·격차 작음: ①②③ 열림
+    r, t = run(cr_curve=[(1, .034), (3, .036), (5, .038)], ytm=.035, ytm_cmp=1, S0=7000., K0=10000., sig=.25)
+    g = {no: ok for no, _, _, ok, _ in r["관문"]}
+    chk_bool("우량 — ① 열림", g[1]); chk_bool("우량 — ② 외가격 열림", g[2]); chk_bool("우량 — ③ 격차 작음 열림", g[3])
+    chk("우량 — 격차 %p", r["지표"]["gap"]*100, (math.exp(G["curves"](t)[1](t.T)) - 1 - .035)*100, 1e-6)
+    chk_bool("우량 — 결론이 «적용 검토» 또는 ④ 닫힘 중 하나로 정해진다",
+             r["결론"].startswith("이자율모형 적용을") or (not g[4] and r["결론"].startswith("검토했으나")))
+    # (라) 조기상환권 없음 → 해당 없음
+    r, _ = run(cr_curve=[(1, .14), (3, .17), (5, .19)], p_s=99., p_e=0.)
+    chk_bool("풋 없음 — 해당 없음", r["결론"] == "해당 없음")
+    # (마) BDT 를 켰으면 왜곡 크기가 있고 문안이 «적용» 이다
+    r, t = run(cr_curve=[(1, .034), (3, .036), (5, .038)], ytm=.035, ytm_cmp=1, S0=7000., K0=10000., put_bdt=1, bdt_sig=.2)
+    chk_bool("BDT 적용 — 왜곡 크기가 있다", r["왜곡"] is not None)
+    chk_bool("BDT 적용 — 문안에 «과소평가» 가 있다", "과소평가" in r["문안"])
+    chk_bool("BDT 적용 — 왜곡 = BDT 부채요소 − TF 부채요소", r["왜곡"] is not None and abs(r["왜곡"]["diff"] - (r["왜곡"]["bdt"] - r["왜곡"]["tf"])) < 1e-9)
+    # (바) 주주간계약은 없음
+    ts = Terms(inst="SHA", rf_curve=RF, cr_curve=[(1, .14), (3, .17), (5, .19)]); derive(ts)
+    chk_bool("주주간계약 — None", rev(ts, {"dist": {}}, 0, 0, 0, 0) is None)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -887,6 +925,7 @@ def main():
     test_sha_boundaries()
     test_date_month_roundtrip()
     test_pick_close()
+    test_bdt_review_gates()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

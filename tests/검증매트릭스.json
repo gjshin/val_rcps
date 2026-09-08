@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-08T06:23:14",
- "head": "d8b4ff4",
+ "generated": "2026-09-08T07:40:10",
+ "head": "aa061b7",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -327,7 +327,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 99
+   "n_tests": 100
   },
   {
    "case_id": "CB-conv_class-LIABILITY",
@@ -354,7 +354,7 @@
     "tests/값조서대조.py::liability·2·GS·1",
     "tests/값조서대조.py::liability·2·GS·0"
    ],
-   "n_tests": 36
+   "n_tests": 37
   },
   {
    "case_id": "RCPS-conv_class-EQUITY",
@@ -3888,7 +3888,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 123
+   "n_tests": 124
   },
   {
    "case_id": "CB-put_bdt-1",
@@ -3899,8 +3899,8 @@
    "meaning": "조기상환권 금리격자",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1·bdt0.0",
     "tests/값조서대조.py::equity·0·TF·1·bdt0.2",
@@ -3911,9 +3911,10 @@
     "tests/조서대조.py::BDT σ=0 · 확정 격자와 같아야",
     "tests/조서대조.py::BDT 등가격 (보장=할인)",
     "tests/조서대조.py::BDT · 표면3% 보장7%",
+    "tests/손계산대조.py::test_bdt_review_gates",
     "tests/분기전수.py::put_bdt=1"
    ],
-   "n_tests": 10
+   "n_tests": 11
   },
   {
    "case_id": "RCPS-put_bdt-0",
@@ -5216,7 +5217,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 132
+   "n_tests": 133
   },
   {
    "case_id": "CB-put-OFF",
@@ -5230,10 +5231,11 @@
    "oracle": "hand_calc_independent",
    "independent_oracle": true,
    "covered_by": [
+    "tests/손계산대조.py::test_bdt_review_gates",
     "tests/오라클.py::test_discounting",
     "tests/분기전수.py::put=OFF"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "RCPS-put-ON",
