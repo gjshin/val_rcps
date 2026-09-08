@@ -9106,6 +9106,13 @@ with tabs[2]:
                        else v2 if isinstance(v2, str) else f"{v2:,.4f}")]
                  for k2, v2 in _d["지표"].items()],
                 columns=["항목", "값"]), use_container_width=True, hide_index=True)
+        if _key == "put" and _d["결론"] == "묶어서 분리" and "차이" in _d["지표"]:
+            _gap = _d["지표"]["차이"]
+            st.caption(inst_text(t,
+                "전환권이 파생상품부채라 10% 검토(B4.3.5(5)(가))에 **들어가기 전에** 묶음으로 "
+                f"결정됐습니다. 위 차이 {_gap*100:.1f}% 는 지표로만 보여 줍니다 — 전환권이 자본이었다면 "
+                + ("이 차이만으로도 «분리» 입니다." if abs(_gap) > SPLIT_TOL
+                   else "«분리하지 않을 여지» 입니다.")))
         st.markdown("**평가방법** — " + inst_text(t, _d["평가"]))
 
     if not _sp["put"]["설정일치"]:
