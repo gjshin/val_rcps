@@ -2458,7 +2458,7 @@ def write_check_sheets(wb, tm: Terms, checks, after="결과"):
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     thin = Side(style="thin", color=RPT["hair"])
     def put(ws, r, c, v, *, bold=False, size=10, color=None, fill=None, wrap=False, border=False):
-        cl = ws.cell(row=r, column=c, value=v)
+        cl = ws.cell(row=r, column=c, value=xlfn(v))
         cl.font = Font(name="맑은 고딕", size=size, bold=bold, color=color or RPT["ink"])
         if fill: cl.fill = PatternFill("solid", fgColor=fill)
         cl.alignment = Alignment(vertical="top", wrap_text=wrap)
@@ -3370,6 +3370,22 @@ R_P2, R_P4 = "0.00%", "0.0000%"
 R_YMD = "yyyy-mm-dd"
 
 
+# 엑셀 2010 이후에 들어온 함수는 xlsx 파일 안에 «_xlfn.» 접두사를 달고 저장돼야 한다.
+# openpyxl 은 문자열을 그대로 쓰므로 접두사가 없으면 엑셀이 #NAME? 을 보이다가 사용자가
+# 셀에서 엔터를 쳐야 다시 파싱한다. 조서를 여는 사람마다 겪을 일이라 여기서 붙인다.
+XLFN = ("STDEV.S", "STDEV.P", "VAR.S", "VAR.P", "PERCENTILE.INC", "PERCENTILE.EXC",
+        "QUARTILE.INC", "QUARTILE.EXC", "NORM.S.DIST", "NORM.DIST", "NORM.S.INV", "NORM.INV",
+        "IFS", "MAXIFS", "MINIFS", "CONCAT", "TEXTJOIN", "XLOOKUP", "FORECAST.LINEAR",
+        "COVARIANCE.S", "COVARIANCE.P", "MODE.SNGL", "RANK.EQ", "RANK.AVG")
+_XLFN_RE = re.compile(r"(?<![\w.])(" + "|".join(re.escape(f) for f in XLFN) + r")\s*\(")
+
+
+def xlfn(v):
+    """수식 문자열이면 2010+ 함수 이름 앞에 _xlfn. 을 붙인다. 이미 붙어 있으면 그대로."""
+    if not (isinstance(v, str) and v.startswith("=")): return v
+    return _XLFN_RE.sub(lambda m: "_xlfn." + m.group(1) + "(", v)
+
+
 def report_kit(wb, font="맑은 고딕"):
     """리포트 한 권에 쓸 서식 도구를 만든다.
 
@@ -3387,7 +3403,7 @@ def report_kit(wb, font="맑은 고딕"):
 
     def put(ws, r, c, v, *, fmt=None, bold=False, size=10, color=None,
             fill=None, align=None, border=False, wrap=False, italic=False):
-        cl = ws.cell(r, c, v)
+        cl = ws.cell(r, c, xlfn(v))
         cl.font = Font(name=font, size=size, bold=bold, italic=italic,
                        color=color or RPT["ink"])
         if fmt: cl.number_format = fmt
@@ -3580,11 +3596,11 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
                (R_HI, "정상범위 상한", f"=$C${R_MD}+$C${R_MK}*$C${R_MA}", R_N6, False),
                (R_EX, "제외 개수",
                 f"=COUNT({D1}:{DN})-COUNT($G${R0+1}:$G${last})", R_N0, False),
-               (R_SD, "일 변동성", f"=STDEV.S($G${R0+1}:$G${last})", R_P4, False),
+               (R_SD, "일 변동성", f"=_xlfn.STDEV.S($G${R0+1}:$G${last})", R_P4, False),
                (R_AN, "연 변동성", f"=$C${R_SD}*SQRT($C${R_TD})", R_P2, False)]
         if _rate:
             lab += [(R_AD, "절대 일 변동성 (%p)",
-                     f"=STDEV.S($H${R0+1}:$H${last})", R_N4, False),
+                     f"=_xlfn.STDEV.S($H${R0+1}:$H${last})", R_N4, False),
                     (R_AA, "절대 연 변동성 (%p)",
                      f"=$C${R_AD}*SQRT($C${R_TD})", R_N4, False),
                     (R_MN, "평균 금리 (%)",
@@ -4169,7 +4185,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
 
     def put(ws, r, c, v, *, bold=False, color="000000", fill=None, fmt=None,
             size=10, align=None, border=False):
-        cl = ws.cell(row=r, column=c, value=v)
+        cl = ws.cell(row=r, column=c, value=xlfn(v))
         cl.font = Font(name=F, size=size, bold=bold, color=color)
         if fill: cl.fill = PatternFill("solid", fgColor=fill)
         if fmt: cl.number_format = fmt
@@ -5034,7 +5050,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
 
     def put(ws, r, c, v, *, bold=False, color="000000", fill=None, fmt=None,
             size=10, align=None, border=False):
-        cl = ws.cell(row=r, column=c, value=v)
+        cl = ws.cell(row=r, column=c, value=xlfn(v))
         cl.font = Font(name=F, size=size, bold=bold, color=color)
         if fill: cl.fill = PatternFill("solid", fgColor=fill)
         if fmt: cl.number_format = fmt
