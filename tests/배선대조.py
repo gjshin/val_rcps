@@ -24,8 +24,8 @@ WANT = {
     4:  {"pst", "pen", "frq"},                 # Flag(조기상환)
     5:  {"kst", "ken", "kfrq"},                # Flag(매도청구)
     6:  {"roff", "cyc"},                       # Flag(리픽싱)
-    7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate"},   # 조기상환금액
-    8:  {"prem", "cpn", "kcmp", "dt", "elm"},   # 매도청구금액
+    7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate", "pmode"},   # 조기상환금액
+    8:  {"prem", "cpn", "kcmp", "dt", "elm", "kless"},   # 매도청구금액 — kless 0 이면 지급분을 안 뺀다
     # 지급일은 발행일 기준이라 리픽싱(roff)처럼 첫 지급 스텝을 함께 본다.
     9:  {"ipay", "payoff", "cpn", "ipaym"},    # 쿠폰
     10: {"n", "red"},                          # 만기상환

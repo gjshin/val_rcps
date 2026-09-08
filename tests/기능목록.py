@@ -63,6 +63,7 @@ MANIFEST = {
     "k_method":    ("매도청구권 평가방법", {0: "유무가치비교", 1: "옵션차익혼합할인",
                                       2: "지분·부채 분리"}, ("CB", "BW", "RCPS")),
     "k_sep":       ("매도청구권 회계", {1: "별도 금융상품", 0: "복합내재파생에 포함"}, ("CB", "BW", "RCPS")),
+    "k_less_cpn":  ("매도청구금액 산식", {1: "보장수익률 복리 − 기 지급 이자·배당", 0: "순수 복리 (차감 없음)"}, ("CB", "BW", "RCPS")),
     "k_third":     ("제3자 지정 가능", {0: "발행회사만", 1: "제3자 지정 가능"}, ("CB", "BW", "RCPS")),
     "k_transfer":  ("사채와 독립 양도 가능", {0: "아니다", 1: "그렇다"}, ("CB", "BW", "RCPS")),
     "k_cmp":       ("매도청구 프리미엄 복리 횟수", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회"}, ("CB", "BW", "RCPS")),
@@ -171,7 +172,8 @@ def terms_enum_fields(G):
         if ty not in ("int", "str"): continue
         # 문자열이라도 날짜·출처·등급 같은 자유 입력은 열거형이 아니다
         # 자유 문자열 — 갈래가 아니다 (날짜·등급 이름·주가 출처·종목코드)
-        if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src"): continue
+        if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src",
+                 "rvol_rating", "rvol_how"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty
@@ -320,6 +322,12 @@ def collect_coverage(G):
         # 날짜↔개월 변환과 종가 고르기 — 격자 값이 아니라 입력 경로의 시험. step_mapper 를 밟는다.
         "test_date_month_roundtrip": [("CB", "mid", True)],
         "test_pick_close": [("CB", "inst", "CB")],
+        "test_acc_mode_fv_only": [("CB", "mid", True), ("SHA", "mid", True)],
+        "test_call_strike_switch": [("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1),
+                                    ("RCPS", "k_less_cpn", 0), ("BW", "k_less_cpn", 0), ("CB", "call", True)],
+        "test_eir_expected_maturity": [("CB", "p_sep", 0), ("CB", "p_sep", 1), ("CB", "k_sep", 1)],
+        "test_bdt_review_gates": [("CB", "conv_class", "equity"), ("CB", "conv_class", "liability"),
+                                  ("CB", "put_bdt", 1), ("CB", "put_bdt", 0), ("CB", "put", True), ("CB", "put", False)],
     }
     tf = "tests/손계산대조.py"
     src = open(os.path.join(ROOT, tf), encoding="utf-8").read()
@@ -485,6 +493,13 @@ def main():
                summary=tab, cases=rows)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1, default=str)
+    # 조서 99_모형검증 시트가 같은 함수로 읽는다. 한때 «rows» 키를 읽어 KeyError 를 삼키고
+    # 「매트릭스 파일이 없다」로 찍혔다 — 쓰는 쪽과 읽는 쪽을 여기서 맞춰 본다.
+    _ms = G["matrix_summary"](OUT)
+    if _ms is None or not any(p == "CB" for p, _ in _ms["rows"]):
+        print("   ★ 조서가 매트릭스를 읽지 못한다 (matrix_summary)"); FAIL.append("matrix_summary")
+    else:
+        print(f"   조서 99_모형검증 매트릭스 요약 — {len(_ms['rows'])} 상품 · {_ms['n']} 행 (matrix_summary)")
     print(f"\n   → {os.path.relpath(OUT, ROOT)} ({len(rows)} 행)")
 
     bad = bool(miss) or bool(unlisted)
