@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-08T03:51:37",
- "head": "d962f94",
+ "generated": "2026-09-08T06:23:14",
+ "head": "d8b4ff4",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -66,7 +66,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 132
+   "n_tests": 133
   },
   {
    "case_id": "RCPS-inst-RCPS",
@@ -5810,10 +5810,11 @@
     "tests/설정전수대조.py::중간평가 · 리픽싱 12개월",
     "tests/손계산대조.py::test_coupon_schedule_after_elapsed_months",
     "tests/손계산대조.py::test_root_immediate_put",
+    "tests/손계산대조.py::test_date_month_roundtrip",
     "tests/오라클.py::test_date_boundaries",
     "tests/분기전수.py::mid=ON"
    ],
-   "n_tests": 11
+   "n_tests": 12
   },
   {
    "case_id": "CB-mid-OFF",

@@ -815,6 +815,54 @@ def test_sha_boundaries():
             chk_bool("연대 — sha_validate 가 알린다", any("발행회사" in x for x in G["sha_validate"](t)))
 
 
+def test_date_month_roundtrip():
+    """날짜 입력 → 개월 → 날짜가 같은 날로 닫히고, 개월로 넣든 날짜로 넣든 같은 노드에 떨어진다."""
+    print("\n[21] 날짜 ↔ 발행일 기준 개월")
+    import datetime as dt
+    m2d, d2m, sm = G["months_to_date"], G["date_to_months"], G["step_mapper"]
+    issues = ["2024-05-16", "2024-01-31", "2024-02-29", "2023-02-28", "2024-03-31", "2024-08-31",
+              "2025-12-31", "2024-06-30", "2024-11-30", "2025-01-01", "2024-10-15", "2023-07-04"]
+    bad_int = bad_day = 0; n_int = 0
+    for di in issues:
+        for m in list(range(0, 121, 4)) + [1, 3, 6, 9, 11, 13, 23, 25, 35, 37, 59, 61]:
+            d = m2d(di, m); back = d2m(di, d)
+            if back != float(m): bad_int += 1          # 정수 달은 소수 없이 되돌아와야 한다
+            n_int += 1
+        # 날짜에서 출발 — 발행일 뒤 0~1500일 모든 날이 하루 안에서 되돌아와야 한다
+        d0 = dt.date.fromisoformat(di)
+        for k in range(0, 1500, 7):
+            d = d0 + dt.timedelta(days=k)
+            if abs((m2d(di, d2m(di, d)) - d).days) > 1: bad_day += 1
+    chk(f"정수 개월 왕복이 정확히 닫힌 수 ({n_int}건 중 어긋남)", bad_int, 0, 0.5)
+    chk("날짜 → 개월 → 날짜가 하루 넘게 어긋난 수", bad_day, 0, 0.5)
+    chk("2024-05-16 + 12개월 → 2025-05-16 → 12.0", d2m("2024-05-16", "2025-05-16"), 12.0, 1e-9)
+    chk("2024-01-31 + 1개월 = 2024-02-29 (말일 보정) → 1.0", d2m("2024-01-31", "2024-02-29"), 1.0, 1e-9)
+    chk("발행일 이전 날짜는 0", d2m("2024-05-16", "2024-01-01"), 0.0, 1e-9)
+    # 같은 노드 — 개월로 넣은 값과, 그 개월을 날짜로 바꿨다가 개월로 되돌린 값이 step_mapper 에서 같다
+    t = Terms(d_issue="2024-05-16", d_base="2024-06-30", d_mat="2029-05-16", gap_m=1.)
+    derive(t)
+    lo, hi = sm(t, t.n, t.T / t.n)
+    diff = 0
+    for m in [12, 24, 36, 59, 12.5, 23.75, 47.1]:
+        mm = d2m(t.d_issue, m2d(t.d_issue, m))
+        if lo(m) != lo(mm) or hi(m) != hi(mm): diff += 1
+    chk("개월 입력과 날짜 입력이 다른 노드를 준 수", diff, 0, 0.5)
+
+
+def test_pick_close():
+    """평가기준일 종가 고르기 — 평가기준일 이하 마지막 거래일. 네트워크 없이 표만 넣는다."""
+    print("\n[22] 평가기준일 종가 고르기")
+    pc = G["pick_close"]
+    rows = [("2024-06-26", 100.0), ("2024-06-27", 0.0), ("2024-06-28", 101.0), ("2024-07-01", 105.0)]
+    r = pc(rows, "2024-06-30")
+    chk_bool("휴장일(일요일)이면 직전 거래일", r is not None and r[0] == "2024-06-28")
+    chk("그 날의 종가", r[1] if r else None, 101.0, 1e-9)
+    r = pc(rows, "2024-06-28"); chk_bool("거래일 당일이면 그 날", r is not None and r[0] == "2024-06-28")
+    r = pc(rows, "2024-06-27"); chk_bool("종가 0(거래 없음)은 건너뛴다", r is not None and r[0] == "2024-06-26")
+    chk_bool("평가기준일 뒤 자료만 있으면 없음", pc([("2024-07-01", 105.0)], "2024-06-30") is None)
+    chk_bool("빈 표면 없음", pc([], "2024-06-30") is None)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -837,6 +885,8 @@ def main():
     test_ipo_branch_keeps_probability_mass()
     test_unsupported_combos_agree()
     test_sha_boundaries()
+    test_date_month_roundtrip()
+    test_pick_close()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

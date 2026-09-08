@@ -170,7 +170,8 @@ def terms_enum_fields(G):
         ty = fld.type if isinstance(fld.type, str) else getattr(fld.type, "__name__", str(fld.type))
         if ty not in ("int", "str"): continue
         # 문자열이라도 날짜·출처·등급 같은 자유 입력은 열거형이 아니다
-        if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt"): continue
+        # 자유 문자열 — 갈래가 아니다 (날짜·등급 이름·주가 출처·종목코드)
+        if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty
@@ -316,6 +317,9 @@ def collect_coverage(G):
         "test_ipo_branch_keeps_probability_mass": [("RCPS", "ipo_on", 1), ("RCPS", "ipo_conv", 1),
                                                    ("RCPS", "ipo_conv", 0), ("RCPS", "carry", 0),
                                                    ("RCPS", "rfx_mode", 0)],
+        # 날짜↔개월 변환과 종가 고르기 — 격자 값이 아니라 입력 경로의 시험. step_mapper 를 밟는다.
+        "test_date_month_roundtrip": [("CB", "mid", True)],
+        "test_pick_close": [("CB", "inst", "CB")],
     }
     tf = "tests/손계산대조.py"
     src = open(os.path.join(ROOT, tf), encoding="utf-8").read()
