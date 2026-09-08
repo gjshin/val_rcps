@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-08 08:25",
- "head": "3352dd8",
- "app_sha256_12": "d5bd059c6d47",
+ "generated": "2026-09-08 15:54",
+ "head": "c678417",
+ "app_sha256_12": "e06eddbc233c",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 50.2,
+   "sec": 37.9,
    "last": "모두 통과",
    "tail": []
   },
@@ -19,7 +19,7 @@
    "cmd": "python3 tests/오라클.py",
    "ok": true,
    "code": 0,
-   "sec": 1.1,
+   "sec": 0.8,
    "last": "모두 통과",
    "tail": []
   },
@@ -28,8 +28,8 @@
    "cmd": "python3 tests/분기전수.py",
    "ok": true,
    "code": 0,
-   "sec": 7.1,
-   "last": "→ tests/output/분기전수.json 295 줄",
+   "sec": 6.3,
+   "last": "→ tests/output/분기전수.json 313 줄",
    "tail": []
   },
   {
@@ -37,8 +37,8 @@
    "cmd": "python3 tests/기능목록.py --strict",
    "ok": true,
    "code": 0,
-   "sec": 0.6,
-   "last": "   → tests/검증매트릭스.json (316 행)",
+   "sec": 0.5,
+   "last": "   → tests/검증매트릭스.json (334 행)",
    "tail": []
   },
   {
@@ -46,8 +46,8 @@
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 84.2,
-   "last": "→ tests/output/조합시험.json 1803 줄 · 실패 0 (tests/output/조합시험_실패.json) · 84초",
+   "sec": 62.7,
+   "last": "→ tests/output/조합시험.json 1802 줄 · 실패 0 (tests/output/조합시험_실패.json) · 62초",
    "tail": []
   },
   {
@@ -55,7 +55,7 @@
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 45.5,
+   "sec": 41.1,
    "last": "",
    "tail": []
   },
@@ -64,7 +64,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 65.1,
+   "sec": 48.0,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +73,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 37.6,
+   "sec": 28.8,
    "last": "",
    "tail": []
   }
@@ -93,21 +93,21 @@
  "baseline_ok": true,
  "matrix": {
   "CB": {
-   "PASS": 79,
+   "PASS": 85,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 89,
+   "PASS": 95,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 83,
+   "PASS": 89,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -129,5 +129,5 @@
   }
  },
  "all_ok": true,
- "sec": 291.7
+ "sec": 226.5
 }

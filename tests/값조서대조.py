@@ -51,6 +51,8 @@ _CHA = dict(inst="RCPS", mat_mode=0, S0=15647., K0=17354., floor=12148., par=500
 CASES += [(cls, km, "TF", 1, None, dict(_CHA, issuer_call=ic))
           for cls in ("equity", "liability")
           for ic, km in ((0, 0), (1, 0), (2, 0), (2, 1), (2, 2))]
+# 한공회 본문 4.3.3 방식(행사가를 GS 전환확률로 분해) — 방법 1·2
+CASES += [("equity", km, "TF", 1, None, dict(_CHA, issuer_call=2, k_split=1)) for km in (1, 2)]
 
 # 복합계약 전체 당기손익-공정가치 지정. 배분표가 한 줄이 되므로 배분표·분개를
 # 다시 조립하는 자리가 어긋나지 않는지 본다. 전환권이 부채일 때만 성립한다.

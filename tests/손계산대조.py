@@ -997,6 +997,130 @@ def test_eir_expected_maturity():
     chk_bool("경과 뒤 — 평가기준일 이후 첫 조기상환 가능일", ex2 is not None and ex2[2] >= t2.elapsed_m and ex2[2] - 24 in (0., 3., 6.) or (ex2 is not None and abs(((ex2[2]-24) % 3)) < 1e-9))
 
 
+def test_call_split_text():
+    """제3자 콜옵션의 행사가 분해 — 부속예제(가치 구성비율) 대 한공회 본문 4.3.3(GS 전환확률)."""
+    print("\n[27] 제3자 콜옵션 행사가 분해 · 콜옵션 유형")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    base = dict(rf_curve=RF, cr_curve=CR, carry=1, gap_m=6., k_s=12., k_e=24., k_f=6., k_prem=.015, k_cmp=4, k_w=.3)
+    ctp = G["call_third_party"]
+    def val(km, ks, **kw):
+        t = Terms(**{**base, **kw}, k_method=km, k_split=ks); derive(t)
+        full = G["engine"](t, call=False)
+        return ctp(t, full, km), t, full
+
+    def _mkt(bs, **kw):
+        t = Terms(**{**bs, **kw}); derive(t); return t
+    v10, _, _ = val(1, 0); v11, _, _ = val(1, 1); v20, _, _ = val(2, 0); v21, t21, full = val(2, 1)
+    chk_bool("두 방식이 다른 값을 낸다 (방법2)", abs(v20 - v21) > 1e-6)
+    chk_bool("본문식 방법2 가 부속예제 방법2 의 ±10% 안", abs(v21 - v20) < 0.10*v20)
+    chk_bool("본문식 방법1 이 방법2 의 ±15% 안 (두 할인 요령의 차이)", abs(v11 - v21) < 0.15*v21)
+    print(f"      (부속예제 방법1 {v10:.4f} · 방법2 {v20:.4f} | 본문식 방법1 {v11:.4f} · 방법2 {v21:.4f})")
+    # 지분 몫 + 채권 몫 = 페이오프 (본문식) — 뿌리에서 확인
+    memo, ks = full["memo"], full["kstrike"]
+    root = memo[full["root"]]
+    rt = ctp(t21, full, 2)
+    chk_bool("본문식 값 ≥ 0", rt >= -1e-9)
+    # 깊은 내가격 — P→1, E/(E+B)→1 이라 두 방식이 붙는다
+    a0, _, _ = val(2, 0, S0=10000., K0=1000.); a1, _, _ = val(2, 1, S0=10000., K0=1000.)
+    chk("깊은 내가격 — 두 방식 차이", a1 - a0, 0.0, 0.05)
+    # 콜 없으면 0
+    z, _, _ = val(2, 1, k_s=99., k_e=0.)
+    chk("콜 기간 없음 — 0", z, 0.0, 1e-12)
+    # 기본값·강제: Terms() 는 0, 현금납입 BW 는 0 으로 강제, SHA 는 0
+    chk_bool("Terms() 기본 k_split = 0 (기준선 보존)", Terms().k_split == 0)
+    tb = Terms(inst="BW", bw_pay=0, k_split=1, k_method=2); derive(tb)
+    chk_bool("현금납입 BW → k_split 0 강제", tb.k_split == 0)
+    # 기특정 콜 — 값은 같고 별도 금융상품 강제
+    tk0 = Terms(**base, k_method=2, k_split=1, k_kind=0); derive(tk0)
+    tk1 = Terms(**base, k_method=2, k_split=1, k_kind=1, k_sep=0); derive(tk1)
+    chk_bool("기특정 콜 — k_sep 을 1 로 되돌린다 (compat)", tk1.k_sep == 1 and any(k == "k_sep" for k, _, _ in getattr(tk1, "forced_notes", [])))
+    f0 = G["decompose"](tk0); f1 = G["decompose"](tk1)
+    chk("기특정 콜 — 매도청구권 값은 유형과 무관", f1[4], f0[4], 1e-9)
+    # ── 혼합할인율의 비중은 늘 [0,1] 이고 P 를 따른다 (본문 3.2 p.50 GS 전환가중확률할인) ──
+    # 방법 1 의 자식 비중은 k_split=1 이면 전환확률, 0 이면 가치 구성비율이다. 둘 다 [0,1]
+    # 이므로 섞은 할인율이 무위험~위험 구간을 벗어나지 않는다.
+    import math as _m
+    _t = Terms(**base, k_method=1, k_split=1); derive(_t)
+    _f = G["engine"](_t, call=False)
+    _mm, _fRF, _fCR = _f["memo"], _f["fwdRF"], _f["fwdCR"]
+    chk_bool("전환확률이 모든 노드에서 [0,1]",
+             all(-1e-12 <= _o.get("P", 0.0) <= 1 + 1e-12 for _o in _mm.values()))
+
+    def _oracle_mix(tt, ff, weight):
+        """방법 1 의 독립 재구현 — 자식의 비중으로 r = γ·Rf + (1−γ)·Rd 를 만들어 역진한다.
+        엔진과 별개로 여기서 다시 짠다. 산식을 뒤집으면(1−γ 를 무위험에 곱하면) 어긋난다."""
+        mm, dt2 = ff["memo"], ff["dt"]
+        qq, r1, r2, kk = ff["qi"], ff["fwdRF"], ff["fwdCR"], ff["kstrike"]
+        seen = {}
+        def go(key, i):
+            if key in seen: return seen[key]
+            o = mm[key]; K = kk(i)
+            pay = max(o["E"] + o["B"] - K, 0.0) if K is not None else 0.0
+            if "up" not in o:
+                v = pay
+            else:
+                q2 = qq(i); ou, od = mm[o["up"]], mm[o["dn"]]
+                gu, gd = weight(ou), weight(od)
+                yu = gu*r1(i) + (1 - gu)*r2(i)
+                yd = gd*r1(i) + (1 - gd)*r2(i)
+                v = max(pay, q2*go(o["up"], i+1)*_m.exp(-yu*dt2)
+                             + (1 - q2)*go(o["dn"], i+1)*_m.exp(-yd*dt2))
+            seen[key] = v; return v
+        return go(ff["root"], 0)
+
+    _wP = lambda o: o.get("P", 0.0)
+    _wE = lambda o: (o["E"]/(o["E"] + o["B"]) if o["E"] + o["B"] > 1e-12 else 0.0)
+    chk("방법1 · 전환확률 비중 = 독립 오라클", ctp(_t, _f, 1), _oracle_mix(_t, _f, _wP), 1e-9)
+    _t0 = Terms(**base, k_method=1, k_split=0); derive(_t0); _f0 = G["engine"](_t0, call=False)
+    chk("방법1 · 구성비율 비중 = 독립 오라클", ctp(_t0, _f0, 1), _oracle_mix(_t0, _f0, _wE), 1e-9)
+    # 극단 비중 — 오라클을 상수 비중으로 돌려 무위험·위험·혼합이 제 값인지 본다
+    _r1 = _oracle_mix(_t, _f, lambda o: 1.0)
+    _r0 = _oracle_mix(_t, _f, lambda o: 0.0)
+    _r4 = _oracle_mix(_t, _f, lambda o: 0.4)
+    chk_bool(f"비중 1 → 무위험이 가장 높은 값 ({_r1:.4f} > {_r4:.4f} > {_r0:.4f})",
+             _r1 > _r4 > _r0)
+    # 비중 0.4 는 두 극단 사이 — 할인율이 0.4·Rf + 0.6·Rd 라는 뜻
+    chk_bool("비중 0.4 값이 두 극단 사이", _r0 < _r4 < _r1)
+    # 구성비율과 전환확률이 실제로 다른 노드가 있어야 두 기준의 구분이 뜻을 가진다
+    _diff = sum(1 for _o in _mm.values()
+                if _o["E"] + _o["B"] > 1e-9
+                and abs(_o["E"]/(_o["E"] + _o["B"]) - _o.get("P", 0.0)) > 1e-6)
+    chk_bool(f"구성비율 ≠ 전환확률인 노드가 있다 ({_diff}개)", _diff > 0)
+    # ── 행사가 분해: 두 몫의 합은 언제나 페이오프 (본문식) ──
+    _ks = _f["kstrike"]; _worst = 0.0
+    for _key, _o in _mm.items():
+        _i = _key[0]; _K = _ks(_i)
+        if _K is None: continue
+        _pay = max(_o["E"] + _o["B"] - _K, 0.0)
+        if _pay <= 0: continue
+        _P = _o.get("P", 0.0)
+        _worst = max(_worst, abs((_o["E"] - _P*_K) + (_o["B"] - (1 - _P)*_K) - _pay))
+    chk("본문식 지분 몫 + 채권 몫 = 페이오프 (최대 오차)", _worst, 0.0, 1e-9)
+    # ── 콜 대상비율 (GPT §11 8·9) ──
+    _ca = lambda **kw: G["decompose"](_mkt(base, k_method=2, k_split=1, **kw))[4]
+    chk("대상비율 0% → 매도청구권 0", _ca(k_w=0.0), 0.0, 1e-12)
+    chk("대상비율 100% = 30% 값 ÷ 0.3", _ca(k_w=1.0), _ca(k_w=.3)/0.3, 1e-9)
+    # ── 의무보유(k_hold): 콜 대상물량이 행사기간 동안 존속하는가 ──
+    # 4.4.2·4.4.3 대로 기초자산은 그대로 두고, 콜 계약층에서 «행사기회 유지»로만 반영한다.
+    _h1, _, _ = val(2, 1, k_hold=1); _h0, _, _ = val(2, 1, k_hold=0)
+    chk_bool(f"의무보유 있음 > 없음 (콜 {_h1:.4f} 대 {_h0:.4f})", _h1 > _h0 + 1e-6)
+    chk_bool("의무보유가 값을 크게 움직인다 (2배 이상)", _h1 > 2*_h0)
+    _g1, _, _ = val(1, 0, k_hold=1); _g0, _, _ = val(1, 0, k_hold=0)
+    chk_bool("방법1 에서도 같은 방향", _g1 > _g0 + 1e-6)
+    chk_bool("Terms() 기본 k_hold = 1 (기준선 보존)", Terms().k_hold == 1)
+    # 유무가치비교법은 k_hold 를 보지 않는다 — 격자의 전환 지연으로 이미 반영하므로 이중반영 금지
+    _u1 = G["decompose"](_mkt(base, k_method=0, k_hold=1))[4]
+    _u0 = G["decompose"](_mkt(base, k_method=0, k_hold=0))[4]
+    chk("유무가치비교법은 k_hold 와 무관 (이중반영 금지)", _u1, _u0, 1e-12)
+    # 문안
+    for km, ks, kk, want in ((0, 0, 0, "유무가치비교법"), (2, 1, 0, "본문 4.3.3"), (2, 0, 0, "비례균등차감법"), (2, 1, 1, "주주간 분배")):
+        t = Terms(**base, k_method=km, k_split=ks, k_kind=kk); derive(t)
+        chk_bool(f"문안에 «{want}»", want in G["call_method_text"](t))
+    # RCPS 발행자 상환권·없음 갈래는 k_kind 0
+    tr = Terms(inst="RCPS", issuer_call=1, k_kind=1); derive(tr)
+    chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -1025,6 +1149,7 @@ def main():
     test_acc_mode_fv_only()
     test_call_strike_switch()
     test_eir_expected_maturity()
+    test_call_split_text()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
