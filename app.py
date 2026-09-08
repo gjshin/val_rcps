@@ -109,6 +109,13 @@ class Terms:
     k_cmp: int = 4
     k_w: float = 0.30
     k_lock: float = 25.0
+    k_split: int = 0              # 옵션차익혼합할인법의 행사가 분해 — 0 부속예제(가치 구성비율 E/(E+B)) / 1 한공회 본문 4.3.3(GS 전환확률)
+    k_kind: int = 0               # 콜옵션 유형 — 0 제3자 지정 «가능» 콜(발행자 보유 · 파생상품자산) / 1 제3자 사전 «기특정» 콜(발행자 당사자 아님 · 주주간 분배)
+    k_basis: str = ""             # 평가기법 선택 근거 (한공회 4.6.2 문서화) — 조서 문안에 실린다
+    # 콜 대상물량 의무보유 — 대상비율은 k_w, 종료일은 k_e(콜 행사기간 종료), 제한 권리는
+    # 전환 + 조기상환청구다. 1 이면 그 물량이 콜 종료일까지 살아 있어 콜을 언제든 행사할 수
+    # 있고, 0 이면 투자자가 전환·조기상환으로 사채를 소멸시킬 때 그것을 사는 콜도 사라진다.
+    k_hold: int = 1
     k_third: int = 1              # 매도청구권을 제3자에게 지정할 수 있는가
     k_transfer: int = 0           # 매도청구권을 사채와 독립적으로 양도할 수 있는가
     # 조기상환청구권과 매도청구권이 **같은 노드에서 함께 열릴 때** 누구의 권리가
@@ -298,6 +305,8 @@ def months_between(d1: dt.date, d2: dt.date) -> float:
 COMPAT_GS_KMETHOD = ("**GS 에서는 유무가치비교법만 지원합니다.** 옵션차익혼합할인법은 "
                      "노드의 지분·부채 분해 위에 정의된 산식이라 TF 전용입니다 "
                      "(한공회 4.4.3). GS 로 재려면 신용위험 처리를 TF 로 바꾸십시오.")
+COMPAT_KKIND = ("**제3자 기특정 콜옵션은 별도의 금융상품입니다.** 발행 시 제3자가 정해져 있어 거래상대방이 "
+                "발행자가 아니므로 내재파생에 넣을 수 없습니다 (문단 4.3.1). 회계 처리를 «별도 금융상품» 으로 되돌렸습니다.")
 COMPAT_PSEP = ("조기상환권을 분리하지 않는 선택은 전환권을 **자본**으로 두고 매도청구권을 "
                "**별도 금융상품**으로 볼 때만 고를 수 있습니다. 매도청구권을 내재파생으로 "
                "묶으면 복수의 내재파생을 하나의 복합내재파생으로 다루므로 (문단 B4.3.4) "
@@ -381,6 +390,8 @@ def compat(tm: Terms):
         out.append(("p_sep", 1, COMPAT_PSEP))
     if int(tm.put_bdt) and not (tm.conv_class == "equity" and tm.model == "TF"):
         out.append(("put_bdt", 0, COMPAT_BDT))
+    if int(getattr(tm, "k_kind", 0)) == 1 and int(tm.k_sep) == 0:
+        out.append(("k_sep", 1, COMPAT_KKIND))
     return out
 
 
@@ -410,6 +421,7 @@ def derive(tm: Terms) -> Terms:
         tm.k_w = 0.0; tm.k_method = 0; tm.k_lock = 0.0
         tm.p_sep = 1; tm.k_sep = 1
         tm.put_bdt = 0
+        tm.k_kind = 0; tm.k_split = 0; tm.k_hold = 1
         tm.ipo_conv = 0          # 강제전환이 아니라 풋·콜이 소멸하는 사건이다
         tm.carry = 1             # 리픽싱이 없어 상태확장이 뜻을 잃는다
         return tm
@@ -422,6 +434,10 @@ def derive(tm: Terms) -> Terms:
             # 대용납입 — 사채를 권면액만큼 납입에 갈음한다. 사채가 소멸하므로
             # 분리·비분리 구분이 격자에 남기는 흔적이 없다.
             tm.bw_detach = 0
+        else:
+            # 현금납입형은 노드의 전환확률이 0 (사채와 워런트가 따로 간다)이라 본문식 분해가
+            # 행사가를 전부 채권으로 보내 버린다. 부속예제 방식만 쓴다.
+            tm.k_split = 0
     if is_rcps(tm):
         ic = int(tm.issuer_call)
         if ic == 2:
@@ -431,7 +447,7 @@ def derive(tm: Terms) -> Terms:
             # 전환권까지 붙은 우선주라 전체 격자에서 잰다 — CB 의 매도청구권과
             # 같은 길이다. 한도·의무보유·평가방법을 사용자가 정한다.
             tm.k_third = 1; tm.k_transfer = 0
-            tm.k_sep = 1
+            tm.k_sep = 1                      # k_kind(지정 가능/기특정)는 사용자 값 그대로
         elif ic == 1:
             # 발행자 상환권 — 거래상대방이 그대로인 내재파생이라 격자 안에서
             # MIN(보유, 상환가액) 으로 누르고, 전체(100%)에 걸린다. 상환청구권과
@@ -439,13 +455,13 @@ def derive(tm: Terms) -> Terms:
             tm.k_w = 1.0
             tm.k_method = 0; tm.k_lock = 0.0
             tm.k_third = 0; tm.k_transfer = 0
-            tm.k_sep = 0
+            tm.k_sep = 0; tm.k_kind = 0; tm.k_hold = 1
         else:
             # 콜이 없다. 상환청구권 하나뿐이라 분리 여부(p_sep)가 산다.
             tm.k_w = 0.0
             tm.k_method = 0; tm.k_lock = 0.0
             tm.k_third = 0; tm.k_transfer = 0
-            tm.k_sep = 1
+            tm.k_sep = 1; tm.k_kind = 0; tm.k_hold = 1
     return tm
 
 
@@ -656,6 +672,8 @@ def fv_only_rows(tm: Terms, full, b0, b1, b2, ca):
     out.append((("복합계약 전체 · 당기손익-공정가치" if fvpl_on(tm) else
                  "파생상품부채 공정가치 (결산 재측정 대상)"), rm["fv_liab"]))
     if rm["fv_asset"] > 1e-12: out.append(("파생상품자산 (매도청구권) 공정가치", rm["fv_asset"]))
+    # 기특정 콜은 발행자 자산이 아니라 재평가 대상이 아니다. 값만 참고로 싣는다.
+    out += alloc_extra(tm, ca)
     if tm.conv_class == "equity" and not is_bw(tm):
         out.append(("전환권대가 (자본 · 재측정 없음 · 참고)", 100 - b1 + (ca if ca > 0 else 0.0)))
     return out
@@ -1539,54 +1557,100 @@ def sha_backsolve(tm: Terms, target: float = None):
     return mid, fm, 80
 
 
+# 기초 사채가 그 자리에서 정산되어 사라지는 결정들. 의무보유가 없을 때 콜도 함께 소멸한다.
+CB_SETTLED = ("conv", "auto", "ipo", "put", "call", "mat")
+
+
 def call_third_party(tm: Terms, full, method: int) -> float:
     """제3자 지정 가능 콜옵션 — 옵션차익혼합할인법.
 
-    한국공인회계사회 『K-IFRS 실무사례와 해설 11 복합금융상품』 4.4.3 과
-    부속예제 [사례 4-4] 의 산식이다. 발행자가 지정한 제3자에게 넘어갈 수 있는
+    한국공인회계사회 『K-IFRS 실무사례와 해설 연구보고서 시리즈 11 복합금융상품』
+    4.3.3·4.3.4·4.4.3 의 산식이다. 발행자가 지정한 제3자에게 넘어갈 수 있는
     콜옵션은 기준서 1109 문단 4.3.1 상 별도의 금융상품이고, 기초자산이
     전환사채인 복합옵션(an option on an option)이므로 격자 안에서
     MIN(계속보유, 콜금액) 으로 누르는 발행자 콜옵션과 다르게 평가한다.
+    발행자 콜은 행사하면 사채가 소멸해 기초자산이 남지 않으므로 복합옵션 구조가
+    성립하지 않고, 그래서 4.3.2 의 유무가치비교법을 쓴다.
 
     기초자산은 ``콜과 그 부속조항(의무보유 등)을 포함하지 않은 전환사채`` 다.
     ``decompose`` 가 넘기는 ``full = engine(tm, call=False)`` 이 정확히 그것이라
     새 격자를 만들지 않고 그 memo 를 한 번 더 역진한다.
 
-    method 1  혼합할인율      — 값 하나를 자식의 구성비율로 섞은 할인율로 할인
-    method 2  지분·부채 분리   — 페이오프를 구성비율로 쪼개 각각 Rf·Rd 로 할인
+    본문 3.2 (p.50) 가 「혼합할인율 이항모형」을 **모형군의 이름**으로 정의한다 — 노드의
+    페이오프 성격에 따라 위험할인율과 무위험할인율을 «구분하여» 적용하는 방식 전체를 말하고,
+    그 안에 **TF & Hull(지분-채권 현금가중할인)** 과 **GS(전환가중확률할인)** 가 나란히 있다.
+    그래서 두 갈래를 모두 둔다.
+
+    method 1  GS 식 전환가중확률할인 — 값 하나를 자식의 «지분 성격 비중» 으로 섞은 할인율로
+              할인한다. 비중은 늘 [0, 1] 이다.
+    method 2  TF 식 지분-채권 분리할인 — 페이오프를 지분 몫·채권 몫으로 쪼개 각각 Rf·Rd 로
+              할인한다. 두 몫은 부호가 갈릴 수 있고(long-short), 합은 언제나 페이오프다.
+
+    지분·채권 구분 기준 ``tm.k_split``:
+      0  비례균등차감법 — 지분·부채 가치 구성비율 w = E/(E+B). 행사가를 페이오프에 비례해
+         균등 차감하는 것과 같다. 국내 실무서·부속예제가 쓰는 방식이고 **한공회 본문에서
+         도출되지는 않는다** (w = P 는 전환·상환 두 시나리오의 현가가 같을 때만 성립한다).
+      1  한공회 본문 4.3.3 — 「행사가를 분해하기 위해서는 … 행사 확률인 위험중립확률을 구해야
+         한다. 이 단계에서 GS 모형의 전환확률을 활용할 수 있다」. 지분 몫 = E − P·K,
+         채권 몫 = B − (1−P)·K. 각 몫은 «확률 × (그 시나리오 현가 − 행사가)» 라 상환
+         시나리오에서 음수가 될 수 있다 — 콜이 주식으로 갈 시나리오에서만 이득이라는 뜻이다.
+
+    의무보유 ``tm.k_hold`` — 기초자산에서는 빼고(4.4.2·4.4.3 문언) **옵션 계약층에서만**
+    반영한다. 투자자의 전환·조기상환 제한 자체를 별도의 가치요소로 콜에 더하지는 않고,
+    그 제한으로 콜 대상 전환사채가 행사기간 동안 존속하여 콜의 행사 가능성이 유지되는
+    효과만 콜 계약가치에 담는다. 0 이면 기초 사채가 소멸하는 노드에서 콜도 함께 사라진다.
     """
     memo, dt_ = full["memo"], full["dt"]
     qi, fRF, fCR = full["qi"], full["fwdRF"], full["fwdCR"]
     kstrike = full["kstrike"]
+    ksplit = int(getattr(tm, "k_split", 0)) == 1
+    khold = int(getattr(tm, "k_hold", 1)) == 1
     cache = {}
 
     def w(o):
-        """구성비율 — 노드 가치 중 지분 몫."""
+        """가치 구성비율 — 노드 가치 중 지분 몫. 늘 [0, 1]."""
         v = o["E"] + o["B"]
         return o["E"]/v if v > 1e-12 else 0.0
+
+    def gamma(o):
+        """방법 1 의 지분 성격 비중. 두 기준 모두 [0, 1] 이라 할인율이 Rf~Rd 를 벗어나지 않는다."""
+        return o.get("P", 0.0) if ksplit else w(o)
+
+    def split(o, i, pay):
+        """행사 페이오프의 (지분 몫, 채권 몫). 합은 언제나 pay 다."""
+        K = kstrike(i)
+        if pay <= 0 or K is None: return 0.0, 0.0
+        if not ksplit:
+            ww = w(o); return pay*ww, pay*(1-ww)
+        P = o.get("P", 0.0)
+        return o["E"] - P*K, o["B"] - (1-P)*K
 
     def rec(key, i):
         if key in cache: return cache[key]
         o = memo[key]
         K = kstrike(i)
         pay = max(o["E"] + o["B"] - K, 0.0) if K is not None else 0.0
-        if "up" not in o:                       # 만기 — 자식이 없다
-            ww = w(o)
-            r = (pay, pay*ww, pay*(1-ww))
+        # 의무보유가 없으면 투자자가 전환·조기상환으로 사채를 소멸시키는 자리에서 그것을
+        # 사는 콜도 함께 사라진다 — 투자자가 먼저 움직여 콜을 피하기 때문이다.
+        if not khold and "up" in o and o.get("kind") in CB_SETTLED:
+            r = (0.0, 0.0, 0.0)
+        elif "up" not in o:                     # 만기 — 자식이 없다
+            e_, b_ = split(o, i, pay)
+            r = (pay, e_, b_)
         else:
             q, ou, od = qi(i), memo[o["up"]], memo[o["dn"]]
             cu, eu, bu = rec(o["up"], i+1)
             cd, ed, bd = rec(o["dn"], i+1)
             if method == 1:
-                yu = w(ou)*fRF(i) + (1-w(ou))*fCR(i)
-                yd = w(od)*fRF(i) + (1-w(od))*fCR(i)
+                yu = gamma(ou)*fRF(i) + (1-gamma(ou))*fCR(i)
+                yd = gamma(od)*fRF(i) + (1-gamma(od))*fCR(i)
                 cont = q*cu*math.exp(-yu*dt_) + (1-q)*cd*math.exp(-yd*dt_)
                 r = (max(pay, cont), 0.0, 0.0)
             else:
                 he = (q*eu + (1-q)*ed) * math.exp(-fRF(i)*dt_)
                 hb = (q*bu + (1-q)*bd) * math.exp(-fCR(i)*dt_)
-                if pay >= he + hb:
-                    ww = w(o); r = (pay, pay*ww, pay*(1-ww))
+                if pay > 0 and pay >= he + hb:
+                    e_, b_ = split(o, i, pay); r = (pay, e_, b_)
                 else:
                     r = (he + hb, he, hb)
         cache[key] = r
@@ -1595,8 +1659,126 @@ def call_third_party(tm: Terms, full, method: int) -> float:
     return rec(full["root"], 0)[0]
 
 
-K_METHODS = {0: "유무가치비교법", 1: "옵션차익혼합할인법 · 혼합할인율",
-             2: "옵션차익혼합할인법 · 지분·부채 분리"}
+CALL_HOWTO = """\
+| 단계 | 하는 일 | 조서 시트 |
+|---|---|---|
+| ① | **기초자산 격자** — 콜도 의무보유도 없는 전환사채. 노드마다 지분 조각·채권 조각·전환확률이 나온다 | 04 · 05 · 06 · 08 · 11 |
+| ② | **회차별 매도청구 행사금액** — 계약서의 행사금액표와 대조한다 | 트리 8행 |
+| ③ | **노드별 콜 이득** = (지분 + 채권) − 행사금액, 음수면 0 | 19 |
+| ④ | **그 이득의 성격을 가른다** — 전환확률(⑪) 또는 가치 구성비율(⑰) | 11 · 11b · 17 · 17a · 17b |
+| ⑤ | **뒤에서 앞으로 되짚는다** — 「지금 행사」와 「계속 보유」 중 큰 쪽. 계속 보유는 지분 성격에 무위험, 채권 성격에 위험 선도이자율 | 18 · 20 · 21~24 |
+| ⑥ | **뿌리 값 × 콜 대상비율** | 결과 |
+
+본문 3.2 는 「노드의 페이오프 성격에 따라 위험할인율 또는 무위험할인율이 **구분되어 적용**됨으로 인해
+**혼합할인율 이항모형**으로 알려져 있다」고 하며, 그 안에 **TF & Hull(지분-채권 현금가중할인)** 과
+**GS(전환가중확률할인)** 를 나란히 둡니다. 앱의 두 갈래가 그것입니다."""
+
+
+def call_type_note(tm: Terms) -> str:
+    """콜 유형별 한공회 실무 접근 — 화면에 서너 줄로 요약해 싣는다."""
+    if is_sha(tm) or tm.k_w <= 0: return ""
+    if issuer_redeem(tm) or not tm.k_third:
+        return ("**발행자 콜** — 한공회 기본 접근은 **유무가치비교법**입니다 (4.3.2). 콜조항을 넣은 "
+                "값과 뺀 값의 차이로 봅니다. 행사하면 사채가 소멸해 기초자산이 남지 않으므로 "
+                "복합옵션 구조가 성립하지 않고, 거래상대방도 그대로라 내재파생이어서 따로 자산으로 "
+                "세우지 않습니다.")
+    if int(tm.k_kind) == 1:
+        return ("**제3자 사전 기특정 콜** — 값은 지정 가능 콜과 같은 격자에서 나옵니다 (4.5.4 접근법 "
+                "2-2). 다만 발행 시 제3자가 이미 정해져 있어 **발행회사는 옵션 당사자가 아니므로** "
+                "파생상품자산을 인식하지 않고 최초 인식 시 **주주간 분배**로 봅니다 (4.5.1). "
+                "선택한 방법과 근거를 일관되게 문서화하십시오 (4.6).")
+    return ("**제3자 지정 가능 콜** — 거래상대방이 달라 **별도의 금융상품**이고 (기준서 1109 문단 "
+            "4.3.1), 전환사채를 먼저 평가한 뒤 그 전환사채를 기초자산으로 하는 **복합옵션**으로 "
+            "잽니다 (4.3.4 · 4.4.3). 유무가치비교법도 쓸 수 있으나 재는 대상이 달라 값이 갈립니다 — "
+            "선택한 평가방법과 근거를 일관되게 문서화하십시오 (4.6).")
+
+
+def call_compare(tm: Terms, full, b2):
+    """매도청구권을 방법별로 나란히 잰다 — 화면·값 조서·수식 조서가 같은 함수를 쓴다.
+
+    옵션차익 네 조합은 이미 만든 ``full`` 의 memo 를 한 번 더 역진할 뿐이라 싸다.
+    유무가치비교법만 격자를 두 장 더 만든다 (의무보유 있는 것과 뺀 것).
+
+    돌려주는 것 ``(rows, rec)``
+      rows  [(방법, 지분·채권 구분 기준, 값, 적용 여부)]
+      rec   적용값과 유무가치비교법의 차이를 두 조각으로 나눈 정합 분해.
+            한공회 4.1.1 이 「두 방법은 개념적으로 결과가 동일하여야 하나 세부적인
+            구현방법에서 … 차이가 종종 발생한다」고 하므로, 그 차이를 설명해 둔다.
+    """
+    if is_sha(tm) or tm.k_w <= 0: return [], {}
+    ks = full["kstrike"]
+    if not any(ks(i) is not None for i in range(int(full["n"])+1)): return [], {}
+
+    def opt(method, split, hold):
+        t2 = Terms(**asdict(tm)); t2.k_split = split; t2.k_hold = hold
+        return tm.k_w * call_third_party(t2, full, method)
+
+    def wow(lock):                      # 유무가치비교법 — 콜을 넣고 뺀 차액
+        cs = max(tm.cv_s, lock)
+        b3 = pick(engine(tm, conv=True, put=True, call=True, conv_start=cs), tm.model)
+        return tm.k_w * (b2 - b3)
+
+    km, kspl, khl = int(tm.k_method), int(tm.k_split), int(tm.k_hold)
+    A, A0 = wow(tm.k_lock), wow(0.0)
+    rows = [("유무가치비교법 (4.3.2)", "해당 없음 — 격자에서 직접", A, km == 0)]
+    if tm.k_lock > tm.cv_s:
+        rows.append(("유무가치비교법 · 의무보유 뺀 값 (참고)", "해당 없음", A0, False))
+    for m in (1, 2):
+        mn = "옵션차익 · GS식 전환가중확률할인" if m == 1 else "옵션차익 · TF식 지분-채권 분리할인"
+        for sp in (1, 0):
+            rows.append((mn, K_SPLITS[sp].split(" —")[0], opt(m, sp, khl),
+                         km == m and kspl == sp))
+    rec = {}
+    if km:                              # 적용값이 옵션차익법일 때만 분해가 뜻을 가진다
+        C = opt(km, kspl, 1)            # 콜 존속 (의무보유 있음)
+        B = opt(km, kspl, 0)            # 정산 시 콜 소멸 (의무보유 없음)
+        rec = {"유무가치비교법 (적용 계약)": A,
+               "옵션차익법 (적용 산식·적용 설정)": opt(km, kspl, khl),
+               "① 방법론 차이 (둘 다 의무보유 없음)": A0 - B,
+               "② 유무가치법이 추가로 담는 부분": (A - A0) - (C - B),
+               "참고 · 의무보유로 콜 행사기회가 보전되는 효과": C - B}
+    return rows, rec
+
+
+K_METHODS = {0: "유무가치비교법",
+             1: "옵션차익혼합할인법 · GS식 전환가중확률할인 (단일 할인율)",
+             2: "옵션차익혼합할인법 · TF식 지분-채권 분리할인"}
+K_SPLITS = {0: "비례균등차감법 — 지분·부채 가치 구성비율 (타 실무서·부속예제)",
+            1: "한공회 본문 4.3.3 — GS 전환확률"}
+K_HOLDS = {1: "의무보유 있음 — 콜 대상물량이 행사기간 종료일까지 존속",
+           0: "의무보유 없음 — 투자자의 전환·조기상환으로 콜도 소멸"}
+K_KINDS = {0: "제3자 지정 가능 콜 (발행자 보유 · 파생상품자산)", 1: "제3자 사전 기특정 콜 (발행자 당사자 아님 · 주주간 분배)"}
+
+
+def call_method_text(tm: Terms) -> str:
+    """조서에 적는 매도청구권 평가방법 문안 — 한공회 연구보고서 시리즈 11 문단을 단다."""
+    if tm.k_w <= 0 or is_sha(tm): return "매도청구권 없음"
+    kind = ("제3자 사전 기특정 콜 — 발행자는 옵션 당사자가 아니며 최초 인식 시 주주간 분배 (4.5)"
+            if int(tm.k_kind) == 1 else "제3자 지정 가능 콜 — 접근법 2 제3자 가상지정관점 (4.4.3)")
+    if int(tm.k_method) == 0:
+        how = "유무가치비교법 — 콜 조항 유무의 가치 비교 (4.3.2), 의무보유·전환억제 효과 포함"
+    else:
+        how = ("옵션차익혼합할인법 · "
+               + ("GS식 전환가중확률할인" if int(tm.k_method) == 1 else "TF식 지분-채권 분리할인")
+               + " (3.2 「혼합할인율 이항모형」) — 기초자산은 콜·부속조항을 뺀 전환사채(4.4.2·4.4.3), "
+               + "지분·채권 구분 기준은 "
+               + ("본문 4.3.3 의 GS 전환확률" if int(tm.k_split) == 1
+                  else "지분·부채 가치 구성비율(비례균등차감법 — 타 실무서, 본문에서 도출되는 방식은 아님)")
+               + ("; 콜 대상물량은 의무보유로 행사기간 종료일까지 존속한다고 본다 — 전환·조기상환 "
+                  "제한 자체를 별도의 가치요소로 더하지는 않고, 그 제한으로 콜의 행사 가능성이 "
+                  "유지되는 효과만 담는다" if int(tm.k_hold) == 1
+                  else "; 콜 대상물량에 의무보유가 없어 투자자의 전환·조기상환으로 콜도 소멸한다고 본다"))
+    base = f" · 선택 근거: {tm.k_basis.strip()}" if (tm.k_basis or "").strip() else ""
+    # 한공회 본문이 유형별로 「기본적인 접근법」을 지정한다 — 고른 방법이 그것과 같은지 밝힌다.
+    # 발행자만 행사하는 콜은 행사하면 사채가 소멸해 기초자산이 남지 않는다 — 복합옵션
+    # 구조가 성립하지 않으므로 본문 4.3.2 가 유무가치비교법을 기본으로 둔다.
+    std = ("유무가치비교법 (4.3.2)" if (issuer_redeem(tm) or not tm.k_third)
+           else "옵션차익혼합할인법 (4.3.4·4.4.3)")
+    now = "유무가치비교법" if int(tm.k_method) == 0 else "옵션차익혼합할인법"
+    same = (" — 본문 기본 접근법과 같다" if now in std else
+            " — **본문 기본 접근법과 다르다.** 4.6.2 대로 선택 근거를 남길 것")
+    return (f"{kind} · {how}{base} · 본문 기본 접근법: {std}{same}"
+            " — 한공회 『K-IFRS 실무사례와 해설 연구보고서 시리즈 11』 4.6 대로 일관 적용")
 
 
 
@@ -2116,7 +2298,14 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                        f"{kb:,.2f} 의 차이가 {kgap*100:.1f}% 로 거의 같지 "
                        "않습니다.")
             cite += ["1109 문단 4.3.1", "문단 B4.3.5(5)"]
-        if res == "별도의 금융상품":
+        if res == "별도의 금융상품" and int(getattr(tm, "k_kind", 0)) == 1:
+            # 발행 시 제3자가 이미 정해져 있으면 발행자가 콜을 보유하지 않는다.
+            val = ("발행 시 제3자가 특정되어 있어 **발행회사는 옵션 당사자가 아닙니다.** "
+                   "값은 지정 가능 콜과 같은 격자에서 나오지만(본문 4.5.4 접근법 2-2), "
+                   "발행회사 측면에서는 금융상품이 아니라 **주주간 분배**이므로 파생상품자산을 "
+                   "인식하지 않고 최초 인식 시 그 가치를 측정해 둡니다 (본문 4.5.1). "
+                   "회계처리 탭의 배분표에 합계 밖 참고 줄로 실립니다.")
+        elif res == "별도의 금융상품":
             val = ("기초자산이 전환사채 전체인 미국형 복합옵션이므로 "
                    "**옵션차익혼합할인법**이 개념적으로 정합합니다. 다만 계약에 "
                    "의무보유 조건이 있으면 그 효과를 값에 넣으려고 "
@@ -2315,6 +2504,11 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
     다를 뿐이다.
     """
     sep = tm.k_sep != 0
+    # 제3자 사전 기특정 콜 — 발행 시 제3자가 이미 정해져 있어 발행자가 콜을 보유하지
+    # 않는다. 발행자 측면에서는 금융상품이 아니라 **주주간 분배**이므로 (본문 4.5.1)
+    # 파생상품자산을 세우지 않고, 받은 현금 100 을 복합금융상품 요소에 전부 배분한다.
+    # 콜의 공정가치는 유형과 무관하게 같으므로 참고 줄로 합계 밖에 적는다.
+    kk = int(getattr(tm, "k_kind", 0)) == 1
     # 조기상환권을 분리하지 않는 선택은 **전환권이 자본이고 매도청구권이 별도
     # 금융상품일 때**만 살아 있다. 매도청구권을 내재파생으로 묶으면 문단 B4.3.4
     # 가 복수의 내재파생을 하나의 복합내재파생으로 다루라고 하므로 조기상환권도
@@ -2322,6 +2516,7 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
     psep = not (tm.conv_class == "equity" and sep and int(tm.p_sep) == 0)
     # 자본 갈래에서 부채요소를 줄이는 콜 — RCPS 는 부채 격자에서 잰 값 (문단 31)
     cad = full.get("ca_debt", ca) if is_rcps(tm) else ca
+    _ca, _cad = (0.0, 0.0) if kk else (ca, cad)     # 배분에 실제로 들어가는 금액
     # 매도청구권 줄은 값이 0 이 아니면 싣는다. 음수(강제전환 할인율 효과 — 모형 성질)라고
     # 빼 버리면 잔여 계산에는 들어가 있어 합이 100 에서 어긋난다 (조합시험이 잡음).
     if fvpl_on(tm):
@@ -2336,9 +2531,9 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # 매도청구권은 전체 지정 **밖**에 남는다. 제3자에게 지정·양도될 수 있으면
         # 거래상대방이 달라 복합계약의 일부가 아니라 별도의 금융상품이기 때문이다
         # (문단 4.3.1). 지정은 그 계약을 건드리지 못한다.
-        whole = (100 + ca) if sep else 100.0
+        whole = (100 + _ca) if sep else 100.0
         rows = [("복합계약 전체 · 당기손익-공정가치 측정 금융부채", whole)]
-        if sep and (abs(ca) > 1e-12 or not is_rcps(tm)):
+        if sep and not kk and (abs(ca) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -ca))
         note = ("복합계약 **전체**를 당기손익-공정가치 측정 금융부채로 지정했으므로 "
                 "내재파생상품을 분리하지 않고 한 줄로 인식합니다 (기업회계기준서 "
@@ -2360,10 +2555,10 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # 전환권과 조기상환권은 상호의존적이라 하나의 복합내재파생상품으로 묶어
         # 전체로서(as a whole) 측정한다 (문단 B4.3.4).
         deriv = (b2 - b0) if sep else (b2 - ca - b0)
-        host_acc = (100 + ca) - (b2 - b0)      # 어느 쪽이든 같다
+        host_acc = (100 + _ca) - (b2 - b0)      # 어느 쪽이든 같다
         rows = [("주계약 (잔여)", host_acc),
                 ("복합내재파생상품 · 파생상품부채", deriv)]
-        if sep and (abs(ca) > 1e-12 or not is_rcps(tm)):
+        if sep and not kk and (abs(ca) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -ca))
         note = ("전환권이 파생상품부채이므로 전환권과 조기상환권을 하나의 "
                 "복합내재파생상품으로 묶어 공정가치로 측정하고 주계약을 잔여로 둡니다 "
@@ -2380,9 +2575,9 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # 조기상환권이 주계약과 밀접하게 관련되어 분리하지 않는다. 부채요소를
         # 통째로 상각후원가로 두고, 파생상품부채를 세우지 않는다.
         rows = [("부채요소 (사채 + 조기상환권)", b1)]
-        if abs(cad) > 1e-12 or not is_rcps(tm):
+        if not kk and (abs(cad) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -cad))
-        rows.append(("전환권대가 · 자본", 100-b1+cad))
+        rows.append(("전환권대가 · 자본", 100-b1+_cad))
         note = ("기업회계기준서 제1032호 문단 31 — 부채요소를 먼저 정하고 나머지를 자본에 "
                 "배분합니다. 최초 인식에는 손익이 생기지 않습니다. "
                 "조기상환청구권은 주계약과 밀접하게 관련되어 분리하지 않으므로 "
@@ -2397,22 +2592,46 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         if _hasput or not sep:
             rows.append(("조기상환청구권 · 파생상품부채",
                          (b1-b0) if sep else (b1-b0-cad)))
-        if sep and (abs(cad) > 1e-12 or not is_rcps(tm)):
+        if sep and not kk and (abs(cad) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -cad))
         if not sep:
             rows[1] = ("복합내재파생상품 · 파생상품부채", b1-b0-cad)
-        rows.append(("전환권대가 · 자본", 100-b1+cad))
+        rows.append(("전환권대가 · 자본", 100-b1+_cad))
         note = ("기업회계기준서 제1032호 문단 31 — 부채요소를 먼저 정하고 나머지를 자본에 배분합니다. "
                 "최초 인식에는 손익이 생기지 않습니다."
                 + ("" if sep else
                    " 매도청구권은 발행회사만 행사할 수 있어 내재파생상품이므로 "
                    "조기상환권과 하나로 묶어 순액으로 봅니다 (문단 4.3.1 · B4.3.4)."))
     rows.append(("합계", sum(v for _, v in rows)))
+    if kk:
+        note += ("  ※ 매도청구권이 **제3자 사전 기특정 콜**이라 발행회사가 옵션을 보유하지 "
+                 "않습니다. 발행회사 측면에서는 금융상품이 아니라 **주주간 분배**이므로 "
+                 "파생상품자산을 인식하지 않고, 받은 대가 100 을 복합금융상품 요소에 전부 "
+                 "배분합니다 (한공회 연구보고서 시리즈 11 문단 4.5.1). 옵션을 받은 제3자와 "
+                 f"투자자 사이의 거래이며, 그 공정가치 {ca:,.4f} 는 참고로만 적습니다 — "
+                 "주석 공시 대상인지 별도로 판단하십시오.")
     if tm.elapsed_m > 0.01:
         note += ("  ※ 이 배분은 **최초 인식**용입니다. 평가기준일이 발행일보다 뒤이므로 "
                  "결산 회계처리에는 그대로 쓰지 마십시오. 결산일에 필요한 것은 파생상품의 "
                  "공정가치뿐이고, 주계약은 발행일 배분액을 유효이자율로 상각한 장부금액입니다.")
     return rows, note
+
+
+NOTE_KKIND = ("제3자 기특정 콜옵션 {v} — 발행회사는 옵션 당사자가 아니어서 금융상품을 "
+              "인식하지 않는다. 옵션을 받은 제3자(최대주주 등)와 투자자 사이의 거래이며 "
+              "발행회사 측면에서는 주주간 분배다 (한공회 연구보고서 시리즈 11 문단 4.5.1). "
+              "위 분개에 차변으로 넣지 않는다 — 주석 공시 대상인지 별도로 판단할 것.")
+
+
+def alloc_extra(tm: Terms, ca):
+    """배분표 **합계 밖**에 적는 참고 줄. 기특정 콜의 주주간 분배 금액이다.
+
+    합계에 넣으면 100 이 되지 않고, 차변에 넣으면 분개 대차가 깨진다. 그래서
+    합계 다음 줄에 «참고» 로만 싣는다. 화면·값 조서·수식 조서가 같이 부른다.
+    """
+    if int(getattr(tm, "k_kind", 0)) != 1 or is_sha(tm) or tm.k_w <= 0:
+        return []
+    return [("제3자 기특정 콜옵션 · 주주간 분배 (참고 · 발행자 자산 아님)", ca)]
 
 
 def acc_host(tm: Terms, full, b0, b1, b2, ca):
@@ -2629,6 +2848,18 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
         rights.append(("매도청구권", cad, "적합", ""))
     for nm, v, vd, why in rights:
         out.append((f"권리 값 ≥ 0 · {nm}", f"{v:,.4f}", vd, why))
+    # 어느 방법·어느 구분 기준으로 쟀는지 — 조서를 읽는 사람이 가장 먼저 확인할 것이다.
+    if tm.k_w > 0 and not is_sha(tm):
+        _std = ("유무가치비교법" if (issuer_redeem(tm) or not tm.k_third)
+                else "옵션차익혼합할인법")
+        _now = "유무가치비교법" if int(tm.k_method) == 0 else "옵션차익혼합할인법"
+        out.append(("매도청구권 적용 방법 · 구분 기준",
+                    K_METHODS[int(tm.k_method)]
+                    + (" · " + K_SPLITS[int(tm.k_split)].split(" —")[0] if tm.k_method else "")
+                    + (" · 의무보유 " + ("있음" if int(tm.k_hold) else "없음") if tm.k_method else ""),
+                    "적합" if _now == _std else "한계",
+                    ("본문 기본 접근법과 같다 (4.3.2 · 4.3.4)" if _now == _std else
+                     f"본문 기본 접근법은 {_std} 이다 — 4.6.2 대로 선택 근거를 남길 것")))
     D = full["dist"]; ds = D["conv"] + D["put"] + D["call"] + D["mat"]
     out.append(("정산 분포 합", f"{ds:.10f}", "적합" if abs(ds - 1) <= 1e-9 else "확인 필요", "전환 + 조기상환 + 매도청구 + 만기 = 1"))
     rows, _ = allocate(tm, full, b0, b1, b2, ca)
@@ -2717,6 +2948,58 @@ def matrix_summary(path=None):
             if x["product"] == pr and x["status"] in cnt: cnt[x["status"]] += 1
         out.append((pr, cnt))
     return dict(rows=out, head=(mx.get("head", "") if isinstance(mx, dict) else ""), n=len(rows))
+
+
+def write_call_rows(R, r, tm: Terms, full, b2, put, sec, fmt4, pct, grey):
+    """결과 시트 «매도청구권 방법별 · 정합 분해» — 값이다. 두 조서가 같은 함수를 부른다.
+
+    한공회 4.6.2 가 「선택한 평가기법이 적합하다는 판단 근거 등을 제시하고 관련 내용을
+    문서화할 필요가 있다」고 하므로, 유형·기본 접근법·적용 방법·대체방법 값·차이·
+    선택 근거를 한자리에 모은다.
+    """
+    cmp_, rec = call_compare(tm, full, b2)
+    if not cmp_: return r
+    sec(R, r, "5. 매도청구권 — 방법별 값과 선택 근거 (값 · 4.6.2 문서화)", span=6); r += 1
+    put(R, r, 2, call_type_note(tm).replace("**", ""), color=grey, size=9)
+    R.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+    R.row_dimensions[r].height = 42; r += 2
+    base = next((v for nm, _, v, _ in cmp_ if nm.startswith("유무가치비교법 (")), None)
+    for i, h in enumerate(["방법", "지분·채권 구분 기준", "값", "유무가치 대비", "차이율", "적용"]):
+        put(R, r, 2+i, h, bold=True, border=True, size=9)
+    r += 1
+    for nm, sp, v, on in cmp_:
+        put(R, r, 2, nm, border=True, size=9); put(R, r, 3, sp, border=True, size=9)
+        put(R, r, 4, v, fmt=fmt4, align="right", border=True)
+        put(R, r, 5, (v - base) if base else "", fmt=fmt4, align="right", border=True)
+        put(R, r, 6, ((v - base)/base if base else ""), fmt=pct, align="right", border=True)
+        put(R, r, 7, "◀ 적용" if on else "", border=True, size=9); r += 1
+    r += 1
+    if rec:
+        put(R, r, 2, "유무가치비교법과의 차이 — 어디에서 오는가", bold=True); r += 1
+        for k, v in rec.items():
+            put(R, r, 2, k, border=True, size=9)
+            put(R, r, 4, v, fmt=fmt4, align="right", border=True); r += 1
+        _d = rec["유무가치비교법 (적용 계약)"] - rec["옵션차익법 (적용 산식·적용 설정)"]
+        put(R, r, 2, "차이 (유무가치 − 옵션차익) = ① + ②", bold=True, border=True, size=9)
+        put(R, r, 4, _d, bold=True, fmt=fmt4, align="right", border=True); r += 2
+        put(R, r, 2, "한공회 4.1.1 — 「유무가치비교법과 옵션차익혼합할인법은 개념적으로 그 결과가 "
+                     "동일하여야 하나 세부적인 구현방법에서 시장에서의 실무가 다양하게 진행되고 있어 "
+                     "그 차이가 종종 발생한다」. ①은 두 방법이 같은 계약(의무보유 없음)을 잴 때 남는 "
+                     "구현 차이이고, ②는 유무가치비교법이 추가로 담는 부분이다 — 콜을 넣고 뺀 차액이라 "
+                     "투자자가 전환·조기상환을 못 하게 된 효과까지 값에 들어간다. 옵션차익법은 그 제한 "
+                     "자체를 별도의 가치요소로 콜에 더하지 않고, 제한으로 콜 대상물량이 행사기간 동안 "
+                     "존속하여 행사 가능성이 유지되는 효과만 담는다.", color=grey, size=9)
+        R.merge_cells(start_row=r, start_column=2, end_row=r, end_column=7)
+        R.row_dimensions[r].height = 58; r += 2
+    put(R, r, 2, "적용 방법 · 문안", bold=True, border=True, size=9)
+    put(R, r, 3, call_method_text(tm), border=True, size=9)
+    R.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
+    R.row_dimensions[r].height = 58; r += 1
+    put(R, r, 2, "평가기법 선택 근거 (4.6.2)", bold=True, border=True, size=9)
+    put(R, r, 3, (tm.k_basis.strip() or "— 사이드바 「평가기법 선택 근거」에 적으면 여기에 실린다"),
+        border=True, size=9)
+    R.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
+    return r + 2
 
 
 def write_pc_rows(R, r, tm: Terms, put, sec, fmt4, grey):
@@ -3147,8 +3430,24 @@ def validate(tm: Terms):
                    else "「투자자 조기상환 우선」")
                 + " 입니다. 계약서의 통지기간과 우선순위 조항을 확인하시고, 고른 "
                   "근거를 조서에 남기십시오. (매도청구권 칸에서 바꿉니다)")
+    if tm.k_w > 0 and not is_sha(tm) and not tm.k_third and int(tm.k_method):
+        w.append("매도청구권을 **발행회사만** 행사할 수 있다고 두셨는데 옵션차익혼합할인법을 "
+                 "고르셨습니다. 발행자 콜은 행사하면 사채가 소멸해 기초자산이 남지 않으므로 "
+                 "복합옵션 구조가 성립하지 않습니다 — 본문 4.3.2 는 **유무가치비교법**을 기본 "
+                 "접근법으로 둡니다. (매도청구권 칸에서 바꿉니다)")
     if tm.k_lock < tm.k_e and not issuer_redeem(tm) and tm.k_w > 0:
         w.append("의무보유 전환지연이 매도청구 종료보다 이릅니다. 콜이 실효화될 수 있습니다.")
+    # 계약서에 의무보유가 있는데 스위치를 끄면 옵션차익법이 «콜 대상물량이 중간에 사라질 수
+    # 있다» 고 보아 값이 크게 낮아진다. 반대로 없는데 켜 두면 크게 높아진다. 둘 다 경고한다.
+    if tm.k_w > 0 and not is_sha(tm) and int(tm.k_method):
+        if tm.k_lock > tm.cv_s and int(tm.k_hold) == 0:
+            w.append("계약에 의무보유(전환지연)가 있는데 「콜 대상물량 의무보유」를 꺼 두셨습니다. "
+                     "옵션차익법이 콜 대상물량을 투자자가 중도에 소멸시킬 수 있다고 보아 값이 "
+                     "낮아집니다. (매도청구권 칸에서 바꿉니다)")
+        if tm.k_lock <= tm.cv_s and int(tm.k_hold) == 1:
+            w.append("계약에 의무보유가 없는데 「콜 대상물량 의무보유」를 켜 두셨습니다. "
+                     "옵션차익법이 콜 행사기회가 끝까지 보장된다고 보아 값이 높아집니다. "
+                     "계약서의 처분·전환 제한 조항을 확인하십시오. (매도청구권 칸에서 바꿉니다)")
     # 할증금 산식은 보장수익률에서 표면이자율을 뺀다. 보장이 더 낮으면 음수가
     # 되어 상환금액이 액면 밑으로 내려간다. 0 에서 끊고는 있지만 입력 자체가
     # 계약과 맞지 않으므로 알려 준다.
@@ -4777,6 +5076,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("매도청구 복리 횟수 (연)", tm.k_cmp, N0), ("매도청구 한도", tm.k_w, P2),
         ("의무보유 전환지연 (개월)", _md(tm.k_lock), None),
         ("매도청구권 평가방법", K_METHODS[tm.k_method], None),
+        ("지분·채권 구분 기준", (K_SPLITS[int(tm.k_split)] if tm.k_method else "해당 없음 (유무가치비교법)"), None),
+        ("콜 대상물량 의무보유", (K_HOLDS[int(tm.k_hold)] if tm.k_method else "유무가치비교법은 격자에서 직접 반영"), None),
+        ("콜옵션 유형", K_KINDS[int(tm.k_kind)], None),
+        ("평가기법 문안", call_method_text(tm), None),
         ("풋·콜 우선순위", ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None),
         ("매도청구권 회계 처리",
          "별도 금융상품" if tm.k_sep else "복합내재파생에 포함", None)]),
@@ -5088,7 +5391,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         put(R, 18+i, 4, "적합" if ok else "확인 필요",
             color=(GREEN if ok else RED), align="center", border=True)
     _rk = 18 + len(ck) + 1
-    write_pc_rows(R, _rk, tm, put, sec, N4, GREY)
+    _rk = write_pc_rows(R, _rk, tm, put, sec, N4, GREY)
+    write_call_rows(R, _rk + 1, tm, full, b2, put, sec, N4, P2, GREY)
 
     # ── 회계처리 ──
     E = wb.create_sheet("회계처리"); E.sheet_view.showGridLines = False
@@ -5122,6 +5426,12 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     put(E, rr, 2, "합계", bold=True, fill=BAND, border=True)
     put(E, rr, 3, al[-1][1], bold=True, fill=BAND, fmt=N2, align="right", border=True)
     put(E, rr, 4, al[-1][1]/100*fac, bold=True, fill=BAND, fmt=N0, align="right", border=True)
+    for _j, (_nm, _v) in enumerate(alloc_extra(tm, ca)):
+        # 합계에 넣으면 100 이 되지 않고 차변에 넣으면 대차가 깨진다 — 합계 밖 참고 줄이다.
+        put(E, rr+1+_j, 2, _nm, color=GREY, size=9, border=True)
+        put(E, rr+1+_j, 3, _v, fmt=N2, align="right", color=GREY, border=True)
+        put(E, rr+1+_j, 4, _v/100*fac, fmt=N0, align="right", color=GREY, border=True)
+    rr += len(alloc_extra(tm, ca))
     put(E, rr+1, 2, f"전자등록총액 {fac:,.0f}원 기준으로 환산했습니다.", color=GREY, size=9)
     sec(E, rr+3, "2. 분개", span=5)
     for i, h in enumerate(["계정", "차변 (100)", "대변 (100)", "차변 (원)", "대변 (원)"]):
@@ -5145,7 +5455,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     for j2, v2 in enumerate([sd, sc, sd/100*fac, sc/100*fac]):
         put(E, tr, 3+j2, v2, bold=True, fill=BAND, fmt=(N2 if j2 < 2 else N0),
             align="right", border=True)
-    put(E, tr+2, 2, "최초 인식에는 어떠한 손익도 생기지 않는다. 차변과 대변 합계가 일치해야 한다.",
+    # 기특정 콜의 참고 문구는 «줄» 이 아니라 이 문장에 이어 붙인다 — 아래 행들이 밀리면
+    # 거래원가·기말 재평가 블록의 시작 행이 어긋난다.
+    put(E, tr+2, 2, "최초 인식에는 어떠한 손익도 생기지 않는다. 차변과 대변 합계가 일치해야 한다."
+        + "".join("  ※ " + NOTE_KKIND.format(v=f"{_v:,.4f}") for _, _v in alloc_extra(tm, ca)),
         color=GREY, size=9)
     put(E, tr+3, 2, "전환권 분류: " + ("파생상품부채 — 주계약을 잔여로"
         if tm.conv_class == "liability" else "자본 — 전환권대가를 잔여로"), color=GREY, size=9)
@@ -5636,8 +5949,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("조정후 전환가격", "ipok", "@=C{ipopx}*C{ipomul}", N2, False),
         ("최소공모가격", "ipomin", tm.ipo_min, N2, True),
         ("상장 시 강제전환 (1/0)", "ipocv", int(tm.ipo_conv), N0, True),
-        ("매도청구권 평가방법 (0 유무가치 / 1 혼합할인율 / 2 지분·부채 분리)",
+        ("매도청구권 평가방법 (0 유무가치 / 1 GS식 전환가중확률할인 / 2 TF식 지분-채권 분리할인)",
          "kmeth", tm.k_method, N0, False),
+        ("지분·채권 구분 기준 (0 비례균등차감법 / 1 본문 4.3.3 GS 전환확률)",
+         "ksplit", int(tm.k_split), N0, False),
+        ("콜옵션 유형 (0 제3자 지정 가능 / 1 제3자 기특정)", "kkind", int(tm.k_kind), N0, False),
+        ("콜 대상물량 의무보유 (1 있음 — 행사기간 종료일까지 존속 / 0 없음)",
+         "khold", int(tm.k_hold), N0, False),
         ("조기상환권 처리 (1 분리 / 0 부채요소에 포함)", "psep", int(tm.p_sep), N0, True),
         ("조기상환 행사금액이 상실이자 보상 수준 (1/0)", "plost", int(tm.p_lost_int), N0, True),
         # 전체 지정이면 배분표가 한 줄이 되고 상각표를 만들지 않는다. 트리는
@@ -5787,7 +6105,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 자본 배분에서 부채요소를 줄이는 콜 — 발행자 상환권은 결과 C26 (부채 격자),
     # CB 와 제3자 지정 매도청구권은 C22 (전체 격자)
     CAE = "C26" if issuer_redeem(tm) else "C22"
+    S11B = "11b 채권확률 (1 − 전환확률)"
     S17, S18 = "17 구성비율", "18 혼합할인율"
+    S17A, S17B = "17a 행사 지분몫", "17b 행사 채권몫"
     S19, S20 = "19 콜 페이오프", "20 매도청구권가치"
     S21, S22 = "21 방법2 지분보유", "22 방법2 부채보유"
     S23, S24 = "23 방법2 지분몫", "24 방법2 부채몫"
@@ -5891,6 +6211,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     _need15 = _hascall and _km == 0
     _need1 = _hascall and _km == 1
     _need2 = _hascall and _km == 2
+    # 지분·채권 구분 기준이 본문 4.3.3(GS 전환확률)이면 옵션차익법이 ⑪ 을 참조한다.
+    # ⑪ 은 ⑫⑬⑭ 와 서로를 참조하므로 TF 를 골랐어도 네 시트를 함께 만든다.
+    _ksplit = int(getattr(tm, "k_split", 0)) == 1 and (_need1 or _need2)
+    _khold = int(getattr(tm, "k_hold", 1)) == 1
 
     # ⑤~⑨ 는 TF 트리다. GS 를 골랐어도 옵션차익법(방법 1·2)의 기초자산이라
     # 그때는 남긴다. GS + 유무가치비교법이면 쓰이지 않으므로 만들지 않는다.
@@ -6044,7 +6368,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
          f"=({Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17)*EXP(-{L}$12*{K['dt']})"
          f"+{L}$9+{L}$10"))
 
-    if _gs:
+    if _gs or _ksplit:
         W = newsheet(S11, "⑪ [GS] 전환확률트리",
                      "전환 1, 현금 0, 보유면 다음 두 칸의 평균.", f"{S14} · 다음 열 {S11}")
         # 현금(상환P·상환C)이 동점이면 0 이다. 전환은 허용오차만큼 앞설 때만 1 이다.
@@ -6055,6 +6379,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             f'IF(ABS({Q(S14)}!{L}{R0+r}-{Q(S4)}!{L}{R0+r})<{TOLX},1,'
             + ('0))' if i == n else
                f'{Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17))')), N4)
+
+        W = newsheet(S11B, "⑪b 채권확률트리  1 − 전환확률",
+                     "cash-or-nothing 풋옵션의 위험중립확률이다 (본문 4.3.3). "
+                     "⑪ 과 더하면 언제나 1 이다 — 전환사채 만기까지 둘 중 하나가 행사되고 "
+                     "하나가 행사되면 다른 하나는 사라지기 때문이다.", S11, call_on=False)
+        fill(W, lambda i, r, L, Lp, Ln: f"=1-{Q(S11)}!{L}{R0+r}", N4)
 
         W = newsheet(S12, "⑫ [GS] 위험조정할인율트리",
                      "이 칸을 직전 시점으로 할인할 때 쓰는 이자율이다. "
@@ -6483,18 +6813,34 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         # 제3자 지정 가능 콜옵션은 전환사채를 기초자산으로 하는 복합옵션이다.
         # 기초자산은 콜과 부속조항(의무보유)을 뺀 ⑧ 이다 (책 4.4.3, 부속예제 4-4).
         W = newsheet(S17, "⑰ 구성비율트리  지분 몫 ÷ 전환사채 가치",
-                     "노드 가치 중 주식에서 온 몫의 비율이다.", f"{S5} · {S8}", call_on=False)
+                     "노드 가치 중 주식에서 온 몫의 비율이다. **비례균등차감법**(지분·채권 구분 "
+                     "기준 0)을 고를 때 쓰는 비중이고, 본문 4.3.3(기준 1)을 고르면 대신 ⑪ "
+                     "전환확률을 쓴다."
+                     + ("  지금 설정은 본문 4.3.3 이라 이 시트는 참고용이다." if _ksplit else ""),
+                     f"{S5} · {S8}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln:
              f"=IF({Q(S8)}!{L}{R0+r}=0,0,{Q(S5)}!{L}{R0+r}/{Q(S8)}!{L}{R0+r})", N4)
 
-        if _need1:                      # ⑱·⑳ 은 혼합할인율(방법 1) 전용이다
-            W = newsheet(S18, "⑱ 혼합할인율트리  구성비율 × 무위험 + (1−구성비율) × 위험",
-                         "이 칸을 직전 시점으로 할인할 때 쓰는 이자율이다. "
-                         "지분 몫에는 무위험, 채권 몫에는 위험 선도이자율을 섞는다.",
-                         S17, call_on=False)
+        if _need1:                      # ⑱·⑳ 은 GS식 전환가중확률할인(방법 1) 전용이다
+            _wsh = S11 if _ksplit else S17
+            W = newsheet(S18, "⑱ 혼합할인율트리  비중 × 무위험 + (1−비중) × 위험",
+                         "이 칸을 직전 시점으로 할인할 때 쓰는 이자율이다. 지분 성격에는 무위험, "
+                         "채권 성격에는 위험 선도이자율을 섞는다. 비중은 "
+                         + ("**⑪ GS 전환확률**(본문 4.3.3)" if _ksplit
+                            else "**⑰ 가치 구성비율**(비례균등차감법)")
+                         + " 이다. 비중이 언제나 0~1 이라 할인율이 무위험과 위험 사이를 벗어나지 "
+                           "않는다.",
+                         _wsh, call_on=False)
             fill(W, lambda i, r, L, Lp, Ln:
-                 (f"={Q(S17)}!{L}{R0+r}*{Lp}$11+(1-{Q(S17)}!{L}{R0+r})*{Lp}$12"
+                 (f"={Q(_wsh)}!{L}{R0+r}*{Lp}$11+(1-{Q(_wsh)}!{L}{R0+r})*{Lp}$12"
                   if i > 0 else "=0"), P2)
+
+        # 의무보유가 없으면 투자자가 전환·조기상환으로 사채를 소멸시키는 자리에서 그것을
+        # 사는 콜도 사라진다. ⑨ 의사결정이 그 자리를 알려 준다 (만기 열은 그대로 둔다).
+        _DEAD = (lambda L, r: f'OR({Q(S9)}!{L}{R0+r}="전환",{Q(S9)}!{L}{R0+r}="자동전환",'
+                              f'{Q(S9)}!{L}{R0+r}="상장전환",{Q(S9)}!{L}{R0+r}="상환P")')
+        _kill = (lambda L, r, body: (f"=IF({_DEAD(L, r)},0,{body[1:]})"
+                                     if not _khold else body))
 
         W = newsheet(S19, "⑲ 콜 페이오프트리  MAX(전환사채 가치 − 매도청구금액, 0)",
                      "매도청구 행사기간에만 값이 생긴다. 기초자산은 ⑧ 이다.", S8)
@@ -6506,11 +6852,31 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                          "자식의 구성비율로 섞은 할인율로 자식을 각각 할인한다.",
                          f"{S18} · {S19} · 다음 열 {S20}")
             fill(W, lambda i, r, L, Lp, Ln: (f"={Q(S19)}!{L}{R0+r}" if i == n else
-                 f"=MAX({Q(S19)}!{L}{R0+r},"
-                 f"{Ln}{R0+r}*{L}$16*EXP(-{Q(S18)}!{Ln}{R0+r}*{K['dt']})"
-                 f"+{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S18)}!{Ln}{R0+r+1}*{K['dt']}))"))
+                 _kill(L, r,
+                       f"=MAX({Q(S19)}!{L}{R0+r},"
+                       f"{Ln}{R0+r}*{L}$16*EXP(-{Q(S18)}!{Ln}{R0+r}*{K['dt']})"
+                       f"+{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S18)}!{Ln}{R0+r+1}*{K['dt']}))")))
             put(W, R0+n+3, 2, "매도청구권 (한도 반영 전, t=0)", bold=True)
             put(W, R0+n+3, 3, f"=C{R0}", bold=True, fmt=N2, align="right")
+
+    if _need2 and _ksplit:
+        # ── 17a·17b 행사가를 GS 전환확률로 분해 (본문 4.3.3) ──
+        # 기초자산의 지분(⑤)·채권(⑥)은 이미 나뉘어 있으나 행사가(8행)는 나뉘어 있지 않다.
+        # asset-or-nothing 콜의 위험중립확률이 GS 전환확률(⑪)이고 cash-or-nothing 풋의
+        # 그것이 1−⑪(⑪b)이므로 행사가를 그 확률로 나눈다. 두 몫의 합은 언제나 ⑲ 다.
+        # 각 몫은 «확률 × (그 시나리오 현가 − 행사가)» 라 상환 시나리오에서 음수가 될 수
+        # 있다 — 콜이 주식으로 갈 시나리오에서만 이득이라는 뜻이지 오류가 아니다.
+        W = newsheet(S17A, "⑰a 행사 지분몫  ⑤ − ⑪ × 매도청구금액",
+                     "행사할 때 페이오프의 지분 성격 몫이다. 행사기간이 아니면 0 이다.",
+                     f"{S5} · {S11}")
+        fill(W, lambda i, r, L, Lp, Ln:
+             f"=IF({L}$5=1,{Q(S5)}!{L}{R0+r}-{Q(S11)}!{L}{R0+r}*{L}$8,0)", N4)
+
+        W = newsheet(S17B, "⑰b 행사 채권몫  ⑥ − (1−⑪) × 매도청구금액",
+                     "행사할 때 페이오프의 채권 성격 몫이다. ⑰a 와 더하면 ⑲ 가 된다.",
+                     f"{S6} · {S11B}")
+        fill(W, lambda i, r, L, Lp, Ln:
+             f"=IF({L}$5=1,{Q(S6)}!{L}{R0+r}-{Q(S11B)}!{L}{R0+r}*{L}$8,0)", N4)
 
     if _need2:
         # ── 21~24 옵션차익혼합할인법 · 방법 2 (지분·부채 분리) ──
@@ -6530,21 +6896,30 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
              f"=({Q(S24)}!{Ln}{R0+r}*{L}$16+{Q(S24)}!{Ln}{R0+r+1}*{L}$17)"
              f"*EXP(-{L}$12*{K['dt']})"), N4)
 
-        ex2 = (lambda L, r: f"{Q(S19)}!{L}{R0+r}>={Q(S21)}!{L}{R0+r}+{Q(S22)}!{L}{R0+r}")
+        # 행사이득이 0 이면 행사하지 않는다 — 몫이 음수일 수 있어 «0 >= 음수» 로 잘못
+        # 행사 판정이 나는 것을 막는다.
+        ex2 = (lambda L, r: f"AND({Q(S19)}!{L}{R0+r}>0,"
+                            f"{Q(S19)}!{L}{R0+r}>={Q(S21)}!{L}{R0+r}+{Q(S22)}!{L}{R0+r})")
+        _eq = ((lambda L, r: f"{Q(S17A)}!{L}{R0+r}") if _ksplit else
+               (lambda L, r: f"{Q(S19)}!{L}{R0+r}*{Q(S17)}!{L}{R0+r}"))
+        _db = ((lambda L, r: f"{Q(S17B)}!{L}{R0+r}") if _ksplit else
+               (lambda L, r: f"{Q(S19)}!{L}{R0+r}*(1-{Q(S17)}!{L}{R0+r})"))
+        _src = (f"{S17A} · {S17B}" if _ksplit else S17) + f" · {S19} · {S21} · {S22}"
+        _how = ("행사가를 GS 전환확률로 나눈 ⑰a" if _ksplit else "페이오프에 구성비율을 곱한 몫")
         W = newsheet(S23, "㉓ [방법2] 매도청구권 · 지분 몫",
-                     "행사하면 페이오프의 지분 몫, 아니면 보유가치의 지분 몫이다. "
-                     "만기에는 보유가치가 0 이라 언제나 페이오프를 쪼갠다.",
-                     f"{S17} · {S19} · {S21} · {S22}")
-        fill(W, lambda i, r, L, Lp, Ln:
-             f"=IF({ex2(L, r)},{Q(S19)}!{L}{R0+r}*{Q(S17)}!{L}{R0+r},"
-             f"{Q(S21)}!{L}{R0+r})", N4)
+                     f"행사하면 {_how}, 아니면 보유가치의 지분 몫이다. "
+                     "만기에는 보유가치가 0 이라 언제나 페이오프를 쪼갠다.", _src)
+        fill(W, lambda i, r, L, Lp, Ln: _kill(L, r,
+             f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})") if i < n else
+             f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})", N4)
 
         W = newsheet(S24, "㉔ [방법2] 매도청구권 · 부채 몫",
-                     "행사 판단은 ㉓ 과 같다. 지분 몫의 나머지가 부채 몫이다.",
-                     f"{S17} · {S19} · {S21} · {S22}")
-        fill(W, lambda i, r, L, Lp, Ln:
-             f"=IF({ex2(L, r)},{Q(S19)}!{L}{R0+r}*(1-{Q(S17)}!{L}{R0+r}),"
-             f"{Q(S22)}!{L}{R0+r})", N4)
+                     "행사 판단은 ㉓ 과 같다. "
+                     + ("행사가의 채권 몫을 뺀 ⑰b 다." if _ksplit else "지분 몫의 나머지가 부채 몫이다."),
+                     _src)
+        fill(W, lambda i, r, L, Lp, Ln: _kill(L, r,
+             f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})") if i < n else
+             f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})", N4)
         put(W, R0+n+3, 2, "매도청구권 · 방법2 (한도 반영 전, t=0)", bold=True)
         put(W, R0+n+3, 3, f"={Q(S23)}!C{R0}+C{R0}", bold=True, fmt=N2, align="right")
 
@@ -6587,9 +6962,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
              ("매도청구권 · 옵션차익 · 지분·부채 분리",
               f"={K['cw']}*{Q(S24)}!C{R0+n+3}" if _need2 else B_),
              ("매도청구권자산 (적용값)", f"=C{19+_km}" if _hascall else "=0"),
-             ("전환권대가 (자본일 때)", f'=IF({K["eqcls"]}=1,100-C17+{CAE},"")'),
+             # 제3자 기특정 콜은 발행자가 자산으로 인식하지 않으므로 배분에서 빠진다
+             # (본문 4.5.1 주주간 분배). 잔여인 전환권대가·주계약이 그만큼 작아진다.
+             ("전환권대가 (자본일 때)",
+              f'=IF({K["eqcls"]}=1,100-C17+IF({K["kkind"]}=1,0,{CAE}),"")'),
              ("복합내재파생상품 (부채일 때)", f'=IF({K["eqcls"]}=0,C10-C16,"")'),
-             ("주계약 잔여 (부채일 때)", f'=IF({K["eqcls"]}=0,100+C22-C24,"")')]
+             ("주계약 잔여 (부채일 때)",
+              f'=IF({K["eqcls"]}=0,100+IF({K["kkind"]}=1,0,C22)-C24,"")')]
     if issuer_redeem(tm):
         # 부채 격자에서 잰 발행자 상환권. 자본 배분(전환권대가·회계처리)이 이 값을 쓴다.
         items.append(("매도청구권 · 부채 격자 기준 (자본 배분용)",
@@ -6626,8 +7005,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
              '=IF(ABS(C29-1)<0.000001,"적합","확인 필요")'),
             ("전체 ≥ 주계약", "=C10-C16", '=IF(C30>=0,"적합","확인 필요")'),
             ("배분 합계 = 100",
-             f'=IF({K["ksep"]}=1,IF({K["eqcls"]}=1,C16+C18-{CAE}+C23,C25+C24-C22),'
-             f'IF({K["eqcls"]}=1,C16+C18-{CAE}+C23,C25+C24-C22))',
+             f'=IF({K["eqcls"]}=1,C16+C18-IF({K["kkind"]}=1,0,{CAE})+C23,'
+             f'C25+C24-IF({K["kkind"]}=1,0,C22))',
              '=IF(ABS(C31-100)<0.01,"적합","확인 필요")'),
             # 상태확장 격자는 재결합하지 않아 엑셀 트리 한 장으로 옮길 수 없다.
             # 앱이 상태확장으로 계산했다면 이 조서는 근사값이므로 그 사실을 밝힌다.
@@ -6655,7 +7034,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         "다른 매도청구권 평가방법의 값은 이 조서에 없습니다.", color=GREY, size=9)
     put(R, 36, 2, "주황색 숫자만 값이다. 선도이자율은 부트스트래핑 결과라 엑셀에서 재현하지 않는다.",
         color=AMB, size=9)
-    write_pc_rows(R, 38, tm, put, sec, N4, GREY)
+    _rk2 = write_pc_rows(R, 38, tm, put, sec, N4, GREY)
+    write_call_rows(R, _rk2 + 1, tm, full, b2, put, sec, N4, P2, GREY)
 
     # ── 이자율곡선 ──
     # 각 트리 11·12행의 선도이자율이 어디서 왔는지 남긴다. 부트스트래핑은
@@ -6813,7 +7193,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 넣었으면 조기상환권+매도청구권 묶음이다. 어느 쪽이든 순액 한 줄이다.
     _CMP = (f'=IF({K["eqcls"]}=0,IF({KS}=1,결과!C24,결과!C24-결과!C22),'
             f'IF({KS}=0,결과!C18-결과!{CAE},""))')
-    _CALL = f'=IF({KS}=1,IF({K["eqcls"]}=1,-결과!{CAE},-결과!C22),"")'
+    # 기특정 콜이면 발행자가 자산을 인식하지 않는다 (본문 4.5.1) — 줄이 비어 있다.
+    _CALL = f'=IF({K["kkind"]}=1,"",IF({KS}=1,IF({K["eqcls"]}=1,-결과!{CAE},-결과!C22),""))'
     _EQ = f'=IF({K["eqcls"]}=1,결과!C23,"")'
     # 복합계약 **전체**를 당기손익-공정가치로 지정하면 요소별 줄이 한 줄로 접힌다.
     # 새로 계산할 값이 없다 — 부채 갈래의 「주계약 + 복합내재파생」 합이 그대로
@@ -6832,7 +7213,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 전체 지정은 전환권이 **부채**일 때만 성립하므로(문단 4.2.2) 매도청구권은
     # 부채 갈래와 같은 칸(결과!C22)을 본다.
     if _FVROW:
-        _HOST = f'=IF({KS}=1,100+결과!C22,100)'
+        _HOST = f'=IF(AND({KS}=1,{K["kkind"]}<>1),100+결과!C22,100)'
         _LIAB = _PUT = _CMP = _EQ = ""
     _HOSTNM = ("복합계약 전체 · 당기손익-공정가치 측정 금융부채" if _FVROW else "주계약")
     al2 = [(_HOSTNM, _HOST),
@@ -6850,6 +7231,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     put(E, 13, 2, "합계", bold=True, fill=BAND, border=True)
     put(E, 13, 3, "=SUM(C7:C12)", bold=True, fill=BAND, fmt=N2, align="right", border=True)
     put(E, 13, 4, "=SUM(D7:D12)", bold=True, fill=BAND, fmt=N0, align="right", border=True)
+    if int(tm.k_kind) == 1 and tm.k_w > 0:
+        # 합계에 넣으면 100 이 되지 않고 차변에 넣으면 대차가 깨진다 — 합계 밖 참고 줄이다.
+        put(E, 15, 2, "제3자 기특정 콜옵션 · 주주간 분배 (참고 · 발행자 자산 아님)",
+            color=GREY, size=9, border=True)
+        put(E, 15, 3, f"=결과!{CAE}", fmt=N2, align="right", color=GREY, border=True)
+        put(E, 15, 4, f'=C15/100*{K["face"]}', fmt=N0, align="right", color=GREY, border=True)
     put(E, 14, 2, ("복합계약 전체를 당기손익-공정가치로 지정했으므로 첫 줄 하나만 찬다. "
                    "요소별 배분을 하지 않으므로 아래 줄들은 비어 있고, 유효이자율 "
                    "상각표도 만들지 않는다 (제1109호 문단 4.2.2 · 4.3.3(3)). "
@@ -6861,7 +7248,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     for i, h in enumerate(["계정", "차변 (100)", "대변 (100)", "차변 (원)", "대변 (원)"]):
         put(E, 17, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
     je2 = [("현금", "=100", None),
-           ("파생상품자산 (매도청구권)", f'=IF({KS}=1,IF({K["eqcls"]}=1,결과!{CAE},결과!C22),"")', None),
+           ("파생상품자산 (매도청구권)",
+            f'=IF({K["kkind"]}=1,"",IF({KS}=1,IF({K["eqcls"]}=1,결과!{CAE},결과!C22),""))', None),
            (("　당기손익-공정가치 측정 금융부채 (복합계약 전체)" if _FVROW
              else "　전환사채 (주계약)"), None, _HOST),
            ("　전환사채 (부채요소)", None, _LIAB),
@@ -6877,6 +7265,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             fmt=N0, align="right", border=True)
         put(E, r, 6, f'=IF(ISNUMBER(D{r}),D{r}/100*{K["face"]},"")',
             fmt=N0, align="right", border=True)
+    if int(tm.k_kind) == 1 and tm.k_w > 0:
+        put(E, 27, 2, f'="{NOTE_KKIND.format(v="")[:-1]}"&" (금액 "&TEXT(결과!{CAE},"#,##0.0000")&")"',
+            color=GREY, size=9)
     put(E, 25, 2, "합계", bold=True, fill=BAND, border=True)
     for j2, col in enumerate("CDEF"):
         put(E, 25, 3+j2, f"=SUM({col}18:{col}24)", bold=True, fill=BAND,
@@ -7687,7 +8078,15 @@ HLP_CMP = ("0 이면 **단리**입니다 — 「발행가에 연 X% 단리를 �
 # 불러온 그 순간의 제목이 한 박자 늦는다.
 _HEAD = st.empty()
 
-if "tm" not in st.session_state: st.session_state.tm = Terms()
+# 새 평가의 기본값 — 한공회 본문이 콜 유형별로 「기본적인 접근법」을 따로 지정한다.
+#   4.3.2  발행자 콜   → 콜조항 유무 가치 비교 (유무가치비교법)
+#   4.3.4  제3자 콜    → 복합옵션 (옵션차익혼합할인법)
+#   4.1.1  「실무적으로 많이 채택되고 있는 옵션차익혼합할인법을 기준으로 설명한다」
+# 제3자 지정 가능 콜이 기본이므로 옵션차익 · TF식 지분-채권 분리할인(4.4.3 + 3.2)에
+# 본문 4.3.3 의 전환확률 분해를 짝지어 둔다. dataclass 기본값은 건드리지 않으므로
+# 옛 시나리오 JSON 은 저장된 대로 열린다.
+if "tm" not in st.session_state:
+    st.session_state.tm = Terms(k_method=2, k_split=1)
 if "prices" not in st.session_state: st.session_state.prices = []
 if "peers" not in st.session_state: st.session_state.peers = []
 if "rate_series" not in st.session_state: st.session_state.rate_series = []
@@ -8359,6 +8758,12 @@ with st.sidebar:
                      "우선주를 사 가는 권리입니다. 거래상대방이 달라지므로 **별도의 금융상품**이고 "
                      "(문단 4.3.1), 발행회사는 이를 **파생상품자산**으로 따로 인식합니다. "
                      "실무 계약에서는 총 발행금액의 10~20% 한도로 자주 붙습니다.")
+            # 발행자 상환권·없음 갈래에서는 derive 가 k_method 를 0 으로 눌러 둔다.
+            # 제3자 지정으로 **바꾼 순간**에는 그 0 이 남아 있어 유무가치비교법이 되는데,
+            # 본문 4.3.4 의 기본은 복합옵션이다. 전환하는 그 회차에만 기본값을 채운다.
+            if st.session_state.get("_ic_prev") not in (None, 2) and t.issuer_call == 2:
+                t.k_method, t.k_split = 2, 1
+            st.session_state["_ic_prev"] = int(t.issuer_call)
             if t.issuer_call == 1:
                 _k1, _k2 = st.columns(2)
                 t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
@@ -8397,8 +8802,9 @@ with st.sidebar:
                 t.k_lock = _sched_one(
                     st, "의무보유 전환지연 (개월)", "의무보유 만료일", t.k_lock, "klock",
                     help="인수인이 콜옵션 대상주식을 **미전환 상태로 보유**해야 하는 기간입니다. "
-                         "매도청구 종료일까지 두는 계약이 많습니다. "
-                         "**유무가치비교법에서만** 값에 들어갑니다.")
+                         "매도청구 종료일까지 두는 계약이 많습니다. 이 개월 수는 "
+                         "**유무가치비교법**에서 전환 시작을 늦추는 데 씁니다. 옵션차익법에서는 "
+                         "아래 「콜 대상물량 의무보유」 체크박스로 반영합니다.")
                 # 옵션차익혼합할인법은 노드의 지분·부채 분해 위에 정의된 산식이라 TF
                 # 전용이다 (한공회 4.4.3). GS 를 고르면 기초상품만 GS 이고 콜은 TF 라
                 # 표시와 계산이 어긋나므로 조합 자체를 막는다.
@@ -8411,11 +8817,24 @@ with st.sidebar:
                                           disabled=_gs_blk)
                 if _gs_blk:
                     st.caption(COMPAT_GS_KMETHOD)
+                t.k_kind = int(st.selectbox("콜옵션 유형", [0, 1], index=int(t.k_kind),
+                                            format_func=lambda i: K_KINDS[i], key="kkind_rcps", help="**지정 가능 콜**: 발행자가 보유하다 제3자를 지정해 넘기는 콜 — 발행자의 파생상품자산으로 매 결산 재평가 (회계기준원 2022-I-KQA006, 본문 4.4). **기특정 콜**: 발행 시 제3자(최대주주 등)가 이미 정해진 콜 — 발행자는 당사자가 아니라 자산을 인식하지 않고 최초 인식 시 주주간 분배로 봅니다 (본문 4.5). 값은 같은 격자, 회계처리만 다릅니다. 접근법 1(이연지정)은 본문 FAQ 의 반론(제3자 이전이 값을 바꾸면 무차익거래 원칙과 배치)이 있어 넣지 않았습니다."))
                 if t.k_method:
-                    st.warning("의무보유는 지금 고른 평가방법에서 **값을 움직이지 않습니다.** "
-                               "옵션차익법은 기초자산을 「콜과 그 부속조항을 뺀 우선주」로 "
-                               "보기 때문입니다. 의무보유 효과까지 넣으시려면 "
-                               "**유무가치비교법**을 고르십시오.")
+                    t.k_split = int(st.selectbox("지분·채권 구분 기준", [1, 0],
+                                                 index=[1, 0].index(int(t.k_split)),
+                                                 format_func=lambda i: K_SPLITS[i],
+                                                 key="ksplit_rcps", help='한공회 본문 4.3.3 은 「콜옵션의 **행사가를 분해**하기 위해서는 … 행사 확률인 위험중립확률을 구해야 한다. 이 단계에서 **GS 모형의 전환확률**을 활용할 수 있다」고 씁니다. **비례균등차감법**(지분·부채 가치 구성비율)은 국내 실무서·부속예제가 쓰는 방식으로, 행사가를 페이오프에 비례해 균등 차감하는 것과 같습니다 — 본문에서 도출되는 방식은 아니지만 널리 쓰입니다. 두 값을 분리 판단 탭에서 나란히 보실 수 있습니다.'))
+                t.k_basis = st.text_input("평가기법 선택 근거 (조서 문안)", value=t.k_basis, key="kbasis_rcps",
+                                          help="한공회 4.6.2 — 복수의 기법이 가능한 자리에서 고른 이유를 적어 조서에 남깁니다. "
+                                               "바꾸면 그 사유도 여기에.")
+                if t.k_method:
+                    t.k_hold = 1 if st.checkbox(
+                        "콜 대상물량 의무보유 (행사기간 종료일까지 전환·조기상환 제한)",
+                        value=bool(t.k_hold), key="khold_rcps", help='**의무보유 있음**: 콜 대상비율에 해당하는 물량을 콜 행사기간 종료일까지 전환 및 조기상환청구가 불가능한 상태로 보유한다고 가정합니다. 그러면 콜 대상물량이 끝까지 남아 콜을 언제든 행사할 수 있습니다.\n\n**없음**: 투자자가 먼저 전환하거나 조기상환을 청구해 그 물량을 소멸시키면 그것을 사는 콜도 함께 사라집니다.\n\n한공회 4.4.2·4.4.3 은 **기초자산**에서 의무보유를 빼라고 하고, 같은 문단이 「계약조건의 특성을 가치평가에 반영해야 한다」고도 합니다. 그래서 기초자산은 그대로 두고 **콜 계약층에서 «행사기회가 유지되는가»로만** 반영합니다. 값 차이가 매우 큽니다.') else 0
+                    st.caption("의무보유는 옵션차익법에서 **기초자산을 바꾸지 않고**, 콜 대상 우선주가 "
+                               "행사기간 동안 존속하는지로만 값에 들어갑니다. 유무가치비교법에서는 격자의 "
+                               "전환 시작을 늦추는 방식으로 들어갑니다 — 두 방법의 차이를 분리 판단 탭에서 "
+                               "나눠 보실 수 있습니다.")
                 st.caption("거래상대방이 발행회사가 아니라 제3자이므로 **별도의 금융상품**입니다 "
                            "(기준서 1109 문단 4.3.1). 회계처리 탭에서 **파생상품자산**으로 "
                            "따로 세우고, 상환청구권·전환권 묶음에는 넣지 않습니다.")
@@ -8434,17 +8853,22 @@ with st.sidebar:
               t.k_w = st.number_input("행사 한도 (%)", value=t.k_w*100, step=5.0)/100
               t.k_lock = _sched_one(
                   st, "의무보유 전환지연 (개월)", "의무보유 만료일", t.k_lock, "klock",
-                  help="매도청구 기간 동안 그 부분을 전환하지 못하게 하는 조건입니다. "
-                       "**유무가치비교법에서만** 값에 들어갑니다.")
+                  help="매도청구 기간 동안 그 부분을 전환하지 못하게 하는 조건입니다. 이 개월 수는 "
+                       "**유무가치비교법**에서 전환 시작을 늦추는 데 씁니다. 옵션차익법에서는 "
+                       "아래 「콜 대상물량 의무보유」 체크박스로 반영합니다.")
               if t.k_method != 0:
-                  st.warning("의무보유는 지금 고른 평가방법에서 **값을 움직이지 "
-                             "않습니다.** 옵션차익법은 기초자산을 「콜과 그 부속조항을 "
-                             "뺀 전환사채」로 보기 때문입니다 (책 4.4.3). 의무보유 "
-                             "효과까지 콜 값에 넣으시려면 **유무가치비교법**을 "
-                             "고르십시오.")
+                  t.k_hold = 1 if st.checkbox(
+                      "콜 대상물량 의무보유 (행사기간 종료일까지 전환·조기상환 제한)",
+                      value=bool(t.k_hold), key="khold_cb", help='**의무보유 있음**: 콜 대상비율에 해당하는 물량을 콜 행사기간 종료일까지 전환 및 조기상환청구가 불가능한 상태로 보유한다고 가정합니다. 그러면 콜 대상물량이 끝까지 남아 콜을 언제든 행사할 수 있습니다.\n\n**없음**: 투자자가 먼저 전환하거나 조기상환을 청구해 그 물량을 소멸시키면 그것을 사는 콜도 함께 사라집니다.\n\n한공회 4.4.2·4.4.3 은 **기초자산**에서 의무보유를 빼라고 하고, 같은 문단이 「계약조건의 특성을 가치평가에 반영해야 한다」고도 합니다. 그래서 기초자산은 그대로 두고 **콜 계약층에서 «행사기회가 유지되는가»로만** 반영합니다. 값 차이가 매우 큽니다.') else 0
+                  st.caption("의무보유는 옵션차익법에서 **기초자산을 바꾸지 않고**, 콜 대상 사채가 "
+                             "행사기간 동안 존속하는지로만 값에 들어갑니다. 유무가치비교법에서는 격자의 "
+                             "전환 시작을 늦추는 방식으로 들어갑니다 — 두 방법의 차이를 분리 판단 탭에서 "
+                             "나눠 보실 수 있습니다.")
+              if int(t.k_kind) == 1 and not t.k_sep:
+                  t.k_sep = 1
               t.k_sep = 1 if st.selectbox(
                   "회계 처리", ["별도 금융상품", "복합내재파생에 포함"],
-                  index=0 if t.k_sep else 1,
+                  index=0 if t.k_sep else 1, disabled=(int(t.k_kind) == 1),
                   help="발행회사가 지정하는 제3자가 살 수 있으면 거래상대방이 달라지므로 "
                        "별도의 금융상품입니다 (기준서 1109 문단 4.3.1). 발행회사만 "
                        "행사할 수 있으면 내재파생상품이라 전환권·조기상환권과 하나로 "
@@ -8463,10 +8887,21 @@ with st.sidebar:
                                         disabled=_gs_blk)
               if _gs_blk:
                   st.caption(COMPAT_GS_KMETHOD)
+              t.k_kind = int(st.selectbox("콜옵션 유형", [0, 1], index=int(t.k_kind),
+                                            format_func=lambda i: K_KINDS[i], key="kkind_cb", help="**지정 가능 콜**: 발행자가 보유하다 제3자를 지정해 넘기는 콜 — 발행자의 파생상품자산으로 매 결산 재평가 (회계기준원 2022-I-KQA006, 본문 4.4). **기특정 콜**: 발행 시 제3자(최대주주 등)가 이미 정해진 콜 — 발행자는 당사자가 아니라 자산을 인식하지 않고 최초 인식 시 주주간 분배로 봅니다 (본문 4.5). 값은 같은 격자, 회계처리만 다릅니다. 접근법 1(이연지정)은 본문 FAQ 의 반론(제3자 이전이 값을 바꾸면 무차익거래 원칙과 배치)이 있어 넣지 않았습니다."))
+              if t.k_method:
+                  t.k_split = int(st.selectbox("지분·채권 구분 기준", [1, 0],
+                                               index=[1, 0].index(int(t.k_split)),
+                                               format_func=lambda i: K_SPLITS[i],
+                                               key="ksplit_cb", help='한공회 본문 4.3.3 은 「콜옵션의 **행사가를 분해**하기 위해서는 … 행사 확률인 위험중립확률을 구해야 한다. 이 단계에서 **GS 모형의 전환확률**을 활용할 수 있다」고 씁니다. **비례균등차감법**(지분·부채 가치 구성비율)은 국내 실무서·부속예제가 쓰는 방식으로, 행사가를 페이오프에 비례해 균등 차감하는 것과 같습니다 — 본문에서 도출되는 방식은 아니지만 널리 쓰입니다. 두 값을 분리 판단 탭에서 나란히 보실 수 있습니다.'))
+              t.k_basis = st.text_input("평가기법 선택 근거 (조서 문안)", value=t.k_basis, key="kbasis_cb",
+                                          help="한공회 4.6.2 — 복수의 기법이 가능한 자리에서 고른 이유를 적어 조서에 남깁니다. "
+                                               "바꾸면 그 사유도 여기에.")
               if t.k_method:
                   st.caption("발행회사가 **지정하는 제3자**도 행사할 수 있는 콜옵션은 별도의 "
                              "금융상품이고 기초자산이 전환사채인 복합옵션입니다 "
-                             "(기준서 1109 문단 4.3.1). 기초자산에서 **의무보유는 빠집니다.**")
+                             "(기준서 1109 문단 4.3.1). **기초자산에서는 의무보유가 빠지고**, "
+                             "의무보유는 콜 대상 사채가 행사기간 동안 존속하는지로만 반영됩니다.")
               else:
                   st.caption("콜을 넣고 뺀 두 평가액의 차이로 봅니다. 의무보유 효과가 콜 값에 "
                              "포함됩니다.")
@@ -9403,7 +9838,7 @@ with tabs[1]:
                    "만듭니다. 조서의 「회계처리」 시트도 같은 안내와 이 표만 싣습니다.")
     else:
         alloc_rows, alloc_note = allocate(t, full, b0, b1, b2, ca)
-        af = allocate_full(t, alloc_rows)
+        af = allocate_full(t, alloc_rows + alloc_extra(t, ca))
         st.dataframe(pd.DataFrame(af, columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
             {"100 기준": "{:,.2f}", "전액 기준 (원)": "{:,.0f}"}),
             use_container_width=True, hide_index=True)
@@ -9444,6 +9879,7 @@ with tabs[1]:
         _ln = [f"차) {k:<{_w}} {dr:>12,.4f}" if dr is not None else
                f"    대) {k.strip():<{_w-4}} {cr:>12,.4f}" for k, dr, cr in _je]
         _sd = sum(dr for _, dr, _ in _je if dr); _sc = sum(cr for _, _, cr in _je if cr)
+        _kknote = [NOTE_KKIND.format(v=f"{_v:,.4f}") for _, _v in alloc_extra(t, ca)]
         # 전체 지정이면 상각후원가로 남는 주계약이 없어 유효이자율 이자비용이 없다.
         # 전체를 공정가치로 다시 재고 그 변동을 손익으로 보낸다.
         if fvpl_on(t):
@@ -9466,8 +9902,9 @@ with tabs[1]:
                     if any("파생상품부채" in k for k, _ in alloc_rows[:-1]) else "")
                    + "※ 전환권대가는 자본이므로 후속 재측정이 없습니다."))
         je = ("[최초 인식]\n" + "\n".join(_ln)
-              + f"\n{'합계':<{_w+4}} 차변 {_sd:,.4f} = 대변 {_sc:,.4f}\n\n[후속 결산]\n"
-              + _post)
+              + f"\n{'합계':<{_w+4}} 차변 {_sd:,.4f} = 대변 {_sc:,.4f}\n"
+              + ("".join("※ " + x + "\n" for x in _kknote))
+              + "\n[후속 결산]\n" + _post)
         st.code(je, language=None)
 
         # ── 기말 재평가 ──
@@ -9789,20 +10226,40 @@ with tabs[2]:
         st.info(inst_text(t, "조기상환청구권이 없어 판단할 것이 없습니다."))
 
     # ── 매도청구권 : 세 방법을 나란히 ──
-    st.markdown(inst_text(t, "### 매도청구권 — 세 방법 중 무엇으로 잴 것인가"))
+    st.markdown(inst_text(t, "### 매도청구권 — 어느 방법으로 잴 것인가"))
     if t.k_w > 0:
-        _mv = []
-        for _km, _lb in ((0, "유무가치비교법"), (1, "옵션차익 · 혼합할인율"),
-                         (2, "옵션차익 · 지분·부채 분리")):
-            _tk = Terms(**asdict(t)); _tk.k_method = _km; derive(_tk)
-            _mv.append([_lb, decompose(_tk)[4], "◀ 적용" if t.k_method == _km else ""])
-        st.dataframe(pd.DataFrame(_mv, columns=["방법", "값", "　"]).style.format(
-            {"값": "{:,.4f}"}), use_container_width=True, hide_index=True)
-        st.caption(inst_text(t, "**어느 쪽이 옳다기보다 재는 대상이 다릅니다.** 유무가치비교법은 "
-                   "콜을 넣고 뺀 차액이라 **의무보유로 잃는 전환권 가치까지** 값에 "
-                   "들어갑니다. 옵션차익혼합할인법은 전환사채를 기초자산으로 하는 "
-                   "콜옵션 자체만 잽니다. 보고서를 검토하실 때도 어느 방법을 썼는지 "
-                   "먼저 확인하셔야 합니다."))
+        st.caption(inst_text(t, call_type_note(t)))
+        _cmp, _rec = call_compare(t, full, b2)
+        _base = next((v for nm, _, v, _ in _cmp if nm.startswith("유무가치비교법 (")), None)
+        _mv = [[nm, sp, v, (v - _base) if _base else 0.0,
+                ((v - _base)/_base if _base else 0.0), "◀ 적용" if on else ""]
+               for nm, sp, v, on in _cmp]
+        st.dataframe(pd.DataFrame(
+            _mv, columns=["방법", "지분·채권 구분 기준", "값", "유무가치 대비 차이", "차이율", "　"]
+            ).style.format({"값": "{:,.4f}", "유무가치 대비 차이": "{:,.4f}", "차이율": "{:,.1%}"}),
+            use_container_width=True, hide_index=True)
+        st.caption(inst_text(t,
+            "**두 방법의 결과를 억지로 같게 맞추지 않습니다.** 한공회 4.1.1 은 "
+            "「유무가치비교법과 옵션차익혼합할인법은 개념적으로 그 결과가 동일하여야 하나 "
+            "세부적인 구현방법에서 시장에서의 실무가 다양하게 진행되고 있어 그 차이가 종종 "
+            "발생한다」고 씁니다. 차이는 방법론 · 의무보유 반영 · 조기행사 판단 · 전환확률 "
+            "산출 · 할인방법에서 옵니다 — 아래에 두 조각으로 나눠 두었습니다."))
+        if _rec:
+            st.markdown(inst_text(t, "##### 유무가치비교법과의 차이 — 어디에서 오는가"))
+            _d = _rec["유무가치비교법 (적용 계약)"] - _rec["옵션차익법 (적용 산식·적용 설정)"]
+            st.dataframe(pd.DataFrame(
+                [[k, v] for k, v in _rec.items()] + [["차이 (유무가치 − 옵션차익)", _d]],
+                columns=["항목", "값"]).style.format({"값": "{:,.4f}"}),
+                use_container_width=True, hide_index=True)
+            st.caption(inst_text(t,
+                "①과 ②의 합이 차이와 정확히 같습니다. ①은 두 방법이 같은 계약(의무보유 없음)을 "
+                "잴 때 남는 순수한 구현 차이이고, ②는 유무가치비교법이 추가로 담는 부분입니다 — "
+                "콜을 넣고 뺀 차액이라 투자자가 전환·조기상환을 못 하게 된 효과까지 값에 "
+                "들어갑니다. 옵션차익법은 그 제한 자체를 별도의 가치요소로 콜에 더하지 않고, "
+                "제한으로 **콜 대상물량이 행사기간 동안 존속하여 행사 가능성이 유지되는 효과만** "
+                "담습니다 (참고 줄)."))
+        with st.expander(inst_text(t, "옵션차익혼합할인법은 어떻게 계산하나 — 여섯 단계")):
+            st.markdown(inst_text(t, CALL_HOWTO))
         st.info(inst_text(t, "판정에 따른 권고 — " + _sp["call"]["평가"].replace("**", "")))
 
         # 계약 우선순위가 값을 얼마나 바꾸는가. 겹치는 노드가 없거나 매도청구금액이

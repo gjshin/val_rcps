@@ -29,6 +29,11 @@ CASES = [
     ("GS · 옵션차익혼합할인법", dict(model="GS", k_method=1)),
     ("전환권 부채", dict(conv_class="liability")),
     ("방법2 지분·부채 분리", dict(k_method=2)),
+    # 지분·채권 구분 기준 = 본문 4.3.3(GS 전환확률) — ⑪~⑭ 를 TF 에서도 만들고 ⑰a·⑰b 로 쪼갠다
+    ("방법2 · 본문 4.3.3 전환확률", dict(k_method=2, k_split=1)),
+    ("방법1 · 본문 4.3.3 전환확률", dict(k_method=1, k_split=1)),
+    # 콜 대상물량 의무보유 없음 — 기초 사채가 정산되는 자리에서 콜도 소멸한다
+    ("방법2 · 전환확률 · 의무보유 없음", dict(k_method=2, k_split=1, k_hold=0)),
     ("방법2 · 전환권 부채", dict(k_method=2, conv_class="liability")),
     # RCPS — 상품 스위치. 자동전환은 전환권이 있는 격자에서만 타므로 B0·B1 은 CB 와 같다.
     ("RCPS · 자동전환 · 발행자콜 없음", dict(inst="RCPS", mat_mode=0, issuer_call=0)),

@@ -60,10 +60,13 @@ MANIFEST = {
     "p_sep":       ("조기상환권 회계", {1: "분리 · 파생상품부채", 0: "분리하지 않음 · 부채요소에 포함"}, P_BOND),
     "p_lost_int":  ("행사금액이 상실이자 보상 수준", {0: "아니다", 1: "그렇다 (B4.3.5(5)(나))"}, P_BOND),
     # ── 발행자 콜 ──
-    "k_method":    ("매도청구권 평가방법", {0: "유무가치비교", 1: "옵션차익혼합할인",
-                                      2: "지분·부채 분리"}, ("CB", "BW", "RCPS")),
+    "k_method":    ("매도청구권 평가방법", {0: "유무가치비교", 1: "옵션차익 · GS식 전환가중확률할인",
+                                      2: "옵션차익 · TF식 지분-채권 분리할인"}, ("CB", "BW", "RCPS")),
     "k_sep":       ("매도청구권 회계", {1: "별도 금융상품", 0: "복합내재파생에 포함"}, ("CB", "BW", "RCPS")),
     "k_less_cpn":  ("매도청구금액 산식", {1: "보장수익률 복리 − 기 지급 이자·배당", 0: "순수 복리 (차감 없음)"}, ("CB", "BW", "RCPS")),
+    "k_split":     ("옵션차익법 지분·채권 구분 기준", {0: "비례균등차감법 — 가치 구성비율", 1: "한공회 본문 4.3.3 — GS 전환확률"}, ("CB", "BW", "RCPS")),
+    "k_hold":      ("콜 대상물량 의무보유", {1: "있음 — 행사기간 종료일까지 존속", 0: "없음 — 전환·조기상환으로 콜도 소멸"}, ("CB", "BW", "RCPS")),
+    "k_kind":      ("콜옵션 유형", {0: "제3자 지정 가능 (파생상품자산)", 1: "제3자 기특정 (주주간 분배)"}, ("CB", "BW", "RCPS")),
     "k_third":     ("제3자 지정 가능", {0: "발행회사만", 1: "제3자 지정 가능"}, ("CB", "BW", "RCPS")),
     "k_transfer":  ("사채와 독립 양도 가능", {0: "아니다", 1: "그렇다"}, ("CB", "BW", "RCPS")),
     "k_cmp":       ("매도청구 프리미엄 복리 횟수", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회"}, ("CB", "BW", "RCPS")),
@@ -173,7 +176,7 @@ def terms_enum_fields(G):
         # 문자열이라도 날짜·출처·등급 같은 자유 입력은 열거형이 아니다
         # 자유 문자열 — 갈래가 아니다 (날짜·등급 이름·주가 출처·종목코드)
         if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src",
-                 "rvol_rating", "rvol_how"): continue
+                 "rvol_rating", "rvol_how", "k_basis"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty
@@ -323,6 +326,11 @@ def collect_coverage(G):
         "test_date_month_roundtrip": [("CB", "mid", True)],
         "test_pick_close": [("CB", "inst", "CB")],
         "test_acc_mode_fv_only": [("CB", "mid", True), ("SHA", "mid", True)],
+        "test_call_split_text": [("CB", "k_split", 0), ("CB", "k_split", 1), ("RCPS", "k_split", 1), ("BW", "k_split", 1),
+                                 ("CB", "k_method", 1), ("CB", "k_method", 2), ("CB", "k_kind", 0), ("CB", "k_kind", 1),
+                                 ("RCPS", "k_kind", 1), ("BW", "k_kind", 1),
+                                 ("CB", "k_hold", 0), ("CB", "k_hold", 1),
+                                 ("RCPS", "k_hold", 0), ("BW", "k_hold", 0)],
         "test_call_strike_switch": [("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1),
                                     ("RCPS", "k_less_cpn", 0), ("BW", "k_less_cpn", 0), ("CB", "call", True)],
         "test_eir_expected_maturity": [("CB", "p_sep", 0), ("CB", "p_sep", 1), ("CB", "k_sep", 1)],
