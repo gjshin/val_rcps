@@ -474,6 +474,89 @@ def test_backsolve_net_target():
         out[0][3] - (out[0][1] - out[0][2]), out[0][2], tol=1e-6)
 
 
+def test_fvpl_whole_flows_to_accounting():
+    """복합계약 전체 당기손익-공정가치 지정이 배분표·상각표·거래원가까지 닿는가.
+
+    지정하면 내재파생을 떼지 않으므로(제1109호 문단 4.3.3(3)) 배분표가 **한 줄**이
+    된다. 그 한 줄의 금액은 손으로 셀 수 있다 — 부채 갈래의 「주계약(잔여) +
+    복합내재파생」 합이 곧 전체 공정가치이고, 그것은
+
+        매도청구권이 별도 금융상품이면   100 + 매도청구권
+        매도청구권을 묶었으면            100
+
+    이다. 배분 합계는 어느 쪽이든 100 이다.
+
+    함께 봐야 할 것이 셋 더 있다.
+
+    [가] **상각표를 만들지 않는다.** 상각후원가로 측정하는 주계약이 없기 때문이다.
+    [나] **거래원가 전액이 즉시 비용**이다 (문단 5.1.1). 얹을 자리가 없다.
+    [다] **후속 재평가 대상이 그 한 줄 전부**다. 파생상품부채만 다시 재는 것이 아니다.
+
+    전환권이 **자본**이면 애초에 지정할 수 없다 (문단 4.2.2 는 금융부채에만 지정을
+    허용한다). 그때는 형태가 바뀌지 않아야 한다 — 앱이 잘못 고른 설정을 대신
+    정당화하면 안 된다.
+    """
+    print("\n[14] 복합계약 전체 당기손익-공정가치 지정")
+    if "fvpl_whole" not in Terms.__dataclass_fields__:
+        print("  (전체 지정 미도입 — 건너뜀)"); return
+    base = dict(rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+                cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+
+    def run(**ov):
+        t = Terms(**{**base, **ov}); derive(t)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        rows, _ = G["allocate"](t, full, b0, b1, b2, ca)
+        return t, full, b0, b1, b2, ca, rows
+
+    # ── 매도청구권이 별도 금융상품일 때 ──
+    t, full, b0, b1, b2, ca, rows = run(conv_class="liability", fvpl_whole=1)
+    # 지정하지 않았을 때의 두 줄을 손으로 더해 기대값을 만든다.
+    _, _, _, _, _, ca0, rows0 = run(conv_class="liability")
+    want = sum(v for k, v in rows0[:-1] if "파생상품자산" not in k)
+    chk_bool(f"배분표가 두 줄이다 (전체 + 매도청구권) — {len(rows)-1}줄",
+             len(rows) - 1 == 2)
+    chk_bool("첫 줄이 «복합계약 전체»다", "복합계약 전체" in rows[0][0])
+    chk("전체 = 지정 전 «주계약 + 복합내재파생»", rows[0][1], want)
+    chk("전체 = 100 + 매도청구권", rows[0][1], 100 + ca)
+    chk("매도청구권은 지정 밖에 그대로 남는다", -rows[1][1], ca)
+    chk("배분 합계", rows[-1][1], 100.0)
+    chk_bool("상각표를 만들지 않는다",
+             G["acc_host"](t, full, b0, b1, b2, ca) is None)
+    chk_bool("조서에 실을 상각표도 없다",
+             G["eir_or_none"](t, full, b0, b1, b2, ca) is None)
+    chk("후속 재평가 대상 = 그 한 줄", G["remeasure"](t, rows)["fv_liab"], rows[0][1])
+
+    # ── 거래원가는 전액 즉시 비용 ──
+    t2, f2_, b0_, b1_, b2_, ca_, rows2 = run(conv_class="liability", fvpl_whole=1,
+                                             issue_cost=5e8)
+    cs, tot = G["cost_split"](t2, rows2)
+    chk("거래원가 합계 (100 기준)", tot, 5e8/t2.face_total*100)
+    chk("즉시 비용 몫 = 전액",
+        sum(c for _, _, c, how in cs if how.startswith("즉시 비용")), tot)
+    chk("유효이자율에 녹는 몫", G["cost_host"](t2, rows2), 0.0)
+
+    # ── 매도청구권을 내재파생으로 묶었을 때 ──
+    t3, f3_, b03, b13, b23, ca3, rows3 = run(conv_class="liability", k_sep=0,
+                                             fvpl_whole=1)
+    chk_bool(f"배분표가 한 줄이다 — {len(rows3)-1}줄", len(rows3) - 1 == 1)
+    chk("전체 = 100 (매도청구권까지 묶었다)", rows3[0][1], 100.0)
+    chk("배분 합계", rows3[-1][1], 100.0)
+
+    # ── 전환권이 자본이면 지정할 수 없다 ──
+    t4, f4_, b04, b14, b24, ca4, rows4 = run(fvpl_whole=1)
+    _, _, _, _, _, _, rows4b = run()
+    chk_bool("전환권이 자본이면 형태가 바뀌지 않는다",
+             [k for k, _ in rows4] == [k for k, _ in rows4b])
+    chk_bool("그 설정에 경고가 선다",
+             any("4.2.2" in x for x in G["validate"](t4)))
+    chk_bool("판별 함수가 거짓이다", not G["fvpl_on"](t4))
+
+    # ── 지정하지 않으면 기준선이 그대로 ──
+    t5, f5_, b05, b15, b25, ca5, rows5 = run()
+    chk("기준선 · 주계약", b05, 37.5208)
+    chk("기준선 · 부채요소", b15, 73.1837)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -489,6 +572,7 @@ def main():
     test_sha_mutual_kill_probabilities_sum_to_one()
     test_dividend_yield_and_zero_vol()
     test_backsolve_net_target()
+    test_fvpl_whole_flows_to_accounting()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

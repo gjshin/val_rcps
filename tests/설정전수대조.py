@@ -124,6 +124,11 @@ CASES = [
     # 결과를 안 움직이는 것이 정상인 설정
     ("전자등록총액 500억", dict(face_total=5e10),
      "100 기준 결과는 그대로다. 전액 기준 환산 열만 바뀐다."),
+    # 전체 지정은 **인식**을 바꾸는 스위치라 트리를 건드리지 않는다. 배분표가
+    # 한 줄이 되고 상각표가 사라지는 것은 손계산대조 [14] 가 본다.
+    ("복합계약 전체 FVPL 지정", dict(conv_class="liability", fvpl_whole=1),
+     "트랜치·주계약·부채요소·매도청구권은 그대로다. 바뀌는 것은 배분표(한 줄)와 "
+     "분개·거래원가이고, 상각표는 아예 만들지 않는다."),
 ]
 
 
@@ -177,7 +182,7 @@ def build(G, over, path):
                                conv_start=max(t.cv_s, t.k_lock)), t.model)
     open(path, "wb").write(
         G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv,
-                                G["eir_table"](t, G["acc_host"](t, full, b0, b1, b2, ca))))
+                                G["eir_or_none"](t, full, b0, b1, b2, ca)))
     import openpyxl
     wb = openpyxl.load_workbook(path)
     mp = {nm: f"S{i:02d}" for i, nm in enumerate(wb.sheetnames)}
