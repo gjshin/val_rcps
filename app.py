@@ -672,6 +672,8 @@ def fv_only_rows(tm: Terms, full, b0, b1, b2, ca):
     out.append((("복합계약 전체 · 당기손익-공정가치" if fvpl_on(tm) else
                  "파생상품부채 공정가치 (결산 재측정 대상)"), rm["fv_liab"]))
     if rm["fv_asset"] > 1e-12: out.append(("파생상품자산 (매도청구권) 공정가치", rm["fv_asset"]))
+    # 기특정 콜은 발행자 자산이 아니라 재평가 대상이 아니다. 값만 참고로 싣는다.
+    out += alloc_extra(tm, ca)
     if tm.conv_class == "equity" and not is_bw(tm):
         out.append(("전환권대가 (자본 · 재측정 없음 · 참고)", 100 - b1 + (ca if ca > 0 else 0.0)))
     return out
@@ -2206,7 +2208,14 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                        f"{kb:,.2f} 의 차이가 {kgap*100:.1f}% 로 거의 같지 "
                        "않습니다.")
             cite += ["1109 문단 4.3.1", "문단 B4.3.5(5)"]
-        if res == "별도의 금융상품":
+        if res == "별도의 금융상품" and int(getattr(tm, "k_kind", 0)) == 1:
+            # 발행 시 제3자가 이미 정해져 있으면 발행자가 콜을 보유하지 않는다.
+            val = ("발행 시 제3자가 특정되어 있어 **발행회사는 옵션 당사자가 아닙니다.** "
+                   "값은 지정 가능 콜과 같은 격자에서 나오지만(본문 4.5.4 접근법 2-2), "
+                   "발행회사 측면에서는 금융상품이 아니라 **주주간 분배**이므로 파생상품자산을 "
+                   "인식하지 않고 최초 인식 시 그 가치를 측정해 둡니다 (본문 4.5.1). "
+                   "회계처리 탭의 배분표에 합계 밖 참고 줄로 실립니다.")
+        elif res == "별도의 금융상품":
             val = ("기초자산이 전환사채 전체인 미국형 복합옵션이므로 "
                    "**옵션차익혼합할인법**이 개념적으로 정합합니다. 다만 계약에 "
                    "의무보유 조건이 있으면 그 효과를 값에 넣으려고 "
@@ -2405,6 +2414,11 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
     다를 뿐이다.
     """
     sep = tm.k_sep != 0
+    # 제3자 사전 기특정 콜 — 발행 시 제3자가 이미 정해져 있어 발행자가 콜을 보유하지
+    # 않는다. 발행자 측면에서는 금융상품이 아니라 **주주간 분배**이므로 (본문 4.5.1)
+    # 파생상품자산을 세우지 않고, 받은 현금 100 을 복합금융상품 요소에 전부 배분한다.
+    # 콜의 공정가치는 유형과 무관하게 같으므로 참고 줄로 합계 밖에 적는다.
+    kk = int(getattr(tm, "k_kind", 0)) == 1
     # 조기상환권을 분리하지 않는 선택은 **전환권이 자본이고 매도청구권이 별도
     # 금융상품일 때**만 살아 있다. 매도청구권을 내재파생으로 묶으면 문단 B4.3.4
     # 가 복수의 내재파생을 하나의 복합내재파생으로 다루라고 하므로 조기상환권도
@@ -2412,6 +2426,7 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
     psep = not (tm.conv_class == "equity" and sep and int(tm.p_sep) == 0)
     # 자본 갈래에서 부채요소를 줄이는 콜 — RCPS 는 부채 격자에서 잰 값 (문단 31)
     cad = full.get("ca_debt", ca) if is_rcps(tm) else ca
+    _ca, _cad = (0.0, 0.0) if kk else (ca, cad)     # 배분에 실제로 들어가는 금액
     # 매도청구권 줄은 값이 0 이 아니면 싣는다. 음수(강제전환 할인율 효과 — 모형 성질)라고
     # 빼 버리면 잔여 계산에는 들어가 있어 합이 100 에서 어긋난다 (조합시험이 잡음).
     if fvpl_on(tm):
@@ -2426,9 +2441,9 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # 매도청구권은 전체 지정 **밖**에 남는다. 제3자에게 지정·양도될 수 있으면
         # 거래상대방이 달라 복합계약의 일부가 아니라 별도의 금융상품이기 때문이다
         # (문단 4.3.1). 지정은 그 계약을 건드리지 못한다.
-        whole = (100 + ca) if sep else 100.0
+        whole = (100 + _ca) if sep else 100.0
         rows = [("복합계약 전체 · 당기손익-공정가치 측정 금융부채", whole)]
-        if sep and (abs(ca) > 1e-12 or not is_rcps(tm)):
+        if sep and not kk and (abs(ca) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -ca))
         note = ("복합계약 **전체**를 당기손익-공정가치 측정 금융부채로 지정했으므로 "
                 "내재파생상품을 분리하지 않고 한 줄로 인식합니다 (기업회계기준서 "
@@ -2450,10 +2465,10 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # 전환권과 조기상환권은 상호의존적이라 하나의 복합내재파생상품으로 묶어
         # 전체로서(as a whole) 측정한다 (문단 B4.3.4).
         deriv = (b2 - b0) if sep else (b2 - ca - b0)
-        host_acc = (100 + ca) - (b2 - b0)      # 어느 쪽이든 같다
+        host_acc = (100 + _ca) - (b2 - b0)      # 어느 쪽이든 같다
         rows = [("주계약 (잔여)", host_acc),
                 ("복합내재파생상품 · 파생상품부채", deriv)]
-        if sep and (abs(ca) > 1e-12 or not is_rcps(tm)):
+        if sep and not kk and (abs(ca) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -ca))
         note = ("전환권이 파생상품부채이므로 전환권과 조기상환권을 하나의 "
                 "복합내재파생상품으로 묶어 공정가치로 측정하고 주계약을 잔여로 둡니다 "
@@ -2470,9 +2485,9 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # 조기상환권이 주계약과 밀접하게 관련되어 분리하지 않는다. 부채요소를
         # 통째로 상각후원가로 두고, 파생상품부채를 세우지 않는다.
         rows = [("부채요소 (사채 + 조기상환권)", b1)]
-        if abs(cad) > 1e-12 or not is_rcps(tm):
+        if not kk and (abs(cad) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -cad))
-        rows.append(("전환권대가 · 자본", 100-b1+cad))
+        rows.append(("전환권대가 · 자본", 100-b1+_cad))
         note = ("기업회계기준서 제1032호 문단 31 — 부채요소를 먼저 정하고 나머지를 자본에 "
                 "배분합니다. 최초 인식에는 손익이 생기지 않습니다. "
                 "조기상환청구권은 주계약과 밀접하게 관련되어 분리하지 않으므로 "
@@ -2487,22 +2502,46 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         if _hasput or not sep:
             rows.append(("조기상환청구권 · 파생상품부채",
                          (b1-b0) if sep else (b1-b0-cad)))
-        if sep and (abs(cad) > 1e-12 or not is_rcps(tm)):
+        if sep and not kk and (abs(cad) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -cad))
         if not sep:
             rows[1] = ("복합내재파생상품 · 파생상품부채", b1-b0-cad)
-        rows.append(("전환권대가 · 자본", 100-b1+cad))
+        rows.append(("전환권대가 · 자본", 100-b1+_cad))
         note = ("기업회계기준서 제1032호 문단 31 — 부채요소를 먼저 정하고 나머지를 자본에 배분합니다. "
                 "최초 인식에는 손익이 생기지 않습니다."
                 + ("" if sep else
                    " 매도청구권은 발행회사만 행사할 수 있어 내재파생상품이므로 "
                    "조기상환권과 하나로 묶어 순액으로 봅니다 (문단 4.3.1 · B4.3.4)."))
     rows.append(("합계", sum(v for _, v in rows)))
+    if kk:
+        note += ("  ※ 매도청구권이 **제3자 사전 기특정 콜**이라 발행회사가 옵션을 보유하지 "
+                 "않습니다. 발행회사 측면에서는 금융상품이 아니라 **주주간 분배**이므로 "
+                 "파생상품자산을 인식하지 않고, 받은 대가 100 을 복합금융상품 요소에 전부 "
+                 "배분합니다 (한공회 연구보고서 시리즈 11 문단 4.5.1). 옵션을 받은 제3자와 "
+                 f"투자자 사이의 거래이며, 그 공정가치 {ca:,.4f} 는 참고로만 적습니다 — "
+                 "주석 공시 대상인지 별도로 판단하십시오.")
     if tm.elapsed_m > 0.01:
         note += ("  ※ 이 배분은 **최초 인식**용입니다. 평가기준일이 발행일보다 뒤이므로 "
                  "결산 회계처리에는 그대로 쓰지 마십시오. 결산일에 필요한 것은 파생상품의 "
                  "공정가치뿐이고, 주계약은 발행일 배분액을 유효이자율로 상각한 장부금액입니다.")
     return rows, note
+
+
+NOTE_KKIND = ("제3자 기특정 콜옵션 {v} — 발행회사는 옵션 당사자가 아니어서 금융상품을 "
+              "인식하지 않는다. 옵션을 받은 제3자(최대주주 등)와 투자자 사이의 거래이며 "
+              "발행회사 측면에서는 주주간 분배다 (한공회 연구보고서 시리즈 11 문단 4.5.1). "
+              "위 분개에 차변으로 넣지 않는다 — 주석 공시 대상인지 별도로 판단할 것.")
+
+
+def alloc_extra(tm: Terms, ca):
+    """배분표 **합계 밖**에 적는 참고 줄. 기특정 콜의 주주간 분배 금액이다.
+
+    합계에 넣으면 100 이 되지 않고, 차변에 넣으면 분개 대차가 깨진다. 그래서
+    합계 다음 줄에 «참고» 로만 싣는다. 화면·값 조서·수식 조서가 같이 부른다.
+    """
+    if int(getattr(tm, "k_kind", 0)) != 1 or is_sha(tm) or tm.k_w <= 0:
+        return []
+    return [("제3자 기특정 콜옵션 · 주주간 분배 (참고 · 발행자 자산 아님)", ca)]
 
 
 def acc_host(tm: Terms, full, b0, b1, b2, ca):
@@ -5227,6 +5266,12 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     put(E, rr, 2, "합계", bold=True, fill=BAND, border=True)
     put(E, rr, 3, al[-1][1], bold=True, fill=BAND, fmt=N2, align="right", border=True)
     put(E, rr, 4, al[-1][1]/100*fac, bold=True, fill=BAND, fmt=N0, align="right", border=True)
+    for _j, (_nm, _v) in enumerate(alloc_extra(tm, ca)):
+        # 합계에 넣으면 100 이 되지 않고 차변에 넣으면 대차가 깨진다 — 합계 밖 참고 줄이다.
+        put(E, rr+1+_j, 2, _nm, color=GREY, size=9, border=True)
+        put(E, rr+1+_j, 3, _v, fmt=N2, align="right", color=GREY, border=True)
+        put(E, rr+1+_j, 4, _v/100*fac, fmt=N0, align="right", color=GREY, border=True)
+    rr += len(alloc_extra(tm, ca))
     put(E, rr+1, 2, f"전자등록총액 {fac:,.0f}원 기준으로 환산했습니다.", color=GREY, size=9)
     sec(E, rr+3, "2. 분개", span=5)
     for i, h in enumerate(["계정", "차변 (100)", "대변 (100)", "차변 (원)", "대변 (원)"]):
@@ -5250,7 +5295,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     for j2, v2 in enumerate([sd, sc, sd/100*fac, sc/100*fac]):
         put(E, tr, 3+j2, v2, bold=True, fill=BAND, fmt=(N2 if j2 < 2 else N0),
             align="right", border=True)
-    put(E, tr+2, 2, "최초 인식에는 어떠한 손익도 생기지 않는다. 차변과 대변 합계가 일치해야 한다.",
+    # 기특정 콜의 참고 문구는 «줄» 이 아니라 이 문장에 이어 붙인다 — 아래 행들이 밀리면
+    # 거래원가·기말 재평가 블록의 시작 행이 어긋난다.
+    put(E, tr+2, 2, "최초 인식에는 어떠한 손익도 생기지 않는다. 차변과 대변 합계가 일치해야 한다."
+        + "".join("  ※ " + NOTE_KKIND.format(v=f"{_v:,.4f}") for _, _v in alloc_extra(tm, ca)),
         color=GREY, size=9)
     put(E, tr+3, 2, "전환권 분류: " + ("파생상품부채 — 주계약을 잔여로"
         if tm.conv_class == "liability" else "자본 — 전환권대가를 잔여로"), color=GREY, size=9)
@@ -6754,9 +6802,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
              ("매도청구권 · 옵션차익 · 지분·부채 분리",
               f"={K['cw']}*{Q(S24)}!C{R0+n+3}" if _need2 else B_),
              ("매도청구권자산 (적용값)", f"=C{19+_km}" if _hascall else "=0"),
-             ("전환권대가 (자본일 때)", f'=IF({K["eqcls"]}=1,100-C17+{CAE},"")'),
+             # 제3자 기특정 콜은 발행자가 자산으로 인식하지 않으므로 배분에서 빠진다
+             # (본문 4.5.1 주주간 분배). 잔여인 전환권대가·주계약이 그만큼 작아진다.
+             ("전환권대가 (자본일 때)",
+              f'=IF({K["eqcls"]}=1,100-C17+IF({K["kkind"]}=1,0,{CAE}),"")'),
              ("복합내재파생상품 (부채일 때)", f'=IF({K["eqcls"]}=0,C10-C16,"")'),
-             ("주계약 잔여 (부채일 때)", f'=IF({K["eqcls"]}=0,100+C22-C24,"")')]
+             ("주계약 잔여 (부채일 때)",
+              f'=IF({K["eqcls"]}=0,100+IF({K["kkind"]}=1,0,C22)-C24,"")')]
     if issuer_redeem(tm):
         # 부채 격자에서 잰 발행자 상환권. 자본 배분(전환권대가·회계처리)이 이 값을 쓴다.
         items.append(("매도청구권 · 부채 격자 기준 (자본 배분용)",
@@ -6793,8 +6845,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
              '=IF(ABS(C29-1)<0.000001,"적합","확인 필요")'),
             ("전체 ≥ 주계약", "=C10-C16", '=IF(C30>=0,"적합","확인 필요")'),
             ("배분 합계 = 100",
-             f'=IF({K["ksep"]}=1,IF({K["eqcls"]}=1,C16+C18-{CAE}+C23,C25+C24-C22),'
-             f'IF({K["eqcls"]}=1,C16+C18-{CAE}+C23,C25+C24-C22))',
+             f'=IF({K["eqcls"]}=1,C16+C18-IF({K["kkind"]}=1,0,{CAE})+C23,'
+             f'C25+C24-IF({K["kkind"]}=1,0,C22))',
              '=IF(ABS(C31-100)<0.01,"적합","확인 필요")'),
             # 상태확장 격자는 재결합하지 않아 엑셀 트리 한 장으로 옮길 수 없다.
             # 앱이 상태확장으로 계산했다면 이 조서는 근사값이므로 그 사실을 밝힌다.
@@ -6980,7 +7032,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 넣었으면 조기상환권+매도청구권 묶음이다. 어느 쪽이든 순액 한 줄이다.
     _CMP = (f'=IF({K["eqcls"]}=0,IF({KS}=1,결과!C24,결과!C24-결과!C22),'
             f'IF({KS}=0,결과!C18-결과!{CAE},""))')
-    _CALL = f'=IF({KS}=1,IF({K["eqcls"]}=1,-결과!{CAE},-결과!C22),"")'
+    # 기특정 콜이면 발행자가 자산을 인식하지 않는다 (본문 4.5.1) — 줄이 비어 있다.
+    _CALL = f'=IF({K["kkind"]}=1,"",IF({KS}=1,IF({K["eqcls"]}=1,-결과!{CAE},-결과!C22),""))'
     _EQ = f'=IF({K["eqcls"]}=1,결과!C23,"")'
     # 복합계약 **전체**를 당기손익-공정가치로 지정하면 요소별 줄이 한 줄로 접힌다.
     # 새로 계산할 값이 없다 — 부채 갈래의 「주계약 + 복합내재파생」 합이 그대로
@@ -6999,7 +7052,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 전체 지정은 전환권이 **부채**일 때만 성립하므로(문단 4.2.2) 매도청구권은
     # 부채 갈래와 같은 칸(결과!C22)을 본다.
     if _FVROW:
-        _HOST = f'=IF({KS}=1,100+결과!C22,100)'
+        _HOST = f'=IF(AND({KS}=1,{K["kkind"]}<>1),100+결과!C22,100)'
         _LIAB = _PUT = _CMP = _EQ = ""
     _HOSTNM = ("복합계약 전체 · 당기손익-공정가치 측정 금융부채" if _FVROW else "주계약")
     al2 = [(_HOSTNM, _HOST),
@@ -7017,6 +7070,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     put(E, 13, 2, "합계", bold=True, fill=BAND, border=True)
     put(E, 13, 3, "=SUM(C7:C12)", bold=True, fill=BAND, fmt=N2, align="right", border=True)
     put(E, 13, 4, "=SUM(D7:D12)", bold=True, fill=BAND, fmt=N0, align="right", border=True)
+    if int(tm.k_kind) == 1 and tm.k_w > 0:
+        # 합계에 넣으면 100 이 되지 않고 차변에 넣으면 대차가 깨진다 — 합계 밖 참고 줄이다.
+        put(E, 15, 2, "제3자 기특정 콜옵션 · 주주간 분배 (참고 · 발행자 자산 아님)",
+            color=GREY, size=9, border=True)
+        put(E, 15, 3, f"=결과!{CAE}", fmt=N2, align="right", color=GREY, border=True)
+        put(E, 15, 4, f'=C15/100*{K["face"]}', fmt=N0, align="right", color=GREY, border=True)
     put(E, 14, 2, ("복합계약 전체를 당기손익-공정가치로 지정했으므로 첫 줄 하나만 찬다. "
                    "요소별 배분을 하지 않으므로 아래 줄들은 비어 있고, 유효이자율 "
                    "상각표도 만들지 않는다 (제1109호 문단 4.2.2 · 4.3.3(3)). "
@@ -7028,7 +7087,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     for i, h in enumerate(["계정", "차변 (100)", "대변 (100)", "차변 (원)", "대변 (원)"]):
         put(E, 17, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
     je2 = [("현금", "=100", None),
-           ("파생상품자산 (매도청구권)", f'=IF({KS}=1,IF({K["eqcls"]}=1,결과!{CAE},결과!C22),"")', None),
+           ("파생상품자산 (매도청구권)",
+            f'=IF({K["kkind"]}=1,"",IF({KS}=1,IF({K["eqcls"]}=1,결과!{CAE},결과!C22),""))', None),
            (("　당기손익-공정가치 측정 금융부채 (복합계약 전체)" if _FVROW
              else "　전환사채 (주계약)"), None, _HOST),
            ("　전환사채 (부채요소)", None, _LIAB),
@@ -7044,6 +7104,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             fmt=N0, align="right", border=True)
         put(E, r, 6, f'=IF(ISNUMBER(D{r}),D{r}/100*{K["face"]},"")',
             fmt=N0, align="right", border=True)
+    if int(tm.k_kind) == 1 and tm.k_w > 0:
+        put(E, 27, 2, f'="{NOTE_KKIND.format(v="")[:-1]}"&" (금액 "&TEXT(결과!{CAE},"#,##0.0000")&")"',
+            color=GREY, size=9)
     put(E, 25, 2, "합계", bold=True, fill=BAND, border=True)
     for j2, col in enumerate("CDEF"):
         put(E, 25, 3+j2, f"=SUM({col}18:{col}24)", bold=True, fill=BAND,
@@ -9600,7 +9663,7 @@ with tabs[1]:
                    "만듭니다. 조서의 「회계처리」 시트도 같은 안내와 이 표만 싣습니다.")
     else:
         alloc_rows, alloc_note = allocate(t, full, b0, b1, b2, ca)
-        af = allocate_full(t, alloc_rows)
+        af = allocate_full(t, alloc_rows + alloc_extra(t, ca))
         st.dataframe(pd.DataFrame(af, columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
             {"100 기준": "{:,.2f}", "전액 기준 (원)": "{:,.0f}"}),
             use_container_width=True, hide_index=True)
@@ -9641,6 +9704,7 @@ with tabs[1]:
         _ln = [f"차) {k:<{_w}} {dr:>12,.4f}" if dr is not None else
                f"    대) {k.strip():<{_w-4}} {cr:>12,.4f}" for k, dr, cr in _je]
         _sd = sum(dr for _, dr, _ in _je if dr); _sc = sum(cr for _, _, cr in _je if cr)
+        _kknote = [NOTE_KKIND.format(v=f"{_v:,.4f}") for _, _v in alloc_extra(t, ca)]
         # 전체 지정이면 상각후원가로 남는 주계약이 없어 유효이자율 이자비용이 없다.
         # 전체를 공정가치로 다시 재고 그 변동을 손익으로 보낸다.
         if fvpl_on(t):
@@ -9663,8 +9727,9 @@ with tabs[1]:
                     if any("파생상품부채" in k for k, _ in alloc_rows[:-1]) else "")
                    + "※ 전환권대가는 자본이므로 후속 재측정이 없습니다."))
         je = ("[최초 인식]\n" + "\n".join(_ln)
-              + f"\n{'합계':<{_w+4}} 차변 {_sd:,.4f} = 대변 {_sc:,.4f}\n\n[후속 결산]\n"
-              + _post)
+              + f"\n{'합계':<{_w+4}} 차변 {_sd:,.4f} = 대변 {_sc:,.4f}\n"
+              + ("".join("※ " + x + "\n" for x in _kknote))
+              + "\n[후속 결산]\n" + _post)
         st.code(je, language=None)
 
         # ── 기말 재평가 ──
