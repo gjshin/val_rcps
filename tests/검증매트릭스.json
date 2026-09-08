@@ -1,5 +1,5 @@
 {
- "generated": "2026-09-08T02:20:04",
+ "generated": "2026-09-08T02:40:39",
  "head": "ref: refs/heads/claude/rcps-app",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
@@ -34,9 +34,9 @@
   },
   "ALL": {
    "PASS": 0,
-   "EXPECTED_BLOCK": 2,
-   "KNOWN_LIMITATION": 15,
-   "FAIL": 3,
+   "EXPECTED_BLOCK": 5,
+   "KNOWN_LIMITATION": 16,
+   "FAIL": 0,
    "NOT_TESTED": 0
   }
  },
@@ -185,8 +185,8 @@
    "meaning": "신용위험 처리",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·GS·1",
     "tests/값조서대조.py::equity·0·GS·0",
@@ -201,7 +201,7 @@
     "tests/값조서대조.py::liability·2·GS·1",
     "tests/값조서대조.py::liability·2·GS·0"
    ],
-   "n_tests": 23
+   "n_tests": 24
   },
   {
    "case_id": "RCPS-model-TF",
@@ -354,7 +354,7 @@
     "tests/값조서대조.py::liability·2·GS·1",
     "tests/값조서대조.py::liability·2·GS·0"
    ],
-   "n_tests": 35
+   "n_tests": 36
   },
   {
    "case_id": "RCPS-conv_class-EQUITY",
@@ -1339,7 +1339,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 127
+   "n_tests": 130
   },
   {
    "case_id": "CB-p_sep-0",
@@ -1355,15 +1355,13 @@
    "covered_by": [
     "tests/조서대조.py::조기상환권 미분리",
     "tests/조서대조.py::조기상환권 미분리 · 방법1",
-    "tests/조서대조.py::조기상환권 미분리 · 콜 내재파생 (스위치 꺼짐)",
-    "tests/조서대조.py::조기상환권 미분리 · 전환권 부채 (스위치 꺼짐)",
     "tests/설정전수대조.py::조기상환권 미분리",
     "tests/설정전수대조.py::조기상환권 미분리 · 방법1",
     "tests/손계산대조.py::test_split_metric_independent_of_setting",
     "tests/손계산대조.py::test_put_separation_flows_to_accounting",
     "tests/분기전수.py::p_sep=0"
    ],
-   "n_tests": 9
+   "n_tests": 7
   },
   {
    "case_id": "RCPS-p_sep-1",
@@ -1590,23 +1588,23 @@
    "meaning": "매도청구권 평가방법",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
     "tests/값조서대조.py::equity·0·GS·1",
     "tests/값조서대조.py::equity·0·GS·0",
+    "tests/값조서대조.py::equity·1·GS·1",
+    "tests/값조서대조.py::equity·1·GS·0",
+    "tests/값조서대조.py::equity·2·GS·1",
+    "tests/값조서대조.py::equity·2·GS·0",
     "tests/값조서대조.py::liability·0·TF·1",
     "tests/값조서대조.py::liability·0·TF·0",
     "tests/값조서대조.py::liability·0·GS·1",
-    "tests/값조서대조.py::liability·0·GS·0",
-    "tests/값조서대조.py::equity·0·TF·1·bdt0.0",
-    "tests/값조서대조.py::equity·0·TF·1·bdt0.2",
-    "tests/값조서대조.py::liability·0·TF·1·fvpl_whole=1,k_sep=1,issue_cost=0.0",
-    "tests/값조서대조.py::liability·0·TF·1·fvpl_whole=1,k_sep=1,issue_cost=50000000"
+    "tests/값조서대조.py::liability·0·GS·0"
    ],
-   "n_tests": 105
+   "n_tests": 115
   },
   {
    "case_id": "CB-k_method-1",
@@ -1622,18 +1620,17 @@
    "covered_by": [
     "tests/값조서대조.py::equity·1·TF·1",
     "tests/값조서대조.py::equity·1·TF·0",
-    "tests/값조서대조.py::equity·1·GS·1",
-    "tests/값조서대조.py::equity·1·GS·0",
     "tests/값조서대조.py::liability·1·TF·1",
     "tests/값조서대조.py::liability·1·TF·0",
-    "tests/값조서대조.py::liability·1·GS·1",
-    "tests/값조서대조.py::liability·1·GS·0",
     "tests/값조서대조.py::equity·1·TF·1·bdt0.0",
     "tests/값조서대조.py::equity·1·TF·1·bdt0.2",
-    "tests/조서대조.py::GS · 옵션차익혼합할인법",
-    "tests/조서대조.py::조기상환권 미분리 · 방법1"
+    "tests/조서대조.py::조기상환권 미분리 · 방법1",
+    "tests/조서대조.py::월 노드 · 리픽싱 7스텝 · 방법1 · 부채",
+    "tests/설정전수대조.py::평가방법 1 혼합할인율",
+    "tests/설정전수대조.py::조기상환권 미분리 · 방법1",
+    "tests/분기전수.py::k_method=1"
    ],
-   "n_tests": 16
+   "n_tests": 11
   },
   {
    "case_id": "CB-k_method-2",
@@ -1649,18 +1646,14 @@
    "covered_by": [
     "tests/값조서대조.py::equity·2·TF·1",
     "tests/값조서대조.py::equity·2·TF·0",
-    "tests/값조서대조.py::equity·2·GS·1",
-    "tests/값조서대조.py::equity·2·GS·0",
     "tests/값조서대조.py::liability·2·TF·1",
     "tests/값조서대조.py::liability·2·TF·0",
-    "tests/값조서대조.py::liability·2·GS·1",
-    "tests/값조서대조.py::liability·2·GS·0",
     "tests/조서대조.py::방법2 지분·부채 분리",
     "tests/조서대조.py::방법2 · 전환권 부채",
     "tests/설정전수대조.py::평가방법 2 지분·부채",
     "tests/분기전수.py::k_method=2"
    ],
-   "n_tests": 12
+   "n_tests": 8
   },
   {
    "case_id": "BW-k_method-0",
@@ -1823,8 +1816,8 @@
    "meaning": "매도청구권 회계",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·0",
     "tests/값조서대조.py::equity·0·GS·0",
@@ -1839,7 +1832,7 @@
     "tests/값조서대조.py::liability·2·TF·0",
     "tests/값조서대조.py::liability·2·GS·0"
    ],
-   "n_tests": 21
+   "n_tests": 22
   },
   {
    "case_id": "BW-k_sep-1",
@@ -2573,8 +2566,8 @@
    "meaning": "풋·콜 같은 노드 우선순위",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::기본",
     "tests/주주간계약대조.py::콜 없음",
@@ -2589,7 +2582,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "SHA-pc_order-1",
@@ -2600,13 +2593,14 @@
    "meaning": "풋·콜 같은 노드 우선순위",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::상호소멸 · 콜 우선",
+    "tests/손계산대조.py::test_sha_boundaries",
     "tests/분기전수.py::pc_order=1"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "CB-ytm_cmp-0",
@@ -3878,8 +3872,8 @@
    "meaning": "조기상환권 금리격자",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -3894,7 +3888,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 122
+   "n_tests": 123
   },
   {
    "case_id": "CB-put_bdt-1",
@@ -4837,8 +4831,8 @@
    "meaning": "풋 의무자",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::기본",
     "tests/주주간계약대조.py::콜 없음",
@@ -4853,7 +4847,7 @@
     "tests/주주간계약대조.py::월 노드",
     "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "SHA-sha_writer-1",
@@ -4864,13 +4858,14 @@
    "meaning": "풋 의무자",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
+    "tests/손계산대조.py::test_sha_boundaries",
     "tests/분기전수.py::sha_writer=1"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "SHA-sha_writer-2",
@@ -4881,12 +4876,13 @@
    "meaning": "풋 의무자",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "invariants",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
+    "tests/손계산대조.py::test_sha_boundaries",
     "tests/분기전수.py::sha_writer=2"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-sha_disc-0",
@@ -5037,9 +5033,10 @@
     "tests/주주간계약대조.py::상호소멸 · 적격상장",
     "tests/주주간계약대조.py::상호소멸 · 콜 우선",
     "tests/손계산대조.py::test_sha_mutual_kill_probabilities_sum_to_one",
+    "tests/손계산대조.py::test_sha_boundaries",
     "tests/분기전수.py::sha_kill=1"
    ],
-   "n_tests": 5
+   "n_tests": 6
   },
   {
    "case_id": "SHA-sha_put_cmp-0",
@@ -5126,13 +5123,14 @@
    "meaning": "콜 가산 복리",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::단리 보장",
+    "tests/손계산대조.py::test_sha_boundaries",
     "tests/분기전수.py::sha_call_cmp=0"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "SHA-sha_call_cmp-1",
@@ -6353,7 +6351,7 @@
     "tests/주주간계약대조.py::월 노드",
     "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 17
+   "n_tests": 18
   },
   {
    "case_id": "SHA-sha_call-OFF",
@@ -6411,45 +6409,51 @@
    "product": "ALL",
    "branch": "GS + 매도청구권 평가방법 1·2",
    "value": null,
-   "label": "화면이 잠그고 k_method=0 으로 되돌린다. **엔진·validate 는 막지 않는다** — 4단계 F-01",
+   "label": "compat() 이 k_method=0 으로 되돌린다. 사이드바 잠금 캡션·validate 경고·derive 되돌림이 같은 문구 (COMPAT_GS_KMETHOD)",
    "meaning": "지원하지 않는 조합",
    "kind": "block",
-   "status": "FAIL",
+   "status": "EXPECTED_BLOCK",
    "oracle": "block_behaviour",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
-   "note": "화면만 막고 엔진·validate 는 계산한다 — 세 경로가 같아야 한다 (지시서 §6.3)"
+   "covered_by": [
+    "tests/손계산대조.py::test_unsupported_combos_agree"
+   ],
+   "n_tests": 1,
+   "note": ""
   },
   {
    "case_id": "BLOCK-04",
    "product": "ALL",
    "branch": "전환권 부채 + 조기상환권 미분리",
    "value": null,
-   "label": "화면이 잠근다. allocate() 가 부채 갈래에서 미분리를 무시하므로 값은 같다 — 4단계 F-02 (경고 없이 설정을 버림)",
+   "label": "compat() 이 p_sep=1 로 되돌린다 (COMPAT_PSEP). 값은 전부터 같았고 이제 경고가 붙는다",
    "meaning": "지원하지 않는 조합",
    "kind": "block",
-   "status": "FAIL",
+   "status": "EXPECTED_BLOCK",
    "oracle": "block_behaviour",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
-   "note": "화면만 막고 엔진·validate 는 계산한다 — 세 경로가 같아야 한다 (지시서 §6.3)"
+   "covered_by": [
+    "tests/손계산대조.py::test_unsupported_combos_agree"
+   ],
+   "n_tests": 1,
+   "note": ""
   },
   {
    "case_id": "BLOCK-05",
    "product": "ALL",
    "branch": "GS 또는 전환권 부채 + BDT",
    "value": null,
-   "label": "화면이 잠근다. put_bdt_on() 이 TF·자본에서만 참 — 4단계 F-03",
+   "label": "compat() 이 put_bdt=0 으로 되돌린다 (COMPAT_BDT). 값은 전부터 같았고 이제 경고가 붙는다",
    "meaning": "지원하지 않는 조합",
    "kind": "block",
-   "status": "FAIL",
+   "status": "EXPECTED_BLOCK",
    "oracle": "block_behaviour",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
-   "note": "화면만 막고 엔진·validate 는 계산한다 — 세 경로가 같아야 한다 (지시서 §6.3)"
+   "covered_by": [
+    "tests/손계산대조.py::test_unsupported_combos_agree"
+   ],
+   "n_tests": 1,
+   "note": ""
   },
   {
    "case_id": "LIMIT-01",
@@ -6685,9 +6689,9 @@
   {
    "case_id": "LIMIT-13",
    "product": "ALL",
-   "branch": "자동전환형 RCPS 의 전환권이 음수",
+   "branch": "자동전환·상장 강제전환 RCPS 의 전환권이 음수",
    "value": null,
-   "label": "존속기간 만료 시 자동전환이면 만기 전환은 권리가 아니라 의무다. 주가가 낮으면 B2 < B1 이라 「전환권 = B2 − B1」 이 음수다 (분기전수·조합시험이 limit 로 허용)",
+   "label": "존속기간 만료 시 자동전환·상장 시 강제전환은 권리가 아니라 의무다. 주가가 낮으면 B2 < B1 이라 「전환권 = B2 − B1」 이 음수다 (분기전수·조합시험이 limit 로 허용)",
    "meaning": "계산은 하되 한계를 표시",
    "kind": "limitation",
    "status": "KNOWN_LIMITATION",
@@ -6737,6 +6741,26 @@
    "must_appear_in": [
     "화면",
     "조서"
+   ],
+   "display_checked": false
+  },
+  {
+   "case_id": "LIMIT-16",
+   "product": "ALL",
+   "branch": "비분리형 BW 는 신주인수권 조기행사를 상태로 갖지 않는다",
+   "value": null,
+   "label": "자식 노드의 매도청구는 신주인수권이 살아 있다고 보고 정해진다. 부모에서 투자자가 먼저 행사하면 그 콜은 사채만 비싸게 사는 셈이라 콜 있는 격자가 없는 격자보다 커질 수 있다 (매도청구권 < 0). 두 상태 격자로 고치는 것은 산식 변경이라 별도 승인 대상",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [],
+   "n_tests": 0,
+   "must_appear_in": [
+    "화면",
+    "조서",
+    "README"
    ],
    "display_checked": false
   }

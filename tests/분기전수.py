@@ -128,8 +128,14 @@ def run_bond(G, t):
         # 강제전환이 실제로 있었는지(분포)로 그 경우만 허용한다.
         r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=max(t.cv_s, t.k_lock))
         fc = r3["dist"].get("conv_called", 0.0)
-        C["call_ge_0"] = ("limit" if fc > 0 else False,
-                          f"매도청구권 {ca:.6f} · 강제전환 확률 {fc:.4f}" + (" (LIMIT 강제전환 할인율 효과)" if fc > 0 else ""))
+        # 비분리형 BW 는 «신주인수권을 이미 행사했는가» 를 상태로 갖지 않는다. 자식 노드의 콜은
+        # 신주인수권이 살아 있다고 보고 결정되는데, 부모에서 투자자가 미리 행사하면 그 콜은
+        # 사채만 비싸게 사는 셈이라 부모 값이 오른다 — 상태 미추적의 알려진 한계.
+        bw_nd = G["bw_cash"](t) and int(t.bw_detach) == 0 and t.k_w > 0
+        lim = fc > 0 or bw_nd
+        C["call_ge_0"] = ("limit" if lim else False,
+                          f"매도청구권 {ca:.6f} · 강제전환 확률 {fc:.4f}"
+                          + (" (LIMIT 강제전환 할인율 효과)" if fc > 0 else (" (LIMIT 비분리형 BW 상태 미추적)" if bw_nd else "")))
     tot = sum(v for _, v in rows[:-1])
     C["alloc_100"] = (abs(rows[-1][1] - 100) <= TOL_SUM and abs(tot - 100) <= TOL_SUM,
                       f"합계 {rows[-1][1]:.10f}")
@@ -175,7 +181,10 @@ def one(G, product, label, field, value, over):
     try:
         t = make_terms(G, product, over)
         if field is not None and field in G["Terms"].__dataclass_fields__ and getattr(t, field) != value:
-            row.update(status="FORCED", note=f"derive() 가 {field}={getattr(t, field)!r} 로 되돌린다")
+            notes = getattr(t, "forced_notes", [])
+            row.update(status=("EXPECTED_BLOCK" if notes else "FORCED"),
+                       note=(f"지원하지 않는 조합 — compat() 이 {field}={getattr(t, field)!r} 로 되돌린다" if notes
+                             else f"derive() 가 {field}={getattr(t, field)!r} 로 되돌린다"))
             return row
         C, vals = (run_sha if product == "SHA" else run_bond)(G, t)
         bad = [k for k, (ok, _) in C.items() if ok is False]
@@ -215,7 +224,7 @@ def main():
                 rows.append(r)
         n = sum(1 for r in rows if r["product"] == p)
         print(f"{p:5s} {n:3d}갈래  " + "  ".join(f"{s} {sum(1 for r in rows if r['product']==p and r['status']==s)}"
-                                              for s in ("PASS", "KNOWN_LIMITATION", "FAIL", "FORCED", "ERROR")))
+                                              for s in ("PASS", "KNOWN_LIMITATION", "EXPECTED_BLOCK", "FAIL", "FORCED", "ERROR")))
     for r in rows:
         if r["status"] != "PASS":
             print(f"  {r['status']:6s} {r['product']:4s} {r['label']:24s} {r.get('note','')}"
@@ -223,7 +232,7 @@ def main():
     json.dump(dict(generated=time.strftime("%Y-%m-%d %H:%M"), tol=dict(money=TOL, sum=TOL_SUM),
                    rows=rows), open(OUT, "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
     print("→", os.path.relpath(OUT, ROOT), f"{len(rows)} 줄")
-    return 0 if all(r["status"] in ("PASS", "FORCED", "KNOWN_LIMITATION") for r in rows) else 1
+    return 0 if all(r["status"] in ("PASS", "FORCED", "KNOWN_LIMITATION", "EXPECTED_BLOCK") for r in rows) else 1
 
 
 if __name__ == "__main__":

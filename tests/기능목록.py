@@ -142,12 +142,12 @@ BLOCKS = [
      "engine+ui", "tests/손계산대조.py::test_dividend_yield_and_zero_vol"),
     ("q ∉ [0,1] 인 구간", "선도이자율이 변동성에 비해 가파른 구간. 전 구간 qbad 를 재어 화면 st.stop(). 엔진은 qbad 목록을 돌려준다",
      "ui", "tests/손계산대조.py::test_all_step_risk_neutral_probabilities"),
-    ("GS + 매도청구권 평가방법 1·2", "화면이 잠그고 k_method=0 으로 되돌린다. **엔진·validate 는 막지 않는다** — 4단계 F-01",
-     "ui-only", None),
-    ("전환권 부채 + 조기상환권 미분리", "화면이 잠근다. allocate() 가 부채 갈래에서 미분리를 무시하므로 값은 같다 — 4단계 F-02 (경고 없이 설정을 버림)",
-     "ui-only", None),
-    ("GS 또는 전환권 부채 + BDT", "화면이 잠근다. put_bdt_on() 이 TF·자본에서만 참 — 4단계 F-03",
-     "ui-only", None),
+    ("GS + 매도청구권 평가방법 1·2", "compat() 이 k_method=0 으로 되돌린다. 사이드바 잠금 캡션·validate 경고·derive 되돌림이 같은 문구 (COMPAT_GS_KMETHOD)",
+     "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
+    ("전환권 부채 + 조기상환권 미분리", "compat() 이 p_sep=1 로 되돌린다 (COMPAT_PSEP). 값은 전부터 같았고 이제 경고가 붙는다",
+     "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
+    ("GS 또는 전환권 부채 + BDT", "compat() 이 put_bdt=0 으로 되돌린다 (COMPAT_BDT). 값은 전부터 같았고 이제 경고가 붙는다",
+     "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
 ]
 
 # 계산은 허용하되 한계가 화면·문서·조서에 같은 뜻으로 표시되어야 하는 것.
@@ -180,6 +180,8 @@ LIMITS = [
      ["화면", "조서", "README"]),
     ("잔여 주계약 ≤ 0 이면 상각표 없음", "발행가 100 과 공정가치가 크게 다르면(Day-1 차이) 부채 분류의 잔여 주계약이 0 이하다. 유효이자율이 정의되지 않으므로 상각표를 만들지 않고 그 사실을 적는다 (4단계 F-05)",
      ["화면", "조서"]),
+    ("비분리형 BW 는 신주인수권 조기행사를 상태로 갖지 않는다", "자식 노드의 매도청구는 신주인수권이 살아 있다고 보고 정해진다. 부모에서 투자자가 먼저 행사하면 그 콜은 사채만 비싸게 사는 셈이라 콜 있는 격자가 없는 격자보다 커질 수 있다 (매도청구권 < 0). 두 상태 격자로 고치는 것은 산식 변경이라 별도 승인 대상",
+     ["화면", "조서", "README"]),
 ]
 
 
@@ -334,6 +336,11 @@ def collect_coverage(G):
                                              ("BW", "pc_order", 0), ("BW", "pc_order", 1)],
         "test_maturity_layer_in_distribution": [("RCPS", "mat_mode", 0), ("RCPS", "put", True),
                                                 ("CB", "pc_order", 1)],
+        "test_sha_boundaries": [("SHA", "sha_kill", 1), ("SHA", "pc_order", 0), ("SHA", "pc_order", 1),
+                                ("SHA", "sha_writer", 0), ("SHA", "sha_writer", 1), ("SHA", "sha_writer", 2),
+                                ("SHA", "sha_call_cmp", 0), ("SHA", "sha_call", True)],
+        "test_unsupported_combos_agree": [("CB", "model", "GS"), ("CB", "k_method", 0), ("CB", "p_sep", 1),
+                                          ("CB", "put_bdt", 0), ("CB", "conv_class", "liability"), ("CB", "k_sep", 0)],
         "test_ipo_branch_keeps_probability_mass": [("RCPS", "ipo_on", 1), ("RCPS", "ipo_conv", 1),
                                                    ("RCPS", "ipo_conv", 0), ("RCPS", "carry", 0),
                                                    ("RCPS", "rfx_mode", 0)],

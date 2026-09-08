@@ -260,8 +260,54 @@ def months_between(d1: dt.date, d2: dt.date) -> float:
     return m + (d2 - same).days/max(1, (nxt - same).days)
 
 
+# 지원하지 않는 조합. 세 경로 — 사이드바(잠금 캡션) · validate()(경고) · derive()(되돌림) — 가
+# **같은 문구**를 쓴다. 화면만 막고 엔진이 조용히 다른 값을 내는 일이 없게 하기 위해서다.
+COMPAT_GS_KMETHOD = ("**GS 에서는 유무가치비교법만 지원합니다.** 옵션차익혼합할인법은 "
+                     "노드의 지분·부채 분해 위에 정의된 산식이라 TF 전용입니다 "
+                     "(한공회 4.4.3). GS 로 재려면 신용위험 처리를 TF 로 바꾸십시오.")
+COMPAT_PSEP = ("조기상환권을 분리하지 않는 선택은 전환권을 **자본**으로 두고 매도청구권을 "
+               "**별도 금융상품**으로 볼 때만 고를 수 있습니다. 매도청구권을 내재파생으로 "
+               "묶으면 복수의 내재파생을 하나의 복합내재파생으로 다루므로 (문단 B4.3.4) "
+               "조기상환권도 함께 분리됩니다. 전환권이 부채여도 같은 이유로 묶음에 들어갑니다.")
+COMPAT_BDT = ("BDT 금리격자는 전환권을 **자본**으로 두고 **TF** 를 쓸 때만 켤 수 있습니다. "
+              "자본이면 전환권대가가 잔여라 부채요소만 바꿔도 배분이 성립하지만, 부채이면 "
+              "복합내재파생을 전체로서 재야 해서 전체 가치까지 함께 손봐야 합니다.")
+
+
+HOST_NONPOS_NOTE = ("**잔여 주계약이 0 이하라 상각표를 만들지 않습니다.** 전체 가치가 발행가 100 과 "
+                    "크게 달라 파생을 뺀 잔여가 남지 않는 자리입니다 — 최초 인식 시점의 공정가치와 "
+                    "거래가격의 차이(Day-1 차이, 제1109호 문단 B5.1.2A)를 먼저 정리하셔야 합니다. "
+                    "유효이자율이 정의되지 않으므로 상각표·이자비용 대신 이 문구가 조서에 실립니다.")
+
+
+def compat(tm: Terms):
+    """지원하지 않는 조합을 찾는다. [(필드, 되돌릴 값, 사유)].
+
+    derive() 가 이 목록대로 되돌리고 ``tm.forced_notes`` 에 남긴다. validate() 가 그것을
+    경고로 올리고, 사이드바는 같은 사유로 칸을 잠근다. 주주간계약·BW 전용 강제는
+    derive() 안에 따로 있다 — 그것은 «상품에 없는 스위치» 라 사용자가 고른 것이 아니다.
+    """
+    out = []
+    if tm.model == "GS" and int(tm.k_method):
+        out.append(("k_method", 0, COMPAT_GS_KMETHOD))
+    if int(tm.p_sep) == 0 and not (tm.conv_class == "equity" and int(tm.k_sep) != 0):
+        out.append(("p_sep", 1, COMPAT_PSEP))
+    if int(tm.put_bdt) and not (tm.conv_class == "equity" and tm.model == "TF"):
+        out.append(("put_bdt", 0, COMPAT_BDT))
+    return out
+
+
 def derive(tm: Terms) -> Terms:
-    """날짜에서 경과기간·잔존기간·노드 수를 계산해 채운다."""
+    """날짜에서 경과기간·잔존기간·노드 수를 계산해 채운다.
+
+    지원하지 않는 조합(compat)은 여기서 되돌린다 — 화면·validate·직접 호출이 같은 값을
+    내야 하기 때문이다. 되돌린 내역은 ``forced_notes`` 에 남는다 (두 번째 호출은 이미
+    되돌린 뒤라 비어 있으므로 덮어쓰지 않는다).
+    """
+    _f = compat(tm)
+    if _f:
+        tm.forced_notes = _f
+        for k, v, _ in _f: setattr(tm, k, v)
     di = dt.date.fromisoformat(tm.d_issue)
     db = dt.date.fromisoformat(tm.d_base)
     dm = dt.date.fromisoformat(tm.d_mat)
@@ -2130,6 +2176,8 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
     psep = not (tm.conv_class == "equity" and sep and int(tm.p_sep) == 0)
     # 자본 갈래에서 부채요소를 줄이는 콜 — RCPS 는 부채 격자에서 잰 값 (문단 31)
     cad = full.get("ca_debt", ca) if is_rcps(tm) else ca
+    # 매도청구권 줄은 값이 0 이 아니면 싣는다. 음수(강제전환 할인율 효과 — 모형 성질)라고
+    # 빼 버리면 잔여 계산에는 들어가 있어 합이 100 에서 어긋난다 (조합시험이 잡음).
     if fvpl_on(tm):
         # 복합계약 **전체**를 당기손익-공정가치로 지정했다 (문단 4.2.2·4.3.3(3)).
         # 내재파생을 떼지 않으므로 부채 갈래의 「주계약 + 복합내재파생」 두 줄을
@@ -2144,7 +2192,7 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # (문단 4.3.1). 지정은 그 계약을 건드리지 못한다.
         whole = (100 + ca) if sep else 100.0
         rows = [("복합계약 전체 · 당기손익-공정가치 측정 금융부채", whole)]
-        if sep and (ca > 1e-12 or not is_rcps(tm)):
+        if sep and (abs(ca) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -ca))
         note = ("복합계약 **전체**를 당기손익-공정가치 측정 금융부채로 지정했으므로 "
                 "내재파생상품을 분리하지 않고 한 줄로 인식합니다 (기업회계기준서 "
@@ -2169,7 +2217,7 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         host_acc = (100 + ca) - (b2 - b0)      # 어느 쪽이든 같다
         rows = [("주계약 (잔여)", host_acc),
                 ("복합내재파생상품 · 파생상품부채", deriv)]
-        if sep and (ca > 1e-12 or not is_rcps(tm)):
+        if sep and (abs(ca) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -ca))
         note = ("전환권이 파생상품부채이므로 전환권과 조기상환권을 하나의 "
                 "복합내재파생상품으로 묶어 공정가치로 측정하고 주계약을 잔여로 둡니다 "
@@ -2186,7 +2234,7 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         # 조기상환권이 주계약과 밀접하게 관련되어 분리하지 않는다. 부채요소를
         # 통째로 상각후원가로 두고, 파생상품부채를 세우지 않는다.
         rows = [("부채요소 (사채 + 조기상환권)", b1)]
-        if cad > 1e-12 or not is_rcps(tm):
+        if abs(cad) > 1e-12 or not is_rcps(tm):
             rows.append(("매도청구권 · 파생상품자산", -cad))
         rows.append(("전환권대가 · 자본", 100-b1+cad))
         note = ("기업회계기준서 제1032호 문단 31 — 부채요소를 먼저 정하고 나머지를 자본에 "
@@ -2203,7 +2251,7 @@ def allocate(tm: Terms, full, b0, b1, b2, ca):
         if _hasput or not sep:
             rows.append(("조기상환청구권 · 파생상품부채",
                          (b1-b0) if sep else (b1-b0-cad)))
-        if sep and (cad > 1e-12 or not is_rcps(tm)):
+        if sep and (abs(cad) > 1e-12 or not is_rcps(tm)):
             rows.append(("매도청구권 · 파생상품자산", -cad))
         if not sep:
             rows[1] = ("복합내재파생상품 · 파생상품부채", b1-b0-cad)
@@ -2235,7 +2283,12 @@ def acc_host(tm: Terms, full, b0, b1, b2, ca):
     if fvpl_on(tm): return None
     rows = allocate(tm, full, b0, b1, b2, ca)[0]
     # 거래원가 중 부채요소 몫은 부채에서 차감하므로 상각도 그만큼 낮은 데서 출발한다.
-    return rows[0][1] - cost_host(tm, rows)
+    host = rows[0][1] - cost_host(tm, rows)
+    # 발행가 100 과 공정가치가 크게 다르면(최초 인식 차이) 부채 분류의 잔여 주계약이
+    # 0 이하로 떨어진다. 유효이자율이 정의되지 않으므로 상각표를 만들지 않는다 —
+    # 만들면 이분법이 상한에 걸린 엉터리 표가 조서에 실린다. 화면이 그 사실을 적는다.
+    if host <= 0: return None
+    return host
 
 
 def eir_or_none(tm: Terms, full, b0, b1, b2, ca):
@@ -2328,7 +2381,11 @@ def eir_table(tm: Terms, host):
     def pv(r):
         return (sum(c*(1+r)**(-t) for t in ts[:-1])
                 + (c + red)*(1+r)**(-tm.T))
-    lo, hi = -0.5, 5.0
+    # 상한은 넉넉히 잡되 고정하지 않는다 — 만기 한두 달 앞의 중간평가는 연 환산 유효이자율이
+    # 수백 % 를 넘을 수 있고, 상한에 걸리면 상각표가 엉뚱한 곳에서 끝난다. 상한에서도
+    # 현재가치가 장부금액을 넘으면 상한을 네 배씩 올린다 (1e4 = 연 1,000,000%).
+    lo, hi = -0.99, 5.0
+    while pv(hi) > host and hi < 1e7: hi *= 4
     for _ in range(200):
         m = (lo+hi)/2
         if pv(m) > host: lo = m
@@ -2376,7 +2433,8 @@ def pc_overlap(tm: Terms):
 
 def validate(tm: Terms):
     derive(tm)
-    w = []
+    w = [f"설정을 되돌렸습니다 ({k} → {v}). " + msg.replace("**", "")
+         for k, v, msg in getattr(tm, "forced_notes", [])]
     if tm.cv_s >= tm.cv_e: w.append("전환 시작이 종료보다 늦거나 같습니다.")
     horizon = tm.T*12 + tm.elapsed_m + 0.5      # 발행일 기준 총 개월
     if tm.cv_e > horizon: w.append(f"전환 종료({tm.cv_e:.0f}개월)가 만기({horizon:.0f}개월)를 넘습니다.")
@@ -3051,6 +3109,14 @@ RPT = dict(
     ink="1F3864", sub="44618C", grey="7F7F7F", amber="9A7200",
     green="1F6B44", red="A6301F", band="EFF3F8", light="F7F9FC",
     tint="E4EBF5", hair="D6DCE5", warm="FFF7E6",
+)
+
+# 잔여 주계약이 0 이하일 때 상각표 자리에 싣는 문구 — 화면 HOST_NONPOS_NOTE 와 같은 뜻
+HOST_NONPOS_XL = (
+    "잔여 주계약이 0 이하라 상각표를 만들지 않는다.",
+    "전체 가치가 발행가 100 과 크게 달라 파생을 뺀 잔여가 남지 않는다 — 최초 인식 시점의 "
+    "공정가치와 거래가격의 차이(Day-1 차이, 제1109호 문단 B5.1.2A)를 먼저 정리해야 한다.",
+    "유효이자율이 정의되지 않으므로 상각표·이자비용 대신 이 문구를 싣는다. 배분표는 그대로다.",
 )
 R_N0, R_N2, R_N4, R_N6 = "#,##0", "#,##0.00", "#,##0.0000", "0.000000"
 R_P2, R_P4 = "0.00%", "0.0000%"
@@ -4476,7 +4542,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     if eir is None:
         title(M, 2, "주계약 상각표 — 만들지 않는다", span=7)
         M.column_dimensions["B"].width = 110
-        for _i, _tx in enumerate(FVPL_NOTE):
+        for _i, _tx in enumerate(FVPL_NOTE if fvpl_on(tm) else HOST_NONPOS_XL):
             put(M, 4+_i, 2, _tx, color=(RED if _i == 0 else GREY),
                 bold=(_i == 0), size=(10 if _i == 0 else 9))
             M.cell(row=4+_i, column=2).alignment = Alignment(wrap_text=True,
@@ -5871,7 +5937,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     if eir is None:
         title(M, 2, "주계약 상각표 — 만들지 않는다", span=7)
         M.column_dimensions["B"].width = 110
-        for _i, _tx in enumerate(FVPL_NOTE):
+        for _i, _tx in enumerate(FVPL_NOTE if fvpl_on(tm) else HOST_NONPOS_XL):
             put(M, 4+_i, 2, _tx, color=(RED if _i == 0 else GREY),
                 bold=(_i == 0), size=(10 if _i == 0 else 9))
             M.cell(row=4+_i, column=2).alignment = Alignment(wrap_text=True,
@@ -7051,11 +7117,7 @@ with st.sidebar:
                      "관련되어 분리하지 않습니다 (기준서 1109 문단 B4.3.5(5)(가)). "
                      "「분리 판단」 탭이 계약 조항으로 이 결론을 내 줍니다.") else 0
             if not _psok:
-                st.caption(inst_text(t, "전환권을 **자본**으로 두고 매도청구권을 **별도 "
-                           "금융상품**으로 볼 때만 고를 수 있습니다. 매도청구권을 "
-                           "내재파생으로 묶으면 복수의 내재파생을 하나의 복합내재파생으로 "
-                           "다루므로 (문단 B4.3.4) 조기상환권도 함께 분리됩니다. 전환권이 "
-                           "부채여도 같은 이유로 묶음에 들어갑니다."))
+                st.caption(inst_text(t, COMPAT_PSEP))
                 t.p_sep = 1
             elif int(t.p_sep) == 0:
                 st.caption("부채요소(사채 + 조기상환권)를 통째로 상각후원가로 둡니다. "
@@ -7070,10 +7132,8 @@ with st.sidebar:
                 help="전환을 끄면 격자가 주가와 무관해져 조기상환권이 확정 계산이 "
                      "됩니다. 금리를 확률변수로 두면 옵션의 시간가치가 생깁니다."))
             if not _ok:
-                st.caption("전환권을 **자본**으로 두고 **TF** 를 쓸 때만 켤 수 있습니다. "
-                           "자본이면 전환권대가가 잔여라 부채요소만 바꿔도 배분이 "
-                           "성립하지만, 부채이면 복합내재파생을 전체로서 재야 해서 "
-                           "전체 가치까지 함께 손봐야 합니다.")
+                st.caption(COMPAT_BDT)
+                if t.conv_class != "equity" or t.model != "TF": t.put_bdt = 0
             elif t.put_bdt:
                 # 키를 두지 않는다. 키가 있으면 위젯이 저장해 둔 값이 value 를
                 # 이겨서, 아래 「이 변동성 적용」 도 시나리오 불러오기도 화면에
@@ -7341,9 +7401,7 @@ with st.sidebar:
                                           format_func=lambda i: K_METHODS[i], key="kmeth_rcps",
                                           disabled=_gs_blk)
                 if _gs_blk:
-                    st.caption("**GS 에서는 유무가치비교법만 지원합니다.** 옵션차익혼합할인법은 "
-                               "노드의 지분·부채 분해 위에 정의된 산식이라 TF 전용입니다 "
-                               "(한공회 4.4.3). GS 로 재려면 신용위험 처리를 TF 로 바꾸십시오.")
+                    st.caption(COMPAT_GS_KMETHOD)
                 if t.k_method:
                     st.warning("의무보유는 지금 고른 평가방법에서 **값을 움직이지 않습니다.** "
                                "옵션차익법은 기초자산을 「콜과 그 부속조항을 뺀 우선주」로 "
@@ -7393,9 +7451,7 @@ with st.sidebar:
                                         format_func=lambda i: K_METHODS[i],
                                         disabled=_gs_blk)
               if _gs_blk:
-                  st.caption("**GS 에서는 유무가치비교법만 지원합니다.** 옵션차익혼합할인법은 "
-                             "노드의 지분·부채 분해 위에 정의된 산식이라 TF 전용입니다 "
-                             "(한공회 4.4.3). GS 로 재려면 신용위험 처리를 TF 로 바꾸십시오.")
+                  st.caption(COMPAT_GS_KMETHOD)
               if t.k_method:
                   st.caption("발행회사가 **지정하는 제3자**도 행사할 수 있는 콜옵션은 별도의 "
                              "금융상품이고 기초자산이 전환사채인 복합옵션입니다 "
@@ -8345,8 +8401,10 @@ with tabs[1]:
             st.caption("기업회계기준서 제1032호 문단 38 — 복합금융상품 발행과 관련된 거래원가는 "
                        "**배분된 발행금액에 비례하여** 부채요소와 자본요소로 배분합니다. "
                        "매도청구권 자산은 별도의 금융상품이라(문단 4.3.1) 분모에서 뺐습니다. "
-                       f"주계약은 거래원가를 뺀 **{acc_host(t, full, b0, b1, b2, ca):,.4f}** 에서 "
-                       "상각을 시작하므로 유효이자율이 그만큼 높아집니다.")
+                       + (f"주계약은 거래원가를 뺀 **{_ahc:,.4f}** 에서 상각을 시작하므로 "
+                          "유효이자율이 그만큼 높아집니다."
+                          if (_ahc := acc_host(t, full, b0, b1, b2, ca)) is not None
+                          else "잔여 주계약이 0 이하라 상각표가 없습니다 (아래 상각표 탭)."))
     # 분개는 배분표를 그대로 뒤집는다 — 조서와 같은 규칙. 음수 줄(자산)만
     # 차변으로 가고 나머지는 대변이다. 따로 쓰면 두 표가 어긋난다.
     _je = [("현금", 100.0, None)]
@@ -8956,7 +9014,9 @@ with tabs[5]:
 
 with tabs[6]:
   _ah6 = acc_host(t, full, b0, b1, b2, ca)
-  if _ah6 is None:
+  if _ah6 is None and not fvpl_on(t):
+    st.warning(HOST_NONPOS_NOTE)
+  elif _ah6 is None:
     st.info("**복합계약 전체를 당기손익-공정가치로 지정**하셨으므로 유효이자율 "
             "상각표를 만들지 않습니다.\n\n"
             "상각표는 「상각후원가로 측정하는 주계약」이 있어야 성립합니다. 전체를 "

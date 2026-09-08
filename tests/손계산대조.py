@@ -729,6 +729,92 @@ def test_ipo_branch_keeps_probability_mass():
     chk_bool(f"상장전환 몫이 «전환» 에 잡힌다 ({D['conv']:.4f})", D["conv"] > 0.0)
 
 
+def test_unsupported_combos_agree():
+    """지원하지 않는 조합에서 직접 호출·validate·화면이 같은 답을 내는가.
+
+    전에는 사이드바만 막았다. GS + 옵션차익혼합할인법을 코드로 직접 부르면 경고 없이
+    다른 값(매도청구권 8.9862 / 9.1886, 화면 강제값 12.2404)이 나왔다 (검증기준선 §4-2
+    F-01). 이제 derive() 가 되돌리고 validate() 가 같은 문구로 알린다.
+    """
+    print("\n[19] 지원하지 않는 조합 — 세 경로가 같은가")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    cases = [
+        ("GS + 혼합할인율", dict(model="GS", k_method=1), dict(model="GS", k_method=0), "k_method", G["COMPAT_GS_KMETHOD"]),
+        ("GS + 지분·부채 분리", dict(model="GS", k_method=2), dict(model="GS", k_method=0), "k_method", G["COMPAT_GS_KMETHOD"]),
+        ("전환권 부채 + 미분리", dict(conv_class="liability", p_sep=0), dict(conv_class="liability", p_sep=1), "p_sep", G["COMPAT_PSEP"]),
+        ("콜 내재파생 + 미분리", dict(k_sep=0, p_sep=0), dict(k_sep=0, p_sep=1), "p_sep", G["COMPAT_PSEP"]),
+        ("GS + BDT", dict(model="GS", put_bdt=1), dict(model="GS", put_bdt=0), "put_bdt", G["COMPAT_BDT"]),
+        ("전환권 부채 + BDT", dict(conv_class="liability", put_bdt=1), dict(conv_class="liability", put_bdt=0), "put_bdt", G["COMPAT_BDT"]),
+    ]
+    for nm, raw, ui, fld, msg in cases:
+        a = Terms(rf_curve=RF, cr_curve=CR, carry=1, **raw)
+        b = Terms(rf_curve=RF, cr_curve=CR, carry=1, **ui)
+        w = G["validate"](a)
+        _, a0, a1, a2, ac, _ = G["decompose"](a)
+        _, b0, b1, b2, bc, _ = G["decompose"](b)
+        chk_bool(f"{nm} — validate 가 되돌림을 알린다", any(msg.replace("**", "") in x for x in w))
+        chk_bool(f"{nm} — 되돌린 값이 화면 강제값과 같다 ({fld}={getattr(a, fld)})", getattr(a, fld) == ui[fld])
+        chk(f"{nm} — 전체 가치 (직접 호출 = 화면)", a2, b2, 1e-12)
+        chk(f"{nm} — 매도청구권 (직접 호출 = 화면)", ac, bc, 1e-12)
+    # 지원하는 조합에는 경고가 없다
+    ok = Terms(rf_curve=RF, cr_curve=CR, model="TF", k_method=1)
+    chk_bool("TF + 혼합할인율 — 되돌림 없음", not any("되돌렸습니다" in x for x in G["validate"](ok)))
+    chk_bool("TF + 혼합할인율 — k_method 그대로", ok.k_method == 1)
+
+
+def test_sha_boundaries():
+    """주주간계약의 세 경계 — 풋·콜 동시 행사 가능 노드, 역산이 못 닿는 목표, 연대 의무자."""
+    print("\n[20] 주주간계약 경계")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    # (가) 풋 행사금액 > 지분 > 콜 행사금액인 노드 — 상호소멸이면 pc_order 가 누가 이기는지 정한다
+    base = dict(inst="SHA", gap_m=3., sha_put_s=12., sha_put_e=60., sha_put_yield=.30, sha_put_cmp=1,
+                sha_call_s=12., sha_call_e=60., sha_call_prem=-.20, sha_call_cmp=0, sha_kill=1,
+                rf_curve=RF, cr_curve=CR)
+    R = {}
+    for po in (0, 1):
+        t = Terms(pc_order=po, **base); derive(t); R[po] = G["sha_engine"](t)
+    r0 = R[0]; n = r0["n"]
+    both = [(i, j) for i in range(n+1) for j in range(i+1)
+            if r0["p_on"](i) and r0["c_on"](i)
+            and r0["pk"](i) - r0["eq"](i, j) > 0 and r0["eq"](i, j) - r0["ck"](i) > 0]
+    chk_bool(f"둘 다 내가격인 노드가 있다 ({len(both)})", len(both) > 0)
+    # 두 격자는 서로 다른 게임이다 — 상대의 소멸이 내 계속보유 값을 바꾸므로, 같은 노드에서
+    # 풋 우선이 «call», 콜 우선이 «put» 이 나올 수도 있다 (한쪽이 행사하고 싶지 않았던 것).
+    # 그래서 «뒤집힘» 을 세지 않고, 동률이 실제로 결정과 값에 닿는지만 본다.
+    diff_nodes = sum(1 for i, j in both if R[0]["KIND"][i][j] != R[1]["KIND"][i][j])
+    chk_bool(f"동률 노드에서 두 우선순위의 결정이 갈린다 ({diff_nodes}/{len(both)})", diff_nodes > 0)
+    # 상호소멸이면 한 노드에서 풋·콜이 동시에 살아남을 수 없다
+    coexist = sum(1 for po in (0, 1) for i in range(n+1) for j in range(i+1)
+                  if R[po]["KIND"][i][j] in ("put", "call") and R[po]["P"][i][j] > 1e-12 and R[po]["C"][i][j] > 1e-12)
+    chk("행사 노드에서 풋·콜이 함께 남은 수 (상호소멸이면 0)", coexist, 0, 0.5)
+    chk_bool("풋 우선과 콜 우선의 값이 다르다 (동률 노드가 값에 닿는다)",
+             abs(R[0]["put"] - R[1]["put"]) > 1e-6 or abs(R[0]["call"] - R[1]["call"]) > 1e-6)
+    # (나) 역산 — 닿을 수 없는 목표는 끝값과 −1 을 돌려준다. 닿는 목표는 1e-7 안
+    t = Terms(inst="SHA", gap_m=3., rf_curve=RF, cr_curve=CR); derive(t)
+    S, v, k = G["sha_backsolve"](t, 100.)
+    chk("역산 목표 100 — 도달 (이분법 구간 1e-6·주가)", v, 100.0, 1e-3)
+    chk_bool(f"역산 반복 횟수가 양수 ({k})", k > 0)
+    S2, v2, k2 = G["sha_backsolve"](t, 1e6)
+    chk_bool(f"닿을 수 없는 목표 — 반복 −1 로 표시 ({k2})", k2 == -1)
+    chk("닿을 수 없는 목표 — 상한 주가", S2, t.K0*5.0, 1e-9)
+    # (다) 연대 의무자 (sha_writer=2) — 발행회사는 상환금액 현재가치, 최대주주는 파생. 한 곳에서만 인식하라는 문구
+    for w in (0, 1, 2):
+        t = Terms(inst="SHA", gap_m=3., sha_writer=w, sha_call_s=12., sha_call_e=36., rf_curve=RF, cr_curve=CR)
+        derive(t); A = G["sha_accounts"](t, G["sha_engine"](t))
+        iss = A["발행회사"][0]; maj = A["최대주주"][0]
+        if w == 0:
+            chk_bool("의무자 최대주주 — 발행회사 인식 없음", iss[0][1] == 0.0 and len(iss) == 1)
+            chk_bool("의무자 최대주주 — 최대주주 파생부채", maj[0][0].startswith("파생상품부채"))
+        elif w == 1:
+            chk_bool("의무자 발행회사 — 금융부채 > 0", iss[0][1] > 0)
+            chk_bool("의무자 발행회사 — 최대주주는 콜만", all("풋" not in a for a, _ in maj))
+        else:
+            chk_bool("연대 — 발행회사 금융부채 > 0", iss[0][1] > 0)
+            chk_bool("연대 — 최대주주 파생부채도 있다", maj[0][0].startswith("파생상품부채"))
+            chk_bool("연대 — «한 곳에서만» 문구", "한 곳에서만" in A["발행회사"][1])
+            chk_bool("연대 — sha_validate 가 알린다", any("발행회사" in x for x in G["sha_validate"](t)))
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -749,6 +835,8 @@ def main():
     test_decision_matches_old_chains()
     test_maturity_layer_in_distribution()
     test_ipo_branch_keeps_probability_mass()
+    test_unsupported_combos_agree()
+    test_sha_boundaries()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
