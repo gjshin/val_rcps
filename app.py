@@ -274,6 +274,60 @@ COMPAT_BDT = ("BDT 금리격자는 전환권을 **자본**으로 두고 **TF** �
               "복합내재파생을 전체로서 재야 해서 전체 가치까지 함께 손봐야 합니다.")
 
 
+# 알려진 한계 — (제목, 설명, 실려야 하는 곳). 화면 검산 탭 · 조서 99_모형검증 · README 「한계」 가
+# 모두 이 표에서 나온다. 시험(기능목록.py)이 README 에 제목이 있는지 확인한다.
+MODEL_LIMITS = (
+    ('복합내재파생이 음수',
+     '발행자 상환권이 전환권보다 크면 부채 갈래 묶음이 음수 (대신증권 −9.0050)',
+     ('화면 배분표 캡션', 'docs/사례_대신증권_RCPS.md', '조서 회계처리 시트')),
+    ('배당가능이익·상환재원 제약 미반영',
+     '계약상 상환일에 즉시 상환된다고 본다',
+     ('UNMODELLED_NOTE (조서 표지)', 'README', 'docs/입력안내_RCPS.md')),
+    ('IPO 는 가정 비교이지 PWERM 이 아니다',
+     '상장 시점·공모가는 확률분포가 아니라 가정',
+     ('UNMODELLED_NOTE', 'README', '화면 IPO 캡션')),
+    ('자기신용위험 변동분(5.7.7) 분해 안 함',
+     '전체 FVPL 지정 후속측정에서 OCI 몫을 나누지 않는다',
+     ('UNMODELLED_NOTE', 'validate() 경고', '조서 상각표 자리 FVPL_NOTE', 'docs/의사결정규칙.md §13')),
+    ('리픽싱 근사법(경로가중 등)은 근사',
+     'E[1/K] ≠ 1/E[K]. 상태확장이 정확법',
+     ('화면 조정일 처리 캡션', '조서 가정 시트 경고', 'docs/의사결정규칙.md')),
+    ('리픽싱 기준가 = 노드 주가 (VWAP 아님)',
+     '계약의 가중평균가 대신 노드 주가',
+     ('UNMODELLED_NOTE', 'docs/입력안내_RCPS.md')),
+    ('사전통지기간 미반영',
+     '행사일 = 노드일',
+     ('docs/의사결정규칙.md §7',)),
+    ('BW: 신주인수권증권 자체에 대한 콜 미지원',
+     '콜은 사채에 대한 권리로만 잰다',
+     ('validate() 경고', 'docs/입력안내_BW.md')),
+    ('BW: 부분행사·다단계 행사가액 미지원',
+     '단일 행사·단일 행사가액',
+     ('docs/입력안내_BW.md',)),
+    ('SHA: 상대방 신용은 할인율로만',
+     '부도 손실률·회수율 구조 없음',
+     ('화면 풋 할인율 캡션', 'docs/입력안내_주주간계약.md')),
+    ('SHA: Drag/Tag/ROFR·다단계 strike 미지원',
+     '',
+     ('docs/입력안내_주주간계약.md',)),
+    ('역산이 목표를 정확히 못 맞힐 수 있다',
+     '격자 값의 계단 (0.19 등)',
+     ('화면 역산 경고', 'docs/의사결정규칙.md §10-1')),
+    ('자동전환·상장 강제전환 RCPS 의 전환권이 음수',
+     '존속기간 만료 시 자동전환·상장 시 강제전환은 권리가 아니라 의무다. 주가가 낮으면 B2 < B1 이라 「전환권 = B2 − B1」 이 음수다 (분기전수·조합시험이 limit 로 허용)',
+     ('화면', '조서')),
+    ('강제전환 할인율 효과로 매도청구권이 음수',
+     'TF·GS 는 지분을 무위험(전환확률 가중)으로 할인한다. 콜이 전환을 강제하면 부채가 지분으로 바뀌어 할인이 가벼워지고 전체 가치가 오를 수 있다 → 유무가치비교법 매도청구권 < 0. RCPS 발행자 상환권은 ca_debt=max(0,·) 로 막는다',
+     ('화면', '조서', 'README')),
+    ('잔여 주계약 ≤ 0 이면 상각표 없음',
+     '발행가 100 과 공정가치가 크게 다르면(Day-1 차이) 부채 분류의 잔여 주계약이 0 이하다. 유효이자율이 정의되지 않으므로 상각표를 만들지 않고 그 사실을 적는다 (4단계 F-05)',
+     ('화면', '조서')),
+    ('비분리형 BW 는 신주인수권 조기행사를 상태로 갖지 않는다',
+     '자식 노드의 매도청구는 신주인수권이 살아 있다고 보고 정해진다. 부모에서 투자자가 먼저 행사하면 그 콜은 사채만 비싸게 사는 셈이라 콜 있는 격자가 없는 격자보다 커질 수 있다 (매도청구권 < 0). 두 상태 격자로 고치는 것은 산식 변경이라 별도 승인 대상',
+     ('화면', '조서', 'README')),
+)
+
+
 HOST_NONPOS_NOTE = ("**잔여 주계약이 0 이하라 상각표를 만들지 않습니다.** 전체 가치가 발행가 100 과 "
                     "크게 달라 파생을 뺀 잔여가 남지 않는 자리입니다 — 최초 인식 시점의 공정가치와 "
                     "거래가격의 차이(Day-1 차이, 제1109호 문단 B5.1.2A)를 먼저 정리하셔야 합니다. "
@@ -2298,6 +2352,199 @@ def eir_or_none(tm: Terms, full, b0, b1, b2, ca):
     """
     host = acc_host(tm, full, b0, b1, b2, ca)
     return None if host is None else eir_table(tm, host)
+
+
+def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
+    """조서와 화면이 함께 싣는 검산 표. [(항목, 값, 판정, 설명)].
+
+    판정은 넷 — 적합 · 확인 필요 · 한계(모형 성질이라 결함이 아님) · 해당 없음.
+    «설명» 이 아니라 격자를 실제로 훑어 센 결과만 적는다. 시험(분기전수·조합시험)이
+    같은 불변식을 쓴다 — 조서에 실린 검산과 시험이 어긋나면 그것이 결함이다.
+    """
+    out = []
+    bw = bw_cash(tm)
+    mis = ill = 0; neg = 0.0
+    for o in full["memo"].values():
+        kd = o["kind"]
+        if kd in ("conv", "auto", "ipo") and abs(o["B"]) > 1e-9: mis += 1
+        if (not bw) and kd in ("put", "call", "mat") and abs(o["E"]) > 1e-9: mis += 1
+        if kd == "put" and o.get("pv", 0.0) <= 0: ill += 1
+        if kd == "call" and o.get("kv", math.inf) == math.inf: ill += 1
+        if kd in ("conv", "auto", "ipo") and o.get("cv", 0.0) <= 0: ill += 1
+        neg = min(neg, o["E"], o["B"])
+    N = len(full["memo"])
+    out.append(("결정 ↔ 지분·부채 배정", f"어긋난 노드 {mis} / {N:,}", "적합" if (mis == 0 and neg >= -1e-9) else "확인 필요",
+                "전환이면 부채 0, 상환이면 지분 0. 음수 노드 없음" if neg >= -1e-9 else f"음수 노드 있음 (최소 {neg:,.4f})"))
+    out.append(("행사 불가능한 자리의 결정", f"어긋난 노드 {ill} / {N:,}", "적합" if ill == 0 else "확인 필요",
+                "계약일 이후 첫 노드부터 주기마다만 열린다"))
+    rt = full["memo"][full["root"]]
+    ok_root = abs(full["TF"] - (rt["E"] + rt["B"])) < 1e-9 and abs(full["GS"] - rt["V"]) < 1e-9
+    out.append(("뿌리 노드 = 결과 (두 모형)", f"TF {full['TF']:,.4f} · GS {full['GS']:,.4f}", "적합" if ok_root else "확인 필요",
+                "지분+부채 = TF, V = GS. V ≠ 지분+부채 는 결함이 아니다"))
+    out.append(("위험중립가중치 q", f"[{full['qmin']:.4f}, {full['qmax']:.4f}]", "적합" if not full["qbad"] else "확인 필요",
+                "전 구간 (0, 1) 안" if not full["qbad"] else f"벗어난 구간 {len(full['qbad'])}개 — 화면은 계산을 멈춘다"))
+    cad = full.get("ca_debt", ca) if is_rcps(tm) else ca
+    forced_conv = auto_conv(tm) or (is_rcps(tm) and int(tm.ipo_on) and int(tm.ipo_conv))
+    bdt = put_bdt_on(tm)
+    pv_, cv_ = b1 - b0, b2 - b1
+    rights = []
+    if bdt: rights.append(("조기상환청구권", pv_, "한계", "BDT 부채요소는 다른 모형이라 B0 와 견주지 않는다"))
+    else:   rights.append(("조기상환청구권", pv_, "적합" if pv_ >= -1e-7 else "확인 필요", ""))
+    if bdt: rights.append(("전환권", cv_, "한계", "BDT 부채요소는 다른 모형이라 B2 와 견주지 않는다"))
+    elif cv_ < -1e-7 and forced_conv: rights.append(("전환권", cv_, "한계", "자동전환·강제전환은 권리가 아니라 의무 — 음수 허용"))
+    else:   rights.append(("전환권", cv_, "적합" if cv_ >= -1e-7 else "확인 필요", ""))
+    if cad < -1e-7:
+        r3 = engine(tm, conv=True, put=True, call=True, conv_start=max(tm.cv_s, tm.k_lock))
+        fc = r3["dist"].get("conv_called", 0.0)
+        rights.append(("매도청구권", cad, "한계" if fc > 0 else "확인 필요",
+                       f"강제전환 확률 {fc:.4f} — 콜이 전환을 강제하면 할인이 가벼워져 값이 오른다 (모형 성질)" if fc > 0 else ""))
+    else:
+        rights.append(("매도청구권", cad, "적합", ""))
+    for nm, v, vd, why in rights:
+        out.append((f"권리 값 ≥ 0 · {nm}", f"{v:,.4f}", vd, why))
+    D = full["dist"]; ds = D["conv"] + D["put"] + D["call"] + D["mat"]
+    out.append(("정산 분포 합", f"{ds:.10f}", "적합" if abs(ds - 1) <= 1e-9 else "확인 필요", "전환 + 조기상환 + 매도청구 + 만기 = 1"))
+    rows, _ = allocate(tm, full, b0, b1, b2, ca)
+    tot = sum(v for _, v in rows[:-1])
+    out.append(("배분표 합 = 100", f"{tot:.10f}", "적합" if abs(tot - 100) <= 1e-9 else "확인 필요", "발행대가를 요소에 남김없이 배분"))
+    dr = 100.0 + sum(-v for _, v in rows[:-1] if v < 0); cr = sum(v for _, v in rows[:-1] if v > 0)
+    out.append(("분개 차대 균형", f"차 {dr:,.4f} = 대 {cr:,.4f}", "적합" if abs(dr - cr) <= 1e-9 else "확인 필요",
+                "현금 + 파생상품자산 = 부채·자본 요소"))
+    if tm.issue_cost and tm.issue_cost > 0:
+        parts, cost = cost_split(tm, rows)
+        sm = sum(c for _, _, c, _ in parts)
+        out.append(("거래원가 배분 합 = 원가", f"{sm:.6f} = {cost:.6f}", "적합" if abs(sm - cost) <= 1e-9 else "확인 필요", "1032 문단 38 비례 배분"))
+    if eir is None:
+        out.append(("상각표 기말 = 상환금액", "상각표 없음", "해당 없음",
+                    "복합계약 전체 FVPL 지정" if fvpl_on(tm) else "잔여 주계약 ≤ 0 (Day-1 차이)"))
+    else:
+        r_, arows, red_, _ = eir
+        end = arows[-1][5]
+        out.append(("상각표 기말 = 상환금액", f"{end:,.6f} = {red_:,.6f}", "적합" if abs(end - red_) <= 1e-6 else "확인 필요",
+                    f"유효이자율 {r_:.4%}"))
+    notes = getattr(tm, "forced_notes", [])
+    out.append(("되돌린 설정 (지원하지 않는 조합)", f"{len(notes)}건", "해당 없음" if not notes else "확인 필요",
+                "; ".join(f"{k} → {v}" for k, v, _ in notes) if notes else "없음"))
+    return out
+
+
+def sha_checks(tm: Terms, R):
+    """주주간계약 조서의 검산 표. 형식은 model_checks 와 같다."""
+    out = []
+    n = R["n"]
+    out.append(("풋 ≥ 0", f"{R['put']:,.4f}", "적합" if R["put"] >= -1e-7 else "확인 필요", ""))
+    out.append(("콜 ≥ 0", f"{R['call']:,.4f}", "적합" if R["call"] >= -1e-7 else "확인 필요", ""))
+    pmax = max(R["pk"](i) for i in range(n + 1))
+    out.append(("풋 ≤ 최대 행사금액", f"{R['put']:,.4f} ≤ {pmax:,.4f}", "적합" if R["put"] <= pmax + 1e-7 else "확인 필요", "지분 ≥ 0 이므로"))
+    out.append(("위험중립가중치 q", f"[{R['qmin']:.4f}, {R['qmax']:.4f}]", "적합" if not R["qbad"] else "확인 필요", ""))
+    if int(tm.sha_kill):
+        co = sum(1 for i in range(n + 1) for j in range(i + 1)
+                 if R["KIND"][i][j] in ("put", "call") and R["P"][i][j] > 1e-12 and R["C"][i][j] > 1e-12)
+        out.append(("상호소멸 — 행사 노드에 두 권리가 함께 남지 않음", f"{co}", "적합" if co == 0 else "확인 필요", ""))
+    else:
+        out.append(("상호소멸", "끔", "해당 없음", "두 권리를 독립으로 잰다"))
+    out.append(("적격상장 스텝", f"{R['qi_step']}", "해당 없음" if R["qi_step"] < 0 else "적합",
+                "" if R["qi_step"] < 0 else f"주가 > {tm.ipo_min:,.0f} 인 노드에서 풋 소멸" + (" · 콜도 소멸" if int(tm.sha_qipo_kill) else "")))
+    return out
+
+
+def write_check_sheets(wb, tm: Terms, checks, after="결과"):
+    """조서에 «검산요약» 과 «99_모형검증» 두 장을 더한다.
+
+    검산요약은 이 계약을 실제로 훑은 결과이고, 99_모형검증은 모형 자체의 알려진 한계와
+    검증 프로그램(시험 목록·매트릭스 요약)이다. 값 조서·수식 조서·주주간계약 조서가
+    같은 함수를 부른다.
+    """
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    thin = Side(style="thin", color=RPT["hair"])
+    def put(ws, r, c, v, *, bold=False, size=10, color=None, fill=None, wrap=False, border=False):
+        cl = ws.cell(row=r, column=c, value=v)
+        cl.font = Font(name="맑은 고딕", size=size, bold=bold, color=color or RPT["ink"])
+        if fill: cl.fill = PatternFill("solid", fgColor=fill)
+        cl.alignment = Alignment(vertical="top", wrap_text=wrap)
+        if border: cl.border = Border(top=thin, bottom=thin, left=thin, right=thin)
+        return cl
+    tone = {"적합": RPT["green"], "확인 필요": RPT["red"], "한계": RPT["amber"], "해당 없음": RPT["grey"]}
+
+    C = wb.create_sheet("검산요약"); C.sheet_view.showGridLines = False
+    for col, w in (("A", 2), ("B", 38), ("C", 30), ("D", 11), ("E", 70)): C.column_dimensions[col].width = w
+    put(C, 2, 2, "검산요약 — 이 격자를 실제로 훑은 결과", bold=True, size=14)
+    put(C, 3, 2, "«설명» 이 아니라 셈한 결과다. 판정이 «확인 필요» 인 줄이 하나라도 있으면 값을 쓰기 전에 원인을 찾아야 한다. "
+        "«한계» 는 모형 성질이라 결함이 아니다 — 99_모형검증 시트에 이유가 있다.", size=9, color=RPT["grey"], wrap=True)
+    C.merge_cells(start_row=3, start_column=2, end_row=3, end_column=5); C.row_dimensions[3].height = 30
+    for i, h in enumerate(["항목", "값", "판정", "설명"]):
+        put(C, 5, 2 + i, h, bold=True, fill=RPT["band"], border=True)
+    r = 6
+    for nm, val, vd, why in checks:
+        put(C, r, 2, nm, border=True); put(C, r, 3, val, border=True)
+        put(C, r, 4, vd, bold=True, color=tone.get(vd, RPT["ink"]), border=True)
+        put(C, r, 5, why, size=9, color=RPT["grey"], border=True, wrap=True); r += 1
+    bad = [nm for nm, _, vd, _ in checks if vd == "확인 필요"]
+    put(C, r + 1, 2, ("모든 항목 적합" if not bad else "확인 필요 " + str(len(bad)) + "건: " + ", ".join(bad)),
+        bold=True, color=(RPT["green"] if not bad else RPT["red"]))
+    C.sheet_properties.tabColor = RPT["green"] if not bad else RPT["red"]
+    if after in wb.sheetnames:
+        wb.move_sheet("검산요약", offset=wb.sheetnames.index(after) + 1 - wb.sheetnames.index("검산요약"))
+
+    V = wb.create_sheet("99_모형검증"); V.sheet_view.showGridLines = False
+    for col, w in (("A", 2), ("B", 40), ("C", 90), ("D", 30)): V.column_dimensions[col].width = w
+    put(V, 2, 2, "99_모형검증 — 모형의 알려진 한계와 검증 프로그램", bold=True, size=14)
+    put(V, 3, 2, "이 조서를 낸 앱이 무엇을 못 하는지와, 그 앱이 어떤 시험을 통과했는지를 적는다. "
+        "한계 표는 화면 검산 탭·README 「한계」 와 같은 원본(MODEL_LIMITS)에서 나온다.", size=9, color=RPT["grey"], wrap=True)
+    V.merge_cells(start_row=3, start_column=2, end_row=3, end_column=4); V.row_dimensions[3].height = 30
+    r = 5
+    put(V, r, 2, "1. 알려진 한계", bold=True, fill=RPT["band"]); put(V, r, 3, "", fill=RPT["band"]); put(V, r, 4, "", fill=RPT["band"]); r += 1
+    for i, h in enumerate(["한계", "설명", "실리는 곳"]): put(V, r, 2 + i, h, bold=True, border=True)
+    r += 1
+    for nm, why, where in MODEL_LIMITS:
+        put(V, r, 2, nm, border=True, wrap=True); put(V, r, 3, why, size=9, border=True, wrap=True)
+        put(V, r, 4, " · ".join(where), size=9, color=RPT["grey"], border=True, wrap=True); r += 1
+    r += 1
+    put(V, r, 2, "2. 검증 프로그램 (tests/)", bold=True, fill=RPT["band"]); put(V, r, 3, "", fill=RPT["band"]); put(V, r, 4, "", fill=RPT["band"]); r += 1
+    for i, h in enumerate(["시험", "무엇을 보나", "명령"]): put(V, r, 2 + i, h, bold=True, border=True)
+    r += 1
+    for nm, what, cmd in VERIFY_SUITES:
+        put(V, r, 2, nm, border=True); put(V, r, 3, what, size=9, border=True, wrap=True)
+        put(V, r, 4, cmd, size=9, color=RPT["grey"], border=True); r += 1
+    r += 1
+    put(V, r, 2, "3. 기능 매트릭스 요약", bold=True, fill=RPT["band"]); put(V, r, 3, "", fill=RPT["band"]); put(V, r, 4, "", fill=RPT["band"]); r += 1
+    try:
+        _mx = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests", "검증매트릭스.json"), encoding="utf-8"))
+        _rows = _mx["rows"] if isinstance(_mx, dict) else _mx
+        _sum = {}
+        for x in _rows: _sum[(x["product"], x["status"])] = _sum.get((x["product"], x["status"]), 0) + 1
+        prods = sorted({x["product"] for x in _rows}, key=lambda p: ["CB", "RCPS", "BW", "SHA", "ALL"].index(p) if p in ("CB", "RCPS", "BW", "SHA", "ALL") else 9)
+        for i, h in enumerate(["상품", "PASS · BLOCK · LIMIT · FAIL · NOT_TESTED", "기준"]): put(V, r, 2 + i, h, bold=True, border=True)
+        r += 1
+        for pr in prods:
+            g = lambda st_: _sum.get((pr, st_), 0)
+            put(V, r, 2, pr, border=True)
+            put(V, r, 3, f"{g('PASS')} · {g('EXPECTED_BLOCK')} · {g('KNOWN_LIMITATION')} · {g('FAIL')} · {g('NOT_TESTED')}", border=True)
+            put(V, r, 4, (_mx.get("head", "") if isinstance(_mx, dict) else ""), size=9, color=RPT["grey"], border=True); r += 1
+    except Exception as _e:
+        put(V, r, 2, "매트릭스 파일이 없다 — python3 tests/기능목록.py 로 만든다", size=9, color=RPT["grey"]); r += 1
+    r += 1
+    put(V, r, 2, "4. 기준선 (docs/검증기준선.md)", bold=True, fill=RPT["band"]); put(V, r, 3, "", fill=RPT["band"]); put(V, r, 4, "", fill=RPT["band"]); r += 1
+    put(V, r, 2, "기본 계약 (carry=1)", border=True); put(V, r, 3, "주계약 37.5208 · 부채요소 73.1837 · 전체 114.8781 · 매도청구권 12.2404", border=True); r += 1
+    put(V, r, 2, "허용오차", border=True); put(V, r, 3, "이자율·확률 1e-12 · 금액(100 기준) 1e-6 · 조서 대 엔진 1e-4 · 역산 0.25 — docs/골든값과_허용오차.md", size=9, border=True, wrap=True); r += 1
+    V.sheet_properties.tabColor = RPT["sub"]
+    return C, V
+
+
+# 조서 99_모형검증 시트와 run_all.py 가 같은 목록을 쓴다
+VERIFY_SUITES = (
+    ("손계산대조", "계약에서 손으로 센 기대값 대 엔진 (독립)", "python3 tests/손계산대조.py"),
+    ("오라클", "app.py 를 보지 않고 쓴 닫힌 식 대 엔진 (독립)", "python3 tests/오라클.py"),
+    ("분기전수", "선택 가능한 모든 갈래 × 불변식", "python3 tests/분기전수.py"),
+    ("조합시험", "pairwise · 지정 3-way · seed 무작위 · 단조성", "python3 tests/조합시험.py"),
+    ("배선대조", "수식 조서 머리 행이 가정 시트를 바르게 참조하나", "python3 tests/배선대조.py"),
+    ("값조서대조", "값 조서 대 엔진", "python3 tests/값조서대조.py"),
+    ("주주간계약대조", "주주간계약 수식·값 조서 대 엔진", "python3 tests/주주간계약대조.py"),
+    ("조서대조", "수식 조서를 실제로 풀어 엔진과 대조", "python3 tests/조서대조.py"),
+    ("설정전수대조", "설정을 하나씩 흔들어 조서가 따라오나", "python3 tests/설정전수대조.py"),
+    ("리포트대조", "변동성·이자율 부속 리포트 대 엔진", "python3 tests/리포트대조.py"),
+    ("기능목록", "기능 명세와 커버리지 매트릭스", "python3 tests/기능목록.py --strict"),
+)
 
 
 def cost_split(tm: Terms, rows):
@@ -4656,11 +4903,13 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
 
     # ── 해설 ──
+    write_check_sheets(wb, tm, model_checks(tm, full, b0, b1, b2, ca, eir))
+
     H = wb.create_sheet("해설", 0); H.sheet_view.showGridLines = False
     H.column_dimensions["B"].width = 22; H.column_dimensions["C"].width = 96
     title(H, 2, "이 조서를 읽는 법", span=2)
     ex = [("시트 순서", ""),
-      ("구조", "트리 하나가 시트 하나다. 가정 → 01 주가 → … → 12 GS → 결과 → 회계처리."),
+      ("구조", "트리 하나가 시트 하나다. 가정 → 01 주가 → … → 12 GS → 결과 → 검산요약 → 회계처리."),
       ("따라가기", "시트 탭을 왼쪽부터 차례로 누르면 계산이 쌓이는 순서 그대로다."),
       ("", ""),
       ("머리 17행은 모두 같다", ""),
@@ -6263,6 +6512,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
 
     # ── 해설 ──
+    write_check_sheets(wb, tm, model_checks(tm, full, b0, b1, b2, ca, eir))
+
     H = wb.create_sheet("해설", 0); H.sheet_view.showGridLines = False
     H.column_dimensions["B"].width = 22; H.column_dimensions["C"].width = 96
     title(H, 2, "수식 조서 사용 안내", span=2)
@@ -6752,6 +7003,8 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None):
             put(AC, r, 4, v*tm.face_total/100, fmt=N0, align="right", border=True)
             r += 1
         note(AC, r, memo, span=4); r += 2
+
+    write_check_sheets(wb, tm, sha_checks(tm, R), after="회계처리")
 
     if attach:
         # 산출내역은 뒤로 보낸다. 앞 여섯 장이 조서의 본문이다.
@@ -9178,6 +9431,15 @@ with tabs[8]:
         st.caption("계약을 읽어야 답할 수 있는 것은 세 번째 줄 하나입니다. "
                    "나머지는 앱이 **격자를 실제로 훑어** 답합니다 — 「어긋난 노드 "
                    "0개」는 서술이 아니라 셈한 결과입니다.")
+        st.markdown("**검산 표 — 조서 「검산요약」 시트와 같은 표**")
+        _mc = model_checks(t, full, b0, b1, b2, ca, eir_or_none(t, full, b0, b1, b2, ca))
+        st.dataframe(pd.DataFrame(_mc, columns=["항목", "값", "판정", "설명"]),
+                     use_container_width=True, hide_index=True)
+        _mcbad = [nm for nm, _, vd, _ in _mc if vd == "확인 필요"]
+        if _mcbad: st.error("확인 필요: " + ", ".join(_mcbad))
+        with st.expander("모형의 알려진 한계 — 조서 「99_모형검증」 시트와 같은 표"):
+            st.dataframe(pd.DataFrame([(a, b) for a, b, _ in MODEL_LIMITS], columns=["한계", "설명"]),
+                         use_container_width=True, hide_index=True)
 
         # ── 극단 시험 — 격자를 두 번 더 돌리므로 눌렀을 때만 ──
         st.markdown("**극단에서 값이 붙는가**")

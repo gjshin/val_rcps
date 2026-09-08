@@ -1,5 +1,5 @@
 {
- "generated": "2026-09-08T02:40:39",
+ "generated": "2026-09-08T02:44:07",
  "head": "ref: refs/heads/claude/rcps-app",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
@@ -6466,14 +6466,18 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "화면 배분표 캡션",
     "docs/사례_대신증권_RCPS.md",
     "조서 회계처리 시트"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-02",
@@ -6486,14 +6490,18 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "UNMODELLED_NOTE (조서 표지)",
     "README",
     "docs/입력안내_RCPS.md"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-03",
@@ -6506,14 +6514,18 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "UNMODELLED_NOTE",
     "README",
     "화면 IPO 캡션"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-04",
@@ -6526,15 +6538,19 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "UNMODELLED_NOTE",
     "validate() 경고",
     "조서 상각표 자리 FVPL_NOTE",
     "docs/의사결정규칙.md §13"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-05",
@@ -6547,14 +6563,18 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "화면 조정일 처리 캡션",
     "조서 가정 시트 경고",
     "docs/의사결정규칙.md"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-06",
@@ -6567,13 +6587,17 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "UNMODELLED_NOTE",
     "docs/입력안내_RCPS.md"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-07",
@@ -6586,12 +6610,16 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "docs/의사결정규칙.md §7"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-08",
@@ -6604,13 +6632,17 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "validate() 경고",
     "docs/입력안내_BW.md"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-09",
@@ -6623,12 +6655,16 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "docs/입력안내_BW.md"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-10",
@@ -6641,13 +6677,17 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "화면 풋 할인율 캡션",
     "docs/입력안내_주주간계약.md"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-11",
@@ -6660,12 +6700,16 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "docs/입력안내_주주간계약.md"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-12",
@@ -6678,13 +6722,17 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "화면 역산 경고",
     "docs/의사결정규칙.md §10-1"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-13",
@@ -6697,13 +6745,17 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "화면",
     "조서"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-14",
@@ -6716,14 +6768,18 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "화면",
     "조서",
     "README"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-15",
@@ -6736,13 +6792,17 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "화면",
     "조서"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   },
   {
    "case_id": "LIMIT-16",
@@ -6755,14 +6815,18 @@
    "status": "KNOWN_LIMITATION",
    "oracle": "display_consistency",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
    "must_appear_in": [
     "화면",
     "조서",
     "README"
    ],
-   "display_checked": false
+   "display_checked": true,
+   "note": ""
   }
  ]
 }

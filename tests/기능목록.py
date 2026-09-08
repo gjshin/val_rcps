@@ -152,37 +152,9 @@ BLOCKS = [
 
 # 계산은 허용하되 한계가 화면·문서·조서에 같은 뜻으로 표시되어야 하는 것.
 # 표시 위치 셋은 6단계에서 검사한다. 여기서는 목록과 어디에 있어야 하는지만.
-LIMITS = [
-    ("복합내재파생이 음수", "발행자 상환권이 전환권보다 크면 부채 갈래 묶음이 음수 (대신증권 −9.0050)",
-     ["화면 배분표 캡션", "docs/사례_대신증권_RCPS.md", "조서 회계처리 시트"]),
-    ("배당가능이익·상환재원 제약 미반영", "계약상 상환일에 즉시 상환된다고 본다",
-     ["UNMODELLED_NOTE (조서 표지)", "README", "docs/입력안내_RCPS.md"]),
-    ("IPO 는 가정 비교이지 PWERM 이 아니다", "상장 시점·공모가는 확률분포가 아니라 가정",
-     ["UNMODELLED_NOTE", "README", "화면 IPO 캡션"]),
-    ("자기신용위험 변동분(5.7.7) 분해 안 함", "전체 FVPL 지정 후속측정에서 OCI 몫을 나누지 않는다",
-     ["UNMODELLED_NOTE", "validate() 경고", "조서 상각표 자리 FVPL_NOTE", "docs/의사결정규칙.md §13"]),
-    ("리픽싱 근사법(경로가중 등)은 근사", "E[1/K] ≠ 1/E[K]. 상태확장이 정확법",
-     ["화면 조정일 처리 캡션", "조서 가정 시트 경고", "docs/의사결정규칙.md"]),
-    ("리픽싱 기준가 = 노드 주가 (VWAP 아님)", "계약의 가중평균가 대신 노드 주가",
-     ["UNMODELLED_NOTE", "docs/입력안내_RCPS.md"]),
-    ("사전통지기간 미반영", "행사일 = 노드일", ["docs/의사결정규칙.md §7"]),
-    ("BW: 신주인수권증권 자체에 대한 콜 미지원", "콜은 사채에 대한 권리로만 잰다",
-     ["validate() 경고", "docs/입력안내_BW.md"]),
-    ("BW: 부분행사·다단계 행사가액 미지원", "단일 행사·단일 행사가액",
-     ["docs/입력안내_BW.md"]),
-    ("SHA: 상대방 신용은 할인율로만", "부도 손실률·회수율 구조 없음",
-     ["화면 풋 할인율 캡션", "docs/입력안내_주주간계약.md"]),
-    ("SHA: Drag/Tag/ROFR·다단계 strike 미지원", "", ["docs/입력안내_주주간계약.md"]),
-    ("역산이 목표를 정확히 못 맞힐 수 있다", "격자 값의 계단 (0.19 등)", ["화면 역산 경고", "docs/의사결정규칙.md §10-1"]),
-    ("자동전환·상장 강제전환 RCPS 의 전환권이 음수", "존속기간 만료 시 자동전환·상장 시 강제전환은 권리가 아니라 의무다. 주가가 낮으면 B2 < B1 이라 「전환권 = B2 − B1」 이 음수다 (분기전수·조합시험이 limit 로 허용)",
-     ["화면", "조서"]),
-    ("강제전환 할인율 효과로 매도청구권이 음수", "TF·GS 는 지분을 무위험(전환확률 가중)으로 할인한다. 콜이 전환을 강제하면 부채가 지분으로 바뀌어 할인이 가벼워지고 전체 가치가 오를 수 있다 → 유무가치비교법 매도청구권 < 0. RCPS 발행자 상환권은 ca_debt=max(0,·) 로 막는다",
-     ["화면", "조서", "README"]),
-    ("잔여 주계약 ≤ 0 이면 상각표 없음", "발행가 100 과 공정가치가 크게 다르면(Day-1 차이) 부채 분류의 잔여 주계약이 0 이하다. 유효이자율이 정의되지 않으므로 상각표를 만들지 않고 그 사실을 적는다 (4단계 F-05)",
-     ["화면", "조서"]),
-    ("비분리형 BW 는 신주인수권 조기행사를 상태로 갖지 않는다", "자식 노드의 매도청구는 신주인수권이 살아 있다고 보고 정해진다. 부모에서 투자자가 먼저 행사하면 그 콜은 사채만 비싸게 사는 셈이라 콜 있는 격자가 없는 격자보다 커질 수 있다 (매도청구권 < 0). 두 상태 격자로 고치는 것은 산식 변경이라 별도 승인 대상",
-     ["화면", "조서", "README"]),
-]
+# 알려진 한계는 app.py 의 MODEL_LIMITS 가 원본이다 — build_matrix 가 G 에서 읽는다.
+# 화면·조서는 그 표를 그대로 싣고, README 「한계」 에 제목이 있는지를 여기서 확인한다.
+LIMITS = []
 
 
 # ══════════════════════════════════════════════════════════
@@ -441,12 +413,16 @@ def build_matrix(G, cov, pres):
                          covered_by=([tf] if tf else []), n_tests=(1 if tf else 0),
                          note=("화면만 막고 엔진·validate 는 계산한다 — 세 경로가 같아야 한다 (지시서 §6.3)"
                                if where == "ui-only" else "")))
-    for i, (nm, why, where) in enumerate(LIMITS, 1):
+    readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    for i, (nm, why, where) in enumerate(G["MODEL_LIMITS"], 1):
+        shown = nm in readme
         rows.append(dict(case_id=f"LIMIT-{i:02d}", product="ALL", branch=nm, value=None, label=why,
                          meaning="계산은 하되 한계를 표시", kind="limitation",
-                         status="KNOWN_LIMITATION", oracle="display_consistency",
-                         independent_oracle=False, covered_by=[], n_tests=0,
-                         must_appear_in=where, display_checked=False))
+                         status="KNOWN_LIMITATION" if shown else "FAIL", oracle="display_consistency",
+                         independent_oracle=False, covered_by=(["README.md 「한계」", "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"] if shown else []),
+                         n_tests=(1 if shown else 0),
+                         must_appear_in=list(where), display_checked=shown,
+                         note=("" if shown else "README 「한계」 에 이 제목이 없다")))
     return rows
 
 
