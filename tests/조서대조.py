@@ -301,6 +301,9 @@ def build(G, over, path):
     wb.save(path)
     al, _ = G["allocate"](t, full, b0, b1, b2, ca)
     return dict(b0=b0, b1=b1, b2=b2, gs=full["GS"], b3=b3, ca=ca, conv=conv,
+                # 발행일 뒤 평가에 전기말 장부금액이 없으면 회계처리 시트가 «공정가치 산출 전용» 이라
+                # 배분표·분개가 없다 — 그때는 공정가치 표 첫 줄(전체 = b2)만 본다
+                fv_only=(G["acc_mode"](t) == "fv_only"),
                 ctp1=t.k_w*ctp1, ctp2=t.k_w*ctp2,
                 al=al, eq=(t.conv_class == "equity"), sep=(t.k_sep != 0),
                 fvpl=G["fvpl_on"](t),
@@ -359,59 +362,68 @@ def main():
             print("   %-22s 조서 %11s · 엔진 %11.4f  %s"
                   % (nm, f"{have:.4f}" if have is not None else "없음", want,
                      "" if ok else "★"))
-        # 회계처리 — 배분표 C7:C11 과 분개 차·대변 합계
         A = got[acc]
-        want_al = {k.split(" · ")[0].replace(" (잔여)", "").replace(
-                       " (옵션 없는 사채)", "").replace(
-                       " (사채 + 조기상환권)", ""): v for k, v in eng["al"][:-1]}
-        have_al = {}
-        for r in range(7, 13):
-            v = A.get(f"C{r}")
-            if v is not None: have_al[r] = v
-        # 부호까지 포함해 합이 100 이 되어야 한다
-        tot = A.get("C13")
-        okt = tot is not None and abs(tot - 100.0) < 1e-4
-        if not okt: bad += 1
-        print("   %-22s 조서 %11s · 기준 %11.4f  %s"
-              % ("배분 합계", f"{tot:.4f}" if tot is not None else "없음", 100.0,
-                 "" if okt else "★"))
-        drr, crr = A.get("C25"), A.get("D25")
-        # 분개는 배분표를 뒤집은 것이다. 음수 항목만 차변으로 간다.
-        want_dr = 100 + sum(-v for _, v in eng["al"][:-1] if v < 0)
-        okj = (drr is not None and crr is not None
-               and abs(drr - crr) < 1e-4 and abs(drr - want_dr) < 1e-4)
-        if not okj: bad += 1
-        print("   %-22s 차변 %11s · 대변 %11s · 기준 %10.4f  %s"
-              % ("분개 대차", f"{drr:.4f}" if drr is not None else "없음",
-                 f"{crr:.4f}" if crr is not None else "없음", want_dr,
-                 "" if okj else "★"))
-        # 배분 각 줄이 allocate() 와 같은가
-        # 7 주계약 · 8 부채요소 · 9 조기상환권 · 10 복합내재파생 · 11 매도청구 · 12 전환권대가
-        if eng["fvpl"]:
-            # 전체 지정이면 첫 줄이 복합계약 한 줄이고 나머지 요소별 줄은 빈다.
-            rows_ord = [("복합계약 전체", 7), ("매도청구권", 11)]
-        elif eng["eq"] and eng["nosep"]:
-            rows_ord = [("부채요소", 8), ("매도청구권", 11), ("전환권대가", 12)]
-        elif eng["eq"]:
-            rows_ord = [("주계약", 7), ("조기상환청구권", 9), ("매도청구권", 11),
-                        ("전환권대가", 12)]
+        if eng.get("fv_only"):
+            # 공정가치 전용 — 배분표·분개 대신 공정가치 표 첫 줄(전체)이 엔진 b2 인지
+            top = A.get("C10")
+            okf = top is not None and abs(top - eng["b2"]) < 1e-4
+            if not okf: bad += 1
+            print("   %-22s 조서 %11s · 엔진 %11.4f  %s" % ("공정가치 전용 · 전체",
+                  f"{top:.4f}" if top is not None else "없음", eng["b2"], "" if okf else "★"))
         else:
-            rows_ord = [("주계약", 7), ("복합내재파생상품", 10), ("매도청구권", 11)]
-        if not eng["sep"]:
-            # 콜을 내재파생에 넣으면 자산 줄이 비고 파생 줄이 순액이 된다
-            rows_ord = [(nm, r) for nm, r in rows_ord if nm != "매도청구권"]
-            if eng["eq"]:
-                rows_ord = [("주계약", 7), ("복합내재파생상품", 10),
+            # 회계처리 — 배분표 C7:C11 과 분개 차·대변 합계
+            A = got[acc]
+            want_al = {k.split(" · ")[0].replace(" (잔여)", "").replace(
+                           " (옵션 없는 사채)", "").replace(
+                           " (사채 + 조기상환권)", ""): v for k, v in eng["al"][:-1]}
+            have_al = {}
+            for r in range(7, 13):
+                v = A.get(f"C{r}")
+                if v is not None: have_al[r] = v
+            # 부호까지 포함해 합이 100 이 되어야 한다
+            tot = A.get("C13")
+            okt = tot is not None and abs(tot - 100.0) < 1e-4
+            if not okt: bad += 1
+            print("   %-22s 조서 %11s · 기준 %11.4f  %s"
+                  % ("배분 합계", f"{tot:.4f}" if tot is not None else "없음", 100.0,
+                     "" if okt else "★"))
+            drr, crr = A.get("C25"), A.get("D25")
+            # 분개는 배분표를 뒤집은 것이다. 음수 항목만 차변으로 간다.
+            want_dr = 100 + sum(-v for _, v in eng["al"][:-1] if v < 0)
+            okj = (drr is not None and crr is not None
+                   and abs(drr - crr) < 1e-4 and abs(drr - want_dr) < 1e-4)
+            if not okj: bad += 1
+            print("   %-22s 차변 %11s · 대변 %11s · 기준 %10.4f  %s"
+                  % ("분개 대차", f"{drr:.4f}" if drr is not None else "없음",
+                     f"{crr:.4f}" if crr is not None else "없음", want_dr,
+                     "" if okj else "★"))
+            # 배분 각 줄이 allocate() 와 같은가
+            # 7 주계약 · 8 부채요소 · 9 조기상환권 · 10 복합내재파생 · 11 매도청구 · 12 전환권대가
+            if eng["fvpl"]:
+                # 전체 지정이면 첫 줄이 복합계약 한 줄이고 나머지 요소별 줄은 빈다.
+                rows_ord = [("복합계약 전체", 7), ("매도청구권", 11)]
+            elif eng["eq"] and eng["nosep"]:
+                rows_ord = [("부채요소", 8), ("매도청구권", 11), ("전환권대가", 12)]
+            elif eng["eq"]:
+                rows_ord = [("주계약", 7), ("조기상환청구권", 9), ("매도청구권", 11),
                             ("전환권대가", 12)]
-        for nm, r in rows_ord:
-            want = want_al.get(nm)
-            if nm == "매도청구권": want = -eng["ca"]
-            have = have_al.get(r)
-            ok = have is not None and want is not None and abs(have - want) < 1e-4
-            if not ok: bad += 1
-            print("   %-22s 조서 %11s · 배분표 %9s  %s"
-                  % ("배분 · " + nm, f"{have:.4f}" if have is not None else "없음",
-                     f"{want:.4f}" if want is not None else "없음", "" if ok else "★"))
+            else:
+                rows_ord = [("주계약", 7), ("복합내재파생상품", 10), ("매도청구권", 11)]
+            if not eng["sep"]:
+                # 콜을 내재파생에 넣으면 자산 줄이 비고 파생 줄이 순액이 된다
+                rows_ord = [(nm, r) for nm, r in rows_ord if nm != "매도청구권"]
+                if eng["eq"]:
+                    rows_ord = [("주계약", 7), ("복합내재파생상품", 10),
+                                ("전환권대가", 12)]
+            for nm, r in rows_ord:
+                want = want_al.get(nm)
+                if nm == "매도청구권": want = -eng["ca"]
+                have = have_al.get(r)
+                ok = have is not None and want is not None and abs(have - want) < 1e-4
+                if not ok: bad += 1
+                print("   %-22s 조서 %11s · 배분표 %9s  %s"
+                      % ("배분 · " + nm, f"{have:.4f}" if have is not None else "없음",
+                         f"{want:.4f}" if want is not None else "없음", "" if ok else "★"))
     print("\n" + ("모든 항목 일치" if bad == 0 else f"★ {bad}건 불일치"))
     return 0 if bad == 0 else 1
 
