@@ -63,6 +63,7 @@ MANIFEST = {
     "k_method":    ("매도청구권 평가방법", {0: "유무가치비교", 1: "옵션차익혼합할인",
                                       2: "지분·부채 분리"}, ("CB", "BW", "RCPS")),
     "k_sep":       ("매도청구권 회계", {1: "별도 금융상품", 0: "복합내재파생에 포함"}, ("CB", "BW", "RCPS")),
+    "k_less_cpn":  ("매도청구금액 산식", {1: "보장수익률 복리 − 기 지급 이자·배당", 0: "순수 복리 (차감 없음)"}, ("CB", "BW", "RCPS")),
     "k_third":     ("제3자 지정 가능", {0: "발행회사만", 1: "제3자 지정 가능"}, ("CB", "BW", "RCPS")),
     "k_transfer":  ("사채와 독립 양도 가능", {0: "아니다", 1: "그렇다"}, ("CB", "BW", "RCPS")),
     "k_cmp":       ("매도청구 프리미엄 복리 횟수", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회"}, ("CB", "BW", "RCPS")),
@@ -322,6 +323,9 @@ def collect_coverage(G):
         "test_date_month_roundtrip": [("CB", "mid", True)],
         "test_pick_close": [("CB", "inst", "CB")],
         "test_acc_mode_fv_only": [("CB", "mid", True), ("SHA", "mid", True)],
+        "test_call_strike_switch": [("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1),
+                                    ("RCPS", "k_less_cpn", 0), ("BW", "k_less_cpn", 0), ("CB", "call", True)],
+        "test_eir_expected_maturity": [("CB", "p_sep", 0), ("CB", "p_sep", 1), ("CB", "k_sep", 1)],
         "test_bdt_review_gates": [("CB", "conv_class", "equity"), ("CB", "conv_class", "liability"),
                                   ("CB", "put_bdt", 1), ("CB", "put_bdt", 0), ("CB", "put", True), ("CB", "put", False)],
     }

@@ -157,6 +157,7 @@ class Terms:
     rvol_rating: str = ""         # BDT σ 를 뽑은 시계열의 등급 (빈칸 = 직접 입력·단일 파일)
     rvol_tenor: float = -1.0      # 그 시계열의 만기 (년). 만기 보간이면 잔존만기, 한 열이면 그 만기. 음수 = 모름
     rvol_how: str = ""            # σ 산출 근거 한 줄 (조서 가정 시트에 적는다)
+    k_less_cpn: int = 1           # 매도청구금액에서 기 지급 이자·배당을 뺀다(1, 상환가액과 같은 산식) / 안 뺀다(0, 순수 복리)
     put_bdt: int = 0              # 조기상환권 0 격자(확정) / 1 BDT 금리격자
     bdt_sig: float = 0.20         # BDT 단기이자율 변동성 (로그정규, 연)
     bdt_base: int = 0             # 0 위험 곡선 직접 / 1 무위험 + 확정 스프레드
@@ -665,6 +666,16 @@ def auto_conv(tm: Terms) -> bool:
     return is_rcps(tm) and int(tm.mat_mode) == 0
 
 
+def call_cpn(tm: Terms) -> float:
+    """매도청구금액 산식에서 빼는 정기 지급률.
+
+    상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 eff_cpn 을 뺀다.
+    매도청구(콜) 행사금액은 계약마다 갈린다 — 차바이오텍 RCPS 는 상환가액에서는 배당을 빼고
+    매도청구 행사금액(101.5084% ~ 103.0396%)은 순수 분기복리다. ``k_less_cpn`` 이 0 이면 빼지 않는다.
+    """
+    return eff_cpn(tm) if int(tm.k_less_cpn) else 0.0
+
+
 def eff_cpn(tm: Terms) -> float:
     """계산에 쓰는 정기 지급률.
 
@@ -977,7 +988,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
     put_a = lambda i: put_amt(i) if (put and in_set(i, tm.p_s, tm.p_e, tm.p_f)) else 0.0
     # kstrike 는 콜 스위치와 무관한 행사금액이다. 행사기간이 아니면 None.
     # call_a 는 call=False 면 항상 inf 라 제3자 콜옵션 평가에 쓸 수 없다.
-    kstrike = lambda i: (100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, eff_cpn(tm),
+    kstrike = lambda i: (100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, call_cpn(tm),
                                              tm.k_cmp))
                          if in_set(i, tm.k_s, tm.k_e, tm.k_f) else None)
     call_a = lambda i: (kstrike(i) if (call and in_set(i, tm.k_s, tm.k_e, tm.k_f))
@@ -2433,7 +2444,7 @@ def eir_or_none(tm: Terms, full, b0, b1, b2, ca):
     """
     if acc_mode(tm) == "fv_only": return None      # 공정가치 전용 — 상각표를 만들지 않는다
     host = acc_host(tm, full, b0, b1, b2, ca)
-    return None if host is None else eir_table(tm, host)
+    return None if host is None else eir_table(tm, host, eir_expect(tm))
 
 
 BDT_GAP_TOL = 0.05      # 보장수익률 대 위험할인율 격차(연 실효, %p). 이보다 작으면 «유의하지 않음»
@@ -2639,7 +2650,8 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
         r_, arows, red_, _ = eir
         end = arows[-1][5]
         out.append(("상각표 기말 = 상환금액", f"{end:,.6f} = {red_:,.6f}", "적합" if abs(end - red_) <= 1e-6 else "확인 필요",
-                    f"유효이자율 {r_:.4%}"))
+                    f"유효이자율 {r_:.4%}" + (" · 기대만기 = 첫 조기상환 가능일 (조기상환권 비분리)"
+                                          if eir_expect(tm) is not None else "")))
     notes = getattr(tm, "forced_notes", [])
     out.append(("되돌린 설정 (지원하지 않는 조합)", f"{len(notes)}건", "해당 없음" if not notes else "확인 필요",
                 "; ".join(f"{k} → {v}" for k, v, _ in notes) if notes else "없음"))
@@ -2877,10 +2889,41 @@ def pay_index(tm: Terms, t_year: float) -> int:
     return max(1, int(round((t_year + tm.elapsed_m/12)/per)))
 
 
-def eir_table(tm: Terms, host):
+def eir_expect(tm: Terms):
+    """조기상환권을 분리하지 않을 때 상각표가 써야 하는 **기대만기** — (연수, 상환금액, 개월) 또는 None.
+
+    조기상환권을 분리하지 않으면(전환권 자본 · 매도청구권 별도 · p_sep=0) 부채요소(사채 + 조기상환권)를
+    통째로 상각후원가로 둔다. 그때 계약만기 현금흐름으로 유효이자율을 구하면 첫 조기상환 가능일의
+    행사금액과 장부금액이 크게 벌어지고 이자비용·부채가 과소계상된다 — 기준서가 분리하지 않아도 되는
+    경우로 든 «행사가격 ≈ 상각후원가»(B4.3.5(5)(가))와 어긋난다. 적합한 처리는 첫 조기상환 가능일을
+    기대만기로, 그 시점 행사금액을 기대만기 현금흐름으로 두는 것이다.
+
+    첫 조기상환 가능일이 평가기준일 이전이면 그 뒤의 첫 조기상환 가능일(주기 단위)이다. 그마저 평가기준일과
+    같은 날이면(잔여 0) 상각할 기간이 없어 None — 계약만기로 둔다.
+    분리 판단의 10% 검토는 옵션 없는 주계약(B0)이 대상이라 이 함수를 쓰지 않는다.
+    """
+    if fvpl_on(tm) or is_sha(tm) or is_bw(tm): return None
+    if not (tm.conv_class == "equity" and tm.k_sep != 0 and int(tm.p_sep) == 0): return None
+    if tm.p_s > tm.p_e: return None
+    m = float(tm.p_s)
+    step = max(float(tm.p_f), 1e-6)
+    while m < tm.elapsed_m - 1e-9 and m <= tm.p_e + 1e-9: m += step
+    if m > tm.p_e + 1e-9: return None
+    t_exp = (m - tm.elapsed_m)/12
+    if t_exp < 0.01 or t_exp > tm.T - 1e-9: return None
+    amt = (100*(1 + accrue_rate(m/12, tm.p_yield, eff_cpn(tm), tm.p_cmp))
+           if tm.p_mode == "accrue" else float(tm.p_rate))
+    return (t_exp, amt, m)
+
+
+def eir_table(tm: Terms, host, expect=None):
+    """유효이자율 상각표. ``expect`` = eir_expect() — 있으면 그 연수·금액이 만기 대신 선다."""
     c = 100*eff_cpn(tm)*tm.ipay/12
     per = max(1e-6, tm.ipay/12)
     red = 100*(1 + accrue_rate(tm.T + tm.elapsed_m/12, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
+    hz = tm.T
+    if expect is not None:
+        hz, red = expect[0], expect[1]
     # 지급일은 계약상 일정이므로 **발행일**부터 센다. 평가기준일이 발행일보다
     # 뒤이면 첫 회차만 짧아지고 나머지는 온전한 한 주기다. 평가기준일에서
     # 세면 지급일이 계약과 어긋나 이자비용이 회차마다 밀린다.
@@ -2888,15 +2931,15 @@ def eir_table(tm: Terms, host):
     # 하루짜리 회차를 만들지 않는다.
     ey_ = tm.elapsed_m/12
     ts, k = [], 1
-    while k*per - ey_ < tm.T - per*0.1:
+    while k*per - ey_ < hz - per*0.1:
         t_ = k*per - ey_
         if t_ > per*0.1: ts.append(t_)
         k += 1
-    ts.append(tm.T)
+    ts.append(hz)
     nper = len(ts)
     def pv(r):
         return (sum(c*(1+r)**(-t) for t in ts[:-1])
-                + (c + red)*(1+r)**(-tm.T))
+                + (c + red)*(1+r)**(-hz))
     # 상한은 넉넉히 잡되 고정하지 않는다 — 만기 한두 달 앞의 중간평가는 연 환산 유효이자율이
     # 수백 % 를 넘을 수 있고, 상한에 걸리면 상각표가 엉뚱한 곳에서 끝난다. 상한에서도
     # 현재가치가 장부금액을 넘으면 상한을 네 배씩 올린다 (1e4 = 연 1,000,000%).
@@ -2942,7 +2985,7 @@ def pc_overlap(tm: Terms):
         t_ = i*dt_ + ey
         pv = (100*(1 + accrue_rate(t_, tm.p_yield, eff_cpn(tm), tm.p_cmp))
               if tm.p_mode == "accrue" else tm.p_rate)
-        kv = 100*(1 + accrue_rate(t_, tm.k_prem, eff_cpn(tm), tm.k_cmp))
+        kv = 100*(1 + accrue_rate(t_, tm.k_prem, call_cpn(tm), tm.k_cmp))
         out.append((i, t_*12, pv, kv))
     return out
 
@@ -4557,7 +4600,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         return tm.p_rate
     def call_amt(i, on=True):
         if not on or not in_set(i, tm.k_s, tm.k_e, tm.k_f): return 999999
-        return 100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, eff_cpn(tm), tm.k_cmp))
+        return 100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, call_cpn(tm), tm.k_cmp))
 
     HEAD = ["Date", "time-step", "Flag(전환)", "Flag(조기상환)", "Flag(매도청구)",
             "Flag(리픽싱)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환",
@@ -4662,6 +4705,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
          ("분리하지 않음 · 부채요소에 포함" if _nosep else "분리 · 파생상품부채"),
          None),
         ("매도청구 시작 / 종료 / 주기", _md(tm.k_s, tm.k_s <= tm.k_e), None), ("　  ", _md(tm.k_e, tm.k_s <= tm.k_e), None), ("　   ", tm.k_f, N0),
+        ("매도청구금액 산식", ("보장수익률 복리 − 기 지급 이자·배당" if int(tm.k_less_cpn) else "보장수익률 순수 복리 (지급분 차감 없음)"), None),
         ("매도청구 프리미엄", tm.k_prem, P2),
         ("매도청구 복리 횟수 (연)", tm.k_cmp, N0), ("매도청구 한도", tm.k_w, P2),
         ("의무보유 전환지연 (개월)", _md(tm.k_lock), None),
@@ -5152,12 +5196,17 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         r_eir, rows_eir, redm, nper = eir
         title(M, 2, "주계약 상각표", span=7)
         put(M, 3, 2, "지급일은 계약상 일정이므로 발행일부터 센다. 회차 수는 노드가 아니라 "
-            "이자 지급주기를 따른다.", color=GREY, size=9)
+            "이자 지급주기를 따른다."
+            + ("  ※ 조기상환권을 분리하지 않으므로 기대만기 = 첫 조기상환 가능일, 만기 현금흐름 = 그 시점 "
+               "행사금액이다. 계약만기로 굴리면 첫 조기상환일의 행사금액과 장부금액이 벌어져 이자비용·부채가 "
+               "과소계상된다 (B4.3.5(5)(가))." if eir_expect(tm) is not None else ""),
+            color=GREY, size=9)
         sec(M, 4, "유효이자율 역산", span=7)
         for i, (k, v, fm) in enumerate([("주계약 (인식액, 거래원가 차감 후)"
                                         if tm.issue_cost > 0 else "주계약 (인식액)",
                                         rows_eir[0][2] if rows_eir else b0, N2),
-                                        ("만기상환금액", redm, N2),
+                                        (("기대만기 상환금액 (첫 조기상환 가능일 행사금액)"
+                                          if eir_expect(tm) is not None else "만기상환금액"), redm, N2),
                                         ("표면이자 (회당)", cpn_amt, N2),
                                         ("상각 횟수", nper, N0)]):
             put(M, 5+i, 2, k, border=True)
@@ -5169,9 +5218,11 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                                "지급이자", "기말"]):
             put(M, 12, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
         _di = dt.date.fromisoformat(tm.d_issue); _dm = dt.date.fromisoformat(tm.d_mat)
+        _exv = eir_expect(tm)
+        if _exv is not None: _dm = months_to_date(_di, _exv[2])     # 기대만기 = 첫 조기상환 가능일
         for i, row in enumerate(rows_eir):
             last = (i == len(rows_eir)-1); fl = BAND if last else None
-            # 마지막은 만기일, 나머지는 발행일 + 회차 × 지급주기다.
+            # 마지막은 만기일(기대만기), 나머지는 발행일 + 회차 × 지급주기다.
             pd_ = (_dm if last else
                    _add_months(_di, int(round(pay_index(tm, row[1])*tm.ipay))))
             put(M, 13+i, 2, row[0], bold=last, fill=fl, fmt=N0, align="right", border=True)
@@ -5472,6 +5523,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("조기상환 종료 (스텝)", "pen", stp_hi(tm.p_e), N0, True),
         ("조기상환 주기 (스텝)", "frq", max(1, int(round(tm.p_f*mper))), N0, True),
         ("조기상환 행사금액", "prate", tm.p_rate, N2, True),
+        ("조기상환 산식 (1 보장수익률 복리 / 0 확정 금액)", "pmode", (1 if tm.p_mode == "accrue" else 0), N0, True),
+        ("조기상환 시작 (발행일 기준 개월)", "psm", tm.p_s, N0, True),
         ("조기상환 보장수익률", "pyld", tm.p_yield, P2, True),
         ("보장 복리 (연 회)", "pcmp", tm.p_cmp, N0, True),
         ("매도청구 시작 (스텝)", "kst", stp_lo(tm.k_s), N0, True),
@@ -5479,6 +5532,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("매도청구 주기 (스텝)", "kfrq", max(1, int(round(tm.k_f*mper))), N0, True),
         ("매도청구 프리미엄", "prem", tm.k_prem, P2, True),
         ("매도청구 복리 횟수 (연)", "kcmp", tm.k_cmp, N0, True),
+        ("매도청구금액에서 지급 이자·배당 차감 (1/0)", "kless", int(tm.k_less_cpn), N0, True),
         ("매도청구 한도", "cw", tm.k_w, P2, True),
         # 계약 우선순위는 트리 구조를 정한다. 엑셀에서 바꿔도 수식이 따라오지
         # 않으므로 흰 셀(입력 아님)로 두고 앱에서 고른 것을 적어만 둔다.
@@ -5543,6 +5597,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             ("표면이자율 (계산에 쓰는 값)", "cpn", "@=IF(C{dmode}=1,0,C{cpnc})", P2, False)]
     ROWN = {key: 3+i for i, (_, key, _, _, _) in enumerate(spec)}
     K = {key: f"가정!$C${r}" for key, r in ROWN.items()}
+    # 매도청구금액 산식에서 빼는 지급률 — 스위치가 0 이면 0 (순수 복리)
+    _KC = f"IF({K['kless']}=1,{K['cpn']},0)"
     for i, (nm, key, v, fm, inp) in enumerate(spec):
         r = 3+i
         put(A, r, 2, nm, border=True)
@@ -5601,12 +5657,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             g(6, f"=IF(AND({st}>0,{st}>={K['roff']},"
                  f"MOD({st}-{K['roff']},{K['cyc']})=0),1,0)", N0, RED)
             # 상환할증금 = (g−c)/g × ((1+g/m)^(m·t) − 1).  g 가 0 이면 (g−c)·t
-            g(7, f"=IF({L}$4=1,IF({K['pyld']}>0,"
+            g(7, f"=IF({L}$4=1,IF({K['pmode']}=1,"
                  f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
                  f"{K['prate']}),0)", N2)
             g(8, f"=IF({L}$5=1,IF({K['prem']}>0,"
-                 f"100*(1+{xl_prem(K['prem'], K['cpn'], K['kcmp'], yr)}),"
-                 f"100*(1+MAX(0,-{K['cpn']}*{yr}))),999999)", N2)
+                 f"100*(1+{xl_prem(K['prem'], _KC, K['kcmp'], yr)}),"
+                 f"100*(1+MAX(0,-{_KC}*{yr}))),999999)", N2)
             g(9, f"=IF(AND({st}>0,{st}>={K['payoff']},"
                  f"MOD({st}-{K['payoff']},{K['ipay']})=0),"
                  f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
@@ -6155,7 +6211,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
         g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
              f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
-        g(7, f"=IF({L}$6=1,IF({K['pyld']}>0,"
+        g(7, f"=IF({L}$6=1,IF({K['pmode']}=1,"
              f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
              f"{K['prate']}),0)", N2)
         g(8, f"=IF(AND({st}>0,{st}>={K['payoff']},"
@@ -6195,7 +6251,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
             g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
                  f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
-            g(7, f"=IF({L}$6=1,IF({K['pyld']}>0,"
+            g(7, f"=IF({L}$6=1,IF({K['pmode']}=1,"
                  f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
                  f"{K['prate']}),0)", N2)
             g(8, f"=IF(AND({st}>0,{st}>={K['payoff']},"
@@ -6206,8 +6262,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             g(11, f"=IF(AND({st}>={K['kst']},{st}<={K['ken']},"
                   f"MOD({st}-{K['kst']},{K['kfrq']})=0),1,0)", N0)
             g(12, f"=IF({L}$11=1,IF({K['prem']}>0,"
-                  f"100*(1+{xl_prem(K['prem'], K['cpn'], K['kcmp'], yr)}),"
-                  f"100*(1+MAX(0,-{K['cpn']}*{yr}))),999999)", N2)
+                  f"100*(1+{xl_prem(K['prem'], _KC, K['kcmp'], yr)}),"
+                  f"100*(1+MAX(0,-{_KC}*{yr}))),999999)", N2)
             _cont = f"{Ln}13*EXP(-{L}$10*{K['dt']})+{L}$8"
             # 전환이 없는 갈래라 xl_decide 의 cv=None 과 같은 모양이다.
             g(13, (f"=MAX({L}$7,{L}$9)+{L}$8" if i == n else
@@ -6244,7 +6300,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                 g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
                 g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
                      f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
-                g(7, f"=IF({L}$6=1,IF({K['pyld']}>0,"
+                g(7, f"=IF({L}$6=1,IF({K['pmode']}=1,"
                      f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
                      f"{K['prate']}),0)", N2)
                 g(8, f"=IF(AND({st}>0,{st}>={K['payoff']},"
@@ -6574,10 +6630,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                                                              vertical="top")
     else:
         r_eir, rows_eir, redm, nper = eir
+        _exf = eir_expect(tm)
         title(M, 2, "주계약 상각표", span=7)
         put(M, 3, 2, "주계약(옵션 없는 사채)을 유효이자율법으로 상각한다. "
             "기말 잔액이 만기상환금액과 맞아떨어져야 한다. "
-            "지급일은 계약상 일정이므로 발행일부터 센다. 평가기준일이 발행일보다 뒤이면 "
+            + ("※ 조기상환권을 분리하지 않으므로 기대만기 = 첫 조기상환 가능일, 만기 현금흐름 = 그 시점 "
+               "행사금액이다 (B4.3.5(5)(가)). " if _exf is not None else "")
+            + "지급일은 계약상 일정이므로 발행일부터 센다. 평가기준일이 발행일보다 뒤이면 "
             "첫 회차만 짧고 나머지는 온전한 한 주기다. 회차 수는 노드가 아니라 "
             "이자 지급주기를 따른다.", color=GREY, size=9)
         sec(M, 5, "유효이자율 역산", span=6)
@@ -6586,7 +6645,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                 ("주계약 (인식액, 거래원가 차감 후)",
                  f'=IF({K["eqcls"]}=1,IF(AND({K["ksep"]}=1,{K["psep"]}=0),결과!C17,'
                  f'결과!C16),결과!C25)-회계처리!D32-회계처리!D33', N2, None),
-                ("만기상환금액", f"={K['red']}", N2, None),
+                # 조기상환권 비분리면 기대만기(첫 조기상환 가능일)의 행사금액이 만기 현금흐름이다.
+                # 그 개월(psm 또는 그 뒤 첫 주기)이 가정의 psm 과 같으면 수식, 아니면 값.
+                ((("기대만기 상환금액 (첫 조기상환 가능일 행사금액)",
+                   (f"=IF({K['pmode']}=1,100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], '(' + K['psm'] + '/12)')}),{K['prate']})"
+                    if abs(_exf[2] - tm.p_s) < 1e-9 else None), N2, _exf[1])
+                  if _exf is not None else ("만기상환금액", f"={K['red']}", N2, None))),
                 ("표면이자 (회당)", f"=100*{K['cpn']}*{K['ipaym']}/12", N2, None),
                 ("상각 횟수", None, N0, nper)]):
             put(M, 6+i, 2, k, border=True)
@@ -6605,7 +6669,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             prev = r-1
             put(M, r, 2, row[0], fmt=N0, align="right", border=True, bold=last, fill=fl)
             # 계약상 지급일이다. 마지막은 만기일, 나머지는 발행일에 달을 더한다.
-            pdf = (f"={K['d_mat']}" if last else
+            pdf = ((f"={K['d_mat']}" if _exf is None else f"=EDATE({K['d_issue']},{int(round(_exf[2]))})") if last else
                    f"=EDATE({K['d_issue']},{int(round(pay_index(tm, row[1])*tm.ipay))})")
             put(M, r, 3, pdf, fmt=DATE, align="right", border=True, bold=last, fill=fl)
             put(M, r, 4, row[1], fmt=N2, align="right", border=True, bold=last, fill=fl)
@@ -7864,7 +7928,10 @@ with st.sidebar:
             elif int(t.p_sep) == 0:
                 st.caption("부채요소(사채 + 조기상환권)를 통째로 상각후원가로 둡니다. "
                            "파생상품부채를 세우지 않고, 상각표도 부채요소에서 "
-                           "출발합니다. 전환권대가는 어느 쪽이든 같습니다.")
+                           "출발합니다. 전환권대가는 어느 쪽이든 같습니다. 상각표의 만기는 "
+                           "계약만기가 아니라 **첫 조기상환 가능일(기대만기)** 이고 그 시점 "
+                           "행사금액이 만기 현금흐름입니다 — 계약만기로 굴리면 이자비용·부채가 "
+                           "과소계상됩니다.")
 
             st.divider()
             st.markdown("**평가 방법**")
@@ -8110,6 +8177,8 @@ with st.sidebar:
                                                 "− 기지급배당. 상환청구권과 같은 산식입니다.")/100
                 t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
                                               help=HLP_CMP))
+                t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자·배당 차감", value=bool(t.k_less_cpn),
+                                               key="kless1", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다."))
                 st.caption("상환청구권과 하나의 **복합내재파생상품**으로 묶어 순액으로 봅니다 "
                            "(기준서 1109 문단 B4.3.4). 전환권을 자본으로 두면 부채요소는 "
                            "「우선주 + 상환청구권 − 발행자 상환권」입니다.")
@@ -8123,6 +8192,8 @@ with st.sidebar:
                          "계약서의 회차별 매도청구권 행사금액(%) 표와 대조하십시오.")/100
                 t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
                                               help="공시 행사금액표가 분기복리면 4. " + HLP_CMP))
+                t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자·배당 차감", value=bool(t.k_less_cpn),
+                                               key="kless2", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다."))
                 # 콜 갈래를 바꾸면 derive 가 k_w 를 0(없음)이나 1(발행자 상환권)로
                 # 눌러 놓는다. 그 값을 그대로 보이면 한도가 0% 로 뜨므로, 처음
                 # 열릴 때는 실무에서 흔한 20% 를 채워 둔다. 계약서 값으로 고치면 된다.
@@ -8167,6 +8238,8 @@ with st.sidebar:
               t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
                                             help="분기복리 4 · 반기 2 · 연 1. " + HLP_CMP
                                                  + " 계약서의 매수대금 표와 맞는지 확인하십시오."))
+              t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자 차감", value=bool(t.k_less_cpn),
+                                             key="kless3", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다."))
               t.k_w = st.number_input("행사 한도 (%)", value=t.k_w*100, step=5.0)/100
               t.k_lock = _sched_one(
                   st, "의무보유 전환지연 (개월)", "의무보유 만료일", t.k_lock, "klock",
@@ -9794,9 +9867,17 @@ with tabs[6]:
                "전환권을 **자본**으로 두셨다면 애초에 지정할 수 없어(문단 4.2.2) "
                "이 화면이 뜨지 않습니다.")
   else:
-    r_eir, rows_eir, red, nper = eir_table(t, _ah6)
+    _ex = eir_expect(t)
+    r_eir, rows_eir, red, nper = eir_table(t, _ah6, _ex)
+    if _ex is not None:
+        st.info(f"**조기상환권을 분리하지 않으므로 기대만기로 상각합니다.** 첫 조기상환 가능일"
+                f"(발행일 기준 {_ex[2]:,.1f}개월 · 평가기준일부터 {_ex[0]:.2f}년)을 만기로, 그 시점 "
+                f"행사금액 {_ex[1]:,.4f} 를 만기 현금흐름으로 두고 유효이자율을 구합니다. 계약만기 "
+                "현금흐름으로 구하면 첫 조기상환일의 행사금액과 장부금액이 벌어져 이자비용·부채가 "
+                "과소계상됩니다 (B4.3.5(5)(가)의 «행사가격 ≈ 상각후원가» 와 어긋납니다).")
     st.dataframe(pd.DataFrame([
-        ["주계약 (옵션 없는 사채)", f"{b0:,.2f}"], ["만기상환금액", f"{red:,.2f}"],
+        ["주계약 (옵션 없는 사채)", f"{b0:,.2f}"],
+        [("기대만기 상환금액 (첫 조기상환 가능일 행사금액)" if _ex is not None else "만기상환금액"), f"{red:,.2f}"],
         ["표면이자 (회당)", f"{100*eff_cpn(t)*t.ipay/12:,.2f}"], ["상각 횟수", f"{nper}회"],
         ["유효이자율 (연, 이산복리)", f"{r_eir:.2%}"]], columns=["항목", "값"]),
         use_container_width=True, hide_index=True)

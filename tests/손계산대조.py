@@ -934,6 +934,69 @@ def test_acc_mode_fv_only():
     chk_bool("matrix_summary 가 CB 줄을 돌려준다", ms is not None and any(p == "CB" for p, _ in ms["rows"]))
 
 
+def test_call_strike_switch():
+    """매도청구 행사금액 — 차바이오텍 공시 101.5084% (1년) · 103.0396% (2년), 분기복리 1.5%, 배당 차감 없음."""
+    print("\n[24] 매도청구금액의 지급 이자·배당 차감 스위치")
+    RF = [(1, .030), (3, .031), (5, .032)]; CR = [(1, .14), (3, .17), (5, .19)]
+    base = dict(rf_curve=RF, cr_curve=CR, gap_m=1., k_s=12., k_e=24., k_f=1., k_prem=.015, k_cmp=4, k_w=.2,
+                cpn=.0003, ipay=12.)
+    for inst, extra in (("CB", {}), ("RCPS", dict(inst="RCPS", issuer_call=2, div_mode=0)), ("BW", dict(inst="BW"))):
+        t0 = Terms(**base, **extra, k_less_cpn=0); derive(t0)
+        t1 = Terms(**base, **extra, k_less_cpn=1); derive(t1)
+        f0 = G["engine"](t0, call=True); f1 = G["engine"](t1, call=True)
+        dt_ = t0.T/t0.n; i1 = round(1.0/dt_); i2 = round(2.0/dt_)
+        ar, cc = G["accrue_rate"], G["call_cpn"]
+        # 계약값 — 발행일부터 정확히 1년·2년. 노드는 1년에 딱 떨어지지 않으므로(윤일) 산식으로 견준다
+        chk(f"{inst} · 차감 없음 — 1년 행사금액 (공시 101.5084)", 100*(1 + ar(1.0, .015, cc(t0), 4)), 101.5084, 1e-3)
+        chk(f"{inst} · 차감 없음 — 2년 행사금액 (공시 103.0396)", 100*(1 + ar(2.0, .015, cc(t0), 4)), 103.0396, 1e-3)
+        chk(f"{inst} · 격자의 행사금액 = 그 노드 연수의 순수 복리", f0["kstrike"](i1),
+            100*(1 + ar(i1*dt_, .015, 0.0, 4)), 1e-9)
+        chk_bool(f"{inst} · 차감(기본)이 차감 없음보다 낮다", f1["kstrike"](i1) < f0["kstrike"](i1))
+        chk(f"{inst} · 차감(기본) = 종전 산식", f1["kstrike"](i1),
+            100*(1 + ar(i1*dt_, .015, G["eff_cpn"](t1), 4)), 1e-9)
+    # 값이 움직인다 — 행사금액이 오르면 발행자 권리는 싸진다 (매도청구권 ≤)
+    t0 = Terms(**base, k_less_cpn=0); derive(t0); t1 = Terms(**base, k_less_cpn=1); derive(t1)
+    _, _, _, _, ca0, _ = G["decompose"](t0); _, _, _, _, ca1, _ = G["decompose"](t1)
+    chk_bool("차감 없음이면 매도청구권 값이 같거나 작다", ca0 <= ca1 + 1e-9)
+
+
+def test_eir_expected_maturity():
+    """조기상환권을 분리하지 않으면 상각표의 만기는 첫 조기상환 가능일이고 만기 현금흐름은 그 행사금액이다."""
+    print("\n[26] 비분리 조기상환권 — 기대만기 유효이자율")
+    import io, openpyxl
+    RF = [(1, .030), (3, .031), (5, .032)]; CR = [(1, .14), (3, .17), (5, .19)]
+    base = dict(rf_curve=RF, cr_curve=CR, conv_class="equity", k_sep=1, p_s=24., p_e=57., p_f=3.,
+                p_mode="accrue", p_yield=.03, p_cmp=4, ipay=3.)
+    t0 = Terms(**base, p_sep=0); derive(t0)
+    ex = G["eir_expect"](t0)
+    chk_bool("p_sep=0 → 기대만기가 있다", ex is not None)
+    chk("기대만기 연수 = 24개월", ex[0], 2.0, 1e-9)
+    chk("기대만기 상환금액 = 24개월 행사금액", ex[1], 100*(1 + G["accrue_rate"](2.0, .03, G["eff_cpn"](t0), 4)), 1e-9)
+    full, b0, b1, b2, ca, conv = G["decompose"](t0)
+    eir = G["eir_or_none"](t0, full, b0, b1, b2, ca)
+    r_, rows, red, nper = eir
+    chk("상각표 마지막 회차 연수 = 기대만기", rows[-1][1], 2.0, 1e-9)
+    chk("상각표 기말 = 기대만기 행사금액", rows[-1][5], ex[1], 1e-6)
+    chk("상각표 출발 = 부채요소 (사채 + 조기상환권)", rows[0][2], b1, 1e-6)
+    # 계약만기로 굴렸을 때보다 이자비용(유효이자율)이 높다 — 과소계상이 걷힌다
+    rc, rowsc, _, _ = G["eir_table"](t0, rows[0][2])
+    chk_bool("기대만기 유효이자율 > 계약만기 유효이자율", r_ > rc)
+    for fn in ("build_xlsx", "build_xlsx_formula"):
+        wb = openpyxl.load_workbook(io.BytesIO(G[fn](t0, full, b0, b1, b2, ca, conv, eir)))
+        M = wb["상각표"]
+        lab = [str(M.cell(r, 2).value) for r in range(1, 12)]
+        chk_bool(f"{fn} — 상각표에 «기대만기» 라벨", any("기대만기" in x for x in lab))
+    t1 = Terms(**base, p_sep=1); derive(t1)
+    chk_bool("p_sep=1 → 기대만기 없음 (계약만기)", G["eir_expect"](t1) is None)
+    full, b0, b1, b2, ca, conv = G["decompose"](t1)
+    _, rows1, _, _ = G["eir_or_none"](t1, full, b0, b1, b2, ca)
+    chk("p_sep=1 — 마지막 회차 연수 = 계약만기", rows1[-1][1], t1.T, 1e-9)
+    # 첫 조기상환 가능일이 평가기준일 이전이면 그 뒤 첫 주기
+    t2 = Terms(**base, p_sep=0, d_issue="2024-05-16", d_base="2026-07-01", d_mat="2029-05-16"); derive(t2)
+    ex2 = G["eir_expect"](t2)
+    chk_bool("경과 뒤 — 평가기준일 이후 첫 조기상환 가능일", ex2 is not None and ex2[2] >= t2.elapsed_m and ex2[2] - 24 in (0., 3., 6.) or (ex2 is not None and abs(((ex2[2]-24) % 3)) < 1e-9))
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -960,6 +1023,8 @@ def main():
     test_pick_close()
     test_bdt_review_gates()
     test_acc_mode_fv_only()
+    test_call_strike_switch()
+    test_eir_expected_maturity()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
