@@ -1688,7 +1688,16 @@ def call_method_text(tm: Terms) -> str:
                   "유지되는 효과만 담는다" if int(tm.k_hold) == 1
                   else "; 콜 대상물량에 의무보유가 없어 투자자의 전환·조기상환으로 콜도 소멸한다고 본다"))
     base = f" · 선택 근거: {tm.k_basis.strip()}" if (tm.k_basis or "").strip() else ""
-    return f"{kind} · {how}{base} — 한공회 『K-IFRS 실무사례와 해설 시리즈 11』 4.6 대로 일관 적용"
+    # 한공회 본문이 유형별로 「기본적인 접근법」을 지정한다 — 고른 방법이 그것과 같은지 밝힌다.
+    # 발행자만 행사하는 콜은 행사하면 사채가 소멸해 기초자산이 남지 않는다 — 복합옵션
+    # 구조가 성립하지 않으므로 본문 4.3.2 가 유무가치비교법을 기본으로 둔다.
+    std = ("유무가치비교법 (4.3.2)" if (issuer_redeem(tm) or not tm.k_third)
+           else "옵션차익혼합할인법 (4.3.4·4.4.3)")
+    now = "유무가치비교법" if int(tm.k_method) == 0 else "옵션차익혼합할인법"
+    same = (" — 본문 기본 접근법과 같다" if now in std else
+            " — **본문 기본 접근법과 다르다.** 4.6.2 대로 선택 근거를 남길 것")
+    return (f"{kind} · {how}{base} · 본문 기본 접근법: {std}{same}"
+            " — 한공회 『K-IFRS 실무사례와 해설 연구보고서 시리즈 11』 4.6 대로 일관 적용")
 
 
 
@@ -3276,6 +3285,11 @@ def validate(tm: Terms):
                    else "「투자자 조기상환 우선」")
                 + " 입니다. 계약서의 통지기간과 우선순위 조항을 확인하시고, 고른 "
                   "근거를 조서에 남기십시오. (매도청구권 칸에서 바꿉니다)")
+    if tm.k_w > 0 and not is_sha(tm) and not tm.k_third and int(tm.k_method):
+        w.append("매도청구권을 **발행회사만** 행사할 수 있다고 두셨는데 옵션차익혼합할인법을 "
+                 "고르셨습니다. 발행자 콜은 행사하면 사채가 소멸해 기초자산이 남지 않으므로 "
+                 "복합옵션 구조가 성립하지 않습니다 — 본문 4.3.2 는 **유무가치비교법**을 기본 "
+                 "접근법으로 둡니다. (매도청구권 칸에서 바꿉니다)")
     if tm.k_lock < tm.k_e and not issuer_redeem(tm) and tm.k_w > 0:
         w.append("의무보유 전환지연이 매도청구 종료보다 이릅니다. 콜이 실효화될 수 있습니다.")
     # 계약서에 의무보유가 있는데 스위치를 끄면 옵션차익법이 «콜 대상물량이 중간에 사라질 수
@@ -7917,7 +7931,15 @@ HLP_CMP = ("0 이면 **단리**입니다 — 「발행가에 연 X% 단리를 �
 # 불러온 그 순간의 제목이 한 박자 늦는다.
 _HEAD = st.empty()
 
-if "tm" not in st.session_state: st.session_state.tm = Terms(k_split=1)   # 새 평가는 한공회 본문 4.3.3 방식
+# 새 평가의 기본값 — 한공회 본문이 콜 유형별로 「기본적인 접근법」을 따로 지정한다.
+#   4.3.2  발행자 콜   → 콜조항 유무 가치 비교 (유무가치비교법)
+#   4.3.4  제3자 콜    → 복합옵션 (옵션차익혼합할인법)
+#   4.1.1  「실무적으로 많이 채택되고 있는 옵션차익혼합할인법을 기준으로 설명한다」
+# 제3자 지정 가능 콜이 기본이므로 옵션차익 · TF식 지분-채권 분리할인(4.4.3 + 3.2)에
+# 본문 4.3.3 의 전환확률 분해를 짝지어 둔다. dataclass 기본값은 건드리지 않으므로
+# 옛 시나리오 JSON 은 저장된 대로 열린다.
+if "tm" not in st.session_state:
+    st.session_state.tm = Terms(k_method=2, k_split=1)
 if "prices" not in st.session_state: st.session_state.prices = []
 if "peers" not in st.session_state: st.session_state.peers = []
 if "rate_series" not in st.session_state: st.session_state.rate_series = []
@@ -8589,6 +8611,12 @@ with st.sidebar:
                      "우선주를 사 가는 권리입니다. 거래상대방이 달라지므로 **별도의 금융상품**이고 "
                      "(문단 4.3.1), 발행회사는 이를 **파생상품자산**으로 따로 인식합니다. "
                      "실무 계약에서는 총 발행금액의 10~20% 한도로 자주 붙습니다.")
+            # 발행자 상환권·없음 갈래에서는 derive 가 k_method 를 0 으로 눌러 둔다.
+            # 제3자 지정으로 **바꾼 순간**에는 그 0 이 남아 있어 유무가치비교법이 되는데,
+            # 본문 4.3.4 의 기본은 복합옵션이다. 전환하는 그 회차에만 기본값을 채운다.
+            if st.session_state.get("_ic_prev") not in (None, 2) and t.issuer_call == 2:
+                t.k_method, t.k_split = 2, 1
+            st.session_state["_ic_prev"] = int(t.issuer_call)
             if t.issuer_call == 1:
                 _k1, _k2 = st.columns(2)
                 t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
