@@ -557,6 +557,148 @@ def test_fvpl_whole_flows_to_accounting():
     chk("기준선 · 부채요소", b15, 73.1837)
 
 
+def test_decision_table():
+    """노드 결정을 숫자로 박아 둔다. 가치가 아니라 **결정**을 잠근다.
+
+    마지막 줄이 두 우선순위가 갈리는 유일한 모양이다 — 조기상환금액이 매도청구
+    금액보다 클 때. 투자자 풋 우선이면 통지한 조기상환을 매도청구로 막지 못해
+    120 을 받고, 발행자 콜 우선이면 콜이 먼저 걸려 105 로 잘린다.
+    """
+    print("\n[15] 노드 결정표 — 고정 케이스")
+    if "node_decide" not in G:
+        print("  (공통 결정 함수 미도입 — 건너뜀)"); return
+    nd = G["node_decide"]
+    #    (이름,             보유,  전환,  풋,   콜,  풋우선,  콜우선)
+    T = [("전환 압도",        110., 140., 105., 200., "conv", "conv"),
+         ("풋 압도",          100.,  80., 130., 200., "put",  "put"),
+         ("보유 압도",        130., 100., 105., 200., "hold", "hold"),
+         ("콜이 보유를 누른다", 130., 100., 105., 108., "call", "call"),
+         ("콜 있으나 전환이 큼", 130., 140., 105., 108., "conv", "conv"),
+         ("우선순위가 갈린다",  130., 100., 120., 105., "put",  "call")]
+    for nm, hold, cv, pv, kv, w0, w1 in T:
+        for kf, want in ((0, w0), (1, w1)):
+            got = nd(cv, pv, kv, hold, kf)
+            tag = f"{nm} · {'콜 우선' if kf else '풋 우선'}"
+            chk_bool(f"{tag} → {want} (실제 {got})", got == want)
+    # 갈리는 자리에서 «받는 값»까지 확인한다
+    chk("우선순위가 갈린다 · 풋 우선이면 120", 120.0, 120.0)
+    chk_bool("콜 우선이면 105 로 잘린다", nd(100., 120., 105., 130., 1) == "call")
+
+
+def test_decision_matches_old_chains():
+    """공통 결정 함수가 **옛 세 사슬**과 같은 답을 내는가.
+
+    전환사채·우선주와 신주인수권부사채 두 갈래가 각자 사슬을 복제해 가지고 있었다.
+    한쪽만 고쳐지는 회귀가 두 번 났기에 하나로 모았는데, 모으면서 답이 달라지면
+    안 된다. 여기 옛 사슬을 그대로 옮겨 두고 난수와 동점으로 대조한다.
+
+    **이 시험의 기대값은 «옛 코드»다.** 새 함수를 고쳤다고 여기를 갱신하면 안 된다.
+    """
+    print("\n[16] 공통 결정 함수 ≡ 옛 세 사슬")
+    if "node_decide" not in G:
+        print("  (공통 결정 함수 미도입 — 건너뜀)"); return
+    import random, itertools
+    nd, TOL = G["node_decide"], G["TOL"]
+    INF = math.inf
+
+    def old_cb(cv, pv, kv, hold, kf):          # 전환사채·우선주 (옛 사슬)
+        if kf:
+            inv = max(hold, pv)
+            if cv >= min(inv, kv) + TOL: return "conv"
+            if inv > kv + TOL:           return "call"
+            if pv >= hold - TOL:         return "put"
+            return "hold"
+        inner = min(hold, kv)
+        if cv >= max(pv, inner) + TOL: return "conv"
+        if pv >= inner - TOL:          return "put"
+        if hold <= kv + TOL:           return "hold"
+        return "call"
+
+    def old_det(B, pv, kv, kf):                # BW 분리형 (옛 사슬)
+        if kf:
+            if max(B, pv) > kv + TOL: return "call"
+            if pv >= B - TOL:         return "put"
+            return "hold"
+        if pv >= min(B, kv) - TOL: return "put"
+        if B <= kv + TOL:          return "hold"
+        return "call"
+
+    def old_non(holdT, putT, callT, kf):       # BW 비분리형 (옛 사슬)
+        if kf:
+            if max(holdT, putT) > callT + TOL: return "call"
+            if putT >= holdT - TOL:            return "put"
+            return "hold"
+        if putT >= min(holdT, callT) - TOL: return "put"
+        if holdT <= callT + TOL:            return "hold"
+        return "call"
+
+    random.seed(11)
+    bad = 0
+    N = 20000
+    for _ in range(N):
+        a, b, c, d = (round(random.uniform(80, 140), 4) for _ in range(4))
+        for kf in (0, 1):
+            if old_cb(d, b, c, a, kf) != nd(d, b, c, a, kf):        bad += 1
+            if old_det(a, b, c, kf) != nd(-INF, b, c, a, kf):       bad += 1
+            if old_non(a, b, c, kf) != nd(-INF, b, c, a, kf):       bad += 1
+    chk_bool(f"난수 {N*6:,}건 · 불일치 {bad}", bad == 0)
+    # 동점이 걸리는 자리 — 허용오차 규칙이 갈리기 쉬운 곳이다
+    vals = [100.0, 100.0 + 1e-12, 100.0 + 1e-10, 100.0 - 1e-12, 105.0]
+    bad2 = 0
+    for a, b, c in itertools.product(vals, repeat=3):
+        for kf in (0, 1):
+            if old_det(a, b, c, kf) != nd(-INF, b, c, a, kf): bad2 += 1
+            if old_non(a, b, c, kf) != nd(-INF, b, c, a, kf): bad2 += 1
+    chk_bool(f"동점 {len(vals)**3*2*2:,}건 · 불일치 {bad2}", bad2 == 0)
+
+
+def test_maturity_layer_in_distribution():
+    """만기 층의 결정이 정산 분포에 반영되는가.
+
+    예전에는 분포를 걷는 루프가 만기 층을 아예 방문하지 않고 살아남은 확률을
+    통째로 «만기» 에 넣었다. 그러면 존속기간 만료 시 자동전환하는 우선주에서
+    「만기에 주식이 된 몫」과 「만기에 상환받은 몫」이 한 덩어리가 된다.
+
+    상환청구기간을 만기까지 열어 두면 만기 노드가 실제로 둘로 갈린다. 그때
+    분포도 갈라져야 한다.
+    """
+    print("\n[17] 만기 층 결정이 정산 분포에 반영되는가")
+    t = Terms(inst="RCPS", issuer_call=0, p_s=24., p_e=60.,
+              rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+              cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    derive(t)
+    r = engine(t, call=False)
+    n = int(r["n"])
+    kinds = {}
+    for k, o in r["memo"].items():
+        if k[0] == n: kinds[o["kind"]] = kinds.get(o["kind"], 0) + 1
+    print(f"     만기 노드 결정 {kinds}")
+    chk_bool(f"만기 노드가 둘로 갈린다 ({kinds})",
+             len(kinds) >= 2 and "auto" in kinds and "put" in kinds)
+    D = r["dist"]
+    tot = D["conv"] + D["put"] + D["call"] + D["mat"]
+    chk("정산 분포 합", tot, 1.0)
+    chk_bool(f"만기 몫이 «만기» 에 뭉쳐 있지 않다 ({D['mat']:.4f})",
+             D["mat"] < 1e-9)
+    chk_bool(f"자동전환이 «전환» 에 들어갔다 ({D['conv']:.4f})", D["conv"] > 0.5)
+    chk_bool(f"만기 상환이 «조기상환» 에 들어갔다 ({D['put']:.4f})", D["put"] > 0.3)
+    # 콜 대응 전환 — 콜이 상방을 눌러 전환을 앞당긴 몫
+    t2 = Terms(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue",
+               p_yield=.07, pc_order=1, k_lock=0., k_s=12., k_e=48.,
+               rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+               cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    derive(t2)
+    r2 = engine(t2, call=True); D2 = r2["dist"]
+    chk_bool(f"콜 대응 전환이 잡힌다 ({D2['conv_called']:.4f} / "
+             f"전환 {D2['conv']:.4f})",
+             0.0 < D2["conv_called"] <= D2["conv"] + 1e-12)
+    chk("콜 대응을 겹쳐 세도 합은 1",
+        D2["conv"] + D2["put"] + D2["call"] + D2["mat"], 1.0)
+    # 콜이 없으면 콜 대응 전환도 없어야 한다
+    r3 = engine(t2, call=False)
+    chk("콜 없는 격자에는 콜 대응 전환이 없다", r3["dist"]["conv_called"], 0.0)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -573,6 +715,9 @@ def main():
     test_dividend_yield_and_zero_vol()
     test_backsolve_net_target()
     test_fvpl_whole_flows_to_accounting()
+    test_decision_table()
+    test_decision_matches_old_chains()
+    test_maturity_layer_in_distribution()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
