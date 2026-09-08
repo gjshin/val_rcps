@@ -146,6 +146,8 @@ class Terms:
     p_yield: float = 0.0         # 조기상환 보장수익률
     p_cmp: int = 4               # 조기상환 보장수익률 복리 횟수
     face_total: float = 25_000_000_000.0   # 전자등록총액 (원)
+    ticker: str = ""              # 종목코드·티커 (주가·변동성 조회용, 비상장이면 빈칸)
+    s0_src: str = ""              # 평가기준일 주가의 출처 ("야후 085660.KQ 2024-06-28 종가"). 빈칸 = 직접 입력
     rate_mode: str = "direct"      # direct 직접 · pick 등급 하나 · rating 두 등급 보간
     cr_src: str = ""               # 위험 곡선을 어디서 가져왔는지 (조서에 적는다)     # direct 곡선 직접 / rating 등급 보간
     rt_a: str = "BBB+"            # 인풋 곡선 A 등급
@@ -215,9 +217,7 @@ def step_mapper(tm: "Terms", n: int, dt_: float):
     tol = dt.timedelta(days=min(5, max(1, int(day//4))))
 
     def cd(m):                                      # 발행일 + m 개월
-        k = int(math.floor(m)); fr = m - k
-        d = _add_months(di, k)
-        return d + dt.timedelta(days=round(fr*30.4375)) if fr else d
+        return months_to_date(di, m)
 
     def lo(m):
         c = cd(m) - tol
@@ -238,6 +238,35 @@ def pay_offset(tm: "Terms", st_lo) -> int:
     """
     if tm.ipay <= 0: return 1
     return st_lo(tm.ipay*(math.floor(tm.elapsed_m/tm.ipay) + 1))
+
+
+def months_to_date(d_issue, m: float) -> dt.date:
+    """발행일 기준 m 개월 → 날짜. 꽉 찬 달은 달력으로, 남는 소수 달은 30.4375일로 센다.
+
+    step_mapper 가 계약 개월을 날짜로 옮길 때 쓰는 **유일한** 식이다. 사이드바의 날짜
+    입력도 이 식의 역함수(date_to_months)로 개월을 만들므로, 날짜로 넣든 개월로 넣든 같은
+    노드에 떨어진다.
+    """
+    di = dt.date.fromisoformat(d_issue) if isinstance(d_issue, str) else d_issue
+    k = int(math.floor(m)); fr = m - k
+    d = _add_months(di, k)
+    return d + dt.timedelta(days=round(fr*30.4375)) if fr else d
+
+
+def date_to_months(d_issue, d) -> float:
+    """날짜 → 발행일 기준 개월. months_to_date 의 역함수 — 왕복하면 같은 날이 나온다.
+
+    꽉 찬 달 k 는 _add_months(발행일, k) ≤ d 인 최대 정수, 남는 날수는 30.4375 로 나눈다.
+    정수 달이면 소수 없이 딱 떨어진다.
+    """
+    di = dt.date.fromisoformat(d_issue) if isinstance(d_issue, str) else d_issue
+    d = dt.date.fromisoformat(d) if isinstance(d, str) else d
+    if d <= di: return 0.0
+    k = (d.year - di.year)*12 + (d.month - di.month)
+    while _add_months(di, k) > d: k -= 1
+    while _add_months(di, k + 1) <= d: k += 1
+    rem = (d - _add_months(di, k)).days
+    return float(k) if rem == 0 else round(k + rem/30.4375, 6)
 
 
 def _add_months(d: dt.date, k: int) -> dt.date:
@@ -2458,7 +2487,7 @@ def write_check_sheets(wb, tm: Terms, checks, after="결과"):
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     thin = Side(style="thin", color=RPT["hair"])
     def put(ws, r, c, v, *, bold=False, size=10, color=None, fill=None, wrap=False, border=False):
-        cl = ws.cell(row=r, column=c, value=v)
+        cl = ws.cell(row=r, column=c, value=xlfn(v))
         cl.font = Font(name="맑은 고딕", size=size, bold=bold, color=color or RPT["ink"])
         if fill: cl.fill = PatternFill("solid", fgColor=fill)
         cl.alignment = Alignment(vertical="top", wrap_text=wrap)
@@ -2897,6 +2926,57 @@ def use_korean_font():
     return nm
 
 
+def _yf_symbols(code: str, market: str):
+    """국내 6자리 코드면 고른 시장을 먼저, 그다음 다른 시장. 해외 티커는 그대로."""
+    if not code.isdigit():
+        return [code]
+    sufs = [f".{market}"] if market else []
+    sufs += [x for x in (".KQ", ".KS") if x not in sufs]
+    return [code + suf for suf in sufs]
+
+
+def pick_close(rows, on_date: str):
+    """[(날짜, 종가)] 에서 평가기준일 **이하** 마지막 거래일의 종가를 고른다.
+
+    평가기준일이 휴장이면(주말·공휴일·거래정지) 직전 거래일이다. 기준일 뒤의 값은 절대 쓰지
+    않는다 — 결산일 이후 주가로 재면 안 된다. 없으면 None.
+    """
+    cand = [(d, v) for d, v in rows if d <= on_date and v > 0]
+    return cand[-1] if cand else None
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_close(code: str, market: str, on_date: str):
+    """평가기준일(또는 직전 거래일)의 **종가**를 야후에서 받는다. (거래일, 종가, 심볼).
+
+    변동성용 fetch_prices 와 달리 auto_adjust=False — 평가일의 주가는 그날 실제로 거래된
+    값이어야지, 그 뒤의 증자·분할을 소급 반영한 수정주가가 아니다.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise RuntimeError("yfinance 가 설치되어 있지 않습니다.") from None
+    d2 = dt.date.fromisoformat(on_date)
+    d1 = d2 - dt.timedelta(days=21)
+    errs = []
+    for sym in _yf_symbols(code, market):
+        try:
+            df = yf.download(sym, start=d1, end=d2 + dt.timedelta(days=1),
+                             progress=False, auto_adjust=False, threads=False)
+            if df is None or df.empty:
+                errs.append(f"{sym} 자료 없음"); continue
+            if hasattr(df.columns, "nlevels") and df.columns.nlevels > 1:
+                df = df.droplevel(1, axis=1)
+            col = "Close" if "Close" in df.columns else df.columns[0]
+            rows = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in df[col].dropna().items()]
+            hit = pick_close(rows, on_date)
+            if hit: return hit[0], hit[1], sym
+            errs.append(f"{sym} {on_date} 이전 거래일 없음")
+        except Exception as e:
+            errs.append(f"{sym} {e}")
+    raise RuntimeError(" / ".join(errs) or "자료를 찾지 못했습니다")
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_prices(code: str, days: int, market: str, end: str = None):
     """야후 파이낸스에서 수정주가를 받는다.
@@ -2915,14 +2995,8 @@ def fetch_prices(code: str, days: int, market: str, end: str = None):
     d1 = d2 - dt.timedelta(days=int(days*1.7)+30)
     # 고른 시장을 먼저 보되 비면 다른 시장도 해 본다. 이전 상장이나 시장 이관이
     # 있으면 접미사가 어긋나는데, 화면에서는 "자료 없음" 으로만 보여 원인을 못 찾는다.
-    if not code.isdigit():
-        sufs = [""]
-    else:
-        sufs = [f".{market}"] if market else []
-        sufs += [x for x in (".KQ", ".KS") if x not in sufs]
     errs = []
-    for suf in sufs:
-        sym = code + suf
+    for sym in _yf_symbols(code, market):
         try:
             df = yf.download(sym, start=d1, end=d2+dt.timedelta(days=1),
                              progress=False, auto_adjust=True, threads=False)
@@ -3370,6 +3444,22 @@ R_P2, R_P4 = "0.00%", "0.0000%"
 R_YMD = "yyyy-mm-dd"
 
 
+# 엑셀 2010 이후에 들어온 함수는 xlsx 파일 안에 «_xlfn.» 접두사를 달고 저장돼야 한다.
+# openpyxl 은 문자열을 그대로 쓰므로 접두사가 없으면 엑셀이 #NAME? 을 보이다가 사용자가
+# 셀에서 엔터를 쳐야 다시 파싱한다. 조서를 여는 사람마다 겪을 일이라 여기서 붙인다.
+XLFN = ("STDEV.S", "STDEV.P", "VAR.S", "VAR.P", "PERCENTILE.INC", "PERCENTILE.EXC",
+        "QUARTILE.INC", "QUARTILE.EXC", "NORM.S.DIST", "NORM.DIST", "NORM.S.INV", "NORM.INV",
+        "IFS", "MAXIFS", "MINIFS", "CONCAT", "TEXTJOIN", "XLOOKUP", "FORECAST.LINEAR",
+        "COVARIANCE.S", "COVARIANCE.P", "MODE.SNGL", "RANK.EQ", "RANK.AVG")
+_XLFN_RE = re.compile(r"(?<![\w.])(" + "|".join(re.escape(f) for f in XLFN) + r")\s*\(")
+
+
+def xlfn(v):
+    """수식 문자열이면 2010+ 함수 이름 앞에 _xlfn. 을 붙인다. 이미 붙어 있으면 그대로."""
+    if not (isinstance(v, str) and v.startswith("=")): return v
+    return _XLFN_RE.sub(lambda m: "_xlfn." + m.group(1) + "(", v)
+
+
 def report_kit(wb, font="맑은 고딕"):
     """리포트 한 권에 쓸 서식 도구를 만든다.
 
@@ -3387,7 +3477,7 @@ def report_kit(wb, font="맑은 고딕"):
 
     def put(ws, r, c, v, *, fmt=None, bold=False, size=10, color=None,
             fill=None, align=None, border=False, wrap=False, italic=False):
-        cl = ws.cell(r, c, v)
+        cl = ws.cell(r, c, xlfn(v))
         cl.font = Font(name=font, size=size, bold=bold, italic=italic,
                        color=color or RPT["ink"])
         if fmt: cl.number_format = fmt
@@ -3580,11 +3670,11 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
                (R_HI, "정상범위 상한", f"=$C${R_MD}+$C${R_MK}*$C${R_MA}", R_N6, False),
                (R_EX, "제외 개수",
                 f"=COUNT({D1}:{DN})-COUNT($G${R0+1}:$G${last})", R_N0, False),
-               (R_SD, "일 변동성", f"=STDEV.S($G${R0+1}:$G${last})", R_P4, False),
+               (R_SD, "일 변동성", f"=_xlfn.STDEV.S($G${R0+1}:$G${last})", R_P4, False),
                (R_AN, "연 변동성", f"=$C${R_SD}*SQRT($C${R_TD})", R_P2, False)]
         if _rate:
             lab += [(R_AD, "절대 일 변동성 (%p)",
-                     f"=STDEV.S($H${R0+1}:$H${last})", R_N4, False),
+                     f"=_xlfn.STDEV.S($H${R0+1}:$H${last})", R_N4, False),
                     (R_AA, "절대 연 변동성 (%p)",
                      f"=$C${R_AD}*SQRT($C${R_TD})", R_N4, False),
                     (R_MN, "평균 금리 (%)",
@@ -4169,7 +4259,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
 
     def put(ws, r, c, v, *, bold=False, color="000000", fill=None, fmt=None,
             size=10, align=None, border=False):
-        cl = ws.cell(row=r, column=c, value=v)
+        cl = ws.cell(row=r, column=c, value=xlfn(v))
         cl.font = Font(name=F, size=size, bold=bold, color=color)
         if fill: cl.fill = PatternFill("solid", fgColor=fill)
         if fmt: cl.number_format = fmt
@@ -4280,6 +4370,14 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 조서를 받은 사람이 무엇을 재고 무엇을 안 쟀는지 표지에서 알아야 한다.
     put(A, 4, 2, SCOPE_NOTE.replace("**", ""), color=GREY, size=9)
     put(A, 5, 2, UNMODELLED_NOTE, color=AMB, size=9)
+    # 개월을 날짜와 함께 싣는다 — 계약서(날짜)와 조서(개월)를 서로 대조할 수 있게
+    def _md(m, on=True):
+        try:
+            if on and 0 <= m < 1200:
+                return f"{m:,.1f} ({months_to_date(tm.d_issue, m).isoformat()})"
+        except Exception:
+            pass
+        return f"{m:,.1f}"
     blocks = [("1. 모형", [("신용위험 처리", tm.model, None),
         ("조정일 아닌 시점", ["상태확장(정확)", "경로가중치", "확률가중평균", "특정노드선택"][tm.carry], None),
         ("전환권 회계 분류", "파생상품부채" if tm.conv_class == "liability" else "자본", None)]),
@@ -4306,21 +4404,21 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                ("상장 시 강제전환", "예" if tm.ipo_conv else "아니오", None)]
               if (tm.ipo_on and tm.ipo_px > 0) else [])
            if is_rcps(tm) else [])),
-      ("4. 옵션", [("전환 시작 / 종료 (개월)", tm.cv_s, N0), ("　", tm.cv_e, N0),
-        ("조기상환 시작 / 종료 / 주기", tm.p_s, N0), ("　", tm.p_e, N0), ("　 ", tm.p_f, N0),
+      ("4. 옵션", [("전환 시작 / 종료 (개월)", _md(tm.cv_s), None), ("　", _md(tm.cv_e), None),
+        ("조기상환 시작 / 종료 / 주기", _md(tm.p_s, tm.p_s <= tm.p_e), None), ("　", _md(tm.p_e, tm.p_s <= tm.p_e), None), ("　 ", tm.p_f, N0),
         ("조기상환 행사금액 산정", "보장수익률 복리" if tm.p_mode == "accrue" else "고정률", None),
         ("조기상환권 회계 처리",
          ("분리하지 않음 · 부채요소에 포함" if _nosep else "분리 · 파생상품부채"),
          None),
-        ("매도청구 시작 / 종료 / 주기", tm.k_s, N0), ("　  ", tm.k_e, N0), ("　   ", tm.k_f, N0),
+        ("매도청구 시작 / 종료 / 주기", _md(tm.k_s, tm.k_s <= tm.k_e), None), ("　  ", _md(tm.k_e, tm.k_s <= tm.k_e), None), ("　   ", tm.k_f, N0),
         ("매도청구 프리미엄", tm.k_prem, P2),
         ("매도청구 복리 횟수 (연)", tm.k_cmp, N0), ("매도청구 한도", tm.k_w, P2),
-        ("의무보유 전환지연 (개월)", tm.k_lock, N0),
+        ("의무보유 전환지연 (개월)", _md(tm.k_lock), None),
         ("매도청구권 평가방법", K_METHODS[tm.k_method], None),
         ("풋·콜 우선순위", ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None),
         ("매도청구권 회계 처리",
          "별도 금융상품" if tm.k_sep else "복합내재파생에 포함", None)]),
-      ("5. 시장 인풋", [("변동성 σ", tm.sig, P2),
+      ("5. 시장 인풋", [("주가 출처", (tm.s0_src or "직접 입력"), None), ("변동성 σ", tm.sig, P2),
                      ("보통주 배당수익률 δ", tm.div_y, P2)]
         + ([("조기상환권 평가", "BDT 금리격자", None),
             ("BDT 단기이자율 변동성 σ", tm.bdt_sig, P2),
@@ -5034,7 +5132,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
 
     def put(ws, r, c, v, *, bold=False, color="000000", fill=None, fmt=None,
             size=10, align=None, border=False):
-        cl = ws.cell(row=r, column=c, value=v)
+        cl = ws.cell(row=r, column=c, value=xlfn(v))
         cl.font = Font(name=F, size=size, bold=bold, color=color)
         if fill: cl.fill = PatternFill("solid", fgColor=fill)
         if fmt: cl.number_format = fmt
@@ -5065,6 +5163,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("만기일", "d_mat", dt.date.fromisoformat(tm.d_mat), DATE, True),
         ("경과기간 (개월)", "elm", tm.elapsed_m, N2, True),
         ("평가기준일 주가", "S0", tm.S0, N2, True),
+        ("주가 출처", "s0src", (tm.s0_src or "직접 입력"), None, True),
         ("현재 전환가액", "K0", tm.K0, N2, True),
         ("잔존기간 T (년)", "T", tm.T, N4, True),
         ("노드 수 n", "n", n, N0, True),
@@ -7036,6 +7135,23 @@ if "prices" not in st.session_state: st.session_state.prices = []
 if "peers" not in st.session_state: st.session_state.peers = []
 if "rate_series" not in st.session_state: st.session_state.rate_series = []
 
+# 위젯이 아니라 앱이 직접 관리하는 상태 — 시나리오를 불러와도 남긴다
+_KEEP_STATE = {"tm", "prices", "peers", "scen", "scen_id", "rf_txt", "cr_txt", "ca_txt", "cb_txt",
+               "kis_rows", "kis_src", "peer_txt", "px_src", "rate_how", "rate_opt", "rate_series",
+               "report", "rvmode", "vol_opt", "sched_mode", "sched_mode_prev"}
+# 행사 시점 칸의 key — 날짜/개월 모드를 바꾸면 다른 모드의 저장값이 되살아나지 않게 비운다
+_SCHED_KEYS = ["cvs", "cve", "ps", "pe", "ks", "ke", "klock", "ipom", "qipom",
+               "shaps", "shape", "shacs", "shace"]
+_SCHED_KEYS += [k + "_d" for k in _SCHED_KEYS] + ["p_none", "k_none", "shac_none"]
+
+
+def reset_widgets(keys=None):
+    """key 있는 위젯의 저장값을 지워 다음 실행에서 value= 기본값(Terms)으로 다시 그리게 한다."""
+    for k in (list(st.session_state.keys()) if keys is None else keys):
+        if keys is None and k in _KEEP_STATE: continue
+        if k in st.session_state: del st.session_state[k]
+
+
 with st.sidebar:
     st.subheader("계약조건")
 
@@ -7061,6 +7177,9 @@ with st.sidebar:
                 st.session_state.ca_txt = _fmt(_tm.cr_curve)
             if _tm.cr_curve_b: st.session_state.cb_txt = _fmt(_tm.cr_curve_b)
             st.session_state.scen_id = _sid
+            # key 가 있는 칸(조기상환·매도청구 시작/종료, 날짜 칸 …)은 한 번 그려지면 저장값이
+            # value= 기본값을 이긴다. 비우지 않으면 시나리오의 값이 화면의 옛 값으로 되돌아간다.
+            reset_widgets()
             st.success("불러왔습니다. 이자율 곡선도 함께 채웠습니다 (만기 단위 = 년).")
             st.rerun()
         except Exception as ex:
@@ -7144,16 +7263,84 @@ with st.sidebar:
         c3.metric("경과", f"{t.elapsed_m:.1f}개월")
         c4.metric("잔존", f"{t.T:.2f}년")
         c5.metric("노드", f"{t.n}")
-        st.caption("행사 시점은 아래에서 **발행일 기준 개월**로 넣으십시오. "
-                   "앱이 평가기준일 기준으로 옮기고, 행사금액도 발행일부터 복리로 붙입니다.")
+        st.session_state.sched_mode = st.radio(
+            "행사 시점 입력 방식", ["날짜", "발행일 기준 개월"], horizontal=True,
+            index=0 if st.session_state.get("sched_mode", "날짜") == "날짜" else 1,
+            help="계약서에 날짜로 쓰여 있으면 날짜로 넣으십시오. 앱이 발행일 기준 개월로 바꿔 "
+                 "저장하므로 시나리오 파일·조서는 어느 쪽으로 넣어도 같습니다.")
+        if st.session_state.sched_mode == "날짜":
+            st.caption("행사 시작·종료를 **날짜**로 넣으십시오. 발행일 기준 개월로 바꿔 옆에 보여 "
+                       "줍니다. 주기는 개월 그대로입니다.")
+        else:
+            st.caption("행사 시점은 아래에서 **발행일 기준 개월**로 넣으십시오. "
+                       "앱이 평가기준일 기준으로 옮기고, 행사금액도 발행일부터 복리로 붙입니다.")
+
+    # 날짜 모드와 개월 모드가 같은 자리에서 같은 Terms 개월 값을 만든다. 날짜 위젯의 key 는
+    # 개월 위젯과 다르게(_d) 두어 서로의 저장값을 건드리지 않는다.
+    _DATE_MODE = st.session_state.sched_mode == "날짜"
+    if st.session_state.get("sched_mode_prev", st.session_state.sched_mode) != st.session_state.sched_mode:
+        reset_widgets(_SCHED_KEYS); st.session_state.sched_mode_prev = st.session_state.sched_mode; st.rerun()
+    st.session_state.sched_mode_prev = st.session_state.sched_mode
+
+    def _sched_one(col, lab_m, lab_d, m, key, **kw):
+        """한 시점. 날짜 모드면 date_input, 아니면 number_input. 개월을 돌려준다."""
+        if not _DATE_MODE:
+            return col.number_input(lab_m, value=float(m), step=1.0, key=key, **kw)
+        kw.pop("min_value", None)
+        d = col.date_input(lab_d, value=months_to_date(t.d_issue, m), key=key + "_d",
+                           help=kw.get("help"))
+        mm = date_to_months(t.d_issue, d)
+        col.caption(f"발행일 기준 {mm:,.1f}개월")
+        return mm
+
+    def _sched_pair(cs, ce, m_s, m_e, key, none_lab=None, lab=("시작", "종료")):
+        """시작·종료 한 쌍. none_lab 이 있으면 「권리 없음」 체크박스로 시작>종료 관례를 대신한다."""
+        if not _DATE_MODE:
+            a = cs.number_input(f"{lab[0]} (개월)", value=float(m_s), step=1.0, key=key + "s")
+            b = ce.number_input(f"{lab[1]} (개월)", value=float(m_e), step=1.0, key=key + "e")
+            return a, b
+        if none_lab:
+            if st.checkbox(none_lab, value=bool(m_s > m_e), key=key + "_none"):
+                return (99.0 if m_s <= m_e else m_s), (0.0 if m_s <= m_e else m_e)
+            if m_s > m_e: m_s, m_e = 12.0, max(12.0, t.T*12 + t.elapsed_m - 1)
+        ds = cs.date_input(f"{lab[0]}일", value=months_to_date(t.d_issue, m_s), key=key + "s_d")
+        de = ce.date_input(f"{lab[1]}일", value=months_to_date(t.d_issue, m_e), key=key + "e_d")
+        a, b = date_to_months(t.d_issue, ds), date_to_months(t.d_issue, de)
+        st.caption(f"발행일 기준 {a:,.1f} ~ {b:,.1f}개월")
+        return a, b
 
     with st.expander("기본", expanded=True):
         _SHA = is_sha(t)
+        # 상장사면 평가기준일(또는 직전 거래일) 종가를 받아 넣는다. 비상장이면 빈칸으로 두고
+        # 손으로 넣거나 아래 역산을 쓴다. 출처는 조서 가정 시트에 같이 실린다.
+        tk1, tk2, tk3 = st.columns([2, 1, 2])
+        t.ticker = tk1.text_input("종목코드 · 티커", value=t.ticker,
+                                  help="국내는 6자리 숫자, 해외는 티커. 비상장이면 비워 두십시오.").strip()
+        _mkt = tk2.selectbox("시장", ["KQ", "KS", ""], index=0,
+                             format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x],
+                             key="s0_mkt")
+        if tk3.button("평가기준일 종가 불러오기", use_container_width=True,
+                      disabled=not t.ticker, key="btn_s0"):
+            with st.spinner("받는 중"):
+                try:
+                    _dd, _px, _sym = fetch_close(t.ticker, _mkt, t.d_base)
+                    t.S0 = float(_px)
+                    t.s0_src = f"야후 {_sym} {_dd} 종가"
+                    st.rerun()
+                except Exception as ex:
+                    st.warning(f"받지 못했습니다 — {ex}. 주가를 직접 넣으십시오.")
+        _s0_before = float(t.S0)
         t.S0 = st.number_input("평가기준일 주가 (원)", value=float(t.S0), step=1.0,
                                help=("비상장이면 지분가치 평가액 ÷ 주식수를 넣거나, 아래에서 "
                                      "투자원금으로 역산하십시오." if _SHA else
                                      "비상장이면 별도 지분평가액 ÷ 주식수를 넣거나, 아래에서 "
                                      "발행가로 역산하십시오."))
+        if abs(t.S0 - _s0_before) > 1e-9:
+            t.s0_src = ""                      # 손으로 고쳤다 — 출처는 더 이상 야후가 아니다
+        if t.s0_src:
+            st.caption(f"출처 · {t.s0_src}")
+            if t.s0_src.split()[-2] != t.d_base:
+                st.caption(f"평가기준일 {t.d_base} 은 휴장일이라 직전 거래일 종가입니다.")
         # 발행가 역산 (책 5-1). 비상장 발행회사는 관측 주가가 없으니 「발행된 값이
         # 곧 공정가치」로 놓고 전체 가치가 발행가가 되는 주가를 격자에서 찾는다.
         bc1, bc2 = st.columns([1, 1])
@@ -7280,11 +7467,11 @@ with st.sidebar:
     # 없으므로 통째로 빼고, 대신 아래 「주주간계약」 칸을 연다.
     if not is_sha(t):
         with st.expander(inst_text(t, "전환 · 조정")):
-            st.caption("모두 **발행일 기준 개월**입니다. 계약서 그대로 넣으십시오.")
-            t.cv_s = st.number_input(inst_text(t, "전환 시작 (개월)"),
-                                     value=float(t.cv_s), step=1.0)
-            t.cv_e = st.number_input(inst_text(t, "전환 종료 (개월)"),
-                                     value=float(t.cv_e), step=1.0)
+            if not _DATE_MODE:
+                st.caption("모두 **발행일 기준 개월**입니다. 계약서 그대로 넣으십시오.")
+            _c1, _c2 = st.columns(2)
+            t.cv_s, t.cv_e = _sched_pair(_c1, _c2, t.cv_s, t.cv_e, "cv",
+                                         lab=(inst_text(t, "전환 시작"), inst_text(t, "전환 종료")))
             t.rfx_mode = st.selectbox("조정 방식", [2, 1, 0], index=[2, 1, 0].index(t.rfx_mode),
                                       format_func=lambda i: ["조정 없음", "하향만", "하향 + 상향"][i])
             t.rfx_cyc = st.number_input("조정 주기 (개월)", value=float(t.rfx_cyc), step=1.0)
@@ -7317,10 +7504,10 @@ with st.sidebar:
                     help="국내 RCPS 계약에 거의 빠짐없이 들어갑니다 — 상장 시 보통주 "
                          "자동전환과 공모가 연동 전환가격 조정. 책 [사례 5-5] 의 산식을 씁니다."))
                 if t.ipo_on:
-                    t.ipo_m = st.number_input("예상 상장 시점 (개월)", value=float(t.ipo_m),
-                                              step=1.0, min_value=1.0,
-                                              help="발행일 기준입니다. **가정**이므로 여러 시점을 "
-                                                   "돌려 조서에 나란히 싣는 편이 정직합니다.")
+                    t.ipo_m = _sched_one(st, "예상 상장 시점 (개월)", "예상 상장일", t.ipo_m, "ipom",
+                                         min_value=1.0,
+                                         help="발행일 기준입니다. **가정**이므로 여러 시점을 "
+                                              "돌려 조서에 나란히 싣는 편이 정직합니다.")
                     t.ipo_px = st.number_input("공모가액 (원)", value=float(t.ipo_px), step=100.0,
                                                min_value=0.0)
                     t.ipo_mult = st.number_input("공모가 배수 (%)", value=t.ipo_mult*100,
@@ -7343,8 +7530,8 @@ with st.sidebar:
                         st.warning("공모가액이 0 이라 IPO 조항이 작동하지 않습니다.")
 
         with st.expander(L["put"]):
-            t.p_s = st.number_input("시작 (개월)", value=float(t.p_s), step=1.0, key="ps")
-            t.p_e = st.number_input("종료 (개월)", value=float(t.p_e), step=1.0, key="pe")
+            _p1, _p2 = st.columns(2)
+            t.p_s, t.p_e = _sched_pair(_p1, _p2, t.p_s, t.p_e, "p", none_lab="이 권리 없음")
             t.p_f = st.number_input("주기 (개월)", value=float(t.p_f), step=1.0, key="pf")
             t.p_mode = st.selectbox("행사금액 산정", ["fixed", "accrue"],
                                     index=0 if t.p_mode == "fixed" else 1,
@@ -7608,8 +7795,8 @@ with st.sidebar:
                      "(문단 4.3.1), 발행회사는 이를 **파생상품자산**으로 따로 인식합니다. "
                      "실무 계약에서는 총 발행금액의 10~20% 한도로 자주 붙습니다.")
             if t.issuer_call == 1:
-                t.k_s = st.number_input("시작 (개월)", value=float(t.k_s), step=1.0, key="ks")
-                t.k_e = st.number_input("종료 (개월)", value=float(t.k_e), step=1.0, key="ke")
+                _k1, _k2 = st.columns(2)
+                t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
                 t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
                 t.k_prem = st.number_input("상환 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
                                            help="발행자 상환가액 = 100 × (1 + 보장수익률 복리)^경과연수 "
@@ -7620,8 +7807,8 @@ with st.sidebar:
                            "(기준서 1109 문단 B4.3.4). 전환권을 자본으로 두면 부채요소는 "
                            "「우선주 + 상환청구권 − 발행자 상환권」입니다.")
             elif t.issuer_call == 2:
-                t.k_s = st.number_input("시작 (개월)", value=float(t.k_s), step=1.0, key="ks")
-                t.k_e = st.number_input("종료 (개월)", value=float(t.k_e), step=1.0, key="ke")
+                _k1, _k2 = st.columns(2)
+                t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
                 t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
                 t.k_prem = st.number_input(
                     "매수대금 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
@@ -7638,8 +7825,8 @@ with st.sidebar:
                     help="콜옵션 대상주식이 총 발행금액에서 차지하는 비율입니다. "
                          "실무 계약은 10~20% 가 흔합니다. 계약서의 「콜옵션 대상주식」 "
                          "조항을 그대로 넣으십시오.")/100
-                t.k_lock = st.number_input(
-                    "의무보유 전환지연 (개월)", value=float(t.k_lock), step=1.0,
+                t.k_lock = _sched_one(
+                    st, "의무보유 전환지연 (개월)", "의무보유 만료일", t.k_lock, "klock",
                     help="인수인이 콜옵션 대상주식을 **미전환 상태로 보유**해야 하는 기간입니다. "
                          "매도청구 종료일까지 두는 계약이 많습니다. "
                          "**유무가치비교법에서만** 값에 들어갑니다.")
@@ -7666,16 +7853,16 @@ with st.sidebar:
             else:
                 st.caption("상환권은 투자자만 가집니다.")
           else:
-              t.k_s = st.number_input("시작 (개월)", value=float(t.k_s), step=1.0, key="ks")
-              t.k_e = st.number_input("종료 (개월)", value=float(t.k_e), step=1.0, key="ke")
+              _k1, _k2 = st.columns(2)
+              t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
               t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
               t.k_prem = st.number_input("프리미엄 (연 %)", value=t.k_prem*100, step=0.5)/100
               t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
                                             help="분기복리 4 · 반기 2 · 연 1. " + HLP_CMP
                                                  + " 계약서의 매수대금 표와 맞는지 확인하십시오."))
               t.k_w = st.number_input("행사 한도 (%)", value=t.k_w*100, step=5.0)/100
-              t.k_lock = st.number_input(
-                  "의무보유 전환지연 (개월)", value=float(t.k_lock), step=1.0,
+              t.k_lock = _sched_one(
+                  st, "의무보유 전환지연 (개월)", "의무보유 만료일", t.k_lock, "klock",
                   help="매도청구 기간 동안 그 부분을 전환하지 못하게 하는 조건입니다. "
                        "**유무가치비교법에서만** 값에 들어갑니다.")
               if t.k_method != 0:
@@ -7770,14 +7957,12 @@ with st.sidebar:
 
     else:
         with st.expander("주주간계약 — 풋 · 콜", expanded=True):
-            st.caption("모두 **투자일(발행일) 기준 개월**입니다. 계약서 그대로 넣으십시오. "
-                       "금액 기준은 투자원금 100 입니다.")
+            st.caption(("금액 기준은 투자원금 100 입니다." if _DATE_MODE else
+                        "모두 **투자일(발행일) 기준 개월**입니다. 계약서 그대로 넣으십시오. "
+                        "금액 기준은 투자원금 100 입니다."))
             st.markdown("**투자자 풋옵션** — 보유 지분을 되팔 권리")
             q1, q2, q3 = st.columns(3)
-            t.sha_put_s = q1.number_input("시작 (개월)", value=float(t.sha_put_s),
-                                          step=1.0, key="shaps")
-            t.sha_put_e = q2.number_input("종료 (개월)", value=float(t.sha_put_e),
-                                          step=1.0, key="shape")
+            t.sha_put_s, t.sha_put_e = _sched_pair(q1, q2, t.sha_put_s, t.sha_put_e, "shap")
             t.sha_put_f = q3.number_input("주기 (개월)", value=float(t.sha_put_f),
                                           step=1.0, key="shapf")
             t.sha_put_yield = st.number_input(
@@ -7793,12 +7978,16 @@ with st.sidebar:
                        "　(투자원금 100 기준)")
             st.divider()
             st.markdown("**최대주주 콜옵션** — 투자자 지분을 사 갈 권리")
-            st.caption("시작이 종료보다 크면 콜이 없는 계약입니다 (둘 다 0 이면 없음).")
+            if not _DATE_MODE:
+                st.caption("시작이 종료보다 크면 콜이 없는 계약입니다 (둘 다 0 이면 없음).")
             r1, r2, r3 = st.columns(3)
-            t.sha_call_s = r1.number_input("시작 (개월)", value=float(t.sha_call_s),
-                                           step=1.0, key="shacs")
-            t.sha_call_e = r2.number_input("종료 (개월)", value=float(t.sha_call_e),
-                                           step=1.0, key="shace")
+            if _DATE_MODE and st.checkbox("콜 없음", value=not (t.sha_call_e > 0 and t.sha_call_s <= t.sha_call_e),
+                                          key="shac_none"):
+                t.sha_call_s, t.sha_call_e = 0.0, 0.0
+            else:
+                if t.sha_call_e <= 0 or t.sha_call_s > t.sha_call_e:
+                    t.sha_call_s, t.sha_call_e = 0.0, max(12.0, t.T*12 + t.elapsed_m)
+                t.sha_call_s, t.sha_call_e = _sched_pair(r1, r2, t.sha_call_s, t.sha_call_e, "shac")
             t.sha_call_f = r3.number_input("주기 (개월)", value=float(t.sha_call_f),
                                            step=1.0, key="shacf")
             t.sha_call_prem = st.number_input(
@@ -7825,8 +8014,7 @@ with st.sidebar:
             t.ipo_on = int(st.checkbox("적격상장 조항을 격자에 넣는다",
                                        value=bool(t.ipo_on)))
             if t.ipo_on:
-                t.ipo_m = st.number_input("적격상장 기한 (개월)", value=float(t.ipo_m),
-                                          step=1.0)
+                t.ipo_m = _sched_one(st, "적격상장 기한 (개월)", "적격상장 기한일", t.ipo_m, "qipom")
                 t.ipo_min = st.number_input(
                     "적격 판정 최소 주가 (원)", value=float(t.ipo_min), step=100.0,
                     help="그 시점 주가가 이 값을 넘으면 적격상장이 이루어진 것으로 "
@@ -7866,10 +8054,13 @@ with st.sidebar:
 
     with st.expander("변동성", expanded=True):
         c1, c2 = st.columns([2, 1])
-        code = c1.text_input("종목코드 · 티커", value="057680",
-                             help="국내는 6자리 숫자, 해외는 티커")
-        mkt = c2.selectbox("시장", ["KQ", "KS", ""], index=0,
-                           format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x])
+        code = c1.text_input("종목코드 · 티커", value=(t.ticker or "057680"),
+                             help="국내는 6자리 숫자, 해외는 티커. 「기본」의 종목코드를 따라옵니다.",
+                             key="vol_code")
+        mkt = c2.selectbox("시장", ["KQ", "KS", ""],
+                           index=["KQ", "KS", ""].index(st.session_state.get("s0_mkt", "KQ")),
+                           format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x],
+                           key="vol_mkt")
         c3, c4 = st.columns(2)
         pdays = int(c3.number_input("조회 일수", value=250, step=10, min_value=30))
         tdays = int(c4.number_input(
@@ -7884,7 +8075,9 @@ with st.sidebar:
                        f"일수** 칸입니다. 지금 값이면 σ 가 √({tdays}÷250) = "
                        f"{(tdays/250)**0.5:.3f} 배로 나옵니다.")
         st.caption("야후 파이낸스 수정주가를 씁니다. 유상증자·액면분할·배당이 반영된 종가입니다.")
-        asof = st.date_input("조회 종료일", value=dt.date.today())
+        # 평가기준일까지의 주가로 변동성을 잰다. 기준일 뒤의 값이 섞이면 결산일 평가가 아니다.
+        asof = st.date_input("조회 종료일", value=dt.date.fromisoformat(t.d_base),
+                             help="기본은 평가기준일입니다. 기준일 뒤 주가로 변동성을 재면 안 됩니다.")
         drop = st.checkbox("이상치 제거 (중앙값 절대편차 2.5배)", value=True,
                            help="MAD × 1.4826 × 2.5 밖의 일간수익률을 뺍니다. "
                                 "책 사례 5-2 와 같은 배수입니다.")
@@ -8913,6 +9106,13 @@ with tabs[2]:
                        else v2 if isinstance(v2, str) else f"{v2:,.4f}")]
                  for k2, v2 in _d["지표"].items()],
                 columns=["항목", "값"]), use_container_width=True, hide_index=True)
+        if _key == "put" and _d["결론"] == "묶어서 분리" and "차이" in _d["지표"]:
+            _gap = _d["지표"]["차이"]
+            st.caption(inst_text(t,
+                "전환권이 파생상품부채라 10% 검토(B4.3.5(5)(가))에 **들어가기 전에** 묶음으로 "
+                f"결정됐습니다. 위 차이 {_gap*100:.1f}% 는 지표로만 보여 줍니다 — 전환권이 자본이었다면 "
+                + ("이 차이만으로도 «분리» 입니다." if abs(_gap) > SPLIT_TOL
+                   else "«분리하지 않을 여지» 입니다.")))
         st.markdown("**평가방법** — " + inst_text(t, _d["평가"]))
 
     if not _sp["put"]["설정일치"]:
