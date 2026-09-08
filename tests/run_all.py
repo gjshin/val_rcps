@@ -41,7 +41,8 @@ def baseline_now():
     src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
     exec(compile(src.split("st.set_page_config")[0], "app.py", "exec"), m.__dict__)
     G = m.__dict__
-    t = G["Terms"](carry=1, rf_curve=[(1, .0226), (3, .0240), (5, .0252)], cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    # 검증기준선 §3-1 의 «기본 계약» 은 설정전수대조.py 의 기준 — Terms() 기본값 · carry=1 · 노드 6개월
+    t = G["Terms"](carry=1, gap_m=6.0, rf_curve=[(1, .0226), (3, .0240), (5, .0252)], cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
     G["derive"](t); full, b0, b1, b2, ca, _ = G["decompose"](t)
     return dict(주계약=round(b0, 4), 부채요소=round(b1, 4), 전체=round(b2, 4), 매도청구권=round(ca, 4))
 
@@ -59,7 +60,7 @@ def main():
     for nm, cmd, _, est in todo:
         t1 = time.time(); print(f"▶ {nm} ({est}) …", end="", flush=True)
         pr = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
-        out = (pr.stdout + pr.stderr).strip().splitlines()
+        out = [x for x in (pr.stdout + pr.stderr).strip().splitlines() if "it/s]" not in x]   # tqdm 잡음 제외
         last = out[-1] if out else ""
         sec = round(time.time() - t1, 1)
         ok = pr.returncode == 0
@@ -72,8 +73,7 @@ def main():
     mx = {}
     try:
         M = json.load(open(os.path.join(ROOT, "tests", "검증매트릭스.json"), encoding="utf-8"))
-        rows = M["rows"] if isinstance(M, dict) else M
-        for r in rows: mx[r["status"]] = mx.get(r["status"], 0) + 1
+        mx = M["summary"]
     except Exception: pass
     allok = all(r["ok"] for r in res) and base_ok
     doc = dict(generated=time.strftime("%Y-%m-%d %H:%M"), head=head, app_sha256_12=src_hash, quick=a.quick,

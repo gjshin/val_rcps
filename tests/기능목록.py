@@ -470,7 +470,12 @@ def main():
     indep = sum(1 for r in rows if r.get("independent_oracle"))
     print(f"\n   독립 오라클이 붙은 분기 {indep} / 열거형+권리 {sum(1 for r in rows if r['kind'] in ('enum','presence'))}")
 
-    head = (open(os.path.join(ROOT, ".git", "HEAD")).read().strip() if os.path.exists(os.path.join(ROOT, ".git")) else "")
+    # 워크트리에서는 .git 이 파일이라 git 에게 묻는다 (실패해도 매트릭스는 만든다)
+    try:
+        import subprocess
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        head = ""
     out = dict(generated=datetime.datetime.now().isoformat(timespec="seconds"),
                head=head, manifest_missing=miss, unlisted_hand_tests=unlisted,
                summary=tab, cases=rows)
