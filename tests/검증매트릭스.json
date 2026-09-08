@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-08T07:40:10",
- "head": "aa061b7",
+ "generated": "2026-09-08T07:44:30",
+ "head": "42c1c02",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -5813,10 +5813,10 @@
     "tests/손계산대조.py::test_coupon_schedule_after_elapsed_months",
     "tests/손계산대조.py::test_root_immediate_put",
     "tests/손계산대조.py::test_date_month_roundtrip",
-    "tests/오라클.py::test_date_boundaries",
-    "tests/분기전수.py::mid=ON"
+    "tests/손계산대조.py::test_acc_mode_fv_only",
+    "tests/오라클.py::test_date_boundaries"
    ],
-   "n_tests": 12
+   "n_tests": 13
   },
   {
    "case_id": "CB-mid-OFF",
@@ -5947,9 +5947,10 @@
    "covered_by": [
     "tests/주주간계약대조.py::중간평가",
     "tests/손계산대조.py::test_sha_root_immediate_put",
+    "tests/손계산대조.py::test_acc_mode_fv_only",
     "tests/분기전수.py::mid=ON"
    ],
-   "n_tests": 3
+   "n_tests": 4
   },
   {
    "case_id": "SHA-mid-OFF",

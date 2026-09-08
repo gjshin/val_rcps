@@ -171,7 +171,8 @@ def terms_enum_fields(G):
         if ty not in ("int", "str"): continue
         # 문자열이라도 날짜·출처·등급 같은 자유 입력은 열거형이 아니다
         # 자유 문자열 — 갈래가 아니다 (날짜·등급 이름·주가 출처·종목코드)
-        if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src"): continue
+        if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src",
+                 "rvol_rating", "rvol_how"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty
@@ -320,6 +321,7 @@ def collect_coverage(G):
         # 날짜↔개월 변환과 종가 고르기 — 격자 값이 아니라 입력 경로의 시험. step_mapper 를 밟는다.
         "test_date_month_roundtrip": [("CB", "mid", True)],
         "test_pick_close": [("CB", "inst", "CB")],
+        "test_acc_mode_fv_only": [("CB", "mid", True), ("SHA", "mid", True)],
         "test_bdt_review_gates": [("CB", "conv_class", "equity"), ("CB", "conv_class", "liability"),
                                   ("CB", "put_bdt", 1), ("CB", "put_bdt", 0), ("CB", "put", True), ("CB", "put", False)],
     }
@@ -487,6 +489,13 @@ def main():
                summary=tab, cases=rows)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1, default=str)
+    # 조서 99_모형검증 시트가 같은 함수로 읽는다. 한때 «rows» 키를 읽어 KeyError 를 삼키고
+    # 「매트릭스 파일이 없다」로 찍혔다 — 쓰는 쪽과 읽는 쪽을 여기서 맞춰 본다.
+    _ms = G["matrix_summary"](OUT)
+    if _ms is None or not any(p == "CB" for p, _ in _ms["rows"]):
+        print("   ★ 조서가 매트릭스를 읽지 못한다 (matrix_summary)"); FAIL.append("matrix_summary")
+    else:
+        print(f"   조서 99_모형검증 매트릭스 요약 — {len(_ms['rows'])} 상품 · {_ms['n']} 행 (matrix_summary)")
     print(f"\n   → {os.path.relpath(OUT, ROOT)} ({len(rows)} 행)")
 
     bad = bool(miss) or bool(unlisted)

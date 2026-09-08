@@ -901,6 +901,39 @@ def test_bdt_review_gates():
     chk_bool("주주간계약 — None", rev(ts, {"dist": {}}, 0, 0, 0, 0) is None)
 
 
+def test_acc_mode_fv_only():
+    """발행일 뒤 평가에 전기말 장부금액이 없으면 세 경로가 모두 «공정가치 전용» 이다."""
+    print("\n[25] 후속평가 — 공정가치 산출 전용")
+    import io, openpyxl
+    am = G["acc_mode"]
+    RF = [(1, .030), (3, .031), (5, .032)]; CR = [(1, .14), (3, .17), (5, .19)]
+    t0 = Terms(rf_curve=RF, cr_curve=CR); derive(t0)
+    chk_bool("발행 시점 평가 → initial", am(t0) == "initial")
+    t1 = Terms(rf_curve=RF, cr_curve=CR, d_issue="2024-05-16", d_base="2024-12-31", d_mat="2029-05-16"); derive(t1)
+    chk_bool("발행일 뒤 · 전기 장부금액 없음 → fv_only", am(t1) == "fv_only")
+    t2 = Terms(**{**G["asdict"](t1), "prev_deriv": 3.0, "prev_host": 80.0, "eir_issue": .08}); derive(t2)
+    chk_bool("발행일 뒤 · 전기 장부금액 있음 → subsequent", am(t2) == "subsequent")
+    ts = Terms(inst="SHA", rf_curve=RF, cr_curve=CR, d_issue="2024-05-16", d_base="2024-12-31", d_mat="2029-05-16"); derive(ts)
+    chk_bool("주주간계약은 언제나 initial", am(ts) == "initial")
+    for tt, want in ((t1, True), (t2, False)):
+        full, b0, b1, b2, ca, conv = G["decompose"](tt)
+        eir = G["eir_or_none"](tt, full, b0, b1, b2, ca)
+        chk_bool(f"{'fv_only' if want else 'subsequent'} — 상각표 {'없음' if want else '있음'}", (eir is None) == want)
+        for fn in ("build_xlsx", "build_xlsx_formula"):
+            wb = openpyxl.load_workbook(io.BytesIO(G[fn](tt, full, b0, b1, b2, ca, conv, eir)))
+            E, M = wb["회계처리"], wb["상각표"]
+            fv = "공정가치 산출 전용" in str(E.cell(2, 2).value)
+            chk_bool(f"{fn} — 회계처리 시트가 {'공정가치 전용' if want else '배분표'}", fv == want)
+            chk_bool(f"{fn} — 상각표 {'만들지 않음' if want else '있음'}",
+                     ("만들지 않는다" in str(M.cell(2, 2).value)) == want)
+            if want:
+                vals = [E.cell(r, 2).value for r in range(10, 16) if E.cell(r, 2).value]
+                chk_bool(f"{fn} — 공정가치 표에 파생상품부채 줄", any("파생상품부채" in str(v) for v in vals))
+    # 매트릭스 요약 — 조서가 읽는 함수
+    ms = G["matrix_summary"]()
+    chk_bool("matrix_summary 가 CB 줄을 돌려준다", ms is not None and any(p == "CB" for p, _ in ms["rows"]))
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -926,6 +959,7 @@ def main():
     test_date_month_roundtrip()
     test_pick_close()
     test_bdt_review_gates()
+    test_acc_mode_fv_only()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
