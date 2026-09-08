@@ -1659,6 +1659,87 @@ def call_third_party(tm: Terms, full, method: int) -> float:
     return rec(full["root"], 0)[0]
 
 
+CALL_HOWTO = """\
+| 단계 | 하는 일 | 조서 시트 |
+|---|---|---|
+| ① | **기초자산 격자** — 콜도 의무보유도 없는 전환사채. 노드마다 지분 조각·채권 조각·전환확률이 나온다 | 04 · 05 · 06 · 08 · 11 |
+| ② | **회차별 매도청구 행사금액** — 계약서의 행사금액표와 대조한다 | 트리 8행 |
+| ③ | **노드별 콜 이득** = (지분 + 채권) − 행사금액, 음수면 0 | 19 |
+| ④ | **그 이득의 성격을 가른다** — 전환확률(⑪) 또는 가치 구성비율(⑰) | 11 · 11b · 17 · 17a · 17b |
+| ⑤ | **뒤에서 앞으로 되짚는다** — 「지금 행사」와 「계속 보유」 중 큰 쪽. 계속 보유는 지분 성격에 무위험, 채권 성격에 위험 선도이자율 | 18 · 20 · 21~24 |
+| ⑥ | **뿌리 값 × 콜 대상비율** | 결과 |
+
+본문 3.2 는 「노드의 페이오프 성격에 따라 위험할인율 또는 무위험할인율이 **구분되어 적용**됨으로 인해
+**혼합할인율 이항모형**으로 알려져 있다」고 하며, 그 안에 **TF & Hull(지분-채권 현금가중할인)** 과
+**GS(전환가중확률할인)** 를 나란히 둡니다. 앱의 두 갈래가 그것입니다."""
+
+
+def call_type_note(tm: Terms) -> str:
+    """콜 유형별 한공회 실무 접근 — 화면에 서너 줄로 요약해 싣는다."""
+    if is_sha(tm) or tm.k_w <= 0: return ""
+    if issuer_redeem(tm) or not tm.k_third:
+        return ("**발행자 콜** — 한공회 기본 접근은 **유무가치비교법**입니다 (4.3.2). 콜조항을 넣은 "
+                "값과 뺀 값의 차이로 봅니다. 행사하면 사채가 소멸해 기초자산이 남지 않으므로 "
+                "복합옵션 구조가 성립하지 않고, 거래상대방도 그대로라 내재파생이어서 따로 자산으로 "
+                "세우지 않습니다.")
+    if int(tm.k_kind) == 1:
+        return ("**제3자 사전 기특정 콜** — 값은 지정 가능 콜과 같은 격자에서 나옵니다 (4.5.4 접근법 "
+                "2-2). 다만 발행 시 제3자가 이미 정해져 있어 **발행회사는 옵션 당사자가 아니므로** "
+                "파생상품자산을 인식하지 않고 최초 인식 시 **주주간 분배**로 봅니다 (4.5.1). "
+                "선택한 방법과 근거를 일관되게 문서화하십시오 (4.6).")
+    return ("**제3자 지정 가능 콜** — 거래상대방이 달라 **별도의 금융상품**이고 (기준서 1109 문단 "
+            "4.3.1), 전환사채를 먼저 평가한 뒤 그 전환사채를 기초자산으로 하는 **복합옵션**으로 "
+            "잽니다 (4.3.4 · 4.4.3). 유무가치비교법도 쓸 수 있으나 재는 대상이 달라 값이 갈립니다 — "
+            "선택한 평가방법과 근거를 일관되게 문서화하십시오 (4.6).")
+
+
+def call_compare(tm: Terms, full, b2):
+    """매도청구권을 방법별로 나란히 잰다 — 화면·값 조서·수식 조서가 같은 함수를 쓴다.
+
+    옵션차익 네 조합은 이미 만든 ``full`` 의 memo 를 한 번 더 역진할 뿐이라 싸다.
+    유무가치비교법만 격자를 두 장 더 만든다 (의무보유 있는 것과 뺀 것).
+
+    돌려주는 것 ``(rows, rec)``
+      rows  [(방법, 지분·채권 구분 기준, 값, 적용 여부)]
+      rec   적용값과 유무가치비교법의 차이를 두 조각으로 나눈 정합 분해.
+            한공회 4.1.1 이 「두 방법은 개념적으로 결과가 동일하여야 하나 세부적인
+            구현방법에서 … 차이가 종종 발생한다」고 하므로, 그 차이를 설명해 둔다.
+    """
+    if is_sha(tm) or tm.k_w <= 0: return [], {}
+    ks = full["kstrike"]
+    if not any(ks(i) is not None for i in range(int(full["n"])+1)): return [], {}
+
+    def opt(method, split, hold):
+        t2 = Terms(**asdict(tm)); t2.k_split = split; t2.k_hold = hold
+        return tm.k_w * call_third_party(t2, full, method)
+
+    def wow(lock):                      # 유무가치비교법 — 콜을 넣고 뺀 차액
+        cs = max(tm.cv_s, lock)
+        b3 = pick(engine(tm, conv=True, put=True, call=True, conv_start=cs), tm.model)
+        return tm.k_w * (b2 - b3)
+
+    km, kspl, khl = int(tm.k_method), int(tm.k_split), int(tm.k_hold)
+    A, A0 = wow(tm.k_lock), wow(0.0)
+    rows = [("유무가치비교법 (4.3.2)", "해당 없음 — 격자에서 직접", A, km == 0)]
+    if tm.k_lock > tm.cv_s:
+        rows.append(("유무가치비교법 · 의무보유 뺀 값 (참고)", "해당 없음", A0, False))
+    for m in (1, 2):
+        mn = "옵션차익 · GS식 전환가중확률할인" if m == 1 else "옵션차익 · TF식 지분-채권 분리할인"
+        for sp in (1, 0):
+            rows.append((mn, K_SPLITS[sp].split(" —")[0], opt(m, sp, khl),
+                         km == m and kspl == sp))
+    rec = {}
+    if km:                              # 적용값이 옵션차익법일 때만 분해가 뜻을 가진다
+        C = opt(km, kspl, 1)            # 콜 존속 (의무보유 있음)
+        B = opt(km, kspl, 0)            # 정산 시 콜 소멸 (의무보유 없음)
+        rec = {"유무가치비교법 (적용 계약)": A,
+               "옵션차익법 (적용 산식·적용 설정)": opt(km, kspl, khl),
+               "① 방법론 차이 (둘 다 의무보유 없음)": A0 - B,
+               "② 유무가치법이 추가로 담는 부분": (A - A0) - (C - B),
+               "참고 · 의무보유로 콜 행사기회가 보전되는 효과": C - B}
+    return rows, rec
+
+
 K_METHODS = {0: "유무가치비교법",
              1: "옵션차익혼합할인법 · GS식 전환가중확률할인 (단일 할인율)",
              2: "옵션차익혼합할인법 · TF식 지분-채권 분리할인"}
@@ -2767,6 +2848,18 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
         rights.append(("매도청구권", cad, "적합", ""))
     for nm, v, vd, why in rights:
         out.append((f"권리 값 ≥ 0 · {nm}", f"{v:,.4f}", vd, why))
+    # 어느 방법·어느 구분 기준으로 쟀는지 — 조서를 읽는 사람이 가장 먼저 확인할 것이다.
+    if tm.k_w > 0 and not is_sha(tm):
+        _std = ("유무가치비교법" if (issuer_redeem(tm) or not tm.k_third)
+                else "옵션차익혼합할인법")
+        _now = "유무가치비교법" if int(tm.k_method) == 0 else "옵션차익혼합할인법"
+        out.append(("매도청구권 적용 방법 · 구분 기준",
+                    K_METHODS[int(tm.k_method)]
+                    + (" · " + K_SPLITS[int(tm.k_split)].split(" —")[0] if tm.k_method else "")
+                    + (" · 의무보유 " + ("있음" if int(tm.k_hold) else "없음") if tm.k_method else ""),
+                    "적합" if _now == _std else "한계",
+                    ("본문 기본 접근법과 같다 (4.3.2 · 4.3.4)" if _now == _std else
+                     f"본문 기본 접근법은 {_std} 이다 — 4.6.2 대로 선택 근거를 남길 것")))
     D = full["dist"]; ds = D["conv"] + D["put"] + D["call"] + D["mat"]
     out.append(("정산 분포 합", f"{ds:.10f}", "적합" if abs(ds - 1) <= 1e-9 else "확인 필요", "전환 + 조기상환 + 매도청구 + 만기 = 1"))
     rows, _ = allocate(tm, full, b0, b1, b2, ca)
@@ -2855,6 +2948,58 @@ def matrix_summary(path=None):
             if x["product"] == pr and x["status"] in cnt: cnt[x["status"]] += 1
         out.append((pr, cnt))
     return dict(rows=out, head=(mx.get("head", "") if isinstance(mx, dict) else ""), n=len(rows))
+
+
+def write_call_rows(R, r, tm: Terms, full, b2, put, sec, fmt4, pct, grey):
+    """결과 시트 «매도청구권 방법별 · 정합 분해» — 값이다. 두 조서가 같은 함수를 부른다.
+
+    한공회 4.6.2 가 「선택한 평가기법이 적합하다는 판단 근거 등을 제시하고 관련 내용을
+    문서화할 필요가 있다」고 하므로, 유형·기본 접근법·적용 방법·대체방법 값·차이·
+    선택 근거를 한자리에 모은다.
+    """
+    cmp_, rec = call_compare(tm, full, b2)
+    if not cmp_: return r
+    sec(R, r, "5. 매도청구권 — 방법별 값과 선택 근거 (값 · 4.6.2 문서화)", span=6); r += 1
+    put(R, r, 2, call_type_note(tm).replace("**", ""), color=grey, size=9)
+    R.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
+    R.row_dimensions[r].height = 42; r += 2
+    base = next((v for nm, _, v, _ in cmp_ if nm.startswith("유무가치비교법 (")), None)
+    for i, h in enumerate(["방법", "지분·채권 구분 기준", "값", "유무가치 대비", "차이율", "적용"]):
+        put(R, r, 2+i, h, bold=True, border=True, size=9)
+    r += 1
+    for nm, sp, v, on in cmp_:
+        put(R, r, 2, nm, border=True, size=9); put(R, r, 3, sp, border=True, size=9)
+        put(R, r, 4, v, fmt=fmt4, align="right", border=True)
+        put(R, r, 5, (v - base) if base else "", fmt=fmt4, align="right", border=True)
+        put(R, r, 6, ((v - base)/base if base else ""), fmt=pct, align="right", border=True)
+        put(R, r, 7, "◀ 적용" if on else "", border=True, size=9); r += 1
+    r += 1
+    if rec:
+        put(R, r, 2, "유무가치비교법과의 차이 — 어디에서 오는가", bold=True); r += 1
+        for k, v in rec.items():
+            put(R, r, 2, k, border=True, size=9)
+            put(R, r, 4, v, fmt=fmt4, align="right", border=True); r += 1
+        _d = rec["유무가치비교법 (적용 계약)"] - rec["옵션차익법 (적용 산식·적용 설정)"]
+        put(R, r, 2, "차이 (유무가치 − 옵션차익) = ① + ②", bold=True, border=True, size=9)
+        put(R, r, 4, _d, bold=True, fmt=fmt4, align="right", border=True); r += 2
+        put(R, r, 2, "한공회 4.1.1 — 「유무가치비교법과 옵션차익혼합할인법은 개념적으로 그 결과가 "
+                     "동일하여야 하나 세부적인 구현방법에서 시장에서의 실무가 다양하게 진행되고 있어 "
+                     "그 차이가 종종 발생한다」. ①은 두 방법이 같은 계약(의무보유 없음)을 잴 때 남는 "
+                     "구현 차이이고, ②는 유무가치비교법이 추가로 담는 부분이다 — 콜을 넣고 뺀 차액이라 "
+                     "투자자가 전환·조기상환을 못 하게 된 효과까지 값에 들어간다. 옵션차익법은 그 제한 "
+                     "자체를 별도의 가치요소로 콜에 더하지 않고, 제한으로 콜 대상물량이 행사기간 동안 "
+                     "존속하여 행사 가능성이 유지되는 효과만 담는다.", color=grey, size=9)
+        R.merge_cells(start_row=r, start_column=2, end_row=r, end_column=7)
+        R.row_dimensions[r].height = 58; r += 2
+    put(R, r, 2, "적용 방법 · 문안", bold=True, border=True, size=9)
+    put(R, r, 3, call_method_text(tm), border=True, size=9)
+    R.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
+    R.row_dimensions[r].height = 58; r += 1
+    put(R, r, 2, "평가기법 선택 근거 (4.6.2)", bold=True, border=True, size=9)
+    put(R, r, 3, (tm.k_basis.strip() or "— 사이드바 「평가기법 선택 근거」에 적으면 여기에 실린다"),
+        border=True, size=9)
+    R.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
+    return r + 2
 
 
 def write_pc_rows(R, r, tm: Terms, put, sec, fmt4, grey):
@@ -5246,7 +5391,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         put(R, 18+i, 4, "적합" if ok else "확인 필요",
             color=(GREEN if ok else RED), align="center", border=True)
     _rk = 18 + len(ck) + 1
-    write_pc_rows(R, _rk, tm, put, sec, N4, GREY)
+    _rk = write_pc_rows(R, _rk, tm, put, sec, N4, GREY)
+    write_call_rows(R, _rk + 1, tm, full, b2, put, sec, N4, P2, GREY)
 
     # ── 회계처리 ──
     E = wb.create_sheet("회계처리"); E.sheet_view.showGridLines = False
@@ -6888,7 +7034,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         "다른 매도청구권 평가방법의 값은 이 조서에 없습니다.", color=GREY, size=9)
     put(R, 36, 2, "주황색 숫자만 값이다. 선도이자율은 부트스트래핑 결과라 엑셀에서 재현하지 않는다.",
         color=AMB, size=9)
-    write_pc_rows(R, 38, tm, put, sec, N4, GREY)
+    _rk2 = write_pc_rows(R, 38, tm, put, sec, N4, GREY)
+    write_call_rows(R, _rk2 + 1, tm, full, b2, put, sec, N4, P2, GREY)
 
     # ── 이자율곡선 ──
     # 각 트리 11·12행의 선도이자율이 어디서 왔는지 남긴다. 부트스트래핑은
@@ -10079,20 +10226,40 @@ with tabs[2]:
         st.info(inst_text(t, "조기상환청구권이 없어 판단할 것이 없습니다."))
 
     # ── 매도청구권 : 세 방법을 나란히 ──
-    st.markdown(inst_text(t, "### 매도청구권 — 세 방법 중 무엇으로 잴 것인가"))
+    st.markdown(inst_text(t, "### 매도청구권 — 어느 방법으로 잴 것인가"))
     if t.k_w > 0:
-        _mv = []
-        for _km, _lb in ((0, "유무가치비교법"), (1, "옵션차익 · 혼합할인율"),
-                         (2, "옵션차익 · 지분·부채 분리")):
-            _tk = Terms(**asdict(t)); _tk.k_method = _km; derive(_tk)
-            _mv.append([_lb, decompose(_tk)[4], "◀ 적용" if t.k_method == _km else ""])
-        st.dataframe(pd.DataFrame(_mv, columns=["방법", "값", "　"]).style.format(
-            {"값": "{:,.4f}"}), use_container_width=True, hide_index=True)
-        st.caption(inst_text(t, "**어느 쪽이 옳다기보다 재는 대상이 다릅니다.** 유무가치비교법은 "
-                   "콜을 넣고 뺀 차액이라 **의무보유로 잃는 전환권 가치까지** 값에 "
-                   "들어갑니다. 옵션차익혼합할인법은 전환사채를 기초자산으로 하는 "
-                   "콜옵션 자체만 잽니다. 보고서를 검토하실 때도 어느 방법을 썼는지 "
-                   "먼저 확인하셔야 합니다."))
+        st.caption(inst_text(t, call_type_note(t)))
+        _cmp, _rec = call_compare(t, full, b2)
+        _base = next((v for nm, _, v, _ in _cmp if nm.startswith("유무가치비교법 (")), None)
+        _mv = [[nm, sp, v, (v - _base) if _base else 0.0,
+                ((v - _base)/_base if _base else 0.0), "◀ 적용" if on else ""]
+               for nm, sp, v, on in _cmp]
+        st.dataframe(pd.DataFrame(
+            _mv, columns=["방법", "지분·채권 구분 기준", "값", "유무가치 대비 차이", "차이율", "　"]
+            ).style.format({"값": "{:,.4f}", "유무가치 대비 차이": "{:,.4f}", "차이율": "{:,.1%}"}),
+            use_container_width=True, hide_index=True)
+        st.caption(inst_text(t,
+            "**두 방법의 결과를 억지로 같게 맞추지 않습니다.** 한공회 4.1.1 은 "
+            "「유무가치비교법과 옵션차익혼합할인법은 개념적으로 그 결과가 동일하여야 하나 "
+            "세부적인 구현방법에서 시장에서의 실무가 다양하게 진행되고 있어 그 차이가 종종 "
+            "발생한다」고 씁니다. 차이는 방법론 · 의무보유 반영 · 조기행사 판단 · 전환확률 "
+            "산출 · 할인방법에서 옵니다 — 아래에 두 조각으로 나눠 두었습니다."))
+        if _rec:
+            st.markdown(inst_text(t, "##### 유무가치비교법과의 차이 — 어디에서 오는가"))
+            _d = _rec["유무가치비교법 (적용 계약)"] - _rec["옵션차익법 (적용 산식·적용 설정)"]
+            st.dataframe(pd.DataFrame(
+                [[k, v] for k, v in _rec.items()] + [["차이 (유무가치 − 옵션차익)", _d]],
+                columns=["항목", "값"]).style.format({"값": "{:,.4f}"}),
+                use_container_width=True, hide_index=True)
+            st.caption(inst_text(t,
+                "①과 ②의 합이 차이와 정확히 같습니다. ①은 두 방법이 같은 계약(의무보유 없음)을 "
+                "잴 때 남는 순수한 구현 차이이고, ②는 유무가치비교법이 추가로 담는 부분입니다 — "
+                "콜을 넣고 뺀 차액이라 투자자가 전환·조기상환을 못 하게 된 효과까지 값에 "
+                "들어갑니다. 옵션차익법은 그 제한 자체를 별도의 가치요소로 콜에 더하지 않고, "
+                "제한으로 **콜 대상물량이 행사기간 동안 존속하여 행사 가능성이 유지되는 효과만** "
+                "담습니다 (참고 줄)."))
+        with st.expander(inst_text(t, "옵션차익혼합할인법은 어떻게 계산하나 — 여섯 단계")):
+            st.markdown(inst_text(t, CALL_HOWTO))
         st.info(inst_text(t, "판정에 따른 권고 — " + _sp["call"]["평가"].replace("**", "")))
 
         # 계약 우선순위가 값을 얼마나 바꾸는가. 겹치는 노드가 없거나 매도청구금액이
