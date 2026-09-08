@@ -87,10 +87,12 @@ def find_row(ws, col, text, start=1):
 
 def main():
     quick = "--quick" in sys.argv
+    only = next((a for a in sys.argv[1:] if not a.startswith("--")), "")
     import openpyxl
     from openpyxl.utils import get_column_letter as gl
     print("검산수식대조 — 수식 조서의 살아 있는 검산 대 값 조서·엔진")
     for ci, (lbl, over) in enumerate(CASES[:2] if quick else CASES):
+        if only and only not in lbl: continue
         t, full, b0, b1, b2, ca, conv, eir = make(over)
         xb = G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv, eir)
         vb = G["build_xlsx"](t, full, b0, b1, b2, ca, conv, eir)

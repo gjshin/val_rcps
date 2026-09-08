@@ -2664,7 +2664,8 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
     if put_bdt_on(tm):
         bp = bdt_parts(tm)
         dmax = max(abs(sum(bp["Q"][k]) - bp["mkt"][k]) for k in range(int(bp["n"]) + 1))
-        out.append(("BDT 캘리브레이션 |ΣQ − 시장할인계수| 최대", f"{dmax:.2e}", "적합" if dmax < 1e-6 else "확인 필요",
+        out.append(("BDT 캘리브레이션 |ΣQ − 시장할인계수| 최대", ("< 1E-09" if dmax < 1e-9 else f"{dmax:.2E}"),
+                    "적합" if dmax < 1e-6 else "확인 필요",
                     "기준금리 a 를 이분법으로 역산한 결과 — 수식 조서에서 σ·곡선을 바꾸면 벗어난다"))
     notes = getattr(tm, "forced_notes", [])
     out.append(("되돌린 설정 (지원하지 않는 조합)", f"{len(notes)}건", "해당 없음" if not notes else "확인 필요",
@@ -2738,7 +2739,7 @@ def write_pc_rows(R, r, tm: Terms, put, sec, fmt4, grey):
     return r + 1
 
 
-def write_check_sheets(wb, tm: Terms, checks, after="결과", review=None):
+def write_check_sheets(wb, tm: Terms, checks, after="결과", review=None, xl=None):
     """조서에 «검산요약» 과 «99_모형검증» 두 장을 더한다.
 
     검산요약은 이 계약을 실제로 훑은 결과이고, 99_모형검증은 모형 자체의 알려진 한계와
@@ -2764,14 +2765,29 @@ def write_check_sheets(wb, tm: Terms, checks, after="결과", review=None):
     C.merge_cells(start_row=3, start_column=2, end_row=3, end_column=5); C.row_dimensions[3].height = 30
     for i, h in enumerate(["항목", "값", "판정", "설명"]):
         put(C, 5, 2 + i, h, bold=True, fill=RPT["band"], border=True)
-    r = 6
+    r = 6; nxl = 0
     for nm, val, vd, why in checks:
-        put(C, r, 2, nm, border=True); put(C, r, 3, val, border=True)
-        put(C, r, 4, vd, bold=True, color=tone.get(vd, RPT["ink"]), border=True)
-        put(C, r, 5, why, size=9, color=RPT["grey"], border=True, wrap=True); r += 1
+        # xl 이 있으면(수식 조서) 그 줄의 값·판정·설명을 다른 시트를 참조하는 수식으로 쓴다.
+        # 파이썬 판정(vd)은 탭 색과 요약 줄에 그대로 쓴다 — 수식이 같은 답을 내는지는
+        # 검산수식대조가 formulas 로 풀어 확인한다.
+        fx = (xl or {}).get(nm)
+        put(C, r, 2, nm, border=True); put(C, r, 3, (fx[0] if fx and fx[0] else val), border=True)
+        put(C, r, 4, (fx[1] if fx and fx[1] else vd), bold=True, color=tone.get(vd, RPT["ink"]), border=True)
+        put(C, r, 5, (fx[2] if fx and fx[2] else why), size=9, color=RPT["grey"], border=True, wrap=True)
+        if fx: nxl += 1
+        r += 1
     bad = [nm for nm, _, vd, _ in checks if vd == "확인 필요"]
     put(C, r + 1, 2, ("모든 항목 적합" if not bad else "확인 필요 " + str(len(bad)) + "건: " + ", ".join(bad)),
         bold=True, color=(RPT["green"] if not bad else RPT["red"]))
+    if xl is not None:
+        put(C, r + 2, 2, f'=IF(COUNTIF(D6:D{r-1},"확인 필요")=0,"수식 판정 — 모든 항목 적합",'
+                         f'"수식 판정 — 확인 필요 "&COUNTIF(D6:D{r-1},"확인 필요")&"건")', bold=True)
+        put(C, r + 3, 2, f"위 {nxl}줄의 값·판정은 다른 시트의 셀을 참조하는 **수식**이다 — 가정 시트를 바꾸면 따라온다. "
+            "나머지 줄(정산 분포 합 · 우선순위별 차이 · 되돌린 설정 · «한계» 판정)은 앱 계산값이다. "
+            "값 조서의 같은 줄과 문자열이 같아야 하며 검산수식대조가 그것을 확인한다.",
+            size=9, color=RPT["grey"], wrap=True)
+        C.merge_cells(start_row=r + 3, start_column=2, end_row=r + 3, end_column=5); C.row_dimensions[r + 3].height = 30
+        r += 2
     C.sheet_properties.tabColor = RPT["green"] if not bad else RPT["red"]
     if review is not None:
         r += 3
@@ -7081,8 +7097,78 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             put(E, 10+i, 2, k, border=True)
             put(E, 10+i, 3, v, fmt=N4, align="right", border=True)
             put(E, 10+i, 4, v/100*tm.face_total, fmt=N0, align="right", border=True)
-    write_check_sheets(wb, tm, model_checks(tm, full, b0, b1, b2, ca, eir),
-                       review=bdt_review(tm, full, b0, b1, b2, ca, rate_signals(tm)))
+    _checks = model_checks(tm, full, b0, b1, b2, ca, eir)
+    # ── 검산요약을 수식으로 — 상태확장(carry=0)이면 트리가 근사라 값 조서와 다르므로 값 그대로 ──
+    _xl = None
+    if tm.carry != 0:
+        _vd = {nm: vd for nm, _, vd, _ in _checks}
+        # 파이썬 f"{v:,.4f}" 와 같은 문자열. 1000 미만이면 천 단위 구분이 없으므로 "0.0000" 을 쓴다 —
+        # 검산수식대조가 쓰는 formulas 라이브러리가 TEXT(0,"#,##0.0000") 을 "0,.0000" 으로 잘못 내기 때문
+        _T = lambda v, d=4: (f'IF(ABS({v})<1000,TEXT({v},"0.{"0"*d}"),TEXT({v},"#,##0.{"0"*d}"))')
+        _E9 = f"{Q(S9)}!$C${R0}:${gl(3+n)}${R0+n}"
+        _E4 = f"{Q(S4)}!$C${R0}:${gl(3+n)}${R0+n}"
+        _E5 = f"{Q(S5)}!$C${R0}:${gl(3+n)}${R0+n}"
+        _E6 = f"{Q(S6)}!$C${R0}:${gl(3+n)}${R0+n}"
+        _H = lambda row: f"{Q(S9)}!$C${row}:${gl(3+n)}${row}"
+        _CONV = f'(({_E9}="전환")+({_E9}="자동전환")+({_E9}="상장전환"))'
+        _RED = f'(({_E9}="상환P")+({_E9}="상환C")+({_E9}="만기상환"))'
+        _N = f'TEXT(COUNTA({_E9}),"#,##0")'
+        _xl = {}
+        if _needTF:
+            _mis = f"SUMPRODUCT({_CONV}*(ABS({_E6})>0.000000001))" + \
+                   ("" if bw_cash(tm) else f"+SUMPRODUCT({_RED}*(ABS({_E5})>0.000000001))")
+            _neg = f"MIN({_E5},{_E6})"
+            _xl["결정 ↔ 지분·부채 배정"] = (
+                f'="어긋난 노드 "&({_mis})&" / "&{_N}',
+                f'=IF(AND(({_mis})=0,{_neg}>=-0.000000001),"적합","확인 필요")',
+                f'=IF({_neg}>=-0.000000001,"전환이면 부채 0, 상환이면 지분 0. 음수 노드 없음",'
+                f'"음수 노드 있음 (최소 "&{_T(_neg)}&")")')
+            _ill = (f"SUMPRODUCT({_CONV}*({_E4}<=0))"
+                    f'+SUMPRODUCT(({_E9}="상환P")*({_H(7)}<=0))'
+                    f'+SUMPRODUCT(({_E9}="상환C")*({_H(8)}>=999999))')
+            _xl["행사 불가능한 자리의 결정"] = (
+                f'="어긋난 노드 "&({_ill})&" / "&{_N}',
+                f'=IF(({_ill})=0,"적합","확인 필요")', None)
+            if _gs:
+                _xl["뿌리 노드 = 결과 (두 모형)"] = (
+                    f'="TF "&{_T(f"{Q(S8)}!C{R0}")}&" · GS "&{_T(f"{Q(S14)}!C{R0}")}',
+                    f'=IF(ABS({Q(S8)}!C{R0}-({Q(S5)}!C{R0}+{Q(S6)}!C{R0}))<0.000000001,"적합","확인 필요")', None)
+        _qr = f"{Q(S1)}!$C$16:${gl(2+n)}$16"
+        _xl["위험중립가중치 q"] = (
+            f'="["&TEXT(MIN({_qr}),"0.0000")&", "&TEXT(MAX({_qr}),"0.0000")&"]"',
+            f'=IF(AND(MIN({_qr})>0,MAX({_qr})<1),"적합","확인 필요")',
+            f'=IF(AND(MIN({_qr})>0,MAX({_qr})<1),"전 구간 (0, 1) 안",'
+            f'"벗어난 구간 "&(COUNTIF({_qr},"<=0")+COUNTIF({_qr},">=1"))&"개 — 화면은 계산을 멈춘다")')
+        for _nm, _v in (("조기상환청구권", "결과!C17-결과!C16"), ("전환권", "결과!C10-결과!C17"),
+                        ("매도청구권", f"결과!{CAE}")):
+            _key = f"권리 값 ≥ 0 · {_nm}"
+            if _vd.get(_key) in ("적합", "확인 필요"):
+                _xl[_key] = (f'={_T(_v)}', f'=IF({_v}>=-0.0000001,"적합","확인 필요")', None)
+        if acc_mode(tm) != "fv_only":
+            _xl["배분표 합 = 100"] = (f'=TEXT(회계처리!C13,"0.0000000000")',
+                                   f'=IF(ABS(회계처리!C13-100)<=0.000000001,"적합","확인 필요")', None)
+            _xl["분개 차대 균형"] = (f'="차 "&{_T("회계처리!C25")}&" = 대 "&{_T("회계처리!D25")}',
+                                 f'=IF(ABS(회계처리!C25-회계처리!D25)<=0.000000001,"적합","확인 필요")', None)
+            if tm.issue_cost and tm.issue_cost > 0:
+                _c100 = f"{K['cost']}/{K['face']}*100"
+                _xl["거래원가 배분 합 = 원가"] = (
+                    f'=TEXT(회계처리!D37,"0.000000")&" = "&TEXT({_c100},"0.000000")',
+                    f'=IF(ABS(회계처리!D37-({_c100}))<=0.000000001,"적합","확인 필요")', None)
+            if eir is not None:
+                _hl = f"상각표!H{14+len(eir[1])}"
+                _xl["상각표 기말 = 상환금액"] = (
+                    f'={_T(_hl, 6)}&" = "&{_T("상각표!C7", 6)}',
+                    f'=IF(ABS({_hl}-상각표!C7)<=0.000001,"적합","확인 필요")',
+                    f'="유효이자율 "&TEXT(상각표!C10,"0.0000%")'
+                    + ('&" · 기대만기 = 첫 조기상환 가능일 (조기상환권 비분리)"' if eir_expect(tm) is not None else ""))
+        if _bdt:
+            _QR = 14 + n + 3
+            _dr = f"'{SB1}'!$C${_QR+n+3}:${gl(3+n)}${_QR+n+3}"
+            _xl["BDT 캘리브레이션 |ΣQ − 시장할인계수| 최대"] = (
+                f'=IF(SUMPRODUCT(MAX(ABS({_dr})))<0.000000001,"< 1E-09",TEXT(SUMPRODUCT(MAX(ABS({_dr}))),"0.00E+00"))',
+                f'=IF(SUMPRODUCT(MAX(ABS({_dr})))<0.000001,"적합","확인 필요")', None)
+    write_check_sheets(wb, tm, _checks,
+                       review=bdt_review(tm, full, b0, b1, b2, ca, rate_signals(tm)), xl=_xl)
 
     H = wb.create_sheet("해설", 0); H.sheet_view.showGridLines = False
     H.column_dimensions["B"].width = 22; H.column_dimensions["C"].width = 96

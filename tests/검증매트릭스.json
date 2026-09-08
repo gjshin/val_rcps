@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-08T07:55:45",
- "head": "a415f99",
+ "generated": "2026-09-08T08:21:15",
+ "head": "3352dd8",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -1957,7 +1957,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 131
+   "n_tests": 132
   },
   {
    "case_id": "CB-k_less_cpn-0",
@@ -1971,9 +1971,10 @@
    "oracle": "hand_calc_independent",
    "independent_oracle": true,
    "covered_by": [
-    "tests/손계산대조.py::test_call_strike_switch"
+    "tests/손계산대조.py::test_call_strike_switch",
+    "tests/분기전수.py::k_less_cpn=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "BW-k_less_cpn-1",
@@ -2000,7 +2001,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-k_less_cpn-0",
@@ -2014,9 +2015,10 @@
    "oracle": "hand_calc_independent",
    "independent_oracle": true,
    "covered_by": [
-    "tests/손계산대조.py::test_call_strike_switch"
+    "tests/손계산대조.py::test_call_strike_switch",
+    "tests/분기전수.py::k_less_cpn=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-k_less_cpn-1",
@@ -2043,7 +2045,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-k_less_cpn-0",
@@ -2057,9 +2059,10 @@
    "oracle": "hand_calc_independent",
    "independent_oracle": true,
    "covered_by": [
-    "tests/손계산대조.py::test_call_strike_switch"
+    "tests/손계산대조.py::test_call_strike_switch",
+    "tests/분기전수.py::k_less_cpn=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "CB-k_third-0",
