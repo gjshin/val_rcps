@@ -200,6 +200,9 @@ def build(G, over, path):
     # 자산 줄이 사라져 100 이 되고, 파생 순액이 자산이면 그 줄이 대신 차변으로 간다.
     al = G["allocate"](t, full, b0, b1, b2, ca)[0]
     return dict(b2=b2, b3=b3, b0=b0, b1=b1, ca=ca, conv=conv,
+                # 발행일 뒤 평가에 전기말 장부금액이 없으면 회계처리 시트가 «공정가치 산출 전용» 이라
+                # 배분표·분개가 없다 — 그때는 그 시트 첫 줄(전체 = b2)만 본다
+                fv_only=(G["acc_mode"](t) == "fv_only"),
                 dr_want=100 + sum(-v for _, v in al[:-1] if v < 0),
                 eq=(t.conv_class == "equity")), mp["결과"], mp["회계처리"]
 
@@ -240,7 +243,8 @@ def run_one(idx):
     out = {"lbl": lbl, "why": why, "ca": eng["dr_want"],
            "vals": [got[res].get(c) for _, c, _ in ROWS],
            "want": [eng[k] for _, _, k in ROWS],
-           "alloc": got[acc].get("C13"),
+           "alloc": got[acc].get("C13"), "fv_only": eng.get("fv_only", False),
+           "fv_top": got[acc].get("C10"),
            "dr": got[acc].get("C25"), "cr": got[acc].get("D25"),
            "gap": over.get("_gap", 6.0)}
     print("@@" + json.dumps(out), flush=True)
@@ -269,13 +273,18 @@ def main():
             if have is None or abs(have - want) > 1e-4:
                 ok = False
                 bad.append(f"{lbl} · {nm}: 조서 {have} · 엔진 {want:.4f}")
-        # 배분 합계와 분개 대차도 매번 본다
-        if o["alloc"] is None or abs(o["alloc"] - 100.0) > 1e-4:
-            ok = False; bad.append(f"{lbl} · 배분 합계: {o['alloc']}")
-        if (o["dr"] is None or o["cr"] is None
-                or abs(o["dr"] - o["cr"]) > 1e-4
-                or abs(o["dr"] - eng_ca) > 1e-4):
-            ok = False; bad.append(f"{lbl} · 분개 대차: {o['dr']} / {o['cr']}")
+        # 배분 합계와 분개 대차도 매번 본다. 공정가치 전용(후속평가 · 전기 장부금액 없음)이면
+        # 회계처리 시트에 배분표·분개가 없으므로 공정가치 표 첫 줄(전체)이 엔진 b2 인지만 본다
+        if o.get("fv_only"):
+            if o["fv_top"] is None or abs(o["fv_top"] - o["want"][0]) > 1e-4:
+                ok = False; bad.append(f"{lbl} · 공정가치 표 첫 줄(전체): {o['fv_top']}")
+        else:
+            if o["alloc"] is None or abs(o["alloc"] - 100.0) > 1e-4:
+                ok = False; bad.append(f"{lbl} · 배분 합계: {o['alloc']}")
+            if (o["dr"] is None or o["cr"] is None
+                    or abs(o["dr"] - o["cr"]) > 1e-4
+                    or abs(o["dr"] - eng_ca) > 1e-4):
+                ok = False; bad.append(f"{lbl} · 분개 대차: {o['dr']} / {o['cr']}")
         g = o["gap"]
         if g not in base:
             base[g] = vals                     # 그 격자의 첫 케이스가 기준선이다
