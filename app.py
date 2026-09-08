@@ -2652,6 +2652,20 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
         out.append(("상각표 기말 = 상환금액", f"{end:,.6f} = {red_:,.6f}", "적합" if abs(end - red_) <= 1e-6 else "확인 필요",
                     f"유효이자율 {r_:.4%}" + (" · 기대만기 = 첫 조기상환 가능일 (조기상환권 비분리)"
                                           if eir_expect(tm) is not None else "")))
+    pcc = pc_compare(tm)
+    if pcc is None:
+        out.append(("매도청구권 · 우선순위별 차이", "겹치지 않음", "해당 없음",
+                    "조기상환금액 > 매도청구금액인 겹침 노드가 없어 두 우선순위가 같은 답"))
+    else:
+        dpc = abs(pcc[0][1] - pcc[1][1])
+        out.append(("매도청구권 · 우선순위별 차이", f"{dpc:,.4f}", "적합" if dpc <= 1e-6 else "한계",
+                    "계약의 통지기간·번복 조항이 정한다 — 결과 시트에 두 값을 나란히 실었다. "
+                    "고른 근거를 조서에 적을 것" if dpc > 1e-6 else "두 우선순위가 같은 값"))
+    if put_bdt_on(tm):
+        bp = bdt_parts(tm)
+        dmax = max(abs(sum(bp["Q"][k]) - bp["mkt"][k]) for k in range(int(bp["n"]) + 1))
+        out.append(("BDT 캘리브레이션 |ΣQ − 시장할인계수| 최대", f"{dmax:.2e}", "적합" if dmax < 1e-6 else "확인 필요",
+                    "기준금리 a 를 이분법으로 역산한 결과 — 수식 조서에서 σ·곡선을 바꾸면 벗어난다"))
     notes = getattr(tm, "forced_notes", [])
     out.append(("되돌린 설정 (지원하지 않는 조합)", f"{len(notes)}건", "해당 없음" if not notes else "확인 필요",
                 "; ".join(f"{k} → {v}" for k, v, _ in notes) if notes else "없음"))
@@ -2702,6 +2716,26 @@ def matrix_summary(path=None):
             if x["product"] == pr and x["status"] in cnt: cnt[x["status"]] += 1
         out.append((pr, cnt))
     return dict(rows=out, head=(mx.get("head", "") if isinstance(mx, dict) else ""), n=len(rows))
+
+
+def write_pc_rows(R, r, tm: Terms, put, sec, fmt4, grey):
+    """결과 시트 «우선순위별 매도청구권» — 값이다(트리 자체가 한 우선순위로 만들어지므로). 두 조서 공통."""
+    pcc = pc_compare(tm)
+    sec(R, r, "4. 풋·콜 우선순위별 매도청구권 (값 · 계약이 정한다)", span=5); r += 1
+    if pcc is None:
+        put(R, r, 2, "겹치는 노드에서 조기상환금액이 매도청구금액보다 큰 자리가 없어 두 우선순위가 같은 답이다.",
+            color=grey, size=9)
+        return r + 1
+    for i, h in enumerate(["우선순위", "매도청구권", "전환권대가", "적용"]):
+        put(R, r, 2+i, h, bold=True, border=True, size=9)
+    r += 1
+    for lb, ca2, cv2, on in pcc:
+        put(R, r, 2, lb, border=True); put(R, r, 3, ca2, fmt=fmt4, align="right", border=True)
+        put(R, r, 4, cv2, fmt=fmt4, align="right", border=True)
+        put(R, r, 5, "◀ 적용" if on else "", border=True); r += 1
+    put(R, r, 2, "두 값이 다르면 어느 쪽이 맞는지는 계약의 통지기간·「통지된 조기상환청구를 매도청구로 번복할 수 "
+                 "있는가」 조항이 정한다. 고른 근거를 조서에 적는다.", color=grey, size=9)
+    return r + 1
 
 
 def write_check_sheets(wb, tm: Terms, checks, after="결과", review=None):
@@ -2987,6 +3021,23 @@ def pc_overlap(tm: Terms):
               if tm.p_mode == "accrue" else tm.p_rate)
         kv = 100*(1 + accrue_rate(t_, tm.k_prem, call_cpn(tm), tm.k_cmp))
         out.append((i, t_*12, pv, kv))
+    return out
+
+
+def pc_compare(tm: Terms):
+    """풋·콜 우선순위(pc_order) 둘로 재 본 매도청구권·전환권대가 — [(라벨, 매도청구권, 전환권대가, 적용)].
+
+    겹치는 노드에서 조기상환금액이 매도청구금액보다 큰 자리가 없으면 두 갈래가 같은 답이라 None.
+    있으면 격자를 두 번 더 돌린다. 어느 쪽이 맞는지는 수식이 아니라 계약(통지기간·번복 조항)이
+    정하므로 조서에 두 값을 나란히 싣고 고른 근거를 적는다. 화면·값 조서·수식 조서가 같은 함수.
+    """
+    if is_sha(tm) or tm.k_w <= 0: return None
+    if not [x for x in pc_overlap(tm) if x[2] > x[3] + 1e-9]: return None
+    out = []
+    for po, lb in ((0, "투자자 조기상환 우선"), (1, "발행자 매도청구 우선")):
+        tp = Terms(**asdict(tm)); tp.pc_order = po; derive(tp)
+        _, _, _, _, ca2, cv2 = decompose(tp)
+        out.append((lb, ca2, cv2, int(tm.pc_order) == po))
     return out
 
 
@@ -5020,6 +5071,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         put(R, 18+i, 3, v, fmt=N4, align="right", border=True)
         put(R, 18+i, 4, "적합" if ok else "확인 필요",
             color=(GREEN if ok else RED), align="center", border=True)
+    _rk = 18 + len(ck) + 1
+    write_pc_rows(R, _rk, tm, put, sec, N4, GREY)
 
     # ── 회계처리 ──
     E = wb.create_sheet("회계처리"); E.sheet_view.showGridLines = False
@@ -5570,6 +5623,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("매도청구권 평가방법 (0 유무가치 / 1 혼합할인율 / 2 지분·부채 분리)",
          "kmeth", tm.k_method, N0, False),
         ("조기상환권 처리 (1 분리 / 0 부채요소에 포함)", "psep", int(tm.p_sep), N0, True),
+        ("조기상환 행사금액이 상실이자 보상 수준 (1/0)", "plost", int(tm.p_lost_int), N0, True),
         # 전체 지정이면 배분표가 한 줄이 되고 상각표를 만들지 않는다. 트리는
         # 그대로다 — 평가가 아니라 **인식**을 바꾸는 스위치다.
         ("복합계약 전체 당기손익-공정가치 지정", "fvpl",
@@ -6309,7 +6363,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                 g(9, f"=IF({st}={K['n']},{K['red']},0)", N2)
                 if i < n:
                     g(10, BP["a"][i], P2, AMB)
-                    g(11, BP["add"][i], P2, AMB)
+                    # 확정 스프레드 = 위험 선도 − 무위험 선도. 트리 11·12행이 그 값이다.
+                    g(11, f"=IF({K['bbase']}=1,{Q(S1)}!{L}$12-{Q(S1)}!{L}$11,0)", P2)
             put(W, RB-1, 2, "j ＼ 스텝", bold=True, size=8, fill=LIGHT,
                 border=True, align="center")
             for i in range(n+1):
@@ -6362,22 +6417,29 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                           if j <= i-1 else "")
                     v = "=" + "+".join(x for x in (up, dn) if x)
                 put(W, QR+j, 3+i, v, fmt=N6, size=8, align="right")
+        # 시장 할인계수 exp(−r(kΔt)·kΔt) 는 구간 선도이자율의 합으로 정확히 되돌아온다 —
+        # Σ_{i<k} f_i·Δt = r(kΔt)·kΔt. 트리 11행(무위험)·12행(위험)이 그 선도이자율이므로
+        # 수식으로 쓴다. 기준금리 a 만 값(이분법)이라, 엑셀에서 σ·곡선을 바꾸면 «차이» 가
+        # 0 을 벗어나는 것이 곧 캘리브레이션 검산이다.
+        _rowb = 12 if int(tm.bdt_base) == 0 else 11
         for k2, nm in enumerate(("모형 무이표채  Σ Q", "시장 할인계수", "차이")):
             r2 = QR+n+1+k2
             put(W, r2, 2, nm, bold=True, size=8, fill=LIGHT, border=True)
             for i in range(n+1):
                 L = gl(3+i)
                 v = (f"=SUM({L}{QR}:{L}{QR+n})" if k2 == 0 else
-                     (BP["mkt"][i] if k2 == 1 else f"={L}{r2-2}-{L}{r2-1}"))
-                put(W, r2, 3+i, v, fmt=N6, size=8, align="right",
-                    bold=(k2 == 2), color=(AMB if k2 == 1 else "000000"))
+                     (("=1" if i == 0 else
+                       f"=EXP(-SUM({Q(S1)}!$C${_rowb}:{gl(2+i)}${_rowb})*{K['dt']})") if k2 == 1
+                      else f"={L}{r2-2}-{L}{r2-1}"))
+                put(W, r2, 3+i, v, fmt=N6, size=8, align="right", bold=(k2 == 2))
         put(W, QR+n+5, 2,
             "도달가격 Q(i,j) 는 그 칸에 이르는 경로의 확률을 그 경로의 할인율로 "
             "할인해 더한 값이다. 스텝별로 모두 더하면 그 만기의 무이표채 가격이 "
-            "되고, 그것이 시장 할인계수(주황)와 같아야 한다 — 무차익거래 조건이다. "
-            "기준금리 a 를 이 조건에 맞춰 이분법으로 역산했으므로 차이가 0 이다. "
-            "σ 를 바꾸면 a 도 함께 바뀌어야 하므로 앱에서 조서를 다시 만드셔야 "
-            "한다 — 이 시트에서 σ 만 바꾸면 차이가 0 에서 벗어난다.", color=GREY, size=9)
+            "되고, 그것이 시장 할인계수와 같아야 한다 — 무차익거래 조건이다. 시장 할인계수는 "
+            "「01 주가」 시트 선도이자율의 합 exp(−Σf·Δt) 로 만든 수식이다. "
+            "기준금리 a(주황)만 이 조건에 맞춰 이분법으로 역산한 값이라, σ 나 곡선을 이 파일에서 "
+            "바꾸면 a 가 따라오지 않아 차이가 0 에서 벗어난다 — 그때는 앱에서 조서를 다시 만든다.",
+            color=GREY, size=9)
 
         W = wb.create_sheet(SB2)
         bhead(W, "BDT 부채요소  전환 없는 사채 + 조기상환권",
@@ -6577,6 +6639,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         "다른 매도청구권 평가방법의 값은 이 조서에 없습니다.", color=GREY, size=9)
     put(R, 36, 2, "주황색 숫자만 값이다. 선도이자율은 부트스트래핑 결과라 엑셀에서 재현하지 않는다.",
         color=AMB, size=9)
+    write_pc_rows(R, 38, tm, put, sec, N4, GREY)
 
     # ── 이자율곡선 ──
     # 각 트리 11·12행의 선도이자율이 어디서 왔는지 남긴다. 부트스트래핑은
@@ -6925,6 +6988,47 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             put(J, _r, 3, (f"{_v*100:.1f}%" if _a == "차이" else
                            ("예" if _v is True else "아니오" if _v is False
                             else f"{_v:,.4f}")), border=True); _r += 1
+        if _k == "put" and _d["지표"] and tm.p_s <= tm.p_e:
+            # ── B4.3.5(5)(가) 10% 검토를 수식으로 — 위 문자열과 같은 값이어야 한다 (검산수식대조) ──
+            # 상각후원가는 split_test 와 같이 옵션 없는 주계약(B0)을 계약만기까지 굴린 표에서
+            # «t ≥ 첫 조기상환 시점» 인 첫 회차의 기말이다. 유효이자율만 값(이분법)이다.
+            _e0r, _e0rows, _, _e0n = eir_table(tm, b0)
+            _r += 1
+            sec(J, _r, "B4.3.5(5)(가) 10% 검토 — 수식 (가정 시트를 바꾸면 따라온다)", span=6); _r += 1
+            _rs = _r + 8                               # 미니 상각표 첫 자료행
+            _re = _rs + len(_e0rows) - 1
+            _rpv, _rbv, _rt, _rg, _rv, _rr = _r, _r+1, _r+2, _r+3, _r+4, _r+6
+            put(J, _rpv, 2, "첫 조기상환일 행사금액", border=True)
+            put(J, _rpv, 3, f"=IF({K['pmode']}=1,100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], '(' + K['psm'] + '/12)')}),{K['prate']})",
+                fmt=N4, align="right", border=True)
+            put(J, _rbv, 2, "같은 시점 상각후원가 (B0 기준)", border=True)
+            _idx = f'(COUNTIF($C${_rs}:$C${_re},"<"&(C{_rt}-0.000000001))+1)'
+            put(J, _rbv, 3, f"=IF({_idx}>{_e0n},결과!C16,INDEX($G${_rs}:$G${_re},{_idx}))",
+                fmt=N4, align="right", border=True)
+            put(J, _rt, 2, "첫 조기상환 시점 (평가기준일부터, 년)", border=True)
+            put(J, _rt, 3, f"=MAX(0,({K['psm']}-{K['elm']})/12)", fmt=N4, align="right", border=True)
+            put(J, _rg, 2, "차이", border=True)
+            put(J, _rg, 3, f"=ABS(C{_rpv}-C{_rbv})/MAX(ABS(C{_rbv}),0.000000001)", fmt=P2, align="right", border=True)
+            put(J, _rv, 2, "판정 (수식)", bold=True, border=True)
+            put(J, _rv, 3, f'=IF({K["fvpl"]}=1,"분리하지 않음",IF({K["eqcls"]}=0,"묶어서 분리",'
+                           f'IF({K["plost"]}=1,"분리하지 않음",IF(C{_rg}<=0.1,"분리하지 않을 여지","분리"))))',
+                bold=True, border=True)
+            put(J, _rr, 2, "유효이자율 (B0 기준 · 계약만기 · 값)", border=True)
+            put(J, _rr, 3, _e0r, fmt=P2, align="right", border=True, color=AMB)
+            put(J, _rr+1, 2, "B0 기준 상각표 (분리 판단용)", bold=True)
+            for _j, _h in enumerate(["회차", "연수", "기초", "이자", "지급", "기말"]):
+                put(J, _rr+1, 2+_j, _h if _j else "B0 기준 상각표 (분리 판단용) · 회차", bold=True,
+                    fill=LIGHT, align="center", border=True, size=9)
+            for _j, _row in enumerate(_e0rows):
+                _rw = _rs + _j
+                put(J, _rw, 2, _row[0], fmt=N0, align="right", border=True)
+                put(J, _rw, 3, _row[1], fmt=N4, align="right", border=True)
+                put(J, _rw, 4, ("=결과!C16" if _j == 0 else f"=G{_rw-1}"), fmt=N4, align="right", border=True)
+                _gap = f"(C{_rw}" + ("" if _j == 0 else f"-C{_rw-1}") + ")"
+                put(J, _rw, 5, f"=D{_rw}*((1+$C${_rr})^{_gap}-1)", fmt=N4, align="right", border=True)
+                put(J, _rw, 6, f"=100*{K['cpn']}*{K['ipaym']}/12", fmt=N4, align="right", border=True)
+                put(J, _rw, 7, f"=D{_rw}+E{_rw}-F{_rw}", fmt=N4, align="right", border=True)
+            _r = _re + 1
         _r += 1
     # 판정과 실제 회계처리 설정이 어긋나면 이 조서 안에서 「분리 판단」 시트와
     # 「회계처리」 시트가 서로 다른 말을 하게 된다. 그 사실을 여기 적어 둔다.
@@ -6949,8 +7053,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     _r += 1
     put(J, _r, 2, "이 시트는 앱의 「분리 판단」 화면과 같은 함수가 만든다. 계약 조항 "
                   "확인 항목을 **앱에서** 바꾸면 결론과 문안이 함께 바뀐다. "
-                  "이 시트는 그 결과를 옮겨 적은 것이라 수식이 없다.  판정에 쓰는 "
-                  "상각후원가는 문단 B4.3.5(5)(가) 대로 **주계약(B0)** 기준이라 "
+                  "결론·근거 문장은 그 결과를 옮겨 적은 것이고, 조기상환권의 10% 검토(행사금액 · "
+                  "상각후원가 · 차이 · 판정)는 가정 시트를 참조하는 **수식**으로도 한 번 더 있다 — 두 값이 "
+                  "같아야 한다. 판정에 쓰는 상각후원가는 문단 B4.3.5(5)(가) 대로 **주계약(B0)** 기준이라 "
                   "분리 여부 설정과 무관하다.",
         color=GREY, size=9)
     for _row in J.iter_rows(min_row=5, max_row=_r, min_col=3, max_col=3):
@@ -9617,11 +9722,10 @@ with tabs[2]:
         # 계약 우선순위가 값을 얼마나 바꾸는가. 겹치는 노드가 없거나 매도청구금액이
         # 늘 크면 두 갈래가 같은 답을 내므로 표가 한 줄로 겹친다 — 그것도 정보다.
         st.markdown(inst_text(t, "#### 조기상환청구권과 겹칠 때 — 누가 먼저인가"))
-        _pv2 = []
-        for _po, _lb in ((0, "투자자 조기상환 우선"), (1, "발행자 매도청구 우선")):
-            _tp = Terms(**asdict(t)); _tp.pc_order = _po; derive(_tp)
-            _f2, _b02, _b12, _b22, _ca2, _cv2 = decompose(_tp)
-            _pv2.append([_lb, _ca2, _cv2, "◀ 적용" if int(t.pc_order) == _po else ""])
+        _pcc = pc_compare(t)
+        _pv2 = ([[_lb, _ca2, _cv2, "◀ 적용" if _on else ""] for _lb, _ca2, _cv2, _on in _pcc]
+                if _pcc else [["투자자 조기상환 우선", ca, conv, "◀ 적용" if int(t.pc_order) == 0 else ""],
+                              ["발행자 매도청구 우선", ca, conv, "◀ 적용" if int(t.pc_order) == 1 else ""]])
         st.dataframe(pd.DataFrame(
             _pv2, columns=["우선순위", inst_text(t, "매도청구권"),
                            inst_text(t, "전환권대가"), "　"]).style.format(

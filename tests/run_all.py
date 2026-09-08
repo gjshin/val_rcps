@@ -20,6 +20,7 @@ SUITES = [
     ("분기전수",     ["python3", "tests/분기전수.py"],            True,  "1분"),
     ("기능목록",     ["python3", "tests/기능목록.py", "--strict"], True,  "2분"),
     ("조합시험",     ["python3", "tests/조합시험.py", "--quick"],  True,  "3분"),
+    ("검산수식대조", ["python3", "tests/검산수식대조.py", "--quick"], True, "3분"),
     ("배선대조",     ["python3", "tests/배선대조.py"],            True,  "수 초"),
     ("리포트대조",   ["python3", "tests/리포트대조.py"],          True,  "2분"),
     ("값조서대조",   ["python3", "tests/값조서대조.py"],          False, "4분"),
