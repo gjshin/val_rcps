@@ -823,6 +823,21 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
     ipo_adj = lambda i, j, k: (clip(min(k, ipo_k)) if ipo_hit(i, j) else k)
     exact = ((tm.rfx_mode > 0 or ipo_i > 0) and tm.carry == 0)
 
+    def child_k(i, K, s):
+        """스텝 i 의 전환가격 K 에서 주가 s 인 자식(스텝 i+1)의 전환가격.
+
+        상태확장(exact) 격자의 노드 열쇠가 이 값으로 만들어지므로, 격자를 세우는
+        rec() 와 뒤에서 확률을 걷는 두 루프가 **반드시 같은 함수**를 써야 한다.
+        한쪽만 상장 조정을 빠뜨리면 열쇠가 어긋나 그 가지의 확률이 조용히 사라진다.
+        """
+        if tm.rfx_mode == 0: k2 = K
+        elif not is_rfx(i+1): k2 = K
+        else: k2 = clip(s) if tm.rfx_mode == 2 else clip(min(K, s))
+        # 자식이 상장 스텝이고 그 주가가 최소공모가격을 넘으면 자른다.
+        if i+1 == ipo_i and s > tm.ipo_min and ipo_k > 0:
+            k2 = clip(min(k2, ipo_k))
+        return k2
+
     # 도달확률. 위험중립가중치 q 가 구간마다 다르므로 이항계수 한 방에 셀 수
     # 없다. COMBIN(i,j)·q^j·(1−q)^(i−j) 는 q 가 모든 구간에서 같을 때만 맞고,
     # 그러면 정규화된 이월 가중치에서 q 가 통째로 약분돼 「확률가중」이 아니라
@@ -928,16 +943,8 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
             memo[key] = o
             return o
         else:
-            def nk(s):
-                if tm.rfx_mode == 0: k2 = K
-                elif not is_rfx(i+1): k2 = K
-                else: k2 = clip(s) if tm.rfx_mode == 2 else clip(min(K, s))
-                # 자식이 상장 스텝이고 그 주가가 최소공모가격을 넘으면 자른다.
-                if i+1 == ipo_i and s > tm.ipo_min and ipo_k > 0:
-                    k2 = clip(min(k2, ipo_k))
-                return k2
-            KU = nk(S(i, j)*u) if exact else Kg[i+1][j+1]
-            KD = nk(S(i, j)*d) if exact else Kg[i+1][j]
+            KU = child_k(i, K, S(i, j)*u) if exact else Kg[i+1][j+1]
+            KD = child_k(i, K, S(i, j)*d) if exact else Kg[i+1][j]
             ku = (i+1, j+1, round(KU, 6)) if exact else (i+1, j+1)
             kd = (i+1, j,   round(KD, 6)) if exact else (i+1, j)
             a, b = rec(i+1, j+1, KU), rec(i+1, j, KD)
@@ -1070,12 +1077,8 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
             if i == n:
                 # 만기에 «보유» 는 없다. 여기 오면 kind 배선이 빠진 것이다.
                 dist["mat"] += p_; continue
-            def nk2(s):
-                if tm.rfx_mode == 0: return tm.K0
-                if not is_rfx(i+1): return K
-                return clip(s) if tm.rfx_mode == 2 else clip(min(K, s))
-            KU = nk2(S(i, j)*u) if exact else Kg[i+1][j+1]
-            KD = nk2(S(i, j)*d) if exact else Kg[i+1][j]
+            KU = child_k(i, K, S(i, j)*u) if exact else Kg[i+1][j+1]
+            KD = child_k(i, K, S(i, j)*d) if exact else Kg[i+1][j]
             for kk, pp, jj, KK in (
                 ((i+1, j+1, round(KU, 6)) if exact else (i+1, j+1), p_*q, j+1, KU),
                 ((i+1, j, round(KD, 6)) if exact else (i+1, j), p_*(1-q), j, KD)):
@@ -1101,12 +1104,8 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None):
                         wp += p_; wt += p_*i; continue
                     if (not bwd) and o["kind"] in ("put", "call"):
                         continue          # 사채와 함께 소멸한다 — 행사하지 못한다
-                def nk3(s):
-                    if tm.rfx_mode == 0: return tm.K0
-                    if not is_rfx(i+1): return K
-                    return clip(s) if tm.rfx_mode == 2 else clip(min(K, s))
-                KU = nk3(S(i, j)*u) if exact else Kg[i+1][j+1]
-                KD = nk3(S(i, j)*d) if exact else Kg[i+1][j]
+                KU = child_k(i, K, S(i, j)*u) if exact else Kg[i+1][j+1]
+                KD = child_k(i, K, S(i, j)*d) if exact else Kg[i+1][j]
                 for kk, pp, jj, KK in (
                     ((i+1, j+1, round(KU, 6)) if exact else (i+1, j+1), p_*q, j+1, KU),
                     ((i+1, j, round(KD, 6)) if exact else (i+1, j), p_*(1-q), j, KD)):

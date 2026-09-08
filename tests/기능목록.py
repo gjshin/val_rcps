@@ -21,7 +21,7 @@
 
 상태값 — PASS · EXPECTED_BLOCK · KNOWN_LIMITATION · FAIL · NOT_TESTED.
 """
-import sys, os, re, io, json, types, warnings, argparse, itertools, datetime
+import sys, os, json, re, io, json, types, warnings, argparse, itertools, datetime
 warnings.filterwarnings("ignore")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "tests", "검증매트릭스.json")
@@ -123,7 +123,11 @@ def selectable(G, product, field, value):
     if product == "BW":
         forced = dict(mat_mode=1, issuer_call=0, div_mode=0)
         if field in forced: return forced[field] == value
-    if product == "RCPS" and field in ("k_sep", "k_third", "k_transfer", "k_method"):
+    if product == "RCPS" and field == "k_transfer":
+        # 세 콜 갈래(issuer_call 0·1·2) 모두 k_transfer=0 으로 되돌린다 — 「독립 양도」는
+        # 우선주에 없다. 분기전수.py 가 FORCED 로 잡아 준 것 (사이드바 체크박스는 남아 있다)
+        return value == 0
+    if product == "RCPS" and field in ("k_sep", "k_third", "k_method"):
         # RCPS 콜 갈래(issuer_call)가 정한다 — 세 값 다 어느 갈래에선가 나온다
         return True
     if product == "CB" and field in ("mat_mode", "issuer_call", "div_mode", "ipo_conv",
@@ -170,6 +174,12 @@ LIMITS = [
      ["화면 풋 할인율 캡션", "docs/입력안내_주주간계약.md"]),
     ("SHA: Drag/Tag/ROFR·다단계 strike 미지원", "", ["docs/입력안내_주주간계약.md"]),
     ("역산이 목표를 정확히 못 맞힐 수 있다", "격자 값의 계단 (0.19 등)", ["화면 역산 경고", "docs/의사결정규칙.md §10-1"]),
+    ("자동전환·상장 강제전환 RCPS 의 전환권이 음수", "존속기간 만료 시 자동전환·상장 시 강제전환은 권리가 아니라 의무다. 주가가 낮으면 B2 < B1 이라 「전환권 = B2 − B1」 이 음수다 (분기전수·조합시험이 limit 로 허용)",
+     ["화면", "조서"]),
+    ("강제전환 할인율 효과로 매도청구권이 음수", "TF·GS 는 지분을 무위험(전환확률 가중)으로 할인한다. 콜이 전환을 강제하면 부채가 지분으로 바뀌어 할인이 가벼워지고 전체 가치가 오를 수 있다 → 유무가치비교법 매도청구권 < 0. RCPS 발행자 상환권은 ca_debt=max(0,·) 로 막는다",
+     ["화면", "조서", "README"]),
+    ("잔여 주계약 ≤ 0 이면 상각표 없음", "발행가 100 과 공정가치가 크게 다르면(Day-1 차이) 부채 분류의 잔여 주계약이 0 이하다. 유효이자율이 정의되지 않으므로 상각표를 만들지 않고 그 사실을 적는다 (4단계 F-05)",
+     ["화면", "조서"]),
 ]
 
 
@@ -324,6 +334,9 @@ def collect_coverage(G):
                                              ("BW", "pc_order", 0), ("BW", "pc_order", 1)],
         "test_maturity_layer_in_distribution": [("RCPS", "mat_mode", 0), ("RCPS", "put", True),
                                                 ("CB", "pc_order", 1)],
+        "test_ipo_branch_keeps_probability_mass": [("RCPS", "ipo_on", 1), ("RCPS", "ipo_conv", 1),
+                                                   ("RCPS", "ipo_conv", 0), ("RCPS", "carry", 0),
+                                                   ("RCPS", "rfx_mode", 0)],
     }
     tf = "tests/손계산대조.py"
     src = open(os.path.join(ROOT, tf), encoding="utf-8").read()
@@ -334,6 +347,48 @@ def collect_coverage(G):
             key = (p, f, v)
             (pres if f in PRESENCE else cov).setdefault(key, []).append((tf, fn, "hand_calc_independent"))
     unlisted = sorted(have - set(HAND))
+
+    # 독립 오라클 (tests/오라클.py) — 앞부분 식이 app.py 를 보지 않는다. 손으로 적은 태그.
+    ORACLE = {
+        "test_discounting": [("CB", "cpn", True), ("CB", "cpn", False), ("CB", "cmp_cr", 4), ("CB", "cmp_cr", 2),
+                             ("CB", "cmp_rf", 2), ("CB", "put", False), ("CB", "call", False), ("CB", "curve", True)],
+        "test_crr": [("CB", "cmp_rf", 2), ("CB", "curve", True)],
+        "test_accrue": [("CB", "ytm_cmp", 0), ("CB", "ytm_cmp", 1), ("CB", "ytm_cmp", 2), ("CB", "ytm_cmp", 4),
+                        ("CB", "p_cmp", 0), ("CB", "p_cmp", 1), ("CB", "p_cmp", 2), ("CB", "p_cmp", 4)],
+        "test_node_rule": [("CB", "pc_order", 0), ("CB", "pc_order", 1)],
+        "test_refix": [("CB", "rfx_mode", 1), ("CB", "rfx_mode", 2), ("CB", "carry", 1)],
+        "test_one_step_tree": [("CB", "cmp_rf", 2), ("CB", "cmp_cr", 4), ("CB", "conv_class", "equity")],
+        "test_bw_cash": [("BW", "bw_pay", 0), ("BW", "bw_detach", 1)],
+        "test_sha_european": [("SHA", "sha_disc", 0), ("SHA", "sha_put_cmp", 1), ("SHA", "sha_call_cmp", 1),
+                              ("SHA", "sha_put", True), ("SHA", "sha_call", True)],
+        "test_date_boundaries": [("CB", "mid", True), ("CB", "mid", False)],
+        "test_sequential_identities": [("CB", "carry", 0), ("CB", "k_sep", 1), ("CB", "model", "TF")],
+    }
+    tf = "tests/오라클.py"
+    src = open(os.path.join(ROOT, tf), encoding="utf-8").read()
+    have_o = set(re.findall(r"^def (test_\w+)", src, re.M))
+    for fn, tags in ORACLE.items():
+        if fn not in have_o: continue
+        for p, f, v in tags:
+            key = (p, f, v)
+            (pres if f in PRESENCE else cov).setdefault(key, []).append((tf, fn, "hand_calc_independent"))
+    unlisted += sorted(f"오라클::{x}" for x in have_o - set(ORACLE))
+
+    # 분기 전수 — 오라클은 불변식 (NaN 없음 · q ∈ (0,1) · 권리값 ≥ 0 · 배분 합계 100 ·
+    # 상각표 기말 = 상환금액 · 분포 합 1). 값을 못 박지는 않지만 모든 선택 갈래를 한 번씩 밟는다.
+    tf = "tests/분기전수.py"
+    bx = os.path.join(ROOT, "tests", "output", "분기전수.json")
+    if os.path.exists(bx):
+        for r in json.load(open(bx, encoding="utf-8"))["rows"]:
+            if r["status"] != "PASS": continue
+            if r.get("presence"):
+                pres.setdefault((r["product"], r["presence"], bool(r["value"])), []).append(
+                    (tf, r["label"], "invariants"))
+            else:
+                cov.setdefault((r["product"], r["field"], r["value"]), []).append(
+                    (tf, r["label"], "invariants"))
+    else:
+        print("  ! tests/output/분기전수.json 이 없다 — python3 tests/분기전수.py 를 먼저 돌릴 것")
     return cov, pres, unlisted
 
 

@@ -699,6 +699,36 @@ def test_maturity_layer_in_distribution():
     chk("콜 없는 격자에는 콜 대응 전환이 없다", r3["dist"]["conv_called"], 0.0)
 
 
+def test_ipo_branch_keeps_probability_mass():
+    """적격상장 조항이 켜진 상태확장 격자에서 정산 분포의 합이 1 인가.
+
+    상태확장(carry=0) 격자는 노드 열쇠에 전환가격을 넣는다. 격자를 세우는 재귀는
+    상장 스텝에서 전환가격을 공모가×배수로 잘랐는데, 확률을 걷는 루프는 자르지
+    않았다. 열쇠가 어긋난 가지는 memo 에 없어 조용히 버려졌고 — 분포 합이 74% 로
+    떨어졌다 (분기전수.py 가 잡음). 가치는 안 바뀐다 — 분포는 표시 전용이다.
+
+    자식 전환가격을 한 함수(child_k)로 모아 세 루프가 같은 열쇠를 쓰게 했다.
+    """
+    print("\n[18] 상장 조항이 켜진 상태확장 격자 — 분포가 새지 않는가")
+    for conv_on in (1, 0):
+        t = Terms(inst="RCPS", issuer_call=2, mat_mode=0, gap_m=3.0, carry=0,
+                  ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=600., ipo_conv=conv_on,
+                  rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+                  cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+        derive(t)
+        r = engine(t, call=False); D = r["dist"]
+        chk(f"강제전환 {conv_on} · 정산 분포 합", D["conv"] + D["put"] + D["call"] + D["mat"], 1.0, 1e-9)
+    # 리픽싱 없이 상장만 있는 격자 — 예전 루프는 전환가격을 K0 로 되돌려 열쇠가 어긋났다
+    t = Terms(inst="RCPS", issuer_call=0, mat_mode=0, gap_m=3.0, carry=0, rfx_mode=0,
+              ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=600., ipo_conv=1,
+              rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+              cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    derive(t)
+    D = engine(t, call=False)["dist"]
+    chk("리픽싱 없음 · 상장만 · 분포 합", D["conv"] + D["put"] + D["call"] + D["mat"], 1.0, 1e-9)
+    chk_bool(f"상장전환 몫이 «전환» 에 잡힌다 ({D['conv']:.4f})", D["conv"] > 0.0)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -718,6 +748,7 @@ def main():
     test_decision_table()
     test_decision_matches_old_chains()
     test_maturity_layer_in_distribution()
+    test_ipo_branch_keeps_probability_mass()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

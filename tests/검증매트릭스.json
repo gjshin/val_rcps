@@ -1,41 +1,41 @@
 {
- "generated": "2026-09-08T01:50:29",
+ "generated": "2026-09-08T02:20:04",
  "head": "ref: refs/heads/claude/rcps-app",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
   "CB": {
-   "PASS": 62,
+   "PASS": 77,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
-   "NOT_TESTED": 15
+   "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 56,
+   "PASS": 87,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
-   "NOT_TESTED": 32
+   "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 45,
+   "PASS": 81,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
-   "NOT_TESTED": 36
+   "NOT_TESTED": 0
   },
   "SHA": {
-   "PASS": 28,
+   "PASS": 44,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
-   "NOT_TESTED": 16
+   "NOT_TESTED": 0
   },
   "ALL": {
    "PASS": 0,
    "EXPECTED_BLOCK": 2,
-   "KNOWN_LIMITATION": 12,
+   "KNOWN_LIMITATION": 15,
    "FAIL": 3,
    "NOT_TESTED": 0
   }
@@ -66,7 +66,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 131
+   "n_tests": 132
   },
   {
    "case_id": "RCPS-inst-RCPS",
@@ -93,7 +93,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "BW-inst-BW",
@@ -120,7 +120,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "SHA-inst-SHA",
@@ -147,7 +147,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "CB-model-TF",
@@ -158,8 +158,8 @@
    "meaning": "신용위험 처리",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -174,7 +174,7 @@
     "tests/값조서대조.py::liability·2·TF·1",
     "tests/값조서대조.py::liability·2·TF·0"
    ],
-   "n_tests": 108
+   "n_tests": 110
   },
   {
    "case_id": "CB-model-GS",
@@ -201,7 +201,7 @@
     "tests/값조서대조.py::liability·2·GS·1",
     "tests/값조서대조.py::liability·2·GS·0"
    ],
-   "n_tests": 22
+   "n_tests": 23
   },
   {
    "case_id": "RCPS-model-TF",
@@ -228,7 +228,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "RCPS-model-GS",
@@ -243,9 +243,10 @@
    "independent_oracle": false,
    "covered_by": [
     "tests/조서대조.py::RCPS · 자동전환 · GS",
-    "tests/조서대조.py::RCPS · IPO · GS"
+    "tests/조서대조.py::RCPS · IPO · GS",
+    "tests/분기전수.py::model=GS"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "BW-model-TF",
@@ -272,7 +273,7 @@
     "tests/값조서대조.py::liability·0·TF·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::liability·0·TF·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 28
+   "n_tests": 29
   },
   {
    "case_id": "BW-model-GS",
@@ -299,7 +300,7 @@
     "tests/값조서대조.py::liability·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0",
     "tests/값조서대조.py::liability·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.3"
    ],
-   "n_tests": 12
+   "n_tests": 13
   },
   {
    "case_id": "CB-conv_class-EQUITY",
@@ -310,8 +311,8 @@
    "meaning": "전환권 회계 분류",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -326,7 +327,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 97
+   "n_tests": 99
   },
   {
    "case_id": "CB-conv_class-LIABILITY",
@@ -353,7 +354,7 @@
     "tests/값조서대조.py::liability·2·GS·1",
     "tests/값조서대조.py::liability·2·GS·0"
    ],
-   "n_tests": 34
+   "n_tests": 35
   },
   {
    "case_id": "RCPS-conv_class-EQUITY",
@@ -380,7 +381,7 @@
     "tests/조서대조.py::RCPS · 배당 재량 (부채에서 제외)",
     "tests/조서대조.py::RCPS · 배당 재량 · 발행자콜"
    ],
-   "n_tests": 33
+   "n_tests": 34
   },
   {
    "case_id": "RCPS-conv_class-LIABILITY",
@@ -402,9 +403,10 @@
     "tests/조서대조.py::RCPS · 자동전환 · 전환권 부채",
     "tests/조서대조.py::RCPS · IPO · 전환권 부채",
     "tests/조서대조.py::RCPS · 제3자 지정 콜 · 전환권 부채",
-    "tests/조서대조.py::차바이오텍 RCPS · 전환권 부채"
+    "tests/조서대조.py::차바이오텍 RCPS · 전환권 부채",
+    "tests/분기전수.py::conv_class=liability"
    ],
-   "n_tests": 9
+   "n_tests": 10
   },
   {
    "case_id": "BW-conv_class-EQUITY",
@@ -431,7 +433,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 27
+   "n_tests": 28
   },
   {
    "case_id": "BW-conv_class-LIABILITY",
@@ -458,7 +460,7 @@
     "tests/값조서대조.py::liability·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0",
     "tests/값조서대조.py::liability·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.3"
    ],
-   "n_tests": 13
+   "n_tests": 14
   },
   {
    "case_id": "CB-carry-0",
@@ -469,8 +471,8 @@
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -485,7 +487,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 127
+   "n_tests": 129
   },
   {
    "case_id": "CB-carry-1",
@@ -500,9 +502,11 @@
    "independent_oracle": true,
    "covered_by": [
     "tests/설정전수대조.py::조정일 처리 · 경로가중",
-    "tests/손계산대조.py::test_refix_weighted_average_on_reset_date"
+    "tests/손계산대조.py::test_refix_weighted_average_on_reset_date",
+    "tests/오라클.py::test_refix",
+    "tests/분기전수.py::carry=1"
    ],
-   "n_tests": 2
+   "n_tests": 4
   },
   {
    "case_id": "CB-carry-2",
@@ -516,9 +520,10 @@
    "oracle": "engine_vs_workbook_sweep",
    "independent_oracle": false,
    "covered_by": [
-    "tests/설정전수대조.py::조정일 처리 · 확률가중"
+    "tests/설정전수대조.py::조정일 처리 · 확률가중",
+    "tests/분기전수.py::carry=2"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "CB-carry-3",
@@ -532,9 +537,10 @@
    "oracle": "engine_vs_workbook_sweep",
    "independent_oracle": false,
    "covered_by": [
-    "tests/설정전수대조.py::조정일 처리 · 특정노드"
+    "tests/설정전수대조.py::조정일 처리 · 특정노드",
+    "tests/분기전수.py::carry=3"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-carry-0",
@@ -545,8 +551,8 @@
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
     "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
@@ -561,7 +567,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 44
   },
   {
    "case_id": "RCPS-carry-1",
@@ -571,11 +577,13 @@
    "label": "경로가중 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::carry=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-carry-2",
@@ -585,11 +593,13 @@
    "label": "위험중립확률 가중 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::carry=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-carry-3",
@@ -599,11 +609,13 @@
    "label": "특정노드 선택 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::carry=3"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-carry-0",
@@ -630,7 +642,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-carry-1",
@@ -640,11 +652,13 @@
    "label": "경로가중 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::carry=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-carry-2",
@@ -654,11 +668,13 @@
    "label": "위험중립확률 가중 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::carry=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-carry-3",
@@ -668,11 +684,13 @@
    "label": "특정노드 선택 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::carry=3"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-rfx_mode-0",
@@ -687,9 +705,10 @@
    "independent_oracle": false,
    "covered_by": [
     "tests/조서대조.py::리픽싱 없음",
-    "tests/설정전수대조.py::리픽싱 없음"
+    "tests/설정전수대조.py::리픽싱 없음",
+    "tests/분기전수.py::rfx_mode=0"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "CB-rfx_mode-1",
@@ -700,13 +719,15 @@
    "meaning": "리픽싱 방식",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/조서대조.py::하향만 리픽싱",
-    "tests/설정전수대조.py::하향만 리픽싱"
+    "tests/설정전수대조.py::하향만 리픽싱",
+    "tests/오라클.py::test_refix",
+    "tests/분기전수.py::rfx_mode=1"
    ],
-   "n_tests": 2
+   "n_tests": 4
   },
   {
    "case_id": "CB-rfx_mode-2",
@@ -733,7 +754,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 127
+   "n_tests": 129
   },
   {
    "case_id": "RCPS-rfx_mode-0",
@@ -743,11 +764,14 @@
    "label": "없음",
    "meaning": "리픽싱 방식",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
-   "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/손계산대조.py::test_ipo_branch_keeps_probability_mass",
+    "tests/분기전수.py::rfx_mode=0"
+   ],
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-rfx_mode-1",
@@ -757,11 +781,13 @@
    "label": "하향만",
    "meaning": "리픽싱 방식",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rfx_mode=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-rfx_mode-2",
@@ -788,7 +814,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "BW-rfx_mode-0",
@@ -802,9 +828,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/조서대조.py::BW 현금납입 · 리픽싱 없음"
+    "tests/조서대조.py::BW 현금납입 · 리픽싱 없음",
+    "tests/분기전수.py::rfx_mode=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "BW-rfx_mode-1",
@@ -814,11 +841,13 @@
    "label": "하향만",
    "meaning": "리픽싱 방식",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rfx_mode=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-rfx_mode-2",
@@ -845,7 +874,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 39
+   "n_tests": 40
   },
   {
    "case_id": "CB-p_mode-FIXED",
@@ -872,7 +901,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 109
+   "n_tests": 110
   },
   {
    "case_id": "CB-p_mode-ACCRUE",
@@ -899,7 +928,7 @@
     "tests/조서대조.py::단리 · 보장 8%",
     "tests/조서대조.py::단리 · 표면 2%"
    ],
-   "n_tests": 21
+   "n_tests": 22
   },
   {
    "case_id": "RCPS-p_mode-FIXED",
@@ -926,7 +955,7 @@
     "tests/조서대조.py::RCPS · IPO · 발행자콜",
     "tests/조서대조.py::RCPS · IPO · GS"
    ],
-   "n_tests": 21
+   "n_tests": 22
   },
   {
    "case_id": "RCPS-p_mode-ACCRUE",
@@ -953,7 +982,7 @@
     "tests/조서대조.py::RCPS · 배당 재량 (부채에서 제외)",
     "tests/조서대조.py::RCPS · 배당 재량 · 발행자콜"
    ],
-   "n_tests": 21
+   "n_tests": 22
   },
   {
    "case_id": "BW-p_mode-FIXED",
@@ -980,7 +1009,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.3"
    ],
-   "n_tests": 33
+   "n_tests": 34
   },
   {
    "case_id": "BW-p_mode-ACCRUE",
@@ -1000,9 +1029,10 @@
     "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 비분리형",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 분리형",
-    "tests/조서대조.py::BW 현금납입 · 표면 3% · 보장 7%"
+    "tests/조서대조.py::BW 현금납입 · 표면 3% · 보장 7%",
+    "tests/분기전수.py::p_mode=accrue"
    ],
-   "n_tests": 7
+   "n_tests": 8
   },
   {
    "case_id": "CB-p_cmp-0",
@@ -1013,14 +1043,16 @@
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/조서대조.py::단리 · 보장 8%",
     "tests/조서대조.py::단리 · 표면 2%",
-    "tests/설정전수대조.py::단리 상환가액"
+    "tests/설정전수대조.py::단리 상환가액",
+    "tests/오라클.py::test_accrue",
+    "tests/분기전수.py::p_cmp=0"
    ],
-   "n_tests": 3
+   "n_tests": 5
   },
   {
    "case_id": "CB-p_cmp-1",
@@ -1030,11 +1062,14 @@
    "label": "연 1회",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
-   "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/오라클.py::test_accrue",
+    "tests/분기전수.py::p_cmp=1"
+   ],
+   "n_tests": 2
   },
   {
    "case_id": "CB-p_cmp-2",
@@ -1045,12 +1080,14 @@
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook_sweep",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
-    "tests/설정전수대조.py::보장 복리 연 2회"
+    "tests/설정전수대조.py::보장 복리 연 2회",
+    "tests/오라클.py::test_accrue",
+    "tests/분기전수.py::p_cmp=2"
    ],
-   "n_tests": 1
+   "n_tests": 3
   },
   {
    "case_id": "CB-p_cmp-4",
@@ -1061,8 +1098,8 @@
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -1077,7 +1114,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 126
+   "n_tests": 128
   },
   {
    "case_id": "CB-p_cmp-12",
@@ -1087,11 +1124,13 @@
    "label": "월",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-p_cmp-0",
@@ -1101,11 +1140,13 @@
    "label": "단리",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-p_cmp-1",
@@ -1115,11 +1156,13 @@
    "label": "연 1회",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-p_cmp-2",
@@ -1129,11 +1172,13 @@
    "label": "연 2회",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-p_cmp-4",
@@ -1160,7 +1205,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-p_cmp-12",
@@ -1170,11 +1215,13 @@
    "label": "월",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-p_cmp-0",
@@ -1184,11 +1231,13 @@
    "label": "단리",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-p_cmp-1",
@@ -1198,11 +1247,13 @@
    "label": "연 1회",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-p_cmp-2",
@@ -1212,11 +1263,13 @@
    "label": "연 2회",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-p_cmp-4",
@@ -1243,7 +1296,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-p_cmp-12",
@@ -1253,11 +1306,13 @@
    "label": "월",
    "meaning": "조기상환 보장 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_cmp=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-p_sep-1",
@@ -1284,7 +1339,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 126
+   "n_tests": 127
   },
   {
    "case_id": "CB-p_sep-0",
@@ -1305,9 +1360,10 @@
     "tests/설정전수대조.py::조기상환권 미분리",
     "tests/설정전수대조.py::조기상환권 미분리 · 방법1",
     "tests/손계산대조.py::test_split_metric_independent_of_setting",
-    "tests/손계산대조.py::test_put_separation_flows_to_accounting"
+    "tests/손계산대조.py::test_put_separation_flows_to_accounting",
+    "tests/분기전수.py::p_sep=0"
    ],
-   "n_tests": 8
+   "n_tests": 9
   },
   {
    "case_id": "RCPS-p_sep-1",
@@ -1334,7 +1390,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 41
+   "n_tests": 42
   },
   {
    "case_id": "RCPS-p_sep-0",
@@ -1348,9 +1404,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/조서대조.py::RCPS · 상환청구권 미분리"
+    "tests/조서대조.py::RCPS · 상환청구권 미분리",
+    "tests/분기전수.py::p_sep=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "BW-p_sep-1",
@@ -1377,7 +1434,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-p_sep-0",
@@ -1387,11 +1444,13 @@
    "label": "분리하지 않음 · 부채요소에 포함",
    "meaning": "조기상환권 회계",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_sep=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-p_lost_int-0",
@@ -1418,7 +1477,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 130
+   "n_tests": 131
   },
   {
    "case_id": "CB-p_lost_int-1",
@@ -1428,11 +1487,13 @@
    "label": "그렇다 (B4.3.5(5)(나))",
    "meaning": "행사금액이 상실이자 보상 수준",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_lost_int=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-p_lost_int-0",
@@ -1459,7 +1520,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-p_lost_int-1",
@@ -1469,11 +1530,13 @@
    "label": "그렇다 (B4.3.5(5)(나))",
    "meaning": "행사금액이 상실이자 보상 수준",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_lost_int=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-p_lost_int-0",
@@ -1500,7 +1563,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-p_lost_int-1",
@@ -1510,11 +1573,13 @@
    "label": "그렇다 (B4.3.5(5)(나))",
    "meaning": "행사금액이 상실이자 보상 수준",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::p_lost_int=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-k_method-0",
@@ -1541,7 +1606,7 @@
     "tests/값조서대조.py::liability·0·TF·1·fvpl_whole=1,k_sep=1,issue_cost=0.0",
     "tests/값조서대조.py::liability·0·TF·1·fvpl_whole=1,k_sep=1,issue_cost=50000000"
    ],
-   "n_tests": 104
+   "n_tests": 105
   },
   {
    "case_id": "CB-k_method-1",
@@ -1568,7 +1633,7 @@
     "tests/조서대조.py::GS · 옵션차익혼합할인법",
     "tests/조서대조.py::조기상환권 미분리 · 방법1"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "CB-k_method-2",
@@ -1592,9 +1657,10 @@
     "tests/값조서대조.py::liability·2·GS·0",
     "tests/조서대조.py::방법2 지분·부채 분리",
     "tests/조서대조.py::방법2 · 전환권 부채",
-    "tests/설정전수대조.py::평가방법 2 지분·부채"
+    "tests/설정전수대조.py::평가방법 2 지분·부채",
+    "tests/분기전수.py::k_method=2"
    ],
-   "n_tests": 11
+   "n_tests": 12
   },
   {
    "case_id": "BW-k_method-0",
@@ -1621,7 +1687,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-k_method-1",
@@ -1631,11 +1697,13 @@
    "label": "옵션차익혼합할인",
    "meaning": "매도청구권 평가방법",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_method=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-k_method-2",
@@ -1645,11 +1713,13 @@
    "label": "지분·부채 분리",
    "meaning": "매도청구권 평가방법",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_method=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-k_method-0",
@@ -1676,7 +1746,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · GS",
     "tests/조서대조.py::RCPS · 상환청구권 미분리"
    ],
-   "n_tests": 35
+   "n_tests": 36
   },
   {
    "case_id": "RCPS-k_method-1",
@@ -1693,9 +1763,10 @@
     "tests/값조서대조.py::equity·1·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
     "tests/값조서대조.py::liability·1·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
     "tests/조서대조.py::RCPS · 제3자 지정 콜 · 방법1",
-    "tests/설정전수대조.py::RCPS · 제3자 지정 콜 · 방법1"
+    "tests/설정전수대조.py::RCPS · 제3자 지정 콜 · 방법1",
+    "tests/분기전수.py::k_method=1"
    ],
-   "n_tests": 4
+   "n_tests": 5
   },
   {
    "case_id": "RCPS-k_method-2",
@@ -1711,9 +1782,10 @@
    "covered_by": [
     "tests/값조서대조.py::equity·2·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
     "tests/값조서대조.py::liability·2·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
-    "tests/조서대조.py::RCPS · 제3자 지정 콜 · 방법2"
+    "tests/조서대조.py::RCPS · 제3자 지정 콜 · 방법2",
+    "tests/분기전수.py::k_method=2"
    ],
-   "n_tests": 3
+   "n_tests": 4
   },
   {
    "case_id": "CB-k_sep-1",
@@ -1724,8 +1796,8 @@
    "meaning": "매도청구권 회계",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·GS·1",
@@ -1740,7 +1812,7 @@
     "tests/값조서대조.py::liability·2·TF·1",
     "tests/값조서대조.py::liability·2·GS·1"
    ],
-   "n_tests": 110
+   "n_tests": 112
   },
   {
    "case_id": "CB-k_sep-0",
@@ -1767,7 +1839,7 @@
     "tests/값조서대조.py::liability·2·TF·0",
     "tests/값조서대조.py::liability·2·GS·0"
    ],
-   "n_tests": 20
+   "n_tests": 21
   },
   {
    "case_id": "BW-k_sep-1",
@@ -1794,7 +1866,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-k_sep-0",
@@ -1804,11 +1876,13 @@
    "label": "복합내재파생에 포함",
    "meaning": "매도청구권 회계",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_sep=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-k_sep-1",
@@ -1835,7 +1909,7 @@
     "tests/조서대조.py::RCPS · 배당 재량 (부채에서 제외)",
     "tests/조서대조.py::RCPS · IPO 24개월 · 강제전환"
    ],
-   "n_tests": 27
+   "n_tests": 28
   },
   {
    "case_id": "RCPS-k_sep-0",
@@ -1862,7 +1936,7 @@
     "tests/조서대조.py::RCPS · IPO · 발행자콜",
     "tests/조서대조.py::RCPS · 발행자 상환권 (같은 계약)"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "CB-k_third-0",
@@ -1872,11 +1946,13 @@
    "label": "발행회사만",
    "meaning": "제3자 지정 가능",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_third=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-k_third-1",
@@ -1903,7 +1979,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 130
+   "n_tests": 131
   },
   {
    "case_id": "BW-k_third-0",
@@ -1913,11 +1989,13 @@
    "label": "발행회사만",
    "meaning": "제3자 지정 가능",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_third=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-k_third-1",
@@ -1944,7 +2022,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "RCPS-k_third-0",
@@ -1971,7 +2049,7 @@
     "tests/조서대조.py::RCPS · 배당 재량 (부채에서 제외)",
     "tests/조서대조.py::RCPS · 배당 재량 · 발행자콜"
    ],
-   "n_tests": 30
+   "n_tests": 31
   },
   {
    "case_id": "RCPS-k_third-1",
@@ -1998,7 +2076,7 @@
     "tests/설정전수대조.py::RCPS · 제3자 지정 콜 20%",
     "tests/설정전수대조.py::RCPS · 제3자 지정 콜 · 방법1"
    ],
-   "n_tests": 12
+   "n_tests": 13
   },
   {
    "case_id": "CB-k_transfer-0",
@@ -2025,7 +2103,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 130
+   "n_tests": 131
   },
   {
    "case_id": "CB-k_transfer-1",
@@ -2035,11 +2113,13 @@
    "label": "그렇다",
    "meaning": "사채와 독립 양도 가능",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_transfer=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-k_transfer-0",
@@ -2066,7 +2146,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-k_transfer-1",
@@ -2076,11 +2156,13 @@
    "label": "그렇다",
    "meaning": "사채와 독립 양도 가능",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_transfer=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-k_transfer-0",
@@ -2107,21 +2189,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
-  },
-  {
-   "case_id": "RCPS-k_transfer-1",
-   "product": "RCPS",
-   "branch": "k_transfer",
-   "value": 1,
-   "label": "그렇다",
-   "meaning": "사채와 독립 양도 가능",
-   "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
-   "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "n_tests": 43
   },
   {
    "case_id": "CB-k_cmp-0",
@@ -2135,9 +2203,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/조서대조.py::단리 · 보장 8%"
+    "tests/조서대조.py::단리 · 보장 8%",
+    "tests/분기전수.py::k_cmp=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "CB-k_cmp-1",
@@ -2151,9 +2220,10 @@
    "oracle": "engine_vs_workbook_sweep",
    "independent_oracle": false,
    "covered_by": [
-    "tests/설정전수대조.py::매도청구 복리 연 1회"
+    "tests/설정전수대조.py::매도청구 복리 연 1회",
+    "tests/분기전수.py::k_cmp=1"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "CB-k_cmp-2",
@@ -2163,11 +2233,13 @@
    "label": "연 2회",
    "meaning": "매도청구 프리미엄 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_cmp=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-k_cmp-4",
@@ -2194,7 +2266,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 128
+   "n_tests": 129
   },
   {
    "case_id": "BW-k_cmp-0",
@@ -2204,11 +2276,13 @@
    "label": "단리",
    "meaning": "매도청구 프리미엄 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_cmp=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-k_cmp-1",
@@ -2218,11 +2292,13 @@
    "label": "연 1회",
    "meaning": "매도청구 프리미엄 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_cmp=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-k_cmp-2",
@@ -2232,11 +2308,13 @@
    "label": "연 2회",
    "meaning": "매도청구 프리미엄 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_cmp=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-k_cmp-4",
@@ -2263,7 +2341,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "RCPS-k_cmp-0",
@@ -2273,11 +2351,13 @@
    "label": "단리",
    "meaning": "매도청구 프리미엄 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_cmp=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-k_cmp-1",
@@ -2287,11 +2367,13 @@
    "label": "연 1회",
    "meaning": "매도청구 프리미엄 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_cmp=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-k_cmp-2",
@@ -2301,11 +2383,13 @@
    "label": "연 2회",
    "meaning": "매도청구 프리미엄 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::k_cmp=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-k_cmp-4",
@@ -2332,7 +2416,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "CB-pc_order-0",
@@ -2359,7 +2443,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 125
+   "n_tests": 127
   },
   {
    "case_id": "CB-pc_order-1",
@@ -2382,9 +2466,11 @@
     "tests/조서대조.py::우선순위 · 콜 우선 · 전환권 부채",
     "tests/손계산대조.py::test_decision_table",
     "tests/손계산대조.py::test_decision_matches_old_chains",
-    "tests/손계산대조.py::test_maturity_layer_in_distribution"
+    "tests/손계산대조.py::test_maturity_layer_in_distribution",
+    "tests/오라클.py::test_node_rule",
+    "tests/분기전수.py::pc_order=1"
    ],
-   "n_tests": 10
+   "n_tests": 12
   },
   {
    "case_id": "RCPS-pc_order-0",
@@ -2411,7 +2497,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 41
+   "n_tests": 42
   },
   {
    "case_id": "RCPS-pc_order-1",
@@ -2425,9 +2511,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/조서대조.py::우선순위 · 콜 우선 · RCPS 발행자 상환권"
+    "tests/조서대조.py::우선순위 · 콜 우선 · RCPS 발행자 상환권",
+    "tests/분기전수.py::pc_order=1"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "BW-pc_order-0",
@@ -2454,7 +2541,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 37
+   "n_tests": 38
   },
   {
    "case_id": "BW-pc_order-1",
@@ -2472,9 +2559,10 @@
     "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 비분리형",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 분리형",
-    "tests/손계산대조.py::test_decision_matches_old_chains"
+    "tests/손계산대조.py::test_decision_matches_old_chains",
+    "tests/분기전수.py::pc_order=1"
    ],
-   "n_tests": 5
+   "n_tests": 6
   },
   {
    "case_id": "SHA-pc_order-0",
@@ -2501,7 +2589,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 14
+   "n_tests": 15
   },
   {
    "case_id": "SHA-pc_order-1",
@@ -2515,9 +2603,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/주주간계약대조.py::상호소멸 · 콜 우선"
+    "tests/주주간계약대조.py::상호소멸 · 콜 우선",
+    "tests/분기전수.py::pc_order=1"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "CB-ytm_cmp-0",
@@ -2528,14 +2617,16 @@
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/조서대조.py::단리 · 보장 8%",
     "tests/조서대조.py::단리 · 표면 2%",
-    "tests/설정전수대조.py::단리 상환가액"
+    "tests/설정전수대조.py::단리 상환가액",
+    "tests/오라클.py::test_accrue",
+    "tests/분기전수.py::ytm_cmp=0"
    ],
-   "n_tests": 3
+   "n_tests": 5
   },
   {
    "case_id": "CB-ytm_cmp-1",
@@ -2546,12 +2637,14 @@
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook_sweep",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
-    "tests/설정전수대조.py::보장 복리 연 1회"
+    "tests/설정전수대조.py::보장 복리 연 1회",
+    "tests/오라클.py::test_accrue",
+    "tests/분기전수.py::ytm_cmp=1"
    ],
-   "n_tests": 1
+   "n_tests": 3
   },
   {
    "case_id": "CB-ytm_cmp-2",
@@ -2562,8 +2655,8 @@
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
     "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
@@ -2578,7 +2671,7 @@
     "tests/조서대조.py::BDT · 표면3% 보장7%",
     "tests/조서대조.py::우선순위 · 투자자 풋 우선"
    ],
-   "n_tests": 15
+   "n_tests": 17
   },
   {
    "case_id": "CB-ytm_cmp-4",
@@ -2589,8 +2682,8 @@
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -2605,7 +2698,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 111
+   "n_tests": 113
   },
   {
    "case_id": "RCPS-ytm_cmp-0",
@@ -2615,11 +2708,13 @@
    "label": "단리",
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::ytm_cmp=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-ytm_cmp-1",
@@ -2629,11 +2724,13 @@
    "label": "연 1회",
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::ytm_cmp=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-ytm_cmp-2",
@@ -2643,11 +2740,13 @@
    "label": "연 2회",
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::ytm_cmp=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-ytm_cmp-4",
@@ -2674,7 +2773,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "BW-ytm_cmp-0",
@@ -2684,11 +2783,13 @@
    "label": "단리",
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::ytm_cmp=0"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-ytm_cmp-1",
@@ -2698,11 +2799,13 @@
    "label": "연 1회",
    "meaning": "만기보장수익률 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::ytm_cmp=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-ytm_cmp-2",
@@ -2722,9 +2825,10 @@
     "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 비분리형",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 분리형",
-    "tests/조서대조.py::BW 현금납입 · 표면 3% · 보장 7%"
+    "tests/조서대조.py::BW 현금납입 · 표면 3% · 보장 7%",
+    "tests/분기전수.py::ytm_cmp=2"
    ],
-   "n_tests": 7
+   "n_tests": 8
   },
   {
    "case_id": "BW-ytm_cmp-4",
@@ -2751,7 +2855,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.3"
    ],
-   "n_tests": 33
+   "n_tests": 34
   },
   {
    "case_id": "CB-cmp_rf-1",
@@ -2761,11 +2865,13 @@
    "label": "연 1회",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-cmp_rf-2",
@@ -2776,8 +2882,8 @@
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -2792,7 +2898,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 129
+   "n_tests": 133
   },
   {
    "case_id": "CB-cmp_rf-4",
@@ -2806,9 +2912,10 @@
    "oracle": "engine_vs_workbook_sweep",
    "independent_oracle": false,
    "covered_by": [
-    "tests/설정전수대조.py::무위험 복리 연 4회"
+    "tests/설정전수대조.py::무위험 복리 연 4회",
+    "tests/분기전수.py::cmp_rf=4"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "CB-cmp_rf-12",
@@ -2818,11 +2925,13 @@
    "label": "월",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-cmp_rf-1",
@@ -2832,11 +2941,13 @@
    "label": "연 1회",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-cmp_rf-2",
@@ -2863,7 +2974,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-cmp_rf-4",
@@ -2873,11 +2984,13 @@
    "label": "연 4회",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=4"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-cmp_rf-12",
@@ -2887,11 +3000,13 @@
    "label": "월",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-cmp_rf-1",
@@ -2901,11 +3016,13 @@
    "label": "연 1회",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-cmp_rf-2",
@@ -2932,7 +3049,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-cmp_rf-4",
@@ -2942,11 +3059,13 @@
    "label": "연 4회",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=4"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-cmp_rf-12",
@@ -2956,11 +3075,13 @@
    "label": "월",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-cmp_rf-1",
@@ -2970,11 +3091,13 @@
    "label": "연 1회",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-cmp_rf-2",
@@ -3001,7 +3124,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "SHA-cmp_rf-4",
@@ -3011,11 +3134,13 @@
    "label": "연 4회",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=4"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-cmp_rf-12",
@@ -3025,11 +3150,13 @@
    "label": "월",
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_rf=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-cmp_cr-1",
@@ -3039,11 +3166,13 @@
    "label": "연 1회",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-cmp_cr-2",
@@ -3054,12 +3183,14 @@
    "meaning": "위험 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook_sweep",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
-    "tests/설정전수대조.py::신용 복리 연 2회"
+    "tests/설정전수대조.py::신용 복리 연 2회",
+    "tests/오라클.py::test_discounting",
+    "tests/분기전수.py::cmp_cr=2"
    ],
-   "n_tests": 1
+   "n_tests": 3
   },
   {
    "case_id": "CB-cmp_cr-4",
@@ -3070,8 +3201,8 @@
    "meaning": "위험 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -3086,7 +3217,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 129
+   "n_tests": 132
   },
   {
    "case_id": "CB-cmp_cr-12",
@@ -3096,11 +3227,13 @@
    "label": "월",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-cmp_cr-1",
@@ -3110,11 +3243,13 @@
    "label": "연 1회",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-cmp_cr-2",
@@ -3124,11 +3259,13 @@
    "label": "연 2회",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-cmp_cr-4",
@@ -3155,7 +3292,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-cmp_cr-12",
@@ -3165,11 +3302,13 @@
    "label": "월",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-cmp_cr-1",
@@ -3179,11 +3318,13 @@
    "label": "연 1회",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-cmp_cr-2",
@@ -3193,11 +3334,13 @@
    "label": "연 2회",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-cmp_cr-4",
@@ -3224,7 +3367,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-cmp_cr-12",
@@ -3234,11 +3377,13 @@
    "label": "월",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-cmp_cr-1",
@@ -3248,11 +3393,13 @@
    "label": "연 1회",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-cmp_cr-2",
@@ -3262,11 +3409,13 @@
    "label": "연 2회",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-cmp_cr-4",
@@ -3293,7 +3442,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "SHA-cmp_cr-12",
@@ -3303,11 +3452,13 @@
    "label": "월",
    "meaning": "위험 복리 횟수",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cmp_cr=12"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-y_type-PAR",
@@ -3334,7 +3485,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 129
+   "n_tests": 130
   },
   {
    "case_id": "CB-y_type-SPOT",
@@ -3348,9 +3499,10 @@
    "oracle": "engine_vs_workbook_sweep",
    "independent_oracle": false,
    "covered_by": [
-    "tests/설정전수대조.py::현물 곡선 입력"
+    "tests/설정전수대조.py::현물 곡선 입력",
+    "tests/분기전수.py::y_type=spot"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-y_type-PAR",
@@ -3377,7 +3529,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-y_type-SPOT",
@@ -3387,11 +3539,13 @@
    "label": "현물이자율",
    "meaning": "금리 입력 유형",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::y_type=spot"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-y_type-PAR",
@@ -3418,7 +3572,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-y_type-SPOT",
@@ -3428,11 +3582,13 @@
    "label": "현물이자율",
    "meaning": "금리 입력 유형",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::y_type=spot"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-y_type-PAR",
@@ -3459,7 +3615,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "SHA-y_type-SPOT",
@@ -3469,11 +3625,13 @@
    "label": "현물이자율",
    "meaning": "금리 입력 유형",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::y_type=spot"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-rate_mode-DIRECT",
@@ -3500,7 +3658,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 130
+   "n_tests": 131
   },
   {
    "case_id": "CB-rate_mode-PICK",
@@ -3510,11 +3668,13 @@
    "label": "등급 하나",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rate_mode=pick"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-rate_mode-RATING",
@@ -3524,11 +3684,13 @@
    "label": "두 등급 보간",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rate_mode=rating"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-rate_mode-DIRECT",
@@ -3555,7 +3717,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-rate_mode-PICK",
@@ -3565,11 +3727,13 @@
    "label": "등급 하나",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rate_mode=pick"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-rate_mode-RATING",
@@ -3579,11 +3743,13 @@
    "label": "두 등급 보간",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rate_mode=rating"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-rate_mode-DIRECT",
@@ -3610,7 +3776,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-rate_mode-PICK",
@@ -3620,11 +3786,13 @@
    "label": "등급 하나",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rate_mode=pick"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-rate_mode-RATING",
@@ -3634,11 +3802,13 @@
    "label": "두 등급 보간",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rate_mode=rating"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-rate_mode-DIRECT",
@@ -3665,7 +3835,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "SHA-rate_mode-PICK",
@@ -3675,11 +3845,13 @@
    "label": "등급 하나",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rate_mode=pick"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-rate_mode-RATING",
@@ -3689,11 +3861,13 @@
    "label": "두 등급 보간",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::rate_mode=rating"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-put_bdt-0",
@@ -3720,7 +3894,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 121
+   "n_tests": 122
   },
   {
    "case_id": "CB-put_bdt-1",
@@ -3742,9 +3916,10 @@
     "tests/조서대조.py::BDT σ=20% · 무위험+스프레드",
     "tests/조서대조.py::BDT σ=0 · 확정 격자와 같아야",
     "tests/조서대조.py::BDT 등가격 (보장=할인)",
-    "tests/조서대조.py::BDT · 표면3% 보장7%"
+    "tests/조서대조.py::BDT · 표면3% 보장7%",
+    "tests/분기전수.py::put_bdt=1"
    ],
-   "n_tests": 9
+   "n_tests": 10
   },
   {
    "case_id": "RCPS-put_bdt-0",
@@ -3771,7 +3946,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-put_bdt-1",
@@ -3781,11 +3956,13 @@
    "label": "BDT 금리격자",
    "meaning": "조기상환권 금리격자",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::put_bdt=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-put_bdt-0",
@@ -3812,7 +3989,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-put_bdt-1",
@@ -3822,11 +3999,13 @@
    "label": "BDT 금리격자",
    "meaning": "조기상환권 금리격자",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::put_bdt=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-bdt_base-0",
@@ -3853,7 +4032,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 129
+   "n_tests": 130
   },
   {
    "case_id": "CB-bdt_base-1",
@@ -3867,9 +4046,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/조서대조.py::BDT σ=20% · 무위험+스프레드"
+    "tests/조서대조.py::BDT σ=20% · 무위험+스프레드",
+    "tests/분기전수.py::bdt_base=1"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-bdt_base-0",
@@ -3896,7 +4076,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-bdt_base-1",
@@ -3906,11 +4086,13 @@
    "label": "무위험 + 확정 스프레드",
    "meaning": "BDT 기준 곡선",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::bdt_base=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-bdt_base-0",
@@ -3937,7 +4119,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-bdt_base-1",
@@ -3947,11 +4129,13 @@
    "label": "무위험 + 확정 스프레드",
    "meaning": "BDT 기준 곡선",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::bdt_base=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-mat_mode-0",
@@ -3978,7 +4162,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 41
+   "n_tests": 42
   },
   {
    "case_id": "RCPS-mat_mode-1",
@@ -3993,9 +4177,10 @@
    "independent_oracle": false,
    "covered_by": [
     "tests/조서대조.py::RCPS · 만료 상환 · 발행자콜 있음",
-    "tests/설정전수대조.py::RCPS · 만료 상환 · 발행자콜"
+    "tests/설정전수대조.py::RCPS · 만료 상환 · 발행자콜",
+    "tests/분기전수.py::mat_mode=1"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "RCPS-issuer_call-0",
@@ -4022,7 +4207,7 @@
     "tests/조서대조.py::차바이오텍 RCPS · 전환권 부채",
     "tests/설정전수대조.py::RCPS · 자동전환"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "RCPS-issuer_call-1",
@@ -4049,7 +4234,7 @@
     "tests/조서대조.py::RCPS · IPO · 발행자콜",
     "tests/조서대조.py::RCPS · 발행자 상환권 (같은 계약)"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "RCPS-issuer_call-2",
@@ -4076,7 +4261,7 @@
     "tests/설정전수대조.py::RCPS · 제3자 지정 콜 20%",
     "tests/설정전수대조.py::RCPS · 제3자 지정 콜 · 방법1"
    ],
-   "n_tests": 12
+   "n_tests": 13
   },
   {
    "case_id": "RCPS-div_mode-0",
@@ -4103,7 +4288,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 39
+   "n_tests": 40
   },
   {
    "case_id": "RCPS-div_mode-1",
@@ -4119,9 +4304,10 @@
    "covered_by": [
     "tests/조서대조.py::RCPS · 배당 재량 (부채에서 제외)",
     "tests/조서대조.py::RCPS · 배당 재량 · 발행자콜",
-    "tests/설정전수대조.py::RCPS · 배당 재량"
+    "tests/설정전수대조.py::RCPS · 배당 재량",
+    "tests/분기전수.py::div_mode=1"
    ],
-   "n_tests": 3
+   "n_tests": 4
   },
   {
    "case_id": "RCPS-ipo_on-0",
@@ -4148,7 +4334,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 35
+   "n_tests": 36
   },
   {
    "case_id": "RCPS-ipo_on-1",
@@ -4159,8 +4345,8 @@
    "meaning": "적격상장 조항",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/조서대조.py::RCPS · IPO 24개월 · 강제전환",
     "tests/조서대조.py::RCPS · IPO · 강제전환 안 함",
@@ -4168,9 +4354,11 @@
     "tests/조서대조.py::RCPS · IPO · GS",
     "tests/조서대조.py::RCPS · IPO · 전환권 부채",
     "tests/설정전수대조.py::RCPS · IPO 강제전환",
-    "tests/설정전수대조.py::RCPS · IPO 리픽싱만"
+    "tests/설정전수대조.py::RCPS · IPO 리픽싱만",
+    "tests/손계산대조.py::test_ipo_branch_keeps_probability_mass",
+    "tests/분기전수.py::ipo_on=1"
    ],
-   "n_tests": 7
+   "n_tests": 9
   },
   {
    "case_id": "SHA-ipo_on-0",
@@ -4197,7 +4385,7 @@
     "tests/주주간계약대조.py::상호소멸",
     "tests/주주간계약대조.py::상호소멸 · 콜 우선"
    ],
-   "n_tests": 12
+   "n_tests": 13
   },
   {
    "case_id": "SHA-ipo_on-1",
@@ -4213,9 +4401,10 @@
    "covered_by": [
     "tests/주주간계약대조.py::적격상장 36개월",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
-    "tests/주주간계약대조.py::상호소멸 · 적격상장"
+    "tests/주주간계약대조.py::상호소멸 · 적격상장",
+    "tests/분기전수.py::ipo_on=1"
    ],
-   "n_tests": 3
+   "n_tests": 4
   },
   {
    "case_id": "RCPS-ipo_conv-0",
@@ -4226,13 +4415,15 @@
    "meaning": "상장 시 강제전환",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/조서대조.py::RCPS · IPO · 강제전환 안 함",
-    "tests/설정전수대조.py::RCPS · IPO 리픽싱만"
+    "tests/설정전수대조.py::RCPS · IPO 리픽싱만",
+    "tests/손계산대조.py::test_ipo_branch_keeps_probability_mass",
+    "tests/분기전수.py::ipo_conv=0"
    ],
-   "n_tests": 2
+   "n_tests": 4
   },
   {
    "case_id": "RCPS-ipo_conv-1",
@@ -4243,8 +4434,8 @@
    "meaning": "상장 시 강제전환",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
     "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
@@ -4259,7 +4450,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 40
+   "n_tests": 42
   },
   {
    "case_id": "BW-bw_pay-0",
@@ -4286,7 +4477,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.3"
    ],
-   "n_tests": 31
+   "n_tests": 33
   },
   {
    "case_id": "BW-bw_pay-1",
@@ -4310,9 +4501,10 @@
     "tests/값조서대조.py::liability·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3",
     "tests/조서대조.py::BW 대용납입",
     "tests/조서대조.py::BW 대용납입 · 콜 30%",
-    "tests/손계산대조.py::test_bw_inherits_engine_fixes"
+    "tests/손계산대조.py::test_bw_inherits_engine_fixes",
+    "tests/분기전수.py::bw_pay=1"
    ],
-   "n_tests": 11
+   "n_tests": 12
   },
   {
    "case_id": "BW-bw_detach-0",
@@ -4339,7 +4531,7 @@
     "tests/값조서대조.py::liability·0·TF·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::liability·0·TF·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 27
+   "n_tests": 28
   },
   {
    "case_id": "BW-bw_detach-1",
@@ -4366,7 +4558,7 @@
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 분리형",
     "tests/조서대조.py::BW 현금납입 · 분리형"
    ],
-   "n_tests": 17
+   "n_tests": 19
   },
   {
    "case_id": "CB-fvpl_whole-0",
@@ -4393,7 +4585,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 123
+   "n_tests": 124
   },
   {
    "case_id": "CB-fvpl_whole-1",
@@ -4415,9 +4607,10 @@
     "tests/조서대조.py::전체 FVPL 지정 · 콜 내재파생",
     "tests/조서대조.py::전체 FVPL 지정 · 거래원가 5억",
     "tests/설정전수대조.py::복합계약 전체 FVPL 지정",
-    "tests/손계산대조.py::test_fvpl_whole_flows_to_accounting"
+    "tests/손계산대조.py::test_fvpl_whole_flows_to_accounting",
+    "tests/분기전수.py::fvpl_whole=1"
    ],
-   "n_tests": 9
+   "n_tests": 10
   },
   {
    "case_id": "RCPS-fvpl_whole-0",
@@ -4444,7 +4637,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-fvpl_whole-1",
@@ -4454,11 +4647,13 @@
    "label": "지정",
    "meaning": "복합계약 전체 FVPL 지정",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::fvpl_whole=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-fvpl_whole-0",
@@ -4485,7 +4680,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-fvpl_whole-1",
@@ -4495,11 +4690,13 @@
    "label": "지정",
    "meaning": "복합계약 전체 FVPL 지정",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::fvpl_whole=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-bs_net-0",
@@ -4526,7 +4723,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 131
+   "n_tests": 132
   },
   {
    "case_id": "CB-bs_net-1",
@@ -4540,9 +4737,10 @@
    "oracle": "hand_calc_independent",
    "independent_oracle": true,
    "covered_by": [
-    "tests/손계산대조.py::test_backsolve_net_target"
+    "tests/손계산대조.py::test_backsolve_net_target",
+    "tests/분기전수.py::bs_net=1"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-bs_net-0",
@@ -4569,7 +4767,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-bs_net-1",
@@ -4579,11 +4777,13 @@
    "label": "매도청구권 차감 순액",
    "meaning": "역산 목표",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::bs_net=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-bs_net-0",
@@ -4610,7 +4810,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-bs_net-1",
@@ -4620,11 +4820,13 @@
    "label": "매도청구권 차감 순액",
    "meaning": "역산 목표",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::bs_net=1"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-sha_writer-0",
@@ -4651,7 +4853,7 @@
     "tests/주주간계약대조.py::월 노드",
     "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 14
+   "n_tests": 15
   },
   {
    "case_id": "SHA-sha_writer-1",
@@ -4665,9 +4867,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
+    "tests/분기전수.py::sha_writer=1"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-sha_writer-2",
@@ -4677,11 +4880,13 @@
    "label": "연대",
    "meaning": "풋 의무자",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::sha_writer=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-sha_disc-0",
@@ -4692,12 +4897,14 @@
    "meaning": "풋 할인",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
-    "tests/주주간계약대조.py::무위험 할인"
+    "tests/주주간계약대조.py::무위험 할인",
+    "tests/오라클.py::test_sha_european",
+    "tests/분기전수.py::sha_disc=0"
    ],
-   "n_tests": 1
+   "n_tests": 3
   },
   {
    "case_id": "SHA-sha_disc-1",
@@ -4724,7 +4931,7 @@
     "tests/주주간계약대조.py::상호소멸",
     "tests/주주간계약대조.py::상호소멸 · 적격상장"
    ],
-   "n_tests": 13
+   "n_tests": 14
   },
   {
    "case_id": "SHA-sha_disc-2",
@@ -4738,9 +4945,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/주주간계약대조.py::무위험 + 스프레드"
+    "tests/주주간계약대조.py::무위험 + 스프레드",
+    "tests/분기전수.py::sha_disc=2"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-sha_qipo_kill-0",
@@ -4754,9 +4962,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/주주간계약대조.py::적격상장 · 콜 존속"
+    "tests/주주간계약대조.py::적격상장 · 콜 존속",
+    "tests/분기전수.py::sha_qipo_kill=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-sha_qipo_kill-1",
@@ -4783,7 +4992,7 @@
     "tests/주주간계약대조.py::월 노드",
     "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 14
+   "n_tests": 15
   },
   {
    "case_id": "SHA-sha_kill-0",
@@ -4810,7 +5019,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 13
+   "n_tests": 14
   },
   {
    "case_id": "SHA-sha_kill-1",
@@ -4827,9 +5036,10 @@
     "tests/주주간계약대조.py::상호소멸",
     "tests/주주간계약대조.py::상호소멸 · 적격상장",
     "tests/주주간계약대조.py::상호소멸 · 콜 우선",
-    "tests/손계산대조.py::test_sha_mutual_kill_probabilities_sum_to_one"
+    "tests/손계산대조.py::test_sha_mutual_kill_probabilities_sum_to_one",
+    "tests/분기전수.py::sha_kill=1"
    ],
-   "n_tests": 4
+   "n_tests": 5
   },
   {
    "case_id": "SHA-sha_put_cmp-0",
@@ -4843,9 +5053,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/주주간계약대조.py::단리 보장"
+    "tests/주주간계약대조.py::단리 보장",
+    "tests/분기전수.py::sha_put_cmp=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-sha_put_cmp-1",
@@ -4856,8 +5067,8 @@
    "meaning": "풋 보장 복리",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::기본",
     "tests/주주간계약대조.py::콜 없음",
@@ -4872,7 +5083,7 @@
     "tests/주주간계약대조.py::월 노드",
     "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 14
+   "n_tests": 16
   },
   {
    "case_id": "SHA-sha_put_cmp-2",
@@ -4882,11 +5093,13 @@
    "label": "연 2회",
    "meaning": "풋 보장 복리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::sha_put_cmp=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-sha_put_cmp-4",
@@ -4896,11 +5109,13 @@
    "label": "연 4회",
    "meaning": "풋 보장 복리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::sha_put_cmp=4"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-sha_call_cmp-0",
@@ -4914,9 +5129,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/주주간계약대조.py::단리 보장"
+    "tests/주주간계약대조.py::단리 보장",
+    "tests/분기전수.py::sha_call_cmp=0"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-sha_call_cmp-1",
@@ -4927,8 +5143,8 @@
    "meaning": "콜 가산 복리",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::기본",
     "tests/주주간계약대조.py::콜 없음",
@@ -4943,7 +5159,7 @@
     "tests/주주간계약대조.py::월 노드",
     "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 14
+   "n_tests": 16
   },
   {
    "case_id": "SHA-sha_call_cmp-2",
@@ -4953,11 +5169,13 @@
    "label": "연 2회",
    "meaning": "콜 가산 복리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::sha_call_cmp=2"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-sha_call_cmp-4",
@@ -4967,11 +5185,13 @@
    "label": "연 4회",
    "meaning": "콜 가산 복리",
    "kind": "enum",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::sha_call_cmp=4"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-put-ON",
@@ -4998,7 +5218,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 131
+   "n_tests": 132
   },
   {
    "case_id": "CB-put-OFF",
@@ -5008,11 +5228,14 @@
    "label": "없음",
    "meaning": "조기상환청구권",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
-   "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/오라클.py::test_discounting",
+    "tests/분기전수.py::put=OFF"
+   ],
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-put-ON",
@@ -5039,7 +5262,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 43
+   "n_tests": 44
   },
   {
    "case_id": "RCPS-put-OFF",
@@ -5049,11 +5272,13 @@
    "label": "없음",
    "meaning": "조기상환청구권",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::put=OFF"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-put-ON",
@@ -5080,7 +5305,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 41
+   "n_tests": 42
   },
   {
    "case_id": "BW-put-OFF",
@@ -5090,11 +5315,13 @@
    "label": "없음",
    "meaning": "조기상환청구권",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::put=OFF"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "CB-call-ON",
@@ -5121,7 +5348,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 130
+   "n_tests": 131
   },
   {
    "case_id": "CB-call-OFF",
@@ -5131,11 +5358,14 @@
    "label": "없음",
    "meaning": "매도청구권",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
-   "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/오라클.py::test_discounting",
+    "tests/분기전수.py::call=OFF"
+   ],
+   "n_tests": 2
   },
   {
    "case_id": "BW-call-ON",
@@ -5162,7 +5392,7 @@
     "tests/값조서대조.py::liability·0·TF·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3",
     "tests/값조서대조.py::liability·0·TF·1·inst=BW,bw_pay=0,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 22
+   "n_tests": 23
   },
   {
    "case_id": "BW-call-OFF",
@@ -5189,7 +5419,7 @@
     "tests/값조서대조.py::liability·0·GS·1·inst=BW,bw_pay=0,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::liability·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0"
    ],
-   "n_tests": 19
+   "n_tests": 20
   },
   {
    "case_id": "RCPS-call-ON",
@@ -5216,7 +5446,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 전환권 부채",
     "tests/조서대조.py::RCPS · 자동전환 · GS"
    ],
-   "n_tests": 27
+   "n_tests": 28
   },
   {
    "case_id": "RCPS-call-OFF",
@@ -5243,7 +5473,7 @@
     "tests/조서대조.py::차바이오텍 RCPS · 전환권 부채",
     "tests/설정전수대조.py::RCPS · 자동전환"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "CB-cpn-ON",
@@ -5270,7 +5500,7 @@
     "tests/조서대조.py::단리 · 표면 2%",
     "tests/조서대조.py::BDT · 표면3% 보장7%"
    ],
-   "n_tests": 19
+   "n_tests": 21
   },
   {
    "case_id": "CB-cpn-OFF",
@@ -5281,8 +5511,8 @@
    "meaning": "표면이자·우선배당",
    "kind": "presence",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -5297,7 +5527,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 112
+   "n_tests": 114
   },
   {
    "case_id": "RCPS-cpn-ON",
@@ -5324,7 +5554,7 @@
     "tests/조서대조.py::RCPS · 배당 재량 (부채에서 제외)",
     "tests/조서대조.py::RCPS · 배당 재량 · 발행자콜"
    ],
-   "n_tests": 22
+   "n_tests": 23
   },
   {
    "case_id": "RCPS-cpn-OFF",
@@ -5351,7 +5581,7 @@
     "tests/조서대조.py::RCPS · IPO · 발행자콜",
     "tests/조서대조.py::RCPS · IPO · GS"
    ],
-   "n_tests": 20
+   "n_tests": 21
   },
   {
    "case_id": "BW-cpn-ON",
@@ -5371,9 +5601,10 @@
     "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 비분리형",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 분리형",
-    "tests/조서대조.py::BW 현금납입 · 표면 3% · 보장 7%"
+    "tests/조서대조.py::BW 현금납입 · 표면 3% · 보장 7%",
+    "tests/분기전수.py::cpn=ON"
    ],
-   "n_tests": 7
+   "n_tests": 8
   },
   {
    "case_id": "BW-cpn-OFF",
@@ -5400,7 +5631,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.3"
    ],
-   "n_tests": 33
+   "n_tests": 34
   },
   {
    "case_id": "CB-ytm-ON",
@@ -5427,7 +5658,7 @@
     "tests/조서대조.py::단리 · 보장 8%",
     "tests/조서대조.py::단리 · 표면 2%"
    ],
-   "n_tests": 21
+   "n_tests": 22
   },
   {
    "case_id": "CB-ytm-OFF",
@@ -5454,7 +5685,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 109
+   "n_tests": 110
   },
   {
    "case_id": "RCPS-ytm-ON",
@@ -5481,7 +5712,7 @@
     "tests/조서대조.py::RCPS · 배당 재량 (부채에서 제외)",
     "tests/조서대조.py::RCPS · 배당 재량 · 발행자콜"
    ],
-   "n_tests": 19
+   "n_tests": 20
   },
   {
    "case_id": "RCPS-ytm-OFF",
@@ -5508,7 +5739,7 @@
     "tests/조서대조.py::RCPS · IPO · 발행자콜",
     "tests/조서대조.py::RCPS · IPO · GS"
    ],
-   "n_tests": 23
+   "n_tests": 24
   },
   {
    "case_id": "BW-ytm-ON",
@@ -5528,9 +5759,10 @@
     "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 비분리형",
     "tests/조서대조.py::우선순위 · 콜 우선 · BW 분리형",
-    "tests/조서대조.py::BW 현금납입 · 표면 3% · 보장 7%"
+    "tests/조서대조.py::BW 현금납입 · 표면 3% · 보장 7%",
+    "tests/분기전수.py::ytm=ON"
    ],
-   "n_tests": 7
+   "n_tests": 8
   },
   {
    "case_id": "BW-ytm-OFF",
@@ -5557,7 +5789,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.3"
    ],
-   "n_tests": 33
+   "n_tests": 34
   },
   {
    "case_id": "CB-mid-ON",
@@ -5579,9 +5811,11 @@
     "tests/설정전수대조.py::중간평가 · 분기 노드",
     "tests/설정전수대조.py::중간평가 · 리픽싱 12개월",
     "tests/손계산대조.py::test_coupon_schedule_after_elapsed_months",
-    "tests/손계산대조.py::test_root_immediate_put"
+    "tests/손계산대조.py::test_root_immediate_put",
+    "tests/오라클.py::test_date_boundaries",
+    "tests/분기전수.py::mid=ON"
    ],
-   "n_tests": 9
+   "n_tests": 11
   },
   {
    "case_id": "CB-mid-OFF",
@@ -5592,8 +5826,8 @@
    "meaning": "중간평가 (경과기간 > 0)",
    "kind": "presence",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -5608,7 +5842,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 123
+   "n_tests": 125
   },
   {
    "case_id": "RCPS-mid-ON",
@@ -5622,9 +5856,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/조서대조.py::RCPS · 월 노드 · 리픽싱 7스텝 · 자동전환"
+    "tests/조서대조.py::RCPS · 월 노드 · 리픽싱 7스텝 · 자동전환",
+    "tests/분기전수.py::mid=ON"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-mid-OFF",
@@ -5651,7 +5886,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 41
+   "n_tests": 42
   },
   {
    "case_id": "BW-mid-ON",
@@ -5665,9 +5900,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/조서대조.py::BW 현금납입 · 중간평가"
+    "tests/조서대조.py::BW 현금납입 · 중간평가",
+    "tests/분기전수.py::mid=ON"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "BW-mid-OFF",
@@ -5694,7 +5930,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 39
+   "n_tests": 40
   },
   {
    "case_id": "SHA-mid-ON",
@@ -5709,9 +5945,10 @@
    "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::중간평가",
-    "tests/손계산대조.py::test_sha_root_immediate_put"
+    "tests/손계산대조.py::test_sha_root_immediate_put",
+    "tests/분기전수.py::mid=ON"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "SHA-mid-OFF",
@@ -5738,7 +5975,7 @@
     "tests/주주간계약대조.py::월 노드",
     "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 14
+   "n_tests": 15
   },
   {
    "case_id": "CB-cost-ON",
@@ -5757,9 +5994,10 @@
     "tests/조서대조.py::거래원가 5억",
     "tests/조서대조.py::전체 FVPL 지정 · 거래원가 5억",
     "tests/설정전수대조.py::거래원가 5억",
-    "tests/손계산대조.py::test_fvpl_whole_flows_to_accounting"
+    "tests/손계산대조.py::test_fvpl_whole_flows_to_accounting",
+    "tests/분기전수.py::cost=ON"
    ],
-   "n_tests": 6
+   "n_tests": 7
   },
   {
    "case_id": "CB-cost-OFF",
@@ -5786,7 +6024,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 125
+   "n_tests": 126
   },
   {
    "case_id": "RCPS-cost-ON",
@@ -5800,9 +6038,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/조서대조.py::거래원가 · RCPS 발행자콜"
+    "tests/조서대조.py::거래원가 · RCPS 발행자콜",
+    "tests/분기전수.py::cost=ON"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "RCPS-cost-OFF",
@@ -5829,7 +6068,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 41
+   "n_tests": 42
   },
   {
    "case_id": "BW-cost-ON",
@@ -5839,11 +6078,13 @@
    "label": "있음",
    "meaning": "거래원가",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::cost=ON"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-cost-OFF",
@@ -5870,7 +6111,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "CB-curve-ON",
@@ -5897,7 +6138,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 131
+   "n_tests": 134
   },
   {
    "case_id": "CB-curve-OFF",
@@ -5907,11 +6148,13 @@
    "label": "없음",
    "meaning": "기간구조 곡선 (만기점 2개 이상)",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::curve=OFF"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "RCPS-curve-ON",
@@ -5938,7 +6181,7 @@
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 없음",
     "tests/조서대조.py::RCPS · 자동전환 · 발행자콜 있음"
    ],
-   "n_tests": 42
+   "n_tests": 43
   },
   {
    "case_id": "RCPS-curve-OFF",
@@ -5948,11 +6191,13 @@
    "label": "없음",
    "meaning": "기간구조 곡선 (만기점 2개 이상)",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::curve=OFF"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "BW-curve-ON",
@@ -5979,7 +6224,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 40
+   "n_tests": 41
   },
   {
    "case_id": "BW-curve-OFF",
@@ -5989,11 +6234,13 @@
    "label": "없음",
    "meaning": "기간구조 곡선 (만기점 2개 이상)",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::curve=OFF"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-curve-ON",
@@ -6020,7 +6267,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "SHA-curve-OFF",
@@ -6030,11 +6277,13 @@
    "label": "없음",
    "meaning": "기간구조 곡선 (만기점 2개 이상)",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::curve=OFF"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-sha_put-ON",
@@ -6061,7 +6310,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 16
+   "n_tests": 18
   },
   {
    "case_id": "SHA-sha_put-OFF",
@@ -6071,11 +6320,13 @@
    "label": "없음",
    "meaning": "주주간계약 풋",
    "kind": "presence",
-   "status": "NOT_TESTED",
-   "oracle": null,
+   "status": "PASS",
+   "oracle": "invariants",
    "independent_oracle": false,
-   "covered_by": [],
-   "n_tests": 0
+   "covered_by": [
+    "tests/분기전수.py::sha_put=OFF"
+   ],
+   "n_tests": 1
   },
   {
    "case_id": "SHA-sha_call-ON",
@@ -6102,7 +6353,7 @@
     "tests/주주간계약대조.py::월 노드",
     "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 15
+   "n_tests": 17
   },
   {
    "case_id": "SHA-sha_call-OFF",
@@ -6116,9 +6367,10 @@
    "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
-    "tests/주주간계약대조.py::콜 없음"
+    "tests/주주간계약대조.py::콜 없음",
+    "tests/분기전수.py::sha_call=OFF"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "BLOCK-01",
@@ -6427,6 +6679,64 @@
    "must_appear_in": [
     "화면 역산 경고",
     "docs/의사결정규칙.md §10-1"
+   ],
+   "display_checked": false
+  },
+  {
+   "case_id": "LIMIT-13",
+   "product": "ALL",
+   "branch": "자동전환형 RCPS 의 전환권이 음수",
+   "value": null,
+   "label": "존속기간 만료 시 자동전환이면 만기 전환은 권리가 아니라 의무다. 주가가 낮으면 B2 < B1 이라 「전환권 = B2 − B1」 이 음수다 (분기전수·조합시험이 limit 로 허용)",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [],
+   "n_tests": 0,
+   "must_appear_in": [
+    "화면",
+    "조서"
+   ],
+   "display_checked": false
+  },
+  {
+   "case_id": "LIMIT-14",
+   "product": "ALL",
+   "branch": "강제전환 할인율 효과로 매도청구권이 음수",
+   "value": null,
+   "label": "TF·GS 는 지분을 무위험(전환확률 가중)으로 할인한다. 콜이 전환을 강제하면 부채가 지분으로 바뀌어 할인이 가벼워지고 전체 가치가 오를 수 있다 → 유무가치비교법 매도청구권 < 0. RCPS 발행자 상환권은 ca_debt=max(0,·) 로 막는다",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [],
+   "n_tests": 0,
+   "must_appear_in": [
+    "화면",
+    "조서",
+    "README"
+   ],
+   "display_checked": false
+  },
+  {
+   "case_id": "LIMIT-15",
+   "product": "ALL",
+   "branch": "잔여 주계약 ≤ 0 이면 상각표 없음",
+   "value": null,
+   "label": "발행가 100 과 공정가치가 크게 다르면(Day-1 차이) 부채 분류의 잔여 주계약이 0 이하다. 유효이자율이 정의되지 않으므로 상각표를 만들지 않고 그 사실을 적는다 (4단계 F-05)",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [],
+   "n_tests": 0,
+   "must_appear_in": [
+    "화면",
+    "조서"
    ],
    "display_checked": false
   }
