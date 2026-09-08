@@ -146,6 +146,8 @@ class Terms:
     p_yield: float = 0.0         # 조기상환 보장수익률
     p_cmp: int = 4               # 조기상환 보장수익률 복리 횟수
     face_total: float = 25_000_000_000.0   # 전자등록총액 (원)
+    ticker: str = ""              # 종목코드·티커 (주가·변동성 조회용, 비상장이면 빈칸)
+    s0_src: str = ""              # 평가기준일 주가의 출처 ("야후 085660.KQ 2024-06-28 종가"). 빈칸 = 직접 입력
     rate_mode: str = "direct"      # direct 직접 · pick 등급 하나 · rating 두 등급 보간
     cr_src: str = ""               # 위험 곡선을 어디서 가져왔는지 (조서에 적는다)     # direct 곡선 직접 / rating 등급 보간
     rt_a: str = "BBB+"            # 인풋 곡선 A 등급
@@ -2897,6 +2899,57 @@ def use_korean_font():
     return nm
 
 
+def _yf_symbols(code: str, market: str):
+    """국내 6자리 코드면 고른 시장을 먼저, 그다음 다른 시장. 해외 티커는 그대로."""
+    if not code.isdigit():
+        return [code]
+    sufs = [f".{market}"] if market else []
+    sufs += [x for x in (".KQ", ".KS") if x not in sufs]
+    return [code + suf for suf in sufs]
+
+
+def pick_close(rows, on_date: str):
+    """[(날짜, 종가)] 에서 평가기준일 **이하** 마지막 거래일의 종가를 고른다.
+
+    평가기준일이 휴장이면(주말·공휴일·거래정지) 직전 거래일이다. 기준일 뒤의 값은 절대 쓰지
+    않는다 — 결산일 이후 주가로 재면 안 된다. 없으면 None.
+    """
+    cand = [(d, v) for d, v in rows if d <= on_date and v > 0]
+    return cand[-1] if cand else None
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_close(code: str, market: str, on_date: str):
+    """평가기준일(또는 직전 거래일)의 **종가**를 야후에서 받는다. (거래일, 종가, 심볼).
+
+    변동성용 fetch_prices 와 달리 auto_adjust=False — 평가일의 주가는 그날 실제로 거래된
+    값이어야지, 그 뒤의 증자·분할을 소급 반영한 수정주가가 아니다.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        raise RuntimeError("yfinance 가 설치되어 있지 않습니다.") from None
+    d2 = dt.date.fromisoformat(on_date)
+    d1 = d2 - dt.timedelta(days=21)
+    errs = []
+    for sym in _yf_symbols(code, market):
+        try:
+            df = yf.download(sym, start=d1, end=d2 + dt.timedelta(days=1),
+                             progress=False, auto_adjust=False, threads=False)
+            if df is None or df.empty:
+                errs.append(f"{sym} 자료 없음"); continue
+            if hasattr(df.columns, "nlevels") and df.columns.nlevels > 1:
+                df = df.droplevel(1, axis=1)
+            col = "Close" if "Close" in df.columns else df.columns[0]
+            rows = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in df[col].dropna().items()]
+            hit = pick_close(rows, on_date)
+            if hit: return hit[0], hit[1], sym
+            errs.append(f"{sym} {on_date} 이전 거래일 없음")
+        except Exception as e:
+            errs.append(f"{sym} {e}")
+    raise RuntimeError(" / ".join(errs) or "자료를 찾지 못했습니다")
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_prices(code: str, days: int, market: str, end: str = None):
     """야후 파이낸스에서 수정주가를 받는다.
@@ -2915,14 +2968,8 @@ def fetch_prices(code: str, days: int, market: str, end: str = None):
     d1 = d2 - dt.timedelta(days=int(days*1.7)+30)
     # 고른 시장을 먼저 보되 비면 다른 시장도 해 본다. 이전 상장이나 시장 이관이
     # 있으면 접미사가 어긋나는데, 화면에서는 "자료 없음" 으로만 보여 원인을 못 찾는다.
-    if not code.isdigit():
-        sufs = [""]
-    else:
-        sufs = [f".{market}"] if market else []
-        sufs += [x for x in (".KQ", ".KS") if x not in sufs]
     errs = []
-    for suf in sufs:
-        sym = code + suf
+    for sym in _yf_symbols(code, market):
         try:
             df = yf.download(sym, start=d1, end=d2+dt.timedelta(days=1),
                              progress=False, auto_adjust=True, threads=False)
@@ -4336,7 +4383,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("풋·콜 우선순위", ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None),
         ("매도청구권 회계 처리",
          "별도 금융상품" if tm.k_sep else "복합내재파생에 포함", None)]),
-      ("5. 시장 인풋", [("변동성 σ", tm.sig, P2),
+      ("5. 시장 인풋", [("주가 출처", (tm.s0_src or "직접 입력"), None), ("변동성 σ", tm.sig, P2),
                      ("보통주 배당수익률 δ", tm.div_y, P2)]
         + ([("조기상환권 평가", "BDT 금리격자", None),
             ("BDT 단기이자율 변동성 σ", tm.bdt_sig, P2),
@@ -5081,6 +5128,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("만기일", "d_mat", dt.date.fromisoformat(tm.d_mat), DATE, True),
         ("경과기간 (개월)", "elm", tm.elapsed_m, N2, True),
         ("평가기준일 주가", "S0", tm.S0, N2, True),
+        ("주가 출처", "s0src", (tm.s0_src or "직접 입력"), None, True),
         ("현재 전환가액", "K0", tm.K0, N2, True),
         ("잔존기간 T (년)", "T", tm.T, N4, True),
         ("노드 수 n", "n", n, N0, True),
@@ -7165,11 +7213,36 @@ with st.sidebar:
 
     with st.expander("기본", expanded=True):
         _SHA = is_sha(t)
+        # 상장사면 평가기준일(또는 직전 거래일) 종가를 받아 넣는다. 비상장이면 빈칸으로 두고
+        # 손으로 넣거나 아래 역산을 쓴다. 출처는 조서 가정 시트에 같이 실린다.
+        tk1, tk2, tk3 = st.columns([2, 1, 2])
+        t.ticker = tk1.text_input("종목코드 · 티커", value=t.ticker,
+                                  help="국내는 6자리 숫자, 해외는 티커. 비상장이면 비워 두십시오.").strip()
+        _mkt = tk2.selectbox("시장", ["KQ", "KS", ""], index=0,
+                             format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x],
+                             key="s0_mkt")
+        if tk3.button("평가기준일 종가 불러오기", use_container_width=True,
+                      disabled=not t.ticker, key="btn_s0"):
+            with st.spinner("받는 중"):
+                try:
+                    _dd, _px, _sym = fetch_close(t.ticker, _mkt, t.d_base)
+                    t.S0 = float(_px)
+                    t.s0_src = f"야후 {_sym} {_dd} 종가"
+                    st.rerun()
+                except Exception as ex:
+                    st.warning(f"받지 못했습니다 — {ex}. 주가를 직접 넣으십시오.")
+        _s0_before = float(t.S0)
         t.S0 = st.number_input("평가기준일 주가 (원)", value=float(t.S0), step=1.0,
                                help=("비상장이면 지분가치 평가액 ÷ 주식수를 넣거나, 아래에서 "
                                      "투자원금으로 역산하십시오." if _SHA else
                                      "비상장이면 별도 지분평가액 ÷ 주식수를 넣거나, 아래에서 "
                                      "발행가로 역산하십시오."))
+        if abs(t.S0 - _s0_before) > 1e-9:
+            t.s0_src = ""                      # 손으로 고쳤다 — 출처는 더 이상 야후가 아니다
+        if t.s0_src:
+            st.caption(f"출처 · {t.s0_src}")
+            if t.s0_src.split()[-2] != t.d_base:
+                st.caption(f"평가기준일 {t.d_base} 은 휴장일이라 직전 거래일 종가입니다.")
         # 발행가 역산 (책 5-1). 비상장 발행회사는 관측 주가가 없으니 「발행된 값이
         # 곧 공정가치」로 놓고 전체 가치가 발행가가 되는 주가를 격자에서 찾는다.
         bc1, bc2 = st.columns([1, 1])
@@ -7882,10 +7955,13 @@ with st.sidebar:
 
     with st.expander("변동성", expanded=True):
         c1, c2 = st.columns([2, 1])
-        code = c1.text_input("종목코드 · 티커", value="057680",
-                             help="국내는 6자리 숫자, 해외는 티커")
-        mkt = c2.selectbox("시장", ["KQ", "KS", ""], index=0,
-                           format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x])
+        code = c1.text_input("종목코드 · 티커", value=(t.ticker or "057680"),
+                             help="국내는 6자리 숫자, 해외는 티커. 「기본」의 종목코드를 따라옵니다.",
+                             key="vol_code")
+        mkt = c2.selectbox("시장", ["KQ", "KS", ""],
+                           index=["KQ", "KS", ""].index(st.session_state.get("s0_mkt", "KQ")),
+                           format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x],
+                           key="vol_mkt")
         c3, c4 = st.columns(2)
         pdays = int(c3.number_input("조회 일수", value=250, step=10, min_value=30))
         tdays = int(c4.number_input(
@@ -7900,7 +7976,9 @@ with st.sidebar:
                        f"일수** 칸입니다. 지금 값이면 σ 가 √({tdays}÷250) = "
                        f"{(tdays/250)**0.5:.3f} 배로 나옵니다.")
         st.caption("야후 파이낸스 수정주가를 씁니다. 유상증자·액면분할·배당이 반영된 종가입니다.")
-        asof = st.date_input("조회 종료일", value=dt.date.today())
+        # 평가기준일까지의 주가로 변동성을 잰다. 기준일 뒤의 값이 섞이면 결산일 평가가 아니다.
+        asof = st.date_input("조회 종료일", value=dt.date.fromisoformat(t.d_base),
+                             help="기본은 평가기준일입니다. 기준일 뒤 주가로 변동성을 재면 안 됩니다.")
         drop = st.checkbox("이상치 제거 (중앙값 절대편차 2.5배)", value=True,
                            help="MAD × 1.4826 × 2.5 밖의 일간수익률을 뺍니다. "
                                 "책 사례 5-2 와 같은 배수입니다.")
