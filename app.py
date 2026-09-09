@@ -87,6 +87,7 @@ class Terms:
     T: float = 5.0                  # 잔존기간 — derive() 가 채운다
     n: int = 60                     # 노드 수 — derive() 가 채운다
     elapsed_m: float = 0.0          # 발행일 → 평가기준일 경과 개월
+    rem_m: float = 60.0             # 평가기준일 → 만기 «계약상» 개월 — derive() 가 채운다
     cpn: float = 0.0            # 표면이자율
     ipay: float = 3.0           # 이자 지급주기 (개월)
     ytm: float = 0.0            # 만기보장수익률
@@ -429,6 +430,10 @@ def derive(tm: Terms) -> Terms:
     db = dt.date.fromisoformat(tm.d_base)
     dm = dt.date.fromisoformat(tm.d_mat)
     tm.elapsed_m = max(0.0, months_between(di, db))
+    # 잔존기간은 두 가지로 잰다. **할인**은 Actual/365 (tm.T) 로, **행사금액 산정**은
+    # 계약이 세는 개월수(tm.rem_m) 로 한다 — 계약서가 「36개월 보장수익률」이라고
+    # 쓰면 그 36개월이지 1,096일÷365 = 3.0027년이 아니다.
+    tm.rem_m = max(0.0, months_between(db, dm))
     tm.T = max(1e-6, (dm-db).days/365)
     gap = max(0.25, tm.gap_m)
     tm.n = max(4, int(round(tm.T*12/gap)))
@@ -766,6 +771,39 @@ def k_cap(tm: Terms) -> float:
     return tm.K_cap if tm.K_cap > 0 else tm.K0
 
 
+def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
+    """조기상환·매도청구·만기 **행사금액** 을 한 곳에서 만든다.
+
+    같은 산식이 엔진·BDT 갈래·값 조서·EIR 표·조건표 다섯 군데에 흩어져 있었다.
+    흩어지면 하나를 고칠 때 나머지가 남아 **같은 금액을 두 값으로 계산한다** —
+    실제로 EIR 표(``eir_expect``)는 계약 개월수를, 격자는 Actual/365 를 쓰고 있었다.
+
+    돌려주는 것
+      ``cmonth(i)``  스텝 i 의 발행일부터 경과 **개월** — 계약이 세는 방식
+      ``cyear(i)``   행사금액 산정에 쓰는 경과 **연수**
+      ``put(i)``     조기상환 행사금액 (행사 가능 여부는 보지 않는다 — 부르는 쪽이 판단)
+      ``call(i)``    매도청구 행사금액
+      ``red``        만기상환금액
+    """
+    ey = tm.elapsed_m/12
+    rem_m = float(getattr(tm, "rem_m", 0.0) or tm.T*12)
+    cmonth = lambda i: tm.elapsed_m + i*rem_m/max(1, n)
+    # 지금은 Actual/365 다. 계약 개월 기준으로 가르는 스위치는 다음 커밋에서 붙는다.
+    cyear = lambda i: i*dt_ + ey
+    mat_year = tm.T + ey
+
+    def put(i):
+        if tm.p_mode == "accrue":
+            return 100*(1 + accrue_rate(cyear(i), tm.p_yield, eff_cpn(tm), tm.p_cmp))
+        return float(tm.p_rate)
+
+    def call(i):
+        return 100*(1 + accrue_rate(cyear(i), tm.k_prem, call_cpn(tm), tm.k_cmp))
+
+    return dict(cmonth=cmonth, cyear=cyear, put=put, call=call,
+                red=100*(1 + accrue_rate(mat_year, tm.ytm, eff_cpn(tm), tm.ytm_cmp)))
+
+
 def lbl(tm: Terms) -> dict:
     """상품에 따라 갈리는 이름. 화면·조서가 모두 여기서 가져간다."""
     if is_rcps(tm):
@@ -1016,21 +1054,17 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     is_pay = lambda i: (eff_cpn(tm) > 0 and i > 0 and i >= pay_off
                         and (i-pay_off) % pay_per == 0)
     cpn_amt = 100*eff_cpn(tm)*tm.ipay/12
-    red = 100*(1 + accrue_rate(T + ey, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
+    # 행사금액은 발행일부터 붙는다. 산식은 exercise_amounts 하나에서 나온다.
+    EA = exercise_amounts(tm, n, dt_)
+    red = EA["red"]
     S = lambda i, j: tm.S0 * u**j * d**(i-j)
     kcap = k_cap(tm)
     clip = lambda s: min(max(s, tm.floor, tm.par), kcap)
-    def put_amt(i):
-        """행사금액은 발행일부터 붙는다. 경과분을 더해 계산한다."""
-        if tm.p_mode == "accrue":
-            return 100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, eff_cpn(tm), tm.p_cmp))
-        return tm.p_rate
+    put_amt = EA["put"]
     put_a = lambda i: put_amt(i) if (put and in_set(i, ps, tm.p_e, tm.p_f)) else 0.0
     # kstrike 는 콜 스위치와 무관한 행사금액이다. 행사기간이 아니면 None.
     # call_a 는 call=False 면 항상 inf 라 제3자 콜옵션 평가에 쓸 수 없다.
-    kstrike = lambda i: (100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, call_cpn(tm),
-                                             tm.k_cmp))
-                         if in_set(i, tm.k_s, tm.k_e, tm.k_f) else None)
+    kstrike = lambda i: (EA["call"](i) if in_set(i, tm.k_s, tm.k_e, tm.k_f) else None)
     call_a = lambda i: (kstrike(i) if (call and in_set(i, tm.k_s, tm.k_e, tm.k_f))
                         else math.inf)
     conv_ok = lambda i: conv and st_lo(cs) <= i <= st_hi(tm.cv_e)
@@ -2056,7 +2090,8 @@ def bdt_parts(tm: Terms):
         rt, ab = bdt_tree(RF, T, n, tm.bdt_sig)
         add = [forward_rate(CR, i*dt_, (i+1)*dt_) - forward_rate(RF, i*dt_, (i+1)*dt_)
                for i in range(n)]
-    red = 100*(1 + accrue_rate(T + ey, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
+    EA = exercise_amounts(tm, n, dt_)
+    red = EA["red"]
     cpn_amt = 100*eff_cpn(tm)*tm.ipay/12
     pay_per = max(1, int(round(tm.ipay*mper)))
     pay_off = pay_offset(tm, st_lo)
@@ -2065,9 +2100,7 @@ def bdt_parts(tm: Terms):
     p_lo, p_hi = st_lo(tm.p_s), st_hi(tm.p_e)
     p_per = max(1, int(round(tm.p_f*mper)))
     in_put = lambda i: (max(p_lo, 0) <= i <= p_hi and (i-p_lo) % p_per == 0)
-    put_a = lambda i: ((100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, eff_cpn(tm), tm.p_cmp))
-                        if tm.p_mode == "accrue" else tm.p_rate)
-                       if in_put(i) else 0.0)
+    put_a = lambda i: (EA["put"](i) if in_put(i) else 0.0)
     # 캘리브레이션 검산 재료 — 도달가격 Q 와 시장 할인계수.
     # Σ_j Q(k,j) 가 시장 할인계수와 같아야 한다. 이것이 무차익거래 조건이고,
     # 기준금리 a 를 그 조건에 맞춰 역산한 것이다. 조서에서 눈으로 확인하도록
@@ -5057,18 +5090,16 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     REFIXC = {i for i in range(1, n+1) if is_rfx(i)}
     cpn_amt = 100*eff_cpn(tm)*tm.ipay/12
     ey = tm.elapsed_m/12                     # 경과 연수 — 행사금액은 발행일부터 붙는다
-    red = 100*(1 + accrue_rate(tm.T + ey, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
+    EA = exercise_amounts(tm, n, dt_)        # 엔진과 같은 산식에서 나온다
+    red = EA["red"]
     def in_set(i, a, b, fr):
         lo, hi = stp_lo(a), stp_hi(b)
         return lo <= i <= hi and (i-lo) % per_(fr) == 0
     def put_amt(i):
-        if not in_set(i, tm.p_s, tm.p_e, tm.p_f): return 0.0
-        if tm.p_mode == "accrue":
-            return 100*(1 + accrue_rate(i*dt_ + ey, tm.p_yield, eff_cpn(tm), tm.p_cmp))
-        return tm.p_rate
+        return EA["put"](i) if in_set(i, tm.p_s, tm.p_e, tm.p_f) else 0.0
     def call_amt(i, on=True):
-        if not on or not in_set(i, tm.k_s, tm.k_e, tm.k_f): return 999999
-        return 100*(1 + accrue_rate(i*dt_ + ey, tm.k_prem, call_cpn(tm), tm.k_cmp))
+        return (EA["call"](i) if (on and in_set(i, tm.k_s, tm.k_e, tm.k_f))
+                else 999999)
 
     HEAD = ["Date", "time-step", "Flag(전환)", "Flag(조기상환)", "Flag(매도청구)",
             "Flag(리픽싱)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환",
