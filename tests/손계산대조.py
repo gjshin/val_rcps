@@ -1164,9 +1164,18 @@ def test_call_split_text():
     _h_p1, _, _ = val(2, 1, k_hold=1, pc_order=1)
     chk("의무보유가 콜 기간을 덮으면 우선순위와 무관", _h_p0, _h_p1, 1e-12)
     # 문안
-    for km, ks, kk, want in ((0, 0, 0, "유무가치비교법"), (2, 1, 0, "본문 4.3.3"), (2, 0, 0, "비례균등차감법"), (2, 1, 1, "주주간 분배")):
+    for km, ks, kk, want in ((0, 0, 0, "유무가치비교법"), (2, 1, 0, "본문 4.3.3"), (2, 0, 0, "비례균등차감법"),
+                             (2, 1, 1, "주주간 분배"),
+                             # 기특정 콜은 본문 4.5 의 «세 접근법» 중 하나를 고른 것이다.
+                             # 채택한 접근법과 다른 갈래로 가는 길을 함께 밝혀야 한다.
+                             (2, 1, 1, "접근법 2-2"), (2, 1, 1, "접근법 1"), (2, 1, 1, "유무가치비교법")):
         t = Terms(**base, k_method=km, k_split=ks, k_kind=kk); derive(t)
         chk_bool(f"문안에 «{want}»", want in G["call_method_text"](t))
+    # 화면 안내(call_type_note)도 같은 사실을 실어야 한다 — 조서와 화면이 갈리면 안 된다.
+    for kk, want in ((1, "접근법 2-2"), (1, "접근법 1"), (1, "유무가치비교법"), (1, "회계처리 되는 경우가 있다"),
+                     (0, "복합옵션")):
+        t = Terms(**base, k_method=2, k_split=1, k_kind=kk); derive(t)
+        chk_bool(f"화면 안내에 «{want}» (유형 {kk})", want in G["call_type_note"](t))
     # RCPS 발행자 상환권·없음 갈래는 k_kind 0
     tr = Terms(inst="RCPS", issuer_call=1, k_kind=1); derive(tr)
     chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)
