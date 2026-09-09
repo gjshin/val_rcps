@@ -183,7 +183,9 @@ def terms_enum_fields(G):
         # 문자열이라도 날짜·출처·등급 같은 자유 입력은 열거형이 아니다
         # 자유 문자열 — 갈래가 아니다 (날짜·등급 이름·주가 출처·종목코드)
         if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src",
-                 "rvol_rating", "rvol_how", "k_basis"): continue
+                 "rvol_rating", "rvol_how", "k_basis",
+                 # 조회 기록 — 계산 갈래가 아니라 「무엇을 받았는가」의 기록이다
+                 "s0_date", "s0_splits"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty

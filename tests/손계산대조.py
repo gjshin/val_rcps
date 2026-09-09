@@ -1180,15 +1180,99 @@ def test_call_split_text():
                      (0, "복합옵션")):
         t = Terms(**base, k_method=2, k_split=1, k_kind=kk); derive(t)
         chk_bool(f"화면 안내에 «{want}» (유형 {kk})", want in G["call_type_note"](t))
+    # ── 주가·전환가의 basis 정합성 ──
+    # 분할·병합·무상증자가 있으면 「분할 전 전환가액」과 「분할 후 주가」가 섞여 값이
+    # 배수만큼 틀어진다. 네트워크 없이 앱이 이미 가진 두 값으로 잡아야 한다.
+    _bc = G["basis_check"]
+    _BB = dict(K_cap=1000., floor=700., par=100.)
+    chk_bool("정상 계약은 조용하다", not _bc(Terms(S0=1000., K0=1000., **_BB), 1000.0))
+    chk_bool("하루 등락 1% 로는 경고하지 않는다",
+             not _bc(Terms(S0=1010., K0=1000., **_BB), 1000.0))
+    chk_bool("5:1 분할 — 원주가만 조정되면 잡는다",
+             any("5배" in x for x in _bc(Terms(S0=200., K0=1000., **_BB), 1000.0)))
+    chk_bool("무상증자 1:1 — 시계열만 조정되면 잡는다",
+             any("2배" in x for x in _bc(Terms(S0=1000., K0=1000., **_BB), 500.0)))
+    chk_bool("최초 전환가만 분할 전이면 잡는다",
+             any("최초 전환가액" in x for x in
+                 _bc(Terms(S0=1000., K0=1000., K_cap=5000., floor=700., par=100.), 1000.0)))
+    chk_bool("주가가 전환가의 50배면 잡는다",
+             any("50.0배" in x for x in _bc(Terms(S0=50000., K0=1000., **_BB), 50000.0)))
+    # 잘못된 경고를 내지 않는다 — 리픽싱이 없으면 하한은 애초에 작동하지 않고,
+    # 하한 = 액면가면 계약상 하한이 아니라 법정 하한이다 (대신증권 RCPS 가 그렇다).
+    chk_bool("리픽싱 없는 계약의 액면가 하한에는 경고하지 않는다",
+             not _bc(Terms(S0=27100., K0=81000., floor=5000., par=5000., rfx_mode=0)))
+    chk_bool("리픽싱 있고 하한이 20% 면 잡는다",
+             any("최저 조정가액" in x for x in
+                 _bc(Terms(S0=1000., K0=1000., K_cap=1000., floor=200., par=100., rfx_mode=1))))
+    chk_bool("시계열이 없으면(px_last=None) 주가 대조는 건너뛴다",
+             not any("변동성 시계열" in x for x in _bc(Terms(S0=200., K0=1000., **_BB))))
+    # ── 주가 조회 기록 (px_trace) ──
+    # 조서를 받은 사람이 「무엇을 요청했고 무엇을 받았는지」 알아야 분할·병합을
+    # 의심할 때 되짚을 수 있다. 네트워크를 쓰지 않는다 — 기록을 직접 세워 시험한다.
+    _pt = G["px_trace"]
+    _d = dict(_pt(Terms(d_base="2026-06-05")))
+    chk_bool("직접 입력이면 조회가 없었다고 적는다", "직접 입력" in _d["주가 출처"])
+    chk_bool("직접 입력이면 분할 기록도 «조회하지 않음»", _d["분할 기록"] == "조회하지 않음")
+    chk_bool("조회 기록은 다섯 줄", len(_pt(Terms())) == 5)
+    _YK = dict(d_base="2026-06-06", s0_src="야후 085660.KQ 2026-06-05 종가",
+               s0_date="2026-06-05", s0_raw=1103., s0_adj=1103., s0_splits="없음")
+    _y = lambda **kw: Terms(**{**_YK, **kw})
+    _d = dict(_pt(_y()))
+    chk_bool("요청 평가기준일을 그대로 적는다", _d["요청 평가기준일"] == "2026-06-06")
+    chk_bool("휴장이면 직전 거래일임을 적는다", "휴장" in _d["실제 사용 거래일"])
+    chk_bool("원주가·수정주가가 같으면 조용하다", "조정사건" not in _d["원주가 · 수정주가"])
+    chk_bool("«없음» 은 «사건이 없었다»가 아니라고 적는다", "무상증자" in _d["분할 기록"])
+    _d = dict(_pt(_y(s0_adj=551.5, s0_splits="")))
+    chk_bool("원주가와 수정주가가 다르면 알린다", "조정사건" in _d["원주가 · 수정주가"])
+    chk_bool("분할 조회 실패는 «확인 못 함»", "확인 못 함" in _d["분할 기록"])
+    _d = dict(_pt(_y(s0_splits="2026-03-02 5배")))
+    chk_bool("분할 기록이 있으면 그대로 싣는다", _d["분할 기록"] == "2026-03-02 5배")
+    # 조회 실패(None)와 기록 없음([])을 구분한다 — 야후를 부르지 않고 규약만 본다.
+    import inspect as _ins
+    _fs = _ins.getsource(G["fetch_splits"])
+    chk_bool("fetch_splits 는 실패 시 None 을 돌려준다", "return None" in _fs)
+    chk_bool("fetch_splits 는 기록이 없으면 빈 목록을 돌려준다", "return out" in _fs)
+
+    # ── 재현 기록 (run_stamp) ──
+    # 몇 달 뒤 같은 계약을 다시 재서 값이 다르면 앱이 바뀐 것인지 인풋이 바뀐 것인지
+    # 가려야 한다. 지문은 «계산에 실제로 쓴» Terms 에서 나와야 한다.
+    _rs, _sr, _st = G["run_stamp"], G["stamp_rows"], G["_stamp"]
+    _t1 = Terms(sig=.45); derive(_t1)
+    _m1 = _rs(_t1)
+    chk_bool("지문은 _stamp 과 같은 값", _m1["terms_md5"] == _st(_t1))
+    chk_bool("평가체계 버전을 함께 남긴다", _m1["schema"] == G["SCHEMA_VER"])
+    chk_bool("app.py 해시는 12자리", len(_m1["app_sha12"]) in (0, 12))
+    _t2 = Terms(sig=.46); derive(_t2)
+    chk_bool("인풋이 다르면 지문도 다르다", _rs(_t2)["terms_md5"] != _m1["terms_md5"])
+    chk_bool("같은 인풋이면 지문도 같다", _rs(Terms(sig=.45))["terms_md5"] == _st(Terms(sig=.45)))
+    # 수식 조서는 조정일 처리를 바꾼 사본으로 트리를 만든다 — 그 사본의 지문이어야 한다.
+    _tf = Terms(**G["asdict"](_t1)); _tf.carry = 2
+    chk_bool("계산에 쓴 Terms 로 지문을 뜬다", _rs(_tf)["terms_md5"] != _m1["terms_md5"])
+    chk_bool("종류(값·수식)가 다르면 지문도 다르다", _rs(_t1, "수식")["terms_md5"] != _m1["terms_md5"])
+    _rows = dict(_sr(_t1))
+    for _k in ("생성시각", "평가체계 버전", "인풋 지문 (MD5)", "주가 출처", "위험 곡선 출처"):
+        chk_bool(f"조서 재현 기록에 «{_k}»", _k in _rows)
+    chk_bool("조서 재현 기록은 11줄", len(_sr(_t1)) == 11)
+    # 검산요약에도 한 줄 — 조서를 열면 어느 판에서 나왔는지 바로 보인다.
+    _f1, _b0, _b1, _b2, _ca, _cv = G["decompose"](_t1)
+    _ck = dict((x[0], x) for x in G["model_checks"](_t1, _f1, _b0, _b1, _b2, _ca))
+    chk_bool("검산요약에 재현 기록 줄", "재현 기록 · 앱 판 · 인풋 지문" in _ck)
+    chk_bool("검산요약 줄에 지문 앞 8자리",
+             _st(_t1)[:8] in _ck["재현 기록 · 앱 판 · 인풋 지문"][1])
+
     # ── 시나리오 JSON 의 평가체계 버전 ──
     # 옛 파일에는 «_schema» 가 없다. 그때 Terms 기본값(유무가치비교법)으로 열려야
     # 과거 조서가 그대로 재현된다. 새 파일에는 버전이 붙고, 옛 앱에서도 열려야 하므로
     # Terms 에 없는 키는 버려진다.
     import json as _json
     _fields = Terms.__dataclass_fields__
-    _saved = _json.loads(_json.dumps({**G["asdict"](Terms()), "_schema": G["SCHEMA_VER"]},
+    _saved = _json.loads(_json.dumps({**G["asdict"](Terms()), "_schema": G["SCHEMA_VER"],
+                                      "_meta": G["run_stamp"](Terms())},
                                      ensure_ascii=False, default=str))
     chk_bool("저장 파일에 «_schema» 가 붙는다", _saved.get("_schema") == G["SCHEMA_VER"])
+    chk_bool("저장 파일에 «_meta» 재현 기록이 붙는다",
+             _saved.get("_meta", {}).get("terms_md5") == G["_stamp"](Terms()))
+    chk_bool("«_meta» 도 Terms 에 없는 키라 옛 앱에서 버려진다", "_meta" not in _fields)
     chk_bool("Terms 에 없는 키는 버려진다 (옛 앱 호환)", "_schema" not in _fields)
     _t_old = Terms(**{k: v for k, v in {"k_w": 0.3, "sig": 0.5}.items() if k in _fields})
     chk_bool("«_schema» 없는 옛 파일 → 유무가치비교법 기본", _t_old.k_method == 0)

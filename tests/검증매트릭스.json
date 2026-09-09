@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-09T07:35:23",
- "head": "faf7bf4",
+ "generated": "2026-09-09T11:19:14",
+ "head": "820b9f7",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -35,7 +35,7 @@
   "ALL": {
    "PASS": 0,
    "EXPECTED_BLOCK": 5,
-   "KNOWN_LIMITATION": 18,
+   "KNOWN_LIMITATION": 20,
    "FAIL": 0,
    "NOT_TESTED": 0
   }
@@ -7937,6 +7937,53 @@
   },
   {
    "case_id": "LIMIT-18",
+   "product": "ALL",
+   "branch": "주가 basis 검증은 내부 신호뿐 — 분할 이력은 참고",
+   "value": null,
+   "label": "분할·병합·무상증자 여부는 원주가 대 수정주가의 배수와 전환가 계열의 정합성으로만 판정한다. 야후의 분할 이력은 한국 종목 커버리지가 고르지 않고 특히 무상증자를 split 으로 기록하지 않는 경우가 많아 근거로 쓰지 않는다 — 「기록 없음」이 「사건 없음」이 아니다. 조정사건이 의심되면 공시로 확인해야 한다",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
+   "must_appear_in": [
+    "화면 주가 캡션",
+    "README 「한계」",
+    "docs/의사결정규칙.md §30·§31"
+   ],
+   "display_checked": true,
+   "note": ""
+  },
+  {
+   "case_id": "LIMIT-19",
+   "product": "ALL",
+   "branch": "주가와 금리를 함께 흔드는 결합격자 미지원",
+   "value": null,
+   "label": "주가 이항격자와 BDT 금리격자를 곱한 2요인 격자를 만들지 않는다. 전환권이 파생상품부채인 CB 는 주계약과 내재파생 전체를 하나의 복합내재파생으로 재므로 조기상환권을 따로 잴 이유가 없고, 전환권이 자본이라 조기상환권만 부채요소에 남는 경우에만 BDT 를 쓴다. 두 위험의 상관을 반영해야 하는 계약은 고도화 대상이다",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
+   "must_appear_in": [
+    "README 「한계」",
+    "docs/의사결정규칙.md §20"
+   ],
+   "display_checked": true,
+   "note": ""
+  },
+  {
+   "case_id": "LIMIT-20",
    "product": "ALL",
    "branch": "비분리형 BW 는 신주인수권 조기행사를 상태로 갖지 않는다",
    "value": null,

@@ -167,6 +167,12 @@ class Terms:
     face_total: float = 25_000_000_000.0   # 전자등록총액 (원)
     ticker: str = ""              # 종목코드·티커 (주가·변동성 조회용, 비상장이면 빈칸)
     s0_src: str = ""              # 평가기준일 주가의 출처 ("야후 085660.KQ 2024-06-28 종가"). 빈칸 = 직접 입력
+    # 조회 결과를 그대로 남긴다 — 「무엇을 요청했고 무엇을 받았는가」가 조서에 있어야
+    # 나중에 분할·병합을 의심할 때 되짚을 수 있다. 빈칸이면 직접 입력이다.
+    s0_date: str = ""             # 실제로 쓴 거래일 (평가기준일이 휴장이면 직전 거래일)
+    s0_raw: float = -1.0          # 그날의 «원주가» (auto_adjust=False)
+    s0_adj: float = -1.0          # 그날의 «수정주가» (auto_adjust=True). 둘이 다르면 조정사건이 있었다
+    s0_splits: str = ""           # 야후가 기록한 분할 이력. "" 미조회 · "없음" 기록 없음 · 그 외 목록
     rate_mode: str = "direct"      # direct 직접 · pick 등급 하나 · rating 두 등급 보간
     cr_src: str = ""               # 위험 곡선을 어디서 가져왔는지 (조서에 적는다)     # direct 곡선 직접 / rating 등급 보간
     rt_a: str = "BBB+"            # 인풋 곡선 A 등급
@@ -398,6 +404,18 @@ MODEL_LIMITS = (
     ('잔여 주계약 ≤ 0 이면 상각표 없음',
      '발행가 100 과 공정가치가 크게 다르면(Day-1 차이) 부채 분류의 잔여 주계약이 0 이하다. 유효이자율이 정의되지 않으므로 상각표를 만들지 않고 그 사실을 적는다 (4단계 F-05)',
      ('화면', '조서')),
+    ('주가 basis 검증은 내부 신호뿐 — 분할 이력은 참고',
+     '분할·병합·무상증자 여부는 원주가 대 수정주가의 배수와 전환가 계열의 정합성으로만 판정한다. '
+     '야후의 분할 이력은 한국 종목 커버리지가 고르지 않고 특히 무상증자를 split 으로 기록하지 '
+     '않는 경우가 많아 근거로 쓰지 않는다 — 「기록 없음」이 「사건 없음」이 아니다. '
+     '조정사건이 의심되면 공시로 확인해야 한다',
+     ('화면 주가 캡션', 'README 「한계」', 'docs/의사결정규칙.md §30·§31')),
+    ('주가와 금리를 함께 흔드는 결합격자 미지원',
+     '주가 이항격자와 BDT 금리격자를 곱한 2요인 격자를 만들지 않는다. 전환권이 파생상품부채인 '
+     'CB 는 주계약과 내재파생 전체를 하나의 복합내재파생으로 재므로 조기상환권을 따로 잴 이유가 '
+     '없고, 전환권이 자본이라 조기상환권만 부채요소에 남는 경우에만 BDT 를 쓴다. 두 위험의 '
+     '상관을 반영해야 하는 계약은 고도화 대상이다',
+     ('README 「한계」', 'docs/의사결정규칙.md §20')),
     ('비분리형 BW 는 신주인수권 조기행사를 상태로 갖지 않는다',
      '자식 노드의 매도청구는 신주인수권이 살아 있다고 보고 정해진다. 부모에서 투자자가 먼저 행사하면 그 콜은 사채만 비싸게 사는 셈이라 콜 있는 격자가 없는 격자보다 커질 수 있다 (매도청구권 < 0). 두 상태 격자로 고치는 것은 산식 변경이라 별도 승인 대상',
      ('화면', '조서', 'README')),
@@ -3145,6 +3163,13 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
     notes = getattr(tm, "forced_notes", [])
     out.append(("되돌린 설정 (지원하지 않는 조합)", f"{len(notes)}건", "해당 없음" if not notes else "확인 필요",
                 "; ".join(f"{k} → {v}" for k, v, _ in notes) if notes else "없음"))
+    # 재현 기록 한 줄 — 이 조서가 어느 판의 앱에서 나왔는지 검산요약에서 바로 보인다.
+    _m = run_stamp(tm)
+    out.append(("재현 기록 · 앱 판 · 인풋 지문",
+                f"{_m['app_sha12'] or '?'} · {_m['terms_md5'][:8]}",
+                "적합" if _m["app_sha12"] else "확인 필요",
+                (f"소스 판 {_m['git_head']} · 가정 시트에 전체 기록" if _m["git_head"]
+                 else "소스 판(git)을 확인하지 못했다 — 가정 시트에 나머지 기록") ))
     return out
 
 
@@ -3165,6 +3190,13 @@ def sha_checks(tm: Terms, R):
         out.append(("상호소멸", "끔", "해당 없음", "두 권리를 독립으로 잰다"))
     out.append(("적격상장 스텝", f"{R['qi_step']}", "해당 없음" if R["qi_step"] < 0 else "적합",
                 "" if R["qi_step"] < 0 else f"주가 > {tm.ipo_min:,.0f} 인 노드에서 풋 소멸" + (" · 콜도 소멸" if int(tm.sha_qipo_kill) else "")))
+    # 재현 기록 한 줄 — model_checks 와 같은 형식이다.
+    _m = run_stamp(tm)
+    out.append(("재현 기록 · 앱 판 · 인풋 지문",
+                f"{_m['app_sha12'] or '?'} · {_m['terms_md5'][:8]}",
+                "적합" if _m["app_sha12"] else "확인 필요",
+                (f"소스 판 {_m['git_head']} · 해설 시트에 전체 기록" if _m["git_head"]
+                 else "소스 판(git)을 확인하지 못했다 — 해설 시트에 나머지 기록")))
     return out
 
 
@@ -3585,7 +3617,105 @@ def pc_compare(tm: Terms):
     return out
 
 
-def validate(tm: Terms):
+# 분할·병합·무상증자에서 흔한 배수. 이 근처면 corporate action 을 강하게 의심한다.
+CA_RATIOS = (2, 3, 4, 5, 10, 20, 100)
+
+
+def px_trace(tm: Terms) -> list:
+    """주가 조회 기록 다섯 줄 — ``[(항목, 문구)]``. 화면과 세 조서가 같은 것을 쓴다.
+
+    조서를 받은 사람이 **무엇을 요청했고 무엇을 받았는지** 알아야 분할·병합을 의심할 때
+    되짚을 수 있다. 직접 입력이면 조회 자체가 없었으니 그렇게 적는다.
+    """
+    src = (tm.s0_src or "").strip()
+    if not src:
+        return [("주가 출처", "직접 입력 — 야후 조회 없음"),
+                ("요청 평가기준일", tm.d_base),
+                ("실제 사용 거래일", "해당 없음 (직접 입력)"),
+                ("원주가 · 수정주가", "해당 없음 (직접 입력)"),
+                ("분할 기록", "조회하지 않음")]
+    dd = tm.s0_date or "?"
+    day = dd + ("" if dd == tm.d_base else "  (평가기준일이 휴장이라 직전 거래일)")
+    if tm.s0_raw > 0:
+        px = f"원주가 {tm.s0_raw:,.2f} · 수정주가 " + (
+            f"{tm.s0_adj:,.2f}" if tm.s0_adj > 0 else "받지 못함")
+        if tm.s0_adj > 0 and abs(tm.s0_adj - tm.s0_raw) > 0.005 * max(1.0, tm.s0_raw):
+            px += "  ← 다르다. 조회일 뒤 조정사건 가능"
+    else:
+        px = "기록 없음 (이전 판에서 만든 값이거나 손으로 고친 값)"
+    sp = tm.s0_splits or "조회하지 못함 — 확인 못 함"
+    if tm.s0_splits == "없음":
+        sp = "없음 — 다만 한국 종목은 무상증자가 야후에 기록되지 않는 경우가 많다"
+    return [("주가 출처", src), ("요청 평가기준일", tm.d_base),
+            ("실제 사용 거래일", day), ("원주가 · 수정주가", px), ("분할 기록", sp)]
+
+
+def basis_check(tm: Terms, px_last: float = None) -> list:
+    """주가와 전환가가 **같은 기준(basis)** 위에 있는지 본다. 네트워크를 쓰지 않는다.
+
+    분할·병합·무상증자가 있으면 「분할 전 전환가액」과 「분할 후 주가」가 섞여 값이
+    배수만큼 틀어진다. 그런데 앱은 지금까지 이것을 한 번도 보지 않았다 — ``validate()``
+    안에 ``tm.S0`` 가 아예 등장하지 않았다.
+
+    야후의 분할 이력은 판정 근거로 쓰지 않는다. 한국 종목은 커버리지가 고르지 않고,
+    특히 **무상증자를 split 으로 기록하지 않는 경우가 많다** — 「기록이 없다」가
+    「사건이 없었다」를 뜻하지 않는다. 대신 앱이 이미 가진 두 신호로 판정한다.
+
+      ① 평가기준일 종가(S0, 원주가)와 변동성 시계열의 마지막 값(수정주가)의 배수.
+         앱은 S0 를 auto_adjust=False 로, 시계열을 True 로 받는다 — 설계상 의도지만
+         조회 구간 안에 조정사건이 있으면 두 값이 배수만큼 벌어진다.
+      ② 전환가 계열(K0 · floor · par · K_cap)이 서로 정합적인가.
+      ③ 주가와 전환가의 비가 상식 범위인가.
+
+    돌려주는 것 — 경고 문구 목록. 계산을 막지는 않는다.
+    """
+    out = []
+
+    def near(x):
+        """1 이 아닌 흔한 배수(또는 그 역수)에 가까운가."""
+        for r in CA_RATIOS:
+            if abs(x - r) < 0.03*r or abs(x - 1.0/r) < 0.03/r: return r
+        return None
+
+    if px_last and px_last > 0 and tm.S0 > 0:
+        rt = tm.S0/px_last
+        hit = near(rt)
+        # 흔한 배수면 크기와 무관하게, 아니면 5% 를 넘을 때만 알린다 — 하루 등락으로
+        # 매번 경고가 뜨면 정작 중요한 신호를 흘려 보내게 된다.
+        if hit or abs(rt - 1.0) > 0.05:
+            msg = (f"평가기준일 주가 {tm.S0:,.0f}원 과 변동성 시계열의 마지막 값 "
+                   f"{px_last:,.0f}원 이 {rt:,.4f}배 차이 납니다. ")
+            if hit:
+                out.append(msg + f"**{hit}배 안팎이라 분할·병합·무상증자를 의심해야 합니다.** "
+                           "주가는 원주가(조정 전), 변동성 시계열은 수정주가라 조회 구간에 "
+                           "조정사건이 있으면 이렇게 벌어집니다. 전환가액이 어느 기준인지 "
+                           "계약서와 대조하십시오 — 기준이 섞이면 값이 배수만큼 틀어집니다.")
+            else:
+                out.append(msg + "시계열의 마지막 거래일이 평가기준일과 다르거나 "
+                           "조정사건이 있었을 수 있습니다.")
+    # 전환가 계열
+    if tm.K_cap > 0 and tm.K0 > 0:
+        rt = tm.K_cap/tm.K0
+        if near(rt) and abs(rt - 1.0) > 0.01:
+            out.append(f"최초 전환가액 {tm.K_cap:,.0f}원 이 현재 전환가액 {tm.K0:,.0f}원 의 "
+                       f"{rt:,.2f}배입니다 — 리픽싱만으로 보기에는 배수가 정연합니다. "
+                       "분할·병합 뒤 한쪽만 조정하지 않았는지 확인하십시오.")
+    # 리픽싱이 없으면 하한이 애초에 작동하지 않고, 하한 = 액면가면 계약상 하한이 아니라
+    # 상법상 액면미달발행 금지에서 오는 법정 하한이다 — 둘 다 비율을 따질 일이 아니다.
+    if tm.K0 > 0 and tm.floor > 0 and tm.rfx_mode > 0 and tm.floor > tm.par + 1e-9:
+        rt = tm.floor/tm.K0
+        if rt < 0.3 or rt > 1.0:
+            out.append(f"최저 조정가액이 현재 전환가액의 {rt:,.1%} 입니다. 계약상 하한은 "
+                       "보통 70~80% 입니다 — 두 값이 같은 기준인지 확인하십시오.")
+    if tm.S0 > 0 and tm.K0 > 0:
+        rt = tm.S0/tm.K0
+        if rt > 20 or rt < 0.05:
+            out.append(f"주가가 전환가액의 {rt:,.1f}배입니다. 분할·병합 뒤 한쪽만 조정한 "
+                       "값이 아닌지 확인하십시오.")
+    return out
+
+
+def validate(tm: Terms, px_last: float = None):
     derive(tm)
     w = [f"설정을 되돌렸습니다 ({k} → {v}). " + msg.replace("**", "")
          for k, v, msg in getattr(tm, "forced_notes", [])]
@@ -3775,6 +3905,7 @@ def validate(tm: Terms):
         if abs(_f - float(tm.mat_amt)) > 0.05:
             w.append(f"만기상환금액을 직접 넣으셨습니다 ({tm.mat_amt:,.4f}%). "
                      f"보장수익률 산식으로는 {_f:,.4f}% 입니다 — 계약서와 대조하십시오.")
+    w += basis_check(tm, px_last)
     if tm.floor > tm.K0: w.append("최저 조정가액이 최초 전환가액보다 큽니다.")
     if tm.par > tm.floor: w.append("액면가가 최저 조정가액보다 큽니다. 액면가가 하한으로 작동합니다.")
     if tm.rfx_mode > 0 and round(tm.rfx_cyc*tm.n/(tm.T*12)) < 1:
@@ -3880,6 +4011,10 @@ def fetch_close(code: str, market: str, on_date: str):
 
     변동성용 fetch_prices 와 달리 auto_adjust=False — 평가일의 주가는 그날 실제로 거래된
     값이어야지, 그 뒤의 증자·분할을 소급 반영한 수정주가가 아니다.
+
+    **수정주가도 함께 받아 둔다.** 둘이 다르면 조회일 뒤에 조정사건이 있었다는 뜻이고,
+    그때 전환가액이 어느 기준인지 확인해야 한다. 돌려주는 것은
+    ``(거래일, 원주가, 심볼, 수정주가)`` — 수정주가를 못 받으면 ``None`` 이다.
     """
     try:
         import yfinance as yf
@@ -3899,11 +4034,53 @@ def fetch_close(code: str, market: str, on_date: str):
             col = "Close" if "Close" in df.columns else df.columns[0]
             rows = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in df[col].dropna().items()]
             hit = pick_close(rows, on_date)
-            if hit: return hit[0], hit[1], sym
+            if hit:
+                adj = None
+                try:
+                    da = yf.download(sym, start=d1, end=d2 + dt.timedelta(days=1),
+                                     progress=False, auto_adjust=True, threads=False)
+                    if da is not None and not da.empty:
+                        if hasattr(da.columns, "nlevels") and da.columns.nlevels > 1:
+                            da = da.droplevel(1, axis=1)
+                        ca = "Close" if "Close" in da.columns else da.columns[0]
+                        ar = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in da[ca].dropna().items()]
+                        ah = pick_close(ar, on_date)
+                        if ah and ah[0] == hit[0]: adj = ah[1]
+                except Exception:
+                    adj = None           # 수정주가는 «참고» 다 — 못 받아도 원주가로 진행한다
+                return hit[0], hit[1], sym, adj
             errs.append(f"{sym} {on_date} 이전 거래일 없음")
         except Exception as e:
             errs.append(f"{sym} {e}")
     raise RuntimeError(" / ".join(errs) or "자료를 찾지 못했습니다")
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_splits(code: str, market: str, d1: str, d2: str):
+    """야후가 기록한 **분할·병합 이력**. 판정 근거가 아니라 «참고» 다.
+
+    돌려주는 것 — ``None`` 이면 **조회하지 못했다(모른다)**, ``[]`` 면 **기록이 없다**,
+    그 외는 ``[(날짜, 배수)]``. 이 셋을 구분하는 것이 요점이다.
+
+    한국 종목은 커버리지가 고르지 않다. 액면분할·병합은 대체로 잡히지만 **무상증자는
+    split 으로 기록되지 않는 경우가 많다.** 그래서 「기록이 없다」를 「사건이 없었다」로
+    읽으면 안 된다 — 화면·조서에 그 사실을 함께 적는다. 실제 판정은 basis_check() 가
+    네트워크 없이 한다.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        return None
+    for sym in _yf_symbols(code, market):
+        try:
+            sp = yf.Ticker(sym).splits
+            if sp is None: continue
+            out = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in sp.items()
+                   if d1 <= i.strftime("%Y-%m-%d") <= d2 and abs(float(v) - 1.0) > 1e-9]
+            return out
+        except Exception:
+            continue
+    return None
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -5033,6 +5210,76 @@ def _stamp(tm: Terms, kind: str = "") -> str:
         (kind + json.dumps(d, sort_keys=True, default=str)).encode()).hexdigest()
 
 
+_RUN_ENV: dict = {}
+
+
+def _run_env() -> dict:
+    """app.py 의 해시와 git HEAD. 한 번만 재고 못 재면 빈 문자열이다.
+
+    ``tests/run_all.py`` 가 검증 결과에 찍는 것과 **같은 방식**으로 만든다 —
+    조서에 실린 해시와 검증 보고서의 해시를 눈으로 대조할 수 있어야 한다.
+    """
+    if _RUN_ENV: return _RUN_ENV
+    import hashlib, subprocess
+    pth = globals().get("__file__") or ""
+    if not pth or not os.path.exists(pth):
+        for c in (os.path.join(os.getcwd(), "app.py"), "app.py"):
+            if os.path.exists(c): pth = c; break
+    sha = head = ""
+    try:
+        sha = hashlib.sha256(open(pth, "rb").read()).hexdigest()[:12]
+    except Exception:
+        pass
+    try:
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                              cwd=(os.path.dirname(os.path.abspath(pth)) or "."),
+                              capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        pass
+    _RUN_ENV.update(app_sha12=sha, git_head=head)
+    return dict(_RUN_ENV)
+
+
+def run_stamp(tm: Terms, kind: str = "") -> dict:
+    """이 조서를 **다시 만들 수 있게** 하는 최소 기록.
+
+    조서에는 지금까지 생성시각과 출처 문자열뿐이었다. 몇 달 뒤 같은 계약을 다시 재서
+    값이 다르면 앱이 바뀐 것인지 인풋이 바뀐 것인지 가릴 방법이 없었다. 그래서 앱 해시 ·
+    git HEAD · 평가체계 버전 · 인풋 지문을 함께 남긴다.
+
+    ``terms_md5`` 는 **계산에 실제로 쓴 Terms** 의 지문이다 (``_stamp`` 과 같은 함수).
+    수식 조서는 조정일 처리를 바꾼 사본으로 트리를 만들므로 그 사본을 넘겨야 한다.
+    """
+    e = _run_env()
+    return dict(app_sha12=e["app_sha12"], git_head=e["git_head"], schema=SCHEMA_VER,
+                terms_md5=_stamp(tm, kind), d_base=tm.d_base,
+                s0_date=(tm.s0_date or ""), px_src=(tm.s0_src or "직접 입력"),
+                cr_src=(tm.cr_src or "직접 입력"), sig=float(tm.sig), n=int(tm.n),
+                gap_m=float(tm.gap_m), model=str(tm.model), carry=int(tm.carry),
+                rfx_mode=int(tm.rfx_mode), acc_basis=int(getattr(tm, "acc_basis", 1)),
+                k_method=int(tm.k_method),
+                made_at=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+
+def stamp_rows(tm: Terms, kind: str = "") -> list:
+    """``run_stamp`` 를 조서에 실을 ``[(항목, 문구)]`` 로 바꾼다. 세 조서가 같이 쓴다."""
+    m = run_stamp(tm, kind)
+    return [("생성시각", m["made_at"]),
+            ("앱 판 (app.py SHA-256 앞 12자리)", m["app_sha12"] or "확인 못 함"),
+            ("소스 판 (git HEAD)", m["git_head"] or "확인 못 함"),
+            ("평가체계 버전", f"{m['schema']}"),
+            ("인풋 지문 (MD5)", m["terms_md5"]),
+            ("평가기준일 · 주가 거래일", f"{m['d_base']} · {m['s0_date'] or '해당 없음'}"),
+            ("주가 출처", m["px_src"]),
+            ("위험 곡선 출처", m["cr_src"]),
+            ("변동성 σ · 노드 수 · 노드 간격(개월)",
+             f"{m['sig']:.4f} · {m['n']} · {m['gap_m']:g}"),
+            ("신용위험 처리 · 조정일 처리 · 리픽싱 · 행사금액 경과기간",
+             f"{m['model']} · {m['carry']} · {m['rfx_mode']} · "
+             f"{'계약 개월÷12' if m['acc_basis'] else 'Actual/365'}"),
+            ("매도청구권 평가방법", K_METHODS[int(m["k_method"])])]
+
+
 def inst_text(tm: Terms, text: str) -> str:
     """화면 문장을 상품 용어로. CB 면 그대로다."""
     if not isinstance(text, str): return text
@@ -5297,6 +5544,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     title(A, 2, "전환사채 평가 조서", span=5)
     put(A, 3, 2, "생성 " + dt.datetime.now().strftime("%Y-%m-%d %H:%M")
         + "   ·   금액은 전자등록금액 100 기준", color=GREY, size=9)
+    _SRW = stamp_rows(tm, "값")     # 재현 기록 — 아래 「0. 재현 기록」 절에 싣는다
     # 조서를 받은 사람이 무엇을 재고 무엇을 안 쟀는지 표지에서 알아야 한다.
     put(A, 4, 2, SCOPE_NOTE.replace("**", ""), color=GREY, size=9)
     put(A, 5, 2, UNMODELLED_NOTE, color=AMB, size=9)
@@ -5308,7 +5556,9 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         except Exception:
             pass
         return f"{m:,.1f}"
-    blocks = [("1. 모형", [("신용위험 처리", tm.model, None),
+    # 「0. 재현 기록」 — 이 조서를 다시 만들려면 무엇이 같아야 하는가.
+    blocks = [("0. 재현 기록", [(_l, _v, None) for _l, _v in _SRW]),
+      ("1. 모형", [("신용위험 처리", tm.model, None),
         ("조정일 아닌 시점", ["상태확장(정확)", "경로가중치", "확률가중평균", "특정노드선택"][tm.carry], None),
         ("전환권 회계 분류", "파생상품부채" if tm.conv_class == "liability" else "자본", None)]),
       ("2. 계약조건", [("발행일", tm.d_issue, None), ("평가기준일", tm.d_base, None),
@@ -5356,7 +5606,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("풋·콜 우선순위", ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None),
         ("매도청구권 회계 처리",
          "별도 금융상품" if tm.k_sep else "복합내재파생에 포함", None)]),
-      ("5. 시장 인풋", [("주가 출처", (tm.s0_src or "직접 입력"), None),
+      ("5. 시장 인풋", [(_l, _v, None) for _l, _v in px_trace(tm)] + [
         ("위험 곡선 출처", (tm.cr_src or "직접 입력") + (f" · 평가대상 {tm.rt_tgt}" if tm.rate_mode != "direct" and tm.rt_tgt else ""), None),
         ("BDT σ 출처", (tm.rvol_how or "직접 입력") if put_bdt_on(tm) else "해당 없음 (BDT 미적용)", None),
         ("변동성 σ", tm.sig, P2),
@@ -6298,6 +6548,18 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 조서를 받은 사람이 무엇을 재고 무엇을 안 쟀는지 알아야 한다.
     put(A, nb+4, 2, SCOPE_NOTE.replace("**", ""), color=GREY, size=9)
     put(A, nb+5, 2, UNMODELLED_NOTE, color=AMB, size=9)
+    # 주가 조회 기록과 재현 기록. spec «밖» 이라 ROWN 행 번호를 밀지 않는다 —
+    # 수식 배선은 그대로다. 지문은 트리를 만든 Terms(tm) 로 뜬다 — 수식 조서는
+    # 조정일 처리를 바꾼 사본으로 계산하므로 화면 Terms 와 다를 수 있다.
+    put(A, nb+7, 2, "주가 조회 기록", bold=True, size=9)
+    for _i, (_l, _v) in enumerate(px_trace(tm)):
+        put(A, nb+8+_i, 2, _l, color=GREY, size=9)
+        put(A, nb+8+_i, 3, _v, color=GREY, size=9)
+    _r0 = nb+8+len(px_trace(tm))+1
+    put(A, _r0, 2, "재현 기록 — 이 조서를 다시 만들려면 무엇이 같아야 하는가", bold=True, size=9)
+    for _i, (_l, _v) in enumerate(stamp_rows(tm, "수식")):
+        put(A, _r0+1+_i, 2, _l, color=GREY, size=9)
+        put(A, _r0+1+_i, 3, _v, color=GREY, size=9)
     if put_bdt_on(tm):
         put(A, nb+3, 2, "BDT 변동성 σ 도 마찬가지다. BDT 격자의 기준금리 a 는 "
             "「σ 가 지금 값일 때 시장 금리곡선을 맞추도록」 역산한 값이라 조서에 "
@@ -8098,6 +8360,14 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None):
         put(H, 6+i, 2, a, bold=True, size=9, border=True)
         put(H, 6+i, 3, b, size=9, border=True, wrap=True)
         H.row_dimensions[6+i].height = max(16, 14*(1 + len(b)//80))
+    # ── 재현 기록 ──
+    # 몇 달 뒤 같은 계약을 다시 재서 값이 다르면 앱이 바뀐 것인지 인풋이 바뀐 것인지
+    # 가려야 한다. 앱 판·소스 판·인풋 지문을 조서에 남겨 둔다.
+    _hr = 6 + len(_rows) + 1
+    put(H, _hr, 2, "재현 기록", bold=True, size=9.5)
+    for i, (_l, _v) in enumerate(stamp_rows(tm, "수식" if formula else "값")):
+        put(H, _hr+1+i, 2, _l, size=9, border=True)
+        put(H, _hr+1+i, 3, _v, size=9, border=True)
 
     # ── 가정 ──
     A = sheet("가정", widths=[34, 18, 14, 60])
@@ -8114,7 +8384,8 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None):
         if key: K_[key] = f"{Q('가정')}!$C${r}"
 
     sec(A, 4, "1. 대상 지분", span=4)
-    kv(5, "평가기준일 주가 (원)", tm.S0, N2, "", "S0")
+    kv(5, "평가기준일 주가 (원)", tm.S0, N2,
+       " · ".join(f"{_l} {_v}" for _l, _v in px_trace(tm)), "S0")
     kv(6, "주당 인수가액 (원)", tm.K0, N2, "지분가치 = 100 × 주가 ÷ 이 값", "K0")
     kv(7, "평가기준일", dt.date.fromisoformat(tm.d_base), DATE, "", "d_base")
     kv(8, "투자일 → 평가기준일 경과 (개월)", tm.elapsed_m, N2, "", "elm")
@@ -8504,6 +8775,12 @@ with st.sidebar:
             # 대로 연다 — 과거 조서의 재현성이 먼저다. 바꾸고 싶으면 버튼을 누른다.
             st.session_state.scen_old = (int(o.get("_schema", 1)) < SCHEMA_VER
                                          and float(o.get("k_w", 0) or 0) > 0)
+            # 저장 당시의 지문. 지금 인풋으로 다시 뜬 지문과 다르면 파일이 손질되었거나
+            # 화면 칸이 저장값을 덮어썼다는 뜻이라 알려 준다. 계산은 막지 않는다.
+            _mo = o.get("_meta") or {}
+            st.session_state.scen_meta = (
+                _mo if (_mo.get("terms_md5") and
+                        _mo["terms_md5"] != _stamp(st.session_state.tm)) else None)
             # key 가 있는 칸(조기상환·매도청구 시작/종료, 날짜 칸 …)은 한 번 그려지면 저장값이
             # value= 기본값을 이긴다. 비우지 않으면 시나리오의 값이 화면의 옛 값으로 되돌아간다.
             reset_widgets()
@@ -8512,6 +8789,14 @@ with st.sidebar:
         except Exception as ex:
             st.error(f"읽지 못했습니다 — {ex}")
     t = st.session_state.tm
+
+    _sm = st.session_state.get("scen_meta")
+    if _sm:
+        st.warning(f"이 시나리오의 **인풋 지문이 저장 당시와 다릅니다** "
+                   f"(저장 {_sm['terms_md5'][:8]} · 지금 {_stamp(t)[:8]}). "
+                   f"저장한 앱 판 {_sm.get('app_sha12') or '?'} · "
+                   f"소스 {_sm.get('git_head') or '?'} · {_sm.get('made_at', '?')}. "
+                   "화면 칸이 저장값을 덮어썼는지 확인하십시오.")
 
     if st.session_state.get("scen_old"):
         st.info("이 시나리오는 **매도청구권 평가체계를 정리하기 전**에 저장되었습니다. "
@@ -8664,9 +8949,16 @@ with st.sidebar:
                       disabled=not t.ticker, key="btn_s0"):
             with st.spinner("받는 중"):
                 try:
-                    _dd, _px, _sym = fetch_close(t.ticker, _mkt, t.d_base)
+                    _dd, _px, _sym, _adj = fetch_close(t.ticker, _mkt, t.d_base)
                     t.S0 = float(_px)
                     t.s0_src = f"야후 {_sym} {_dd} 종가"
+                    t.s0_date, t.s0_raw = _dd, float(_px)
+                    t.s0_adj = float(_adj) if _adj is not None else -1.0
+                    # 분할 이력은 «참고» 다 — 발행일부터 평가기준일까지 조회한다.
+                    _sp = fetch_splits(t.ticker, _mkt, t.d_issue, t.d_base)
+                    t.s0_splits = ("" if _sp is None else
+                                   ("없음" if not _sp else
+                                    " · ".join(f"{d} {r:g}배" for d, r in _sp)))
                     st.rerun()
                 except Exception as ex:
                     st.warning(f"받지 못했습니다 — {ex}. 주가를 직접 넣으십시오.")
@@ -8677,11 +8969,25 @@ with st.sidebar:
                                      "비상장이면 별도 지분평가액 ÷ 주식수를 넣거나, 아래에서 "
                                      "발행가로 역산하십시오."))
         if abs(t.S0 - _s0_before) > 1e-9:
-            t.s0_src = ""                      # 손으로 고쳤다 — 출처는 더 이상 야후가 아니다
+            # 손으로 고쳤다 — 출처도 조회 기록도 더 이상 이 값의 근거가 아니다
+            t.s0_src = t.s0_date = t.s0_splits = ""
+            t.s0_raw = t.s0_adj = -1.0
         if t.s0_src:
             st.caption(f"출처 · {t.s0_src}")
-            if t.s0_src.split()[-2] != t.d_base:
+            # 조회 기록을 그대로 보여 준다 — 「무엇을 요청했고 무엇을 받았는가」.
+            st.caption(f"요청 평가기준일 {t.d_base} · 실제 사용 거래일 {t.s0_date or '?'}")
+            if t.s0_date and t.s0_date != t.d_base:
                 st.caption(f"평가기준일 {t.d_base} 은 휴장일이라 직전 거래일 종가입니다.")
+            if t.s0_raw > 0:
+                _adjtxt = (f"{t.s0_adj:,.0f} 원" if t.s0_adj > 0 else "받지 못함")
+                st.caption(f"원주가 {t.s0_raw:,.0f} 원 · 수정주가 {_adjtxt}")
+                if t.s0_adj > 0 and abs(t.s0_adj - t.s0_raw) > 0.005 * max(1.0, t.s0_raw):
+                    st.warning(f"원주가와 수정주가가 다릅니다 ({t.s0_raw:,.0f} → "
+                               f"{t.s0_adj:,.0f}). 조회일 뒤에 분할·병합·무상증자가 있었을 "
+                               f"수 있습니다. 전환가액이 같은 기준인지 확인하십시오.")
+            st.caption("분할 기록 · " + (t.s0_splits or "조회하지 못함 — 확인 못 함"))
+            st.caption("한국 종목은 **무상증자가 야후에 분할로 기록되지 않는 경우가 많습니다.** "
+                       "「없음」이 「사건이 없었다」는 뜻은 아니니 공시로 확인하십시오.")
         # 발행가 역산 (책 5-1). 비상장 발행회사는 관측 주가가 없으니 「발행된 값이
         # 곧 공정가치」로 놓고 전체 가치가 발행가가 되는 주가를 격자에서 찾는다.
         bc1, bc2 = st.columns([1, 1])
@@ -9836,7 +10142,8 @@ with st.sidebar:
                        f"(스프레드 {math.exp(CRq(t.T))-math.exp(RFq(t.T)):.2%})")
 
     st.download_button("시나리오 저장",
-                       json.dumps({**asdict(t), "_schema": SCHEMA_VER},
+                       json.dumps({**asdict(t), "_schema": SCHEMA_VER,
+                                   "_meta": run_stamp(t)},
                                   ensure_ascii=False, indent=2).encode(),
                        f"{lbl(t)['short']}평가_시나리오_{dt.date.today()}.json",
                        "application/json",
@@ -9844,7 +10151,14 @@ with st.sidebar:
 
 # ── 계산 ──
 t = st.session_state.tm
-warn = validate(t)
+# 변동성 시계열의 마지막 값을 함께 넘긴다 — 원주가(S0)와 수정주가의 배수가
+# corporate action 의 가장 싼 탐지 신호다.
+_pxl = None
+try:
+    _pxl = float(st.session_state.prices[-1][1]) if st.session_state.get("prices") else None
+except Exception:
+    _pxl = None
+warn = validate(t, _pxl)
 if warn:
     st.warning("확인이 필요합니다\n\n" + "\n".join(f"- {w}" for w in warn))
 
