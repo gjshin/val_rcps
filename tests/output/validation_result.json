@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-09 05:43",
- "head": "c461c18",
- "app_sha256_12": "aee3bbf7f6f4",
+ "generated": "2026-09-09 06:42",
+ "head": "8facf33",
+ "app_sha256_12": "185800d35316",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 50.4,
+   "sec": 50.8,
    "last": "모두 통과",
    "tail": []
   },
@@ -28,8 +28,8 @@
    "cmd": "python3 tests/분기전수.py",
    "ok": true,
    "code": 0,
-   "sec": 7.8,
-   "last": "→ tests/output/분기전수.json 325 줄",
+   "sec": 8.3,
+   "last": "→ tests/output/분기전수.json 337 줄",
    "tail": []
   },
   {
@@ -37,8 +37,8 @@
    "cmd": "python3 tests/기능목록.py --strict",
    "ok": true,
    "code": 0,
-   "sec": 0.6,
-   "last": "   → tests/검증매트릭스.json (348 행)",
+   "sec": 0.5,
+   "last": "   → tests/검증매트릭스.json (360 행)",
    "tail": []
   },
   {
@@ -46,8 +46,8 @@
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 83.3,
-   "last": "→ tests/output/조합시험.json 1896 줄 · 실패 0 (tests/output/조합시험_실패.json) · 83초",
+   "sec": 87.8,
+   "last": "→ tests/output/조합시험.json 1899 줄 · 실패 0 (tests/output/조합시험_실패.json) · 87초",
    "tail": []
   },
   {
@@ -55,7 +55,7 @@
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 46.3,
+   "sec": 47.7,
    "last": "",
    "tail": []
   },
@@ -64,7 +64,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 66.8,
+   "sec": 67.4,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +73,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 38.0,
+   "sec": 34.5,
    "last": "",
    "tail": []
   }
@@ -93,21 +93,21 @@
  "baseline_ok": true,
  "matrix": {
   "CB": {
-   "PASS": 89,
+   "PASS": 93,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 99,
+   "PASS": 103,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 93,
+   "PASS": 97,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -129,5 +129,5 @@
   }
  },
  "all_ok": true,
- "sec": 294.8
+ "sec": 298.4
 }

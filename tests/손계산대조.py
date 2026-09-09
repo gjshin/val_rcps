@@ -1194,6 +1194,42 @@ def test_call_split_text():
     chk_bool("«_schema» 없는 옛 파일 → 유무가치비교법 기본", _t_old.k_method == 0)
     chk_bool("«_schema» 없는 옛 파일 → 행사가 분해 없음", _t_old.k_split == 0)
     chk_bool("평가체계 버전 2", G["SCHEMA_VER"] == 2)
+    # ── 계약서의 회차별 행사금액표 ──
+    # 계약이 확정 숫자를 준 회차는 그 숫자가 산식보다 앞선다. 다이나믹솔루션 제9회
+    # (2026-06-05 발행 · 2029-06-05 만기 · 표면 3% · 보장 5% 분기복리) 공시 표다.
+    _D9 = dict(d_issue="2026-06-05", d_base="2026-06-05", d_mat="2029-06-05", gap_m=3.0,
+               cpn=.03, ipay=6.0, ytm=.05, ytm_cmp=4, S0=1103., K0=1103., floor=773.,
+               par=100., sig=.50, cv_s=12., cv_e=35., p_s=6., p_e=33., p_f=3.,
+               p_mode="accrue", p_yield=.05, p_cmp=4, k_w=.80, k_s=10., k_e=34., k_f=1.,
+               k_prem=.05, k_cmp=4, k_hold=0, rfx_mode=1, rfx_cyc=3.0, carry=1)
+    _D9TBL = {6: 101.0063, 9: 101.5188, 12: 102.0378, 15: 102.5633, 18: 103.0953,
+              21: 103.6340, 24: 104.1794, 27: 104.7317, 30: 105.2908, 33: 105.8570}
+    t9 = Terms(**_D9); t9.rf_curve = [(1, .026), (3, .028), (5, .030)]
+    t9.cr_curve = [(1, .11), (3, .13), (5, .14)]; derive(t9)
+    EA9 = G["exercise_amounts"](t9, t9.n, t9.T/t9.n)
+    lo9, _ = G["step_mapper"](t9, t9.n, t9.T/t9.n)
+    # 산식만으로 (표 없이) — 계약 개월 기준이면 공시 표가 그대로 나온다
+    _w = max(abs(EA9["put"](lo9(mo)) - v) for mo, v in _D9TBL.items())
+    chk("제9회 공시 조기상환율 10줄 = 산식 (계약 개월 기준 · 최대 오차)", _w, 0.0, 5e-4)
+    chk("제9회 공시 만기상환율 106.4302", EA9["red"], 106.4302, 5e-4)
+    # 표를 넣으면 그 숫자가 그대로 나온다 (산식과 무관하게)
+    t9b = Terms(**dict(_D9, p_yield=.09, ytm=.09,
+                       p_sched="\n".join(f"{mo} {v}%" for mo, v in _D9TBL.items()),
+                       mat_amt=106.4302))
+    t9b.rf_curve, t9b.cr_curve = t9.rf_curve, t9.cr_curve; derive(t9b)
+    EAb = G["exercise_amounts"](t9b, t9b.n, t9b.T/t9b.n)
+    _wb = max(abs(EAb["put"](lo9(mo)) - v) for mo, v in _D9TBL.items())
+    chk("보장수익률을 9%로 바꿔도 표가 이긴다 (최대 오차)", _wb, 0.0, 1e-9)
+    chk("만기상환금액도 표가 이긴다", EAb["red"], 106.4302, 1e-9)
+    chk_bool("표가 정한 회차만 행사 가능", all(EAb["p_on"](lo9(mo)) for mo in _D9TBL)
+             and not EAb["p_on"](lo9(3)))
+    # 표가 없으면 종전대로 시작·종료·주기를 따른다
+    chk_bool("표가 없으면 p_on 은 None (부르는 쪽이 판단)", EA9["p_on"] is None)
+    # 파서 — 날짜·개월·구분자·% 를 모두 읽고, 못 읽은 줄은 남긴다
+    _pr = G["parse_sched"]("2026-12-05\t101.0063%\n9,101.5188\n12 102.0378\n엉터리", t9)
+    chk_bool("날짜·쉼표·공백 세 형식을 모두 읽는다",
+             [x[0] for x in _pr[:3]] == [6.0, 9.0, 12.0])
+    chk_bool("못 읽은 줄은 (None, 원문) 으로 남는다", _pr[3][0] is None)
     # RCPS 발행자 상환권·없음 갈래는 k_kind 0
     tr = Terms(inst="RCPS", issuer_call=1, k_kind=1); derive(tr)
     chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)
