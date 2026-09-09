@@ -1180,6 +1180,32 @@ def test_call_split_text():
                      (0, "복합옵션")):
         t = Terms(**base, k_method=2, k_split=1, k_kind=kk); derive(t)
         chk_bool(f"화면 안내에 «{want}» (유형 {kk})", want in G["call_type_note"](t))
+    # ── 주가·전환가의 basis 정합성 ──
+    # 분할·병합·무상증자가 있으면 「분할 전 전환가액」과 「분할 후 주가」가 섞여 값이
+    # 배수만큼 틀어진다. 네트워크 없이 앱이 이미 가진 두 값으로 잡아야 한다.
+    _bc = G["basis_check"]
+    _BB = dict(K_cap=1000., floor=700., par=100.)
+    chk_bool("정상 계약은 조용하다", not _bc(Terms(S0=1000., K0=1000., **_BB), 1000.0))
+    chk_bool("하루 등락 1% 로는 경고하지 않는다",
+             not _bc(Terms(S0=1010., K0=1000., **_BB), 1000.0))
+    chk_bool("5:1 분할 — 원주가만 조정되면 잡는다",
+             any("5배" in x for x in _bc(Terms(S0=200., K0=1000., **_BB), 1000.0)))
+    chk_bool("무상증자 1:1 — 시계열만 조정되면 잡는다",
+             any("2배" in x for x in _bc(Terms(S0=1000., K0=1000., **_BB), 500.0)))
+    chk_bool("최초 전환가만 분할 전이면 잡는다",
+             any("최초 전환가액" in x for x in
+                 _bc(Terms(S0=1000., K0=1000., K_cap=5000., floor=700., par=100.), 1000.0)))
+    chk_bool("주가가 전환가의 50배면 잡는다",
+             any("50.0배" in x for x in _bc(Terms(S0=50000., K0=1000., **_BB), 50000.0)))
+    # 잘못된 경고를 내지 않는다 — 리픽싱이 없으면 하한은 애초에 작동하지 않고,
+    # 하한 = 액면가면 계약상 하한이 아니라 법정 하한이다 (대신증권 RCPS 가 그렇다).
+    chk_bool("리픽싱 없는 계약의 액면가 하한에는 경고하지 않는다",
+             not _bc(Terms(S0=27100., K0=81000., floor=5000., par=5000., rfx_mode=0)))
+    chk_bool("리픽싱 있고 하한이 20% 면 잡는다",
+             any("최저 조정가액" in x for x in
+                 _bc(Terms(S0=1000., K0=1000., K_cap=1000., floor=200., par=100., rfx_mode=1))))
+    chk_bool("시계열이 없으면(px_last=None) 주가 대조는 건너뛴다",
+             not any("변동성 시계열" in x for x in _bc(Terms(S0=200., K0=1000., **_BB))))
     # ── 시나리오 JSON 의 평가체계 버전 ──
     # 옛 파일에는 «_schema» 가 없다. 그때 Terms 기본값(유무가치비교법)으로 열려야
     # 과거 조서가 그대로 재현된다. 새 파일에는 버전이 붙고, 옛 앱에서도 열려야 하므로

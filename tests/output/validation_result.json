@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-09 07:39",
- "head": "faf7bf4",
- "app_sha256_12": "46e10962a519",
+ "generated": "2026-09-09 09:02",
+ "head": "f39affb",
+ "app_sha256_12": "4aea0b3529c2",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 51.3,
+   "sec": 50.3,
    "last": "모두 통과",
    "tail": []
   },
@@ -28,7 +28,7 @@
    "cmd": "python3 tests/분기전수.py",
    "ok": true,
    "code": 0,
-   "sec": 8.1,
+   "sec": 8.3,
    "last": "→ tests/output/분기전수.json 337 줄",
    "tail": []
   },
@@ -37,7 +37,7 @@
    "cmd": "python3 tests/기능목록.py --strict",
    "ok": true,
    "code": 0,
-   "sec": 0.6,
+   "sec": 0.5,
    "last": "   → tests/검증매트릭스.json (360 행)",
    "tail": []
   },
@@ -46,8 +46,8 @@
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 89.1,
-   "last": "→ tests/output/조합시험.json 1899 줄 · 실패 0 (tests/output/조합시험_실패.json) · 89초",
+   "sec": 87.7,
+   "last": "→ tests/output/조합시험.json 1899 줄 · 실패 0 (tests/output/조합시험_실패.json) · 87초",
    "tail": []
   },
   {
@@ -55,7 +55,7 @@
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 46.3,
+   "sec": 45.2,
    "last": "",
    "tail": []
   },
@@ -64,7 +64,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 67.5,
+   "sec": 68.2,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +73,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 38.5,
+   "sec": 37.7,
    "last": "",
    "tail": []
   }
@@ -129,5 +129,5 @@
   }
  },
  "all_ok": true,
- "sec": 302.9
+ "sec": 299.4
 }

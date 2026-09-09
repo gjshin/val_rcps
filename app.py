@@ -3585,7 +3585,76 @@ def pc_compare(tm: Terms):
     return out
 
 
-def validate(tm: Terms):
+# 분할·병합·무상증자에서 흔한 배수. 이 근처면 corporate action 을 강하게 의심한다.
+CA_RATIOS = (2, 3, 4, 5, 10, 20, 100)
+
+
+def basis_check(tm: Terms, px_last: float = None) -> list:
+    """주가와 전환가가 **같은 기준(basis)** 위에 있는지 본다. 네트워크를 쓰지 않는다.
+
+    분할·병합·무상증자가 있으면 「분할 전 전환가액」과 「분할 후 주가」가 섞여 값이
+    배수만큼 틀어진다. 그런데 앱은 지금까지 이것을 한 번도 보지 않았다 — ``validate()``
+    안에 ``tm.S0`` 가 아예 등장하지 않았다.
+
+    야후의 분할 이력은 판정 근거로 쓰지 않는다. 한국 종목은 커버리지가 고르지 않고,
+    특히 **무상증자를 split 으로 기록하지 않는 경우가 많다** — 「기록이 없다」가
+    「사건이 없었다」를 뜻하지 않는다. 대신 앱이 이미 가진 두 신호로 판정한다.
+
+      ① 평가기준일 종가(S0, 원주가)와 변동성 시계열의 마지막 값(수정주가)의 배수.
+         앱은 S0 를 auto_adjust=False 로, 시계열을 True 로 받는다 — 설계상 의도지만
+         조회 구간 안에 조정사건이 있으면 두 값이 배수만큼 벌어진다.
+      ② 전환가 계열(K0 · floor · par · K_cap)이 서로 정합적인가.
+      ③ 주가와 전환가의 비가 상식 범위인가.
+
+    돌려주는 것 — 경고 문구 목록. 계산을 막지는 않는다.
+    """
+    out = []
+
+    def near(x):
+        """1 이 아닌 흔한 배수(또는 그 역수)에 가까운가."""
+        for r in CA_RATIOS:
+            if abs(x - r) < 0.03*r or abs(x - 1.0/r) < 0.03/r: return r
+        return None
+
+    if px_last and px_last > 0 and tm.S0 > 0:
+        rt = tm.S0/px_last
+        hit = near(rt)
+        # 흔한 배수면 크기와 무관하게, 아니면 5% 를 넘을 때만 알린다 — 하루 등락으로
+        # 매번 경고가 뜨면 정작 중요한 신호를 흘려 보내게 된다.
+        if hit or abs(rt - 1.0) > 0.05:
+            msg = (f"평가기준일 주가 {tm.S0:,.0f}원 과 변동성 시계열의 마지막 값 "
+                   f"{px_last:,.0f}원 이 {rt:,.4f}배 차이 납니다. ")
+            if hit:
+                out.append(msg + f"**{hit}배 안팎이라 분할·병합·무상증자를 의심해야 합니다.** "
+                           "주가는 원주가(조정 전), 변동성 시계열은 수정주가라 조회 구간에 "
+                           "조정사건이 있으면 이렇게 벌어집니다. 전환가액이 어느 기준인지 "
+                           "계약서와 대조하십시오 — 기준이 섞이면 값이 배수만큼 틀어집니다.")
+            else:
+                out.append(msg + "시계열의 마지막 거래일이 평가기준일과 다르거나 "
+                           "조정사건이 있었을 수 있습니다.")
+    # 전환가 계열
+    if tm.K_cap > 0 and tm.K0 > 0:
+        rt = tm.K_cap/tm.K0
+        if near(rt) and abs(rt - 1.0) > 0.01:
+            out.append(f"최초 전환가액 {tm.K_cap:,.0f}원 이 현재 전환가액 {tm.K0:,.0f}원 의 "
+                       f"{rt:,.2f}배입니다 — 리픽싱만으로 보기에는 배수가 정연합니다. "
+                       "분할·병합 뒤 한쪽만 조정하지 않았는지 확인하십시오.")
+    # 리픽싱이 없으면 하한이 애초에 작동하지 않고, 하한 = 액면가면 계약상 하한이 아니라
+    # 상법상 액면미달발행 금지에서 오는 법정 하한이다 — 둘 다 비율을 따질 일이 아니다.
+    if tm.K0 > 0 and tm.floor > 0 and tm.rfx_mode > 0 and tm.floor > tm.par + 1e-9:
+        rt = tm.floor/tm.K0
+        if rt < 0.3 or rt > 1.0:
+            out.append(f"최저 조정가액이 현재 전환가액의 {rt:,.1%} 입니다. 계약상 하한은 "
+                       "보통 70~80% 입니다 — 두 값이 같은 기준인지 확인하십시오.")
+    if tm.S0 > 0 and tm.K0 > 0:
+        rt = tm.S0/tm.K0
+        if rt > 20 or rt < 0.05:
+            out.append(f"주가가 전환가액의 {rt:,.1f}배입니다. 분할·병합 뒤 한쪽만 조정한 "
+                       "값이 아닌지 확인하십시오.")
+    return out
+
+
+def validate(tm: Terms, px_last: float = None):
     derive(tm)
     w = [f"설정을 되돌렸습니다 ({k} → {v}). " + msg.replace("**", "")
          for k, v, msg in getattr(tm, "forced_notes", [])]
@@ -3775,6 +3844,7 @@ def validate(tm: Terms):
         if abs(_f - float(tm.mat_amt)) > 0.05:
             w.append(f"만기상환금액을 직접 넣으셨습니다 ({tm.mat_amt:,.4f}%). "
                      f"보장수익률 산식으로는 {_f:,.4f}% 입니다 — 계약서와 대조하십시오.")
+    w += basis_check(tm, px_last)
     if tm.floor > tm.K0: w.append("최저 조정가액이 최초 전환가액보다 큽니다.")
     if tm.par > tm.floor: w.append("액면가가 최저 조정가액보다 큽니다. 액면가가 하한으로 작동합니다.")
     if tm.rfx_mode > 0 and round(tm.rfx_cyc*tm.n/(tm.T*12)) < 1:
@@ -9844,7 +9914,14 @@ with st.sidebar:
 
 # ── 계산 ──
 t = st.session_state.tm
-warn = validate(t)
+# 변동성 시계열의 마지막 값을 함께 넘긴다 — 원주가(S0)와 수정주가의 배수가
+# corporate action 의 가장 싼 탐지 신호다.
+_pxl = None
+try:
+    _pxl = float(st.session_state.prices[-1][1]) if st.session_state.get("prices") else None
+except Exception:
+    _pxl = None
+warn = validate(t, _pxl)
 if warn:
     st.warning("확인이 필요합니다\n\n" + "\n".join(f"- {w}" for w in warn))
 
