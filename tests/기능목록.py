@@ -65,7 +65,8 @@ MANIFEST = {
     "k_sep":       ("매도청구권 회계", {1: "별도 금융상품", 0: "복합내재파생에 포함"}, ("CB", "BW", "RCPS")),
     "k_less_cpn":  ("매도청구금액 산식", {1: "보장수익률 복리 − 기 지급 이자·배당", 0: "순수 복리 (차감 없음)"}, ("CB", "BW", "RCPS")),
     "k_split":     ("옵션차익법 지분·채권 구분 기준", {0: "비례균등차감법 — 가치 구성비율", 1: "한공회 본문 4.3.3 — GS 전환확률"}, ("CB", "BW", "RCPS")),
-    "k_hold":      ("콜 대상물량 의무보유", {1: "있음 — 행사기간 종료일까지 존속", 0: "없음 — 전환·조기상환으로 콜도 소멸"}, ("CB", "BW", "RCPS")),
+    "k_hold":      ("콜 대상물량 의무보유", {1: "있음 — 의무보유 기간 동안 존속", 0: "없음 — 전환·조기상환으로 콜도 소멸"}, ("CB", "BW", "RCPS")),
+    "k_lock_put":  ("의무보유가 조기상환청구도 막는가", {1: "막는다 — 계약 정의", 0: "전환만 막는다"}, ("CB", "BW", "RCPS")),
     "k_kind":      ("콜옵션 유형", {0: "제3자 지정 가능 (파생상품자산)", 1: "제3자 기특정 (주주간 분배)"}, ("CB", "BW", "RCPS")),
     "k_third":     ("제3자 지정 가능", {0: "발행회사만", 1: "제3자 지정 가능"}, ("CB", "BW", "RCPS")),
     "k_transfer":  ("사채와 독립 양도 가능", {0: "아니다", 1: "그렇다"}, ("CB", "BW", "RCPS")),
@@ -360,6 +361,9 @@ def collect_coverage(G):
         "test_bw_cash": [("BW", "bw_pay", 0), ("BW", "bw_detach", 1)],
         "test_sha_european": [("SHA", "sha_disc", 0), ("SHA", "sha_put_cmp", 1), ("SHA", "sha_call_cmp", 1),
                               ("SHA", "sha_put", True), ("SHA", "sha_call", True)],
+        # 제3자 매도청구권의 새 기본산식 — 손계산 함수가 app.py 를 보지 않고 쓴 독립 오라클이다
+        "test_call_tf": [("CB", "k_method", 2), ("CB", "k_split", 1), ("CB", "k_hold", 1),
+                         ("CB", "k_lock_put", 1), ("CB", "k_kind", 0), ("CB", "call", True)],
         "test_date_boundaries": [("CB", "mid", True), ("CB", "mid", False)],
         "test_sequential_identities": [("CB", "carry", 0), ("CB", "k_sep", 1), ("CB", "model", "TF")],
     }

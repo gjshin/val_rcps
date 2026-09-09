@@ -120,6 +120,80 @@ def bw_cash_one_step(S0, K, sig, rf, cr, dt, face, red):
     return w + b, w, b
 
 
+def call_tf_hand(S0, K, sig, rf, cr, dt, n, face, red, kstrike):
+    """제3자 매도청구권 — TF식 지분·채권 분리할인 + 본문 4.3.3 전환확률 분해.
+
+    이 함수는 app.py 를 보지 않고 한공회 본문의 절차를 그대로 옮긴 것이다.
+    이표·리픽싱·조기상환은 없다고 두어 손으로 따라갈 수 있게 한다.
+
+    ① 기초자산 격자 — 콜도 의무보유도 없는 전환사채. 노드마다 지분 조각 E,
+       채권 조각 B, 그리고 GS 전환확률 P 를 센다.
+         만기   전환가치 cv = face·S/K 가 상환금액 red 보다 크면 전환(E=cv, B=0, P=1),
+                아니면 상환(E=0, B=red, P=0).
+         그 앞  E 는 무위험, B 는 위험으로 각각 한 스텝 할인한다. 보유 = E+B 를
+                전환가치와 견주어 큰 쪽을 고른다(조기상환·매도청구는 없다).
+                전환을 고르면 E=cv, B=0 이다.
+         전환확률 P 는 «그 노드가 전환으로 끝나면 1, 현금으로 끝나면 0, 아니면
+                자식 확률의 위험중립가중평균» 이다. GS 값 V 로 판정한다 —
+                V 는 자식의 확률로 섞은 할인율로 자식 V 를 할인한 값이다.
+    ② 회차별 매도청구 행사금액 kstrike(i).
+    ③ 노드별 콜 이득 = (E + B) − kstrike, 음수면 0.
+    ④ 그 이득을 전환확률로 가른다 — 지분 몫 E − P·kstrike, 채권 몫 B − (1−P)·kstrike.
+       두 몫의 합은 언제나 이득이다. 상환 시나리오에서 한쪽이 음수가 될 수 있다.
+    ⑤ 뒤에서 앞으로 — 지분 몫은 무위험, 채권 몫은 위험으로 각각 할인해 더한 값이
+       「계속 보유」다. 「지금 행사」가 그보다 크거나 같으면 행사한다.
+
+    돌려주는 것 (콜 뿌리값, 기초자산 뿌리 E+B, 뿌리 전환확률).
+    """
+    u, d, q = crr(S0, sig, rf, dt)
+    S = lambda i, j: S0 * u**j * d**(i-j)
+    # ── ① 기초자산 격자 ──
+    E = [[0.0]*(i+1) for i in range(n+1)]
+    B = [[0.0]*(i+1) for i in range(n+1)]
+    P = [[0.0]*(i+1) for i in range(n+1)]
+    V = [[0.0]*(i+1) for i in range(n+1)]
+    for j in range(n+1):
+        cv = face*S(n, j)/K
+        if cv > red: E[n][j], B[n][j], P[n][j] = cv, 0.0, 1.0
+        else:        E[n][j], B[n][j], P[n][j] = 0.0, red, 0.0
+        V[n][j] = E[n][j] + B[n][j]
+    for i in range(n-1, -1, -1):
+        for j in range(i+1):
+            e = (q*E[i+1][j+1] + (1-q)*E[i+1][j])*math.exp(-rf*dt)
+            b = (q*B[i+1][j+1] + (1-q)*B[i+1][j])*math.exp(-cr*dt)
+            cv = face*S(i, j)/K
+            # GS — 자식의 전환확률로 섞은 할인율로 자식 값을 각각 할인한다
+            yu = P[i+1][j+1]*rf + (1-P[i+1][j+1])*cr
+            yd = P[i+1][j]*rf + (1-P[i+1][j])*cr
+            Vc = q*V[i+1][j+1]*math.exp(-yu*dt) + (1-q)*V[i+1][j]*math.exp(-yd*dt)
+            V[i][j] = max(cv, Vc)
+            P[i][j] = (1.0 if (cv > 0 and abs(V[i][j] - cv) < 1e-9)
+                       else q*P[i+1][j+1] + (1-q)*P[i+1][j])
+            if cv > e + b: E[i][j], B[i][j] = cv, 0.0
+            else:          E[i][j], B[i][j] = e, b
+    # ── ③~⑤ 콜 ──
+    ce = [[0.0]*(i+1) for i in range(n+1)]
+    cb = [[0.0]*(i+1) for i in range(n+1)]
+    cc = [[0.0]*(i+1) for i in range(n+1)]
+    for i in range(n, -1, -1):
+        for j in range(i+1):
+            Kc = kstrike(i)
+            pay = max(E[i][j] + B[i][j] - Kc, 0.0) if Kc is not None else 0.0
+            def pieces():
+                if pay <= 0 or Kc is None: return 0.0, 0.0
+                return E[i][j] - P[i][j]*Kc, B[i][j] - (1-P[i][j])*Kc
+            if i == n:
+                cc[i][j] = pay; ce[i][j], cb[i][j] = pieces()
+                continue
+            he = (q*ce[i+1][j+1] + (1-q)*ce[i+1][j])*math.exp(-rf*dt)
+            hb = (q*cb[i+1][j+1] + (1-q)*cb[i+1][j])*math.exp(-cr*dt)
+            if pay > 0 and pay >= he + hb:
+                cc[i][j] = pay; ce[i][j], cb[i][j] = pieces()
+            else:
+                cc[i][j] = he + hb; ce[i][j], cb[i][j] = he, hb
+    return cc[0][0], E[0][0] + B[0][0], P[0][0]
+
+
 def sha_european(S0, K0, sig, rf, dt, pk, ck, put_disc):
     """주주간계약 1기간 유럽형 — 풋 (pk − 지분)+ 를 의무자 신용으로, 콜 (지분 − ck)+ 를 무위험으로."""
     u, d, q = crr(S0, sig, rf, dt)
@@ -297,6 +371,39 @@ def test_sha_european(G):
     chk("맨 아래 노드 콜 (깊은 외가격 → 0)", R["C"][n-1][j], call_e, TOL_MONEY, "콜이 무위험으로 할인")
 
 
+def test_call_tf(G):
+    print("\n[I] 제3자 매도청구권 — TF식 지분·채권 분리할인 + 4.3.3 전환확률 분해")
+    # 이표·리픽싱·조기상환 없음 · 평탄 곡선 · 콜 행사금액은 액면 그대로(프리미엄 0).
+    # 손계산 함수는 app.py 를 보지 않고 썼다 — 값이 어긋나면 엔진과 손계산 중
+    # 어느 쪽이 계약을 잘못 읽었는지 먼저 따질 것. 숫자를 여기 맞추지 말 것.
+    for sig, y_cr, mat, gap, prem in ((.30, .10, "2026-01-01", 6.0, 0.0),
+                                      (.45, .18, "2026-01-01", 6.0, .02),
+                                      (.30, .10, "2027-01-01", 3.0, .015)):
+        t = G["Terms"](d_issue="2025-01-01", d_base="2025-01-01", d_mat=mat,
+                       gap_m=gap, rfx_mode=0, carry=1, cpn=0.0, ytm=0.0,
+                       S0=1000., K0=1000., sig=sig,
+                       p_s=99., p_e=0., cv_s=0., cv_e=36.,
+                       k_w=.30, k_s=0., k_e=24., k_f=1., k_prem=prem, k_cmp=1,
+                       k_method=2, k_split=1, k_hold=1, k_lock=99.,
+                       cmp_rf=2, cmp_cr=2)
+        t.rf_curve = [(0.5, .03), (1, .03), (2, .03), (5, .03)]
+        t.cr_curve = [(0.5, y_cr), (1, y_cr), (2, y_cr), (5, y_cr)]
+        G["derive"](t)
+        full = G["engine"](t, call=False)
+        n, dt_ = full["n"], full["dt"]
+        rf_c, cr_c = cont(.03, 2), cont(y_cr, 2)
+        # 행사금액은 계약대로 «액면 × (1 + 프리미엄 복리)» 다. 스텝 i 의 경과 연수는 i·Δt.
+        ks = lambda i: 100.0*(1 + prem)**(i*dt_)
+        hand, host, p0 = call_tf_hand(1000., 1000., sig, rf_c, cr_c, dt_, n, 100., 100., ks)
+        got = G["call_third_party"](t, full, 2)
+        chk(f"σ {sig:.0%} · 신용 {y_cr:.0%} · 노드 {n} · 프리미엄 {prem:.0%} — 콜 뿌리값",
+            got, hand, TOL_MONEY, "TF식 분리할인 또는 4.3.3 행사가 분해")
+        chk("  같은 격자의 기초자산 뿌리값", G["pick"](full, "TF"), host, TOL_MONEY,
+            "기초자산이 콜·의무보유 없는 전환사채가 아니다")
+        chk("  같은 격자의 뿌리 전환확률", full["memo"][full["root"]]["P"], p0, TOL_RATE,
+            "GS 전환확률")
+
+
 def test_date_boundaries(G):
     print("\n[J] 날짜 경계 — 행사기간의 첫·마지막 노드를 달력에서 직접 센다")
     # 독립 정의: 노드 i 의 날짜 = 평가기준일 + round(i·Δt·365) 일. 계약일 = 발행일 + m 개월
@@ -347,7 +454,7 @@ def test_date_boundaries(G):
 
 
 def test_sequential_identities(G):
-    print("\n[I] 순차 차감 항등식 — 기본 계약")
+    print("\n[K] 순차 차감 항등식 — 기본 계약")
     t = G["Terms"](); t.rf_curve = [(1, .0226), (3, .0240), (5, .0252)]
     t.cr_curve = [(1, .1409), (3, .1740), (5, .1905)]; G["derive"](t)
     full, b0, b1, b2, ca, conv = G["decompose"](t)
@@ -362,7 +469,8 @@ def main():
     print("독립 오라클 대조 — 앞부분 식은 app.py 를 보지 않고 썼다. 엔진을 고쳤다고 여기를 고치지 말 것.")
     G = load_app()
     for f in (test_discounting, test_crr, test_accrue, test_node_rule, test_refix,
-              test_one_step_tree, test_bw_cash, test_sha_european, test_date_boundaries,
+              test_one_step_tree, test_bw_cash, test_sha_european, test_call_tf,
+              test_date_boundaries,
               test_sequential_identities):
         f(G)
     print()

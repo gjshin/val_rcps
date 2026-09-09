@@ -1125,14 +1125,71 @@ def test_call_split_text():
     _g1, _, _ = val(1, 0, k_hold=1); _g0, _, _ = val(1, 0, k_hold=0)
     chk_bool("방법1 에서도 같은 방향", _g1 > _g0 + 1e-6)
     chk_bool("Terms() 기본 k_hold = 1 (기준선 보존)", Terms().k_hold == 1)
-    # 유무가치비교법은 k_hold 를 보지 않는다 — 격자의 전환 지연으로 이미 반영하므로 이중반영 금지
+    # ── 의무보유는 두 평가방법이 «같은 기간·같은 권리» 를 본다 ──
+    # k_hold 가 있음/없음, k_lock 이 기간, k_lock_put 이 조기상환청구까지 막는가.
+    # 유무가치비교법도 k_hold 를 따른다 — 꺼 두면 격자의 전환·조기상환 지연이 사라진다.
     _u1 = G["decompose"](_mkt(base, k_method=0, k_hold=1))[4]
     _u0 = G["decompose"](_mkt(base, k_method=0, k_hold=0))[4]
-    chk("유무가치비교법은 k_hold 와 무관 (이중반영 금지)", _u1, _u0, 1e-12)
+    chk_bool(f"유무가치비교법도 의무보유를 따른다 (있음 {_u1:.4f} > 없음 {_u0:.4f})",
+             _u1 > _u0 + 1e-6)
+    # 계약 정의는 「전환 및 조기상환청구 불가」다. 조기상환까지 막으면 콜 대상물량이
+    # 빠져나가지 못해 유무가치법의 값이 «오른다».
+    _p1 = G["decompose"](_mkt(base, k_method=0, k_lock_put=1))[4]
+    _p0 = G["decompose"](_mkt(base, k_method=0, k_lock_put=0))[4]
+    chk_bool(f"조기상환도 막으면 유무가치 값이 오른다 ({_p0:.4f} → {_p1:.4f})",
+             _p1 > _p0 + 1e-6)
+    chk_bool("Terms() 기본 k_lock_put = 1 (계약 정의)", Terms().k_lock_put == 1)
+    # 의무보유가 조기상환 시작보다 이르면 아무 제약이 아니라 두 값이 같다.
+    _q1 = G["decompose"](_mkt(base, k_method=0, k_lock=6.0, k_lock_put=1))[4]
+    _q0 = G["decompose"](_mkt(base, k_method=0, k_lock=6.0, k_lock_put=0))[4]
+    chk("의무보유가 조기상환 시작보다 이르면 차이 없음", _q1, _q0, 1e-12)
+    # 옵션차익법의 존속도 같은 기간을 본다 — 의무보유가 짧을수록 콜이 일찍 죽어 값이 낮다.
+    _l_long, _, _ = val(2, 1, k_hold=1, k_lock=25.0)
+    _l_mid, _, _ = val(2, 1, k_hold=1, k_lock=18.0)
+    chk_bool(f"의무보유가 짧으면 옵션차익 값이 낮다 ({_l_long:.4f} > {_l_mid:.4f})",
+             _l_long > _l_mid + 1e-6)
+    _l_none, _, _ = val(2, 1, k_hold=1, k_lock=0.0)
+    _l_off, _, _ = val(2, 1, k_hold=0)
+    chk("의무보유 기간 0 = 의무보유 없음", _l_none, _l_off, 1e-12)
+    # ── 콜 소멸은 계약 우선순위를 따른다 ──
+    # 「발행자 콜 우선」이면 투자자의 전환·조기상환이 매도청구에 밀려 콜이 소멸하지 않고
+    # 행사된다. 기초 격자가 이미 쓰는 pc_order 를 콜 계약층도 따라야 한다.
+    _o0, _, _ = val(2, 1, k_hold=0, pc_order=0)
+    _o1, _, _ = val(2, 1, k_hold=0, pc_order=1)
+    chk_bool(f"발행자 콜 우선 → 의무보유 없어도 값이 높다 ({_o0:.4f} < {_o1:.4f})",
+             _o1 > _o0 + 1e-6)
+    # 자동전환·만기는 투자자의 «선택» 이 아니라 밀리지 않는다 — 의무보유가 있으면
+    # 두 우선순위가 같은 값을 낸다 (소멸 조건 자체가 걸리지 않는다).
+    _h_p0, _, _ = val(2, 1, k_hold=1, pc_order=0)
+    _h_p1, _, _ = val(2, 1, k_hold=1, pc_order=1)
+    chk("의무보유가 콜 기간을 덮으면 우선순위와 무관", _h_p0, _h_p1, 1e-12)
     # 문안
-    for km, ks, kk, want in ((0, 0, 0, "유무가치비교법"), (2, 1, 0, "본문 4.3.3"), (2, 0, 0, "비례균등차감법"), (2, 1, 1, "주주간 분배")):
+    for km, ks, kk, want in ((0, 0, 0, "유무가치비교법"), (2, 1, 0, "본문 4.3.3"), (2, 0, 0, "비례균등차감법"),
+                             (2, 1, 1, "주주간 분배"),
+                             # 기특정 콜은 본문 4.5 의 «세 접근법» 중 하나를 고른 것이다.
+                             # 채택한 접근법과 다른 갈래로 가는 길을 함께 밝혀야 한다.
+                             (2, 1, 1, "접근법 2-2"), (2, 1, 1, "접근법 1"), (2, 1, 1, "유무가치비교법")):
         t = Terms(**base, k_method=km, k_split=ks, k_kind=kk); derive(t)
         chk_bool(f"문안에 «{want}»", want in G["call_method_text"](t))
+    # 화면 안내(call_type_note)도 같은 사실을 실어야 한다 — 조서와 화면이 갈리면 안 된다.
+    for kk, want in ((1, "접근법 2-2"), (1, "접근법 1"), (1, "유무가치비교법"), (1, "회계처리 되는 경우가 있다"),
+                     (0, "복합옵션")):
+        t = Terms(**base, k_method=2, k_split=1, k_kind=kk); derive(t)
+        chk_bool(f"화면 안내에 «{want}» (유형 {kk})", want in G["call_type_note"](t))
+    # ── 시나리오 JSON 의 평가체계 버전 ──
+    # 옛 파일에는 «_schema» 가 없다. 그때 Terms 기본값(유무가치비교법)으로 열려야
+    # 과거 조서가 그대로 재현된다. 새 파일에는 버전이 붙고, 옛 앱에서도 열려야 하므로
+    # Terms 에 없는 키는 버려진다.
+    import json as _json
+    _fields = Terms.__dataclass_fields__
+    _saved = _json.loads(_json.dumps({**G["asdict"](Terms()), "_schema": G["SCHEMA_VER"]},
+                                     ensure_ascii=False, default=str))
+    chk_bool("저장 파일에 «_schema» 가 붙는다", _saved.get("_schema") == G["SCHEMA_VER"])
+    chk_bool("Terms 에 없는 키는 버려진다 (옛 앱 호환)", "_schema" not in _fields)
+    _t_old = Terms(**{k: v for k, v in {"k_w": 0.3, "sig": 0.5}.items() if k in _fields})
+    chk_bool("«_schema» 없는 옛 파일 → 유무가치비교법 기본", _t_old.k_method == 0)
+    chk_bool("«_schema» 없는 옛 파일 → 행사가 분해 없음", _t_old.k_split == 0)
+    chk_bool("평가체계 버전 2", G["SCHEMA_VER"] == 2)
     # RCPS 발행자 상환권·없음 갈래는 k_kind 0
     tr = Terms(inst="RCPS", issuer_call=1, k_kind=1); derive(tr)
     chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)

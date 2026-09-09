@@ -340,7 +340,8 @@ def monotone(G, product, over, rng):
         return dict(b0=b0, b1=b1, b2=b2, ca=cad, conv=b2 - b1, put=b1 - b0, t=t, full=full)
     def forced_mass(o):
         t = BX.make_terms(G, product, o)
-        r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=max(t.cv_s, t.k_lock))
+        _cs, _ps = G["lock_delay"](t)
+        r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=_cs, put_start=_ps)
         return r3["dist"].get("conv_called", 0.0)
     base = D(over); TOL = 1e-7
     if base["t"].rfx_mode == 0 or base["t"].carry == 0:
@@ -371,7 +372,27 @@ def monotone(G, product, over, rng):
     # 발행총액 배수 — 100 기준 값은 그대로
     big = D({**over, "face_total": 5e10})
     out.append(("발행총액 ×2 — 100 기준 값 불변", abs(big["b2"] - base["b2"]) <= 1e-12, f"{base['b2']:.6f} = {big['b2']:.6f}"))
+    # 매수한 콜의 가치는 어느 노드에서도 음수가 될 수 없다 — 행사하지 않으면 0 이다.
+    # 방법 2 는 지분 몫·채권 몫이 부호가 갈리는(long-short) 값이라, 두 몫을 서로 다른
+    # 이자율로 할인하면 합이 음수로 내려갈 «수 있는» 구조다. 그런 자리가 생기는지 본다.
+    if base["t"].k_w > 0 and not G["is_sha"](base["t"]):
+        for _m in (1, 2):
+            _neg, _root = call_node_min(G, base["t"], _m)
+            out.append((f"방법{_m} 콜 노드값 ≥ 0", _neg >= -1e-9,
+                        f"최소 노드값 {_neg:.6f} · 뿌리 {_root:.6f}"))
     return out
+
+
+def call_node_min(G, tm, method):
+    """콜 트리 전 노드의 최솟값과 뿌리값.
+
+    엔진 자신에게 노드를 받아 온다 (call_third_party 의 nodes 인자). 여기서 논리를
+    베껴 쓰면 엔진이 틀렸을 때 시험도 같이 틀리므로, 값만 받아서 본다.
+    """
+    full = G["engine"](tm, call=False)
+    nodes = {}
+    root = G["call_third_party"](tm, full, method, nodes=nodes)
+    return (min(v[0] for v in nodes.values()) if nodes else 0.0), root
 
 
 # ══════════════════════════════════════════════════════════

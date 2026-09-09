@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-08 18:02",
- "head": "970617b",
- "app_sha256_12": "8289fd169c0e",
+ "generated": "2026-09-09 02:19",
+ "head": "a7295f5",
+ "app_sha256_12": "99e5e2da528c",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 38.1,
+   "sec": 38.4,
    "last": "모두 통과",
    "tail": []
   },
@@ -28,8 +28,8 @@
    "cmd": "python3 tests/분기전수.py",
    "ok": true,
    "code": 0,
-   "sec": 4.9,
-   "last": "→ tests/output/분기전수.json 313 줄",
+   "sec": 5.8,
+   "last": "→ tests/output/분기전수.json 319 줄",
    "tail": []
   },
   {
@@ -37,8 +37,8 @@
    "cmd": "python3 tests/기능목록.py --strict",
    "ok": true,
    "code": 0,
-   "sec": 0.5,
-   "last": "   → tests/검증매트릭스.json (334 행)",
+   "sec": 0.4,
+   "last": "   → tests/검증매트릭스.json (342 행)",
    "tail": []
   },
   {
@@ -46,8 +46,8 @@
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 60.5,
-   "last": "→ tests/output/조합시험.json 1802 줄 · 실패 0 (tests/output/조합시험_실패.json) · 60초",
+   "sec": 69.6,
+   "last": "→ tests/output/조합시험.json 1895 줄 · 실패 0 (tests/output/조합시험_실패.json) · 69초",
    "tail": []
   },
   {
@@ -55,7 +55,7 @@
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 37.5,
+   "sec": 34.0,
    "last": "",
    "tail": []
   },
@@ -64,7 +64,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 49.1,
+   "sec": 47.8,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +73,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 29.2,
+   "sec": 28.9,
    "last": "",
    "tail": []
   }
@@ -82,32 +82,32 @@
   "주계약": 37.5208,
   "부채요소": 73.1837,
   "전체": 114.8781,
-  "매도청구권": 12.2404
+  "매도청구권": 13.0761
  },
  "baseline_expected": {
   "주계약": 37.5208,
   "부채요소": 73.1837,
   "전체": 114.8781,
-  "매도청구권": 12.2404
+  "매도청구권": 13.0761
  },
  "baseline_ok": true,
  "matrix": {
   "CB": {
-   "PASS": 85,
+   "PASS": 87,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 95,
+   "PASS": 97,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 89,
+   "PASS": 91,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -123,11 +123,11 @@
   "ALL": {
    "PASS": 0,
    "EXPECTED_BLOCK": 5,
-   "KNOWN_LIMITATION": 16,
+   "KNOWN_LIMITATION": 18,
    "FAIL": 0,
    "NOT_TESTED": 0
   }
  },
  "all_ok": true,
- "sec": 220.8
+ "sec": 225.9
 }
