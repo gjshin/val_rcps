@@ -3151,6 +3151,13 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
     notes = getattr(tm, "forced_notes", [])
     out.append(("되돌린 설정 (지원하지 않는 조합)", f"{len(notes)}건", "해당 없음" if not notes else "확인 필요",
                 "; ".join(f"{k} → {v}" for k, v, _ in notes) if notes else "없음"))
+    # 재현 기록 한 줄 — 이 조서가 어느 판의 앱에서 나왔는지 검산요약에서 바로 보인다.
+    _m = run_stamp(tm)
+    out.append(("재현 기록 · 앱 판 · 인풋 지문",
+                f"{_m['app_sha12'] or '?'} · {_m['terms_md5'][:8]}",
+                "적합" if _m["app_sha12"] else "확인 필요",
+                (f"소스 판 {_m['git_head']} · 가정 시트에 전체 기록" if _m["git_head"]
+                 else "소스 판(git)을 확인하지 못했다 — 가정 시트에 나머지 기록") ))
     return out
 
 
@@ -3171,6 +3178,13 @@ def sha_checks(tm: Terms, R):
         out.append(("상호소멸", "끔", "해당 없음", "두 권리를 독립으로 잰다"))
     out.append(("적격상장 스텝", f"{R['qi_step']}", "해당 없음" if R["qi_step"] < 0 else "적합",
                 "" if R["qi_step"] < 0 else f"주가 > {tm.ipo_min:,.0f} 인 노드에서 풋 소멸" + (" · 콜도 소멸" if int(tm.sha_qipo_kill) else "")))
+    # 재현 기록 한 줄 — model_checks 와 같은 형식이다.
+    _m = run_stamp(tm)
+    out.append(("재현 기록 · 앱 판 · 인풋 지문",
+                f"{_m['app_sha12'] or '?'} · {_m['terms_md5'][:8]}",
+                "적합" if _m["app_sha12"] else "확인 필요",
+                (f"소스 판 {_m['git_head']} · 해설 시트에 전체 기록" if _m["git_head"]
+                 else "소스 판(git)을 확인하지 못했다 — 해설 시트에 나머지 기록")))
     return out
 
 
@@ -5184,6 +5198,76 @@ def _stamp(tm: Terms, kind: str = "") -> str:
         (kind + json.dumps(d, sort_keys=True, default=str)).encode()).hexdigest()
 
 
+_RUN_ENV: dict = {}
+
+
+def _run_env() -> dict:
+    """app.py 의 해시와 git HEAD. 한 번만 재고 못 재면 빈 문자열이다.
+
+    ``tests/run_all.py`` 가 검증 결과에 찍는 것과 **같은 방식**으로 만든다 —
+    조서에 실린 해시와 검증 보고서의 해시를 눈으로 대조할 수 있어야 한다.
+    """
+    if _RUN_ENV: return _RUN_ENV
+    import hashlib, subprocess
+    pth = globals().get("__file__") or ""
+    if not pth or not os.path.exists(pth):
+        for c in (os.path.join(os.getcwd(), "app.py"), "app.py"):
+            if os.path.exists(c): pth = c; break
+    sha = head = ""
+    try:
+        sha = hashlib.sha256(open(pth, "rb").read()).hexdigest()[:12]
+    except Exception:
+        pass
+    try:
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                              cwd=(os.path.dirname(os.path.abspath(pth)) or "."),
+                              capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        pass
+    _RUN_ENV.update(app_sha12=sha, git_head=head)
+    return dict(_RUN_ENV)
+
+
+def run_stamp(tm: Terms, kind: str = "") -> dict:
+    """이 조서를 **다시 만들 수 있게** 하는 최소 기록.
+
+    조서에는 지금까지 생성시각과 출처 문자열뿐이었다. 몇 달 뒤 같은 계약을 다시 재서
+    값이 다르면 앱이 바뀐 것인지 인풋이 바뀐 것인지 가릴 방법이 없었다. 그래서 앱 해시 ·
+    git HEAD · 평가체계 버전 · 인풋 지문을 함께 남긴다.
+
+    ``terms_md5`` 는 **계산에 실제로 쓴 Terms** 의 지문이다 (``_stamp`` 과 같은 함수).
+    수식 조서는 조정일 처리를 바꾼 사본으로 트리를 만들므로 그 사본을 넘겨야 한다.
+    """
+    e = _run_env()
+    return dict(app_sha12=e["app_sha12"], git_head=e["git_head"], schema=SCHEMA_VER,
+                terms_md5=_stamp(tm, kind), d_base=tm.d_base,
+                s0_date=(tm.s0_date or ""), px_src=(tm.s0_src or "직접 입력"),
+                cr_src=(tm.cr_src or "직접 입력"), sig=float(tm.sig), n=int(tm.n),
+                gap_m=float(tm.gap_m), model=str(tm.model), carry=int(tm.carry),
+                rfx_mode=int(tm.rfx_mode), acc_basis=int(getattr(tm, "acc_basis", 1)),
+                k_method=int(tm.k_method),
+                made_at=dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+
+def stamp_rows(tm: Terms, kind: str = "") -> list:
+    """``run_stamp`` 를 조서에 실을 ``[(항목, 문구)]`` 로 바꾼다. 세 조서가 같이 쓴다."""
+    m = run_stamp(tm, kind)
+    return [("생성시각", m["made_at"]),
+            ("앱 판 (app.py SHA-256 앞 12자리)", m["app_sha12"] or "확인 못 함"),
+            ("소스 판 (git HEAD)", m["git_head"] or "확인 못 함"),
+            ("평가체계 버전", f"{m['schema']}"),
+            ("인풋 지문 (MD5)", m["terms_md5"]),
+            ("평가기준일 · 주가 거래일", f"{m['d_base']} · {m['s0_date'] or '해당 없음'}"),
+            ("주가 출처", m["px_src"]),
+            ("위험 곡선 출처", m["cr_src"]),
+            ("변동성 σ · 노드 수 · 노드 간격(개월)",
+             f"{m['sig']:.4f} · {m['n']} · {m['gap_m']:g}"),
+            ("신용위험 처리 · 조정일 처리 · 리픽싱 · 행사금액 경과기간",
+             f"{m['model']} · {m['carry']} · {m['rfx_mode']} · "
+             f"{'계약 개월÷12' if m['acc_basis'] else 'Actual/365'}"),
+            ("매도청구권 평가방법", K_METHODS[int(m["k_method"])])]
+
+
 def inst_text(tm: Terms, text: str) -> str:
     """화면 문장을 상품 용어로. CB 면 그대로다."""
     if not isinstance(text, str): return text
@@ -5448,6 +5532,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     title(A, 2, "전환사채 평가 조서", span=5)
     put(A, 3, 2, "생성 " + dt.datetime.now().strftime("%Y-%m-%d %H:%M")
         + "   ·   금액은 전자등록금액 100 기준", color=GREY, size=9)
+    _SRW = stamp_rows(tm, "값")     # 재현 기록 — 아래 「0. 재현 기록」 절에 싣는다
     # 조서를 받은 사람이 무엇을 재고 무엇을 안 쟀는지 표지에서 알아야 한다.
     put(A, 4, 2, SCOPE_NOTE.replace("**", ""), color=GREY, size=9)
     put(A, 5, 2, UNMODELLED_NOTE, color=AMB, size=9)
@@ -5459,7 +5544,9 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         except Exception:
             pass
         return f"{m:,.1f}"
-    blocks = [("1. 모형", [("신용위험 처리", tm.model, None),
+    # 「0. 재현 기록」 — 이 조서를 다시 만들려면 무엇이 같아야 하는가.
+    blocks = [("0. 재현 기록", [(_l, _v, None) for _l, _v in _SRW]),
+      ("1. 모형", [("신용위험 처리", tm.model, None),
         ("조정일 아닌 시점", ["상태확장(정확)", "경로가중치", "확률가중평균", "특정노드선택"][tm.carry], None),
         ("전환권 회계 분류", "파생상품부채" if tm.conv_class == "liability" else "자본", None)]),
       ("2. 계약조건", [("발행일", tm.d_issue, None), ("평가기준일", tm.d_base, None),
@@ -6449,11 +6536,18 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 조서를 받은 사람이 무엇을 재고 무엇을 안 쟀는지 알아야 한다.
     put(A, nb+4, 2, SCOPE_NOTE.replace("**", ""), color=GREY, size=9)
     put(A, nb+5, 2, UNMODELLED_NOTE, color=AMB, size=9)
-    # 주가 조회 기록. spec «밖» 이라 ROWN 행 번호를 밀지 않는다 — 수식 배선은 그대로다.
+    # 주가 조회 기록과 재현 기록. spec «밖» 이라 ROWN 행 번호를 밀지 않는다 —
+    # 수식 배선은 그대로다. 지문은 트리를 만든 Terms(tm) 로 뜬다 — 수식 조서는
+    # 조정일 처리를 바꾼 사본으로 계산하므로 화면 Terms 와 다를 수 있다.
     put(A, nb+7, 2, "주가 조회 기록", bold=True, size=9)
     for _i, (_l, _v) in enumerate(px_trace(tm)):
         put(A, nb+8+_i, 2, _l, color=GREY, size=9)
         put(A, nb+8+_i, 3, _v, color=GREY, size=9)
+    _r0 = nb+8+len(px_trace(tm))+1
+    put(A, _r0, 2, "재현 기록 — 이 조서를 다시 만들려면 무엇이 같아야 하는가", bold=True, size=9)
+    for _i, (_l, _v) in enumerate(stamp_rows(tm, "수식")):
+        put(A, _r0+1+_i, 2, _l, color=GREY, size=9)
+        put(A, _r0+1+_i, 3, _v, color=GREY, size=9)
     if put_bdt_on(tm):
         put(A, nb+3, 2, "BDT 변동성 σ 도 마찬가지다. BDT 격자의 기준금리 a 는 "
             "「σ 가 지금 값일 때 시장 금리곡선을 맞추도록」 역산한 값이라 조서에 "
@@ -8254,6 +8348,14 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None):
         put(H, 6+i, 2, a, bold=True, size=9, border=True)
         put(H, 6+i, 3, b, size=9, border=True, wrap=True)
         H.row_dimensions[6+i].height = max(16, 14*(1 + len(b)//80))
+    # ── 재현 기록 ──
+    # 몇 달 뒤 같은 계약을 다시 재서 값이 다르면 앱이 바뀐 것인지 인풋이 바뀐 것인지
+    # 가려야 한다. 앱 판·소스 판·인풋 지문을 조서에 남겨 둔다.
+    _hr = 6 + len(_rows) + 1
+    put(H, _hr, 2, "재현 기록", bold=True, size=9.5)
+    for i, (_l, _v) in enumerate(stamp_rows(tm, "수식" if formula else "값")):
+        put(H, _hr+1+i, 2, _l, size=9, border=True)
+        put(H, _hr+1+i, 3, _v, size=9, border=True)
 
     # ── 가정 ──
     A = sheet("가정", widths=[34, 18, 14, 60])
@@ -8661,6 +8763,12 @@ with st.sidebar:
             # 대로 연다 — 과거 조서의 재현성이 먼저다. 바꾸고 싶으면 버튼을 누른다.
             st.session_state.scen_old = (int(o.get("_schema", 1)) < SCHEMA_VER
                                          and float(o.get("k_w", 0) or 0) > 0)
+            # 저장 당시의 지문. 지금 인풋으로 다시 뜬 지문과 다르면 파일이 손질되었거나
+            # 화면 칸이 저장값을 덮어썼다는 뜻이라 알려 준다. 계산은 막지 않는다.
+            _mo = o.get("_meta") or {}
+            st.session_state.scen_meta = (
+                _mo if (_mo.get("terms_md5") and
+                        _mo["terms_md5"] != _stamp(st.session_state.tm)) else None)
             # key 가 있는 칸(조기상환·매도청구 시작/종료, 날짜 칸 …)은 한 번 그려지면 저장값이
             # value= 기본값을 이긴다. 비우지 않으면 시나리오의 값이 화면의 옛 값으로 되돌아간다.
             reset_widgets()
@@ -8669,6 +8777,14 @@ with st.sidebar:
         except Exception as ex:
             st.error(f"읽지 못했습니다 — {ex}")
     t = st.session_state.tm
+
+    _sm = st.session_state.get("scen_meta")
+    if _sm:
+        st.warning(f"이 시나리오의 **인풋 지문이 저장 당시와 다릅니다** "
+                   f"(저장 {_sm['terms_md5'][:8]} · 지금 {_stamp(t)[:8]}). "
+                   f"저장한 앱 판 {_sm.get('app_sha12') or '?'} · "
+                   f"소스 {_sm.get('git_head') or '?'} · {_sm.get('made_at', '?')}. "
+                   "화면 칸이 저장값을 덮어썼는지 확인하십시오.")
 
     if st.session_state.get("scen_old"):
         st.info("이 시나리오는 **매도청구권 평가체계를 정리하기 전**에 저장되었습니다. "
@@ -10014,7 +10130,8 @@ with st.sidebar:
                        f"(스프레드 {math.exp(CRq(t.T))-math.exp(RFq(t.T)):.2%})")
 
     st.download_button("시나리오 저장",
-                       json.dumps({**asdict(t), "_schema": SCHEMA_VER},
+                       json.dumps({**asdict(t), "_schema": SCHEMA_VER,
+                                   "_meta": run_stamp(t)},
                                   ensure_ascii=False, indent=2).encode(),
                        f"{lbl(t)['short']}평가_시나리오_{dt.date.today()}.json",
                        "application/json",

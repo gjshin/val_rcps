@@ -1233,15 +1233,46 @@ def test_call_split_text():
     chk_bool("fetch_splits 는 실패 시 None 을 돌려준다", "return None" in _fs)
     chk_bool("fetch_splits 는 기록이 없으면 빈 목록을 돌려준다", "return out" in _fs)
 
+    # ── 재현 기록 (run_stamp) ──
+    # 몇 달 뒤 같은 계약을 다시 재서 값이 다르면 앱이 바뀐 것인지 인풋이 바뀐 것인지
+    # 가려야 한다. 지문은 «계산에 실제로 쓴» Terms 에서 나와야 한다.
+    _rs, _sr, _st = G["run_stamp"], G["stamp_rows"], G["_stamp"]
+    _t1 = Terms(sig=.45); derive(_t1)
+    _m1 = _rs(_t1)
+    chk_bool("지문은 _stamp 과 같은 값", _m1["terms_md5"] == _st(_t1))
+    chk_bool("평가체계 버전을 함께 남긴다", _m1["schema"] == G["SCHEMA_VER"])
+    chk_bool("app.py 해시는 12자리", len(_m1["app_sha12"]) in (0, 12))
+    _t2 = Terms(sig=.46); derive(_t2)
+    chk_bool("인풋이 다르면 지문도 다르다", _rs(_t2)["terms_md5"] != _m1["terms_md5"])
+    chk_bool("같은 인풋이면 지문도 같다", _rs(Terms(sig=.45))["terms_md5"] == _st(Terms(sig=.45)))
+    # 수식 조서는 조정일 처리를 바꾼 사본으로 트리를 만든다 — 그 사본의 지문이어야 한다.
+    _tf = Terms(**G["asdict"](_t1)); _tf.carry = 2
+    chk_bool("계산에 쓴 Terms 로 지문을 뜬다", _rs(_tf)["terms_md5"] != _m1["terms_md5"])
+    chk_bool("종류(값·수식)가 다르면 지문도 다르다", _rs(_t1, "수식")["terms_md5"] != _m1["terms_md5"])
+    _rows = dict(_sr(_t1))
+    for _k in ("생성시각", "평가체계 버전", "인풋 지문 (MD5)", "주가 출처", "위험 곡선 출처"):
+        chk_bool(f"조서 재현 기록에 «{_k}»", _k in _rows)
+    chk_bool("조서 재현 기록은 11줄", len(_sr(_t1)) == 11)
+    # 검산요약에도 한 줄 — 조서를 열면 어느 판에서 나왔는지 바로 보인다.
+    _f1, _b0, _b1, _b2, _ca, _cv = G["decompose"](_t1)
+    _ck = dict((x[0], x) for x in G["model_checks"](_t1, _f1, _b0, _b1, _b2, _ca))
+    chk_bool("검산요약에 재현 기록 줄", "재현 기록 · 앱 판 · 인풋 지문" in _ck)
+    chk_bool("검산요약 줄에 지문 앞 8자리",
+             _st(_t1)[:8] in _ck["재현 기록 · 앱 판 · 인풋 지문"][1])
+
     # ── 시나리오 JSON 의 평가체계 버전 ──
     # 옛 파일에는 «_schema» 가 없다. 그때 Terms 기본값(유무가치비교법)으로 열려야
     # 과거 조서가 그대로 재현된다. 새 파일에는 버전이 붙고, 옛 앱에서도 열려야 하므로
     # Terms 에 없는 키는 버려진다.
     import json as _json
     _fields = Terms.__dataclass_fields__
-    _saved = _json.loads(_json.dumps({**G["asdict"](Terms()), "_schema": G["SCHEMA_VER"]},
+    _saved = _json.loads(_json.dumps({**G["asdict"](Terms()), "_schema": G["SCHEMA_VER"],
+                                      "_meta": G["run_stamp"](Terms())},
                                      ensure_ascii=False, default=str))
     chk_bool("저장 파일에 «_schema» 가 붙는다", _saved.get("_schema") == G["SCHEMA_VER"])
+    chk_bool("저장 파일에 «_meta» 재현 기록이 붙는다",
+             _saved.get("_meta", {}).get("terms_md5") == G["_stamp"](Terms()))
+    chk_bool("«_meta» 도 Terms 에 없는 키라 옛 앱에서 버려진다", "_meta" not in _fields)
     chk_bool("Terms 에 없는 키는 버려진다 (옛 앱 호환)", "_schema" not in _fields)
     _t_old = Terms(**{k: v for k, v in {"k_w": 0.3, "sig": 0.5}.items() if k in _fields})
     chk_bool("«_schema» 없는 옛 파일 → 유무가치비교법 기본", _t_old.k_method == 0)
