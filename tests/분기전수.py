@@ -68,6 +68,10 @@ COMPANION = {
     ("CB", "k_lock_put", 0):      dict(k_lock=30.),
     ("RCPS", "k_lock_put", 0):    dict(issuer_call=2, k_lock=30.),
     ("BW", "k_lock_put", 0):      dict(bw_pay=1, k_lock=30.),
+    # Actual/365 기준은 만기가 «정확히 N개월» 이 아닌 계약에서만 값이 갈린다.
+    ("CB", "acc_basis", 0):       dict(d_mat="2030-01-05"),
+    ("RCPS", "acc_basis", 0):     dict(d_mat="2030-01-05"),
+    ("BW", "acc_basis", 0):       dict(d_mat="2030-01-05"),
     # 콜 소멸이 우선순위를 따르는지 — 의무보유가 없어야 소멸 조건이 걸린다.
     ("CB", "pc_order", 1):        dict(k_method=2, k_hold=0),
     ("RCPS", "pc_order", 1):      dict(issuer_call=2, k_method=2, k_hold=0),

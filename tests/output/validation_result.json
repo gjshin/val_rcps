@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-09 02:19",
- "head": "a7295f5",
- "app_sha256_12": "99e5e2da528c",
+ "generated": "2026-09-09 07:39",
+ "head": "faf7bf4",
+ "app_sha256_12": "46e10962a519",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 38.4,
+   "sec": 51.3,
    "last": "모두 통과",
    "tail": []
   },
@@ -19,7 +19,7 @@
    "cmd": "python3 tests/오라클.py",
    "ok": true,
    "code": 0,
-   "sec": 0.7,
+   "sec": 1.0,
    "last": "모두 통과",
    "tail": []
   },
@@ -28,8 +28,8 @@
    "cmd": "python3 tests/분기전수.py",
    "ok": true,
    "code": 0,
-   "sec": 5.8,
-   "last": "→ tests/output/분기전수.json 319 줄",
+   "sec": 8.1,
+   "last": "→ tests/output/분기전수.json 337 줄",
    "tail": []
   },
   {
@@ -37,8 +37,8 @@
    "cmd": "python3 tests/기능목록.py --strict",
    "ok": true,
    "code": 0,
-   "sec": 0.4,
-   "last": "   → tests/검증매트릭스.json (342 행)",
+   "sec": 0.6,
+   "last": "   → tests/검증매트릭스.json (360 행)",
    "tail": []
   },
   {
@@ -46,8 +46,8 @@
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 69.6,
-   "last": "→ tests/output/조합시험.json 1895 줄 · 실패 0 (tests/output/조합시험_실패.json) · 69초",
+   "sec": 89.1,
+   "last": "→ tests/output/조합시험.json 1899 줄 · 실패 0 (tests/output/조합시험_실패.json) · 89초",
    "tail": []
   },
   {
@@ -55,7 +55,7 @@
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 34.0,
+   "sec": 46.3,
    "last": "",
    "tail": []
   },
@@ -64,7 +64,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 47.8,
+   "sec": 67.5,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +73,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 28.9,
+   "sec": 38.5,
    "last": "",
    "tail": []
   }
@@ -82,32 +82,32 @@
   "주계약": 37.5208,
   "부채요소": 73.1837,
   "전체": 114.8781,
-  "매도청구권": 13.0761
+  "매도청구권": 13.0762
  },
  "baseline_expected": {
   "주계약": 37.5208,
   "부채요소": 73.1837,
   "전체": 114.8781,
-  "매도청구권": 13.0761
+  "매도청구권": 13.0762
  },
  "baseline_ok": true,
  "matrix": {
   "CB": {
-   "PASS": 87,
+   "PASS": 93,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 97,
+   "PASS": 103,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 91,
+   "PASS": 97,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -129,5 +129,5 @@
   }
  },
  "all_ok": true,
- "sec": 225.9
+ "sec": 302.9
 }
