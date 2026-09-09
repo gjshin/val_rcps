@@ -68,6 +68,9 @@ COMPANION = {
     ("CB", "k_lock_put", 0):      dict(k_lock=30.),
     ("RCPS", "k_lock_put", 0):    dict(issuer_call=2, k_lock=30.),
     ("BW", "k_lock_put", 0):      dict(bw_pay=1, k_lock=30.),
+    # 콜 소멸이 우선순위를 따르는지 — 의무보유가 없어야 소멸 조건이 걸린다.
+    ("CB", "pc_order", 1):        dict(k_method=2, k_hold=0),
+    ("RCPS", "pc_order", 1):      dict(issuer_call=2, k_method=2, k_hold=0),
     ("RCPS", "ipo_conv", 1):      dict(ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=600.),
     ("RCPS", "ipo_conv", 0):      dict(ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=600.),
     ("*", "ipo_on", 1):           dict(ipo_m=24., ipo_px=1200., ipo_min=600.),

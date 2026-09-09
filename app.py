@@ -1620,6 +1620,10 @@ def call_third_party(tm: Terms, full, method: int) -> float:
     반영한다. 기간은 ``tm.k_lock``, 막는 권리는 전환과 (``tm.k_lock_put`` 이면) 조기상환
     청구다 — 유무가치비교법이 보는 것과 같다. 투자자의 제한 자체를 별도의 가치요소로 콜에
     더하지는 않고,
+    의무보유가 끝난 자리에서 콜이 소멸하는지는 ``tm.pc_order`` 를 따른다 — 「발행자 콜
+    우선」이면 투자자의 전환·조기상환이 매도청구에 밀리므로 콜이 소멸하지 않고 행사된다.
+    한 격자에서 두 층이 다른 계약을 읽으면 안 된다.
+
     그 제한으로 콜 대상 전환사채가 행사기간 동안 존속하여 콜의 행사 가능성이 유지되는
     효과만 콜 계약가치에 담는다. 0 이면 기초 사채가 소멸하는 노드에서 콜도 함께 사라진다.
     """
@@ -1633,6 +1637,13 @@ def call_third_party(tm: Terms, full, method: int) -> float:
     # 의무보유가 조기상환청구까지 막는가. 0 이면 전환만 막으므로 조기상환 노드에서는
     # 의무보유 기간 안이라도 사채가 사라지고 콜도 함께 사라진다.
     lkput = int(getattr(tm, "k_lock_put", 1)) == 1
+    # 같은 노드에서 투자자의 전환·조기상환과 발행자의 매도청구가 함께 열릴 때 누가
+    # 먼저 움직이는지는 계약이 정한다 (pc_order) — 기초 격자가 이미 쓰는 스위치다.
+    # 「발행자 콜 우선」이면 투자자가 사채를 없애기 전에 콜이 행사되므로, 의무보유가
+    # 끝난 뒤라도 그 자리에서 콜이 소멸하지 않고 행사된다. 자동전환·상장전환·만기는
+    # 투자자의 «선택» 이 아니라 밀릴 수 없으므로 그대로 소멸한다.
+    kfirst = int(getattr(tm, "pc_order", 0)) == 1
+    PREEMPT = ("conv", "put")
     cache = {}
 
     def w(o):
@@ -1664,7 +1675,10 @@ def call_third_party(tm: Terms, full, method: int) -> float:
         _kd = o.get("kind")
         _held = i <= lock_end and (lkput or _kd != "put")
         if not _held and "up" in o and _kd in CB_SETTLED:
-            r = (0.0, 0.0, 0.0)
+            if kfirst and _kd in PREEMPT and pay > 0:
+                e_, b_ = split(o, i, pay); r = (pay, e_, b_)   # 발행자가 먼저 행사한다
+            else:
+                r = (0.0, 0.0, 0.0)
         elif "up" not in o:                     # 만기 — 자식이 없다
             e_, b_ = split(o, i, pay)
             r = (pay, e_, b_)
@@ -1796,10 +1810,13 @@ def call_method_text(tm: Terms) -> str:
                + "지분·채권 구분 기준은 "
                + ("본문 4.3.3 의 GS 전환확률" if int(tm.k_split) == 1
                   else "지분·부채 가치 구성비율(비례균등차감법 — 타 실무서, 본문에서 도출되는 방식은 아님)")
-               + ("; 콜 대상물량은 의무보유로 행사기간 종료일까지 존속한다고 본다 — 전환·조기상환 "
-                  "제한 자체를 별도의 가치요소로 더하지는 않고, 그 제한으로 콜의 행사 가능성이 "
-                  "유지되는 효과만 담는다" if int(tm.k_hold) == 1
-                  else "; 콜 대상물량에 의무보유가 없어 투자자의 전환·조기상환으로 콜도 소멸한다고 본다"))
+               + (f"; 콜 대상물량은 의무보유로 {tm.k_lock:,.0f}개월까지 존속한다고 본다"
+                  + ("(전환·조기상환청구 모두 제한)" if int(tm.k_lock_put) else "(전환만 제한)")
+                  + " — 제한 자체를 별도의 가치요소로 더하지는 않고, 그 제한으로 콜의 행사 "
+                    "가능성이 유지되는 효과만 담는다" if int(tm.k_hold) == 1
+                  else "; 콜 대상물량에 의무보유가 없어 투자자의 전환·조기상환으로 콜도 소멸한다고 본다")
+               + ("; 다만 발행자 매도청구가 우선하는 계약이라 그 자리에서도 콜은 소멸하지 않고 "
+                  "행사된다" if int(tm.pc_order) == 1 else ""))
     base = f" · 선택 근거: {tm.k_basis.strip()}" if (tm.k_basis or "").strip() else ""
     # 한공회 본문이 유형별로 「기본적인 접근법」을 지정한다 — 고른 방법이 그것과 같은지 밝힌다.
     # 발행자만 행사하는 콜은 행사하면 사채가 소멸해 기초자산이 남지 않는다 — 복합옵션
@@ -2890,7 +2907,10 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
         out.append(("매도청구권 적용 방법 · 구분 기준",
                     K_METHODS[int(tm.k_method)]
                     + (" · " + K_SPLITS[int(tm.k_split)].split(" —")[0] if tm.k_method else "")
-                    + (" · 의무보유 " + ("있음" if int(tm.k_hold) else "없음") if tm.k_method else ""),
+                    + (" · 의무보유 "
+                       + (f"{tm.k_lock:,.0f}개월"
+                          + ("(전환·조기상환)" if int(tm.k_lock_put) else "(전환만)")
+                          if int(tm.k_hold) else "없음") if tm.k_method else ""),
                     "적합" if _now == _std else "한계",
                     ("본문 기본 접근법과 같다 (4.3.2 · 4.3.4)" if _now == _std else
                      f"본문 기본 접근법은 {_std} 이다 — 4.6.2 대로 선택 근거를 남길 것")))
@@ -6896,7 +6916,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                               f'{Q(S9)}!{L}{R0+r}="상장전환",{Q(S9)}!{L}{R0+r}="상환P")')
         _GONE = (lambda L, r: f'AND({_DEAD(L, r)},OR({L}$2>{K["lockend"]},'
                               f'AND({Q(S9)}!{L}{R0+r}="상환P",{K["lkput"]}=0)))')
-        _kill = lambda L, r, body: f"=IF({_GONE(L, r)},0,{body[1:]})"
+        # 「발행자 콜 우선」이면 투자자의 전환·조기상환이 매도청구에 밀린다. 그 자리에서
+        # 콜은 사라지지 않고 행사된다 — 엔진과 같은 규칙이다. 자동전환·상장전환은
+        # 투자자의 선택이 아니라 밀릴 수 없으므로 그대로 사라진다. 우선순위는 트리
+        # 구조를 정하는 값이라 ⑨ 와 마찬가지로 여기서 굳혀 둔다 (가정 시트 pcord).
+        _PRE = (lambda L, r: f'AND(OR({Q(S9)}!{L}{R0+r}="전환",{Q(S9)}!{L}{R0+r}="상환P"),'
+                             f'{Q(S19)}!{L}{R0+r}>0)')
+        def _kill(L, r, body, pre="0"):
+            gone = f"IF({_PRE(L, r)},{pre},0)" if _kfirst else "0"
+            return f"=IF({_GONE(L, r)},{gone},{body[1:]})"
 
         W = newsheet(S19, "⑲ 콜 페이오프트리  MAX(전환사채 가치 − 매도청구금액, 0)",
                      "매도청구 행사기간에만 값이 생긴다. 기초자산은 ⑧ 이다.", S8)
@@ -6911,7 +6939,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                  _kill(L, r,
                        f"=MAX({Q(S19)}!{L}{R0+r},"
                        f"{Ln}{R0+r}*{L}$16*EXP(-{Q(S18)}!{Ln}{R0+r}*{K['dt']})"
-                       f"+{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S18)}!{Ln}{R0+r+1}*{K['dt']}))")))
+                       f"+{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S18)}!{Ln}{R0+r+1}*{K['dt']}))",
+                       f"{Q(S19)}!{L}{R0+r}")))
             put(W, R0+n+3, 2, "매도청구권 (한도 반영 전, t=0)", bold=True)
             put(W, R0+n+3, 3, f"=C{R0}", bold=True, fmt=N2, align="right")
 
@@ -6966,7 +6995,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                      f"행사하면 {_how}, 아니면 보유가치의 지분 몫이다. "
                      "만기에는 보유가치가 0 이라 언제나 페이오프를 쪼갠다.", _src)
         fill(W, lambda i, r, L, Lp, Ln: _kill(L, r,
-             f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})") if i < n else
+             f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})",
+             _eq(L, r)) if i < n else
              f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})", N4)
 
         W = newsheet(S24, "㉔ [방법2] 매도청구권 · 부채 몫",
@@ -6974,7 +7004,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                      + ("행사가의 채권 몫을 뺀 ⑰b 다." if _ksplit else "지분 몫의 나머지가 부채 몫이다."),
                      _src)
         fill(W, lambda i, r, L, Lp, Ln: _kill(L, r,
-             f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})") if i < n else
+             f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})",
+             _db(L, r)) if i < n else
              f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})", N4)
         put(W, R0+n+3, 2, "매도청구권 · 방법2 (한도 반영 전, t=0)", bold=True)
         put(W, R0+n+3, 3, f"={Q(S23)}!C{R0}+C{R0}", bold=True, fmt=N2, align="right")

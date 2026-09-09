@@ -340,7 +340,8 @@ def monotone(G, product, over, rng):
         return dict(b0=b0, b1=b1, b2=b2, ca=cad, conv=b2 - b1, put=b1 - b0, t=t, full=full)
     def forced_mass(o):
         t = BX.make_terms(G, product, o)
-        r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=max(t.cv_s, t.k_lock))
+        _cs, _ps = G["lock_delay"](t)
+        r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=_cs, put_start=_ps)
         return r3["dist"].get("conv_called", 0.0)
     base = D(over); TOL = 1e-7
     if base["t"].rfx_mode == 0 or base["t"].carry == 0:
@@ -371,7 +372,76 @@ def monotone(G, product, over, rng):
     # 발행총액 배수 — 100 기준 값은 그대로
     big = D({**over, "face_total": 5e10})
     out.append(("발행총액 ×2 — 100 기준 값 불변", abs(big["b2"] - base["b2"]) <= 1e-12, f"{base['b2']:.6f} = {big['b2']:.6f}"))
+    # 매수한 콜의 가치는 어느 노드에서도 음수가 될 수 없다 — 행사하지 않으면 0 이다.
+    # 방법 2 는 지분 몫·채권 몫이 부호가 갈리는(long-short) 값이라, 두 몫을 서로 다른
+    # 이자율로 할인하면 합이 음수로 내려갈 «수 있는» 구조다. 그런 자리가 생기는지 본다.
+    if base["t"].k_w > 0 and not G["is_sha"](base["t"]):
+        for _m in (1, 2):
+            _neg, _root = call_node_min(G, base["t"], _m)
+            out.append((f"방법{_m} 콜 노드값 ≥ 0", _neg >= -1e-9,
+                        f"최소 노드값 {_neg:.6f} · 뿌리 {_root:.6f}"))
     return out
+
+
+def call_node_min(G, tm, method):
+    """콜 트리 전 노드의 최솟값과 뿌리값. call_third_party 를 노드마다 다시 재어 본다.
+
+    엔진은 뿌리값만 돌려주므로, 같은 격자에서 각 노드를 뿌리로 삼은 부분 트리를
+    다시 풀어 최솟값을 센다. 노드 수가 (n+1)(n+2)/2 라 캐시가 있어 한 번 훑는 값이다.
+    """
+    import math
+    full = G["engine"](tm, call=False)
+    memo, dt_, ks = full["memo"], full["dt"], full["kstrike"]
+    qi, fRF, fCR = full["qi"], full["fwdRF"], full["fwdCR"]
+    ksplit = int(getattr(tm, "k_split", 0)) == 1
+    khold = int(getattr(tm, "k_hold", 1)) == 1
+    lock_end = full["st_hi"](tm.k_lock) if khold else -1
+    lkput = int(getattr(tm, "k_lock_put", 1)) == 1
+    kfirst = int(getattr(tm, "pc_order", 0)) == 1
+    cache = {}
+    def w(o):
+        v = o["E"] + o["B"]
+        return o["E"]/v if v > 1e-12 else 0.0
+    def split(o, i, pay):
+        K = ks(i)
+        if pay <= 0 or K is None: return 0.0, 0.0
+        if not ksplit:
+            ww = w(o); return pay*ww, pay*(1-ww)
+        P = o.get("P", 0.0)
+        return o["E"] - P*K, o["B"] - (1-P)*K
+    def rec(key, i):
+        if key in cache: return cache[key]
+        o = memo[key]; K = ks(i)
+        pay = max(o["E"] + o["B"] - K, 0.0) if K is not None else 0.0
+        kd = o.get("kind")
+        held = i <= lock_end and (lkput or kd != "put")
+        if not held and "up" in o and kd in ("conv", "auto", "ipo", "put", "call", "mat"):
+            if kfirst and kd in ("conv", "put") and pay > 0:
+                e_, b_ = split(o, i, pay); r = (pay, e_, b_)
+            else:
+                r = (0.0, 0.0, 0.0)
+        elif "up" not in o:
+            e_, b_ = split(o, i, pay); r = (pay, e_, b_)
+        else:
+            q, ou, od = qi(i), memo[o["up"]], memo[o["dn"]]
+            cu, eu, bu = rec(o["up"], i+1); cd, ed, bd = rec(o["dn"], i+1)
+            if method == 1:
+                g = lambda x: (x.get("P", 0.0) if ksplit else w(x))
+                yu = g(ou)*fRF(i) + (1-g(ou))*fCR(i)
+                yd = g(od)*fRF(i) + (1-g(od))*fCR(i)
+                cont = q*cu*math.exp(-yu*dt_) + (1-q)*cd*math.exp(-yd*dt_)
+                r = (max(pay, cont), 0.0, 0.0)
+            else:
+                he = (q*eu + (1-q)*ed) * math.exp(-fRF(i)*dt_)
+                hb = (q*bu + (1-q)*bd) * math.exp(-fCR(i)*dt_)
+                if pay > 0 and pay >= he + hb:
+                    e_, b_ = split(o, i, pay); r = (pay, e_, b_)
+                else:
+                    r = (he + hb, he, hb)
+        cache[key] = r
+        return r
+    root = rec(full["root"], 0)[0]
+    return (min(v[0] for v in cache.values()) if cache else 0.0), root
 
 
 # ══════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-09T00:46:05",
- "head": "3fd1f31",
+ "generated": "2026-09-09T00:57:33",
+ "head": "fefc9e6",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -66,7 +66,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 140
+   "n_tests": 143
   },
   {
    "case_id": "RCPS-inst-RCPS",
@@ -174,7 +174,7 @@
     "tests/값조서대조.py::liability·2·TF·1",
     "tests/값조서대조.py::liability·2·TF·0"
    ],
-   "n_tests": 116
+   "n_tests": 119
   },
   {
    "case_id": "CB-model-GS",
@@ -327,7 +327,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 107
+   "n_tests": 110
   },
   {
    "case_id": "CB-conv_class-LIABILITY",
@@ -488,7 +488,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 136
+   "n_tests": 139
   },
   {
    "case_id": "CB-carry-1",
@@ -755,7 +755,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 136
+   "n_tests": 139
   },
   {
    "case_id": "RCPS-rfx_mode-0",
@@ -902,7 +902,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 117
+   "n_tests": 120
   },
   {
    "case_id": "CB-p_mode-ACCRUE",
@@ -1115,7 +1115,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 135
+   "n_tests": 138
   },
   {
    "case_id": "CB-p_cmp-12",
@@ -1340,7 +1340,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 138
+   "n_tests": 141
   },
   {
    "case_id": "CB-p_sep-0",
@@ -1477,7 +1477,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 138
+   "n_tests": 141
   },
   {
    "case_id": "CB-p_lost_int-1",
@@ -1627,13 +1627,13 @@
     "tests/값조서대조.py::equity·1·TF·1·bdt0.0",
     "tests/값조서대조.py::equity·1·TF·1·bdt0.2",
     "tests/조서대조.py::방법1 · 본문 4.3.3 전환확률",
+    "tests/조서대조.py::방법1 · 콜 우선 · 의무보유 없음",
     "tests/조서대조.py::조기상환권 미분리 · 방법1",
     "tests/조서대조.py::월 노드 · 리픽싱 7스텝 · 방법1 · 부채",
     "tests/설정전수대조.py::평가방법 1 혼합할인율",
-    "tests/설정전수대조.py::조기상환권 미분리 · 방법1",
-    "tests/손계산대조.py::test_call_split_text"
+    "tests/설정전수대조.py::조기상환권 미분리 · 방법1"
    ],
-   "n_tests": 13
+   "n_tests": 14
   },
   {
    "case_id": "CB-k_method-2",
@@ -1655,12 +1655,12 @@
     "tests/조서대조.py::방법2 · 본문 4.3.3 전환확률",
     "tests/조서대조.py::방법2 · 전환확률 · 의무보유 없음",
     "tests/조서대조.py::방법2 · 전환확률 · 의무보유 12개월",
+    "tests/조서대조.py::방법2 · 콜 우선 · 의무보유 없음",
+    "tests/조서대조.py::방법2 · 콜 우선 · 의무보유 12개월",
     "tests/조서대조.py::방법2 · 전환권 부채",
-    "tests/설정전수대조.py::평가방법 2 지분·부채",
-    "tests/손계산대조.py::test_call_split_text",
-    "tests/분기전수.py::k_method=2"
+    "tests/설정전수대조.py::평가방법 2 지분·부채"
    ],
-   "n_tests": 12
+   "n_tests": 14
   },
   {
    "case_id": "BW-k_method-0",
@@ -1817,7 +1817,7 @@
     "tests/값조서대조.py::liability·2·TF·1",
     "tests/값조서대조.py::liability·2·GS·1"
    ],
-   "n_tests": 120
+   "n_tests": 123
   },
   {
    "case_id": "CB-k_sep-0",
@@ -1968,7 +1968,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 139
+   "n_tests": 142
   },
   {
    "case_id": "CB-k_less_cpn-0",
@@ -2118,10 +2118,13 @@
     "tests/조서대조.py::방법1 · 본문 4.3.3 전환확률",
     "tests/조서대조.py::방법2 · 전환확률 · 의무보유 없음",
     "tests/조서대조.py::방법2 · 전환확률 · 의무보유 12개월",
+    "tests/조서대조.py::방법2 · 콜 우선 · 의무보유 없음",
+    "tests/조서대조.py::방법1 · 콜 우선 · 의무보유 없음",
+    "tests/조서대조.py::방법2 · 콜 우선 · 의무보유 12개월",
     "tests/손계산대조.py::test_call_split_text",
     "tests/분기전수.py::k_split=1"
    ],
-   "n_tests": 6
+   "n_tests": 9
   },
   {
    "case_id": "BW-k_split-0",
@@ -2241,7 +2244,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 138
+   "n_tests": 139
   },
   {
    "case_id": "CB-k_hold-0",
@@ -2256,10 +2259,12 @@
    "independent_oracle": true,
    "covered_by": [
     "tests/조서대조.py::방법2 · 전환확률 · 의무보유 없음",
+    "tests/조서대조.py::방법2 · 콜 우선 · 의무보유 없음",
+    "tests/조서대조.py::방법1 · 콜 우선 · 의무보유 없음",
     "tests/손계산대조.py::test_call_split_text",
     "tests/분기전수.py::k_hold=0"
    ],
-   "n_tests": 3
+   "n_tests": 5
   },
   {
    "case_id": "BW-k_hold-1",
@@ -2375,7 +2380,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 137
+   "n_tests": 140
   },
   {
    "case_id": "CB-k_lock_put-0",
@@ -2505,7 +2510,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 139
+   "n_tests": 142
   },
   {
    "case_id": "CB-k_kind-1",
@@ -2655,7 +2660,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 138
+   "n_tests": 141
   },
   {
    "case_id": "BW-k_third-0",
@@ -2779,7 +2784,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 138
+   "n_tests": 141
   },
   {
    "case_id": "CB-k_transfer-1",
@@ -2942,7 +2947,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 136
+   "n_tests": 139
   },
   {
    "case_id": "BW-k_cmp-0",
@@ -3137,16 +3142,16 @@
     "tests/값조서대조.py::equity·0·GS·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
     "tests/값조서대조.py::liability·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
     "tests/값조서대조.py::liability·0·GS·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
+    "tests/조서대조.py::방법2 · 콜 우선 · 의무보유 없음",
+    "tests/조서대조.py::방법1 · 콜 우선 · 의무보유 없음",
+    "tests/조서대조.py::방법2 · 콜 우선 · 의무보유 12개월",
     "tests/조서대조.py::우선순위 · 발행자 콜 우선",
     "tests/조서대조.py::우선순위 · 콜 우선 · GS",
     "tests/조서대조.py::우선순위 · 콜 우선 · 전환권 부채",
     "tests/손계산대조.py::test_decision_table",
-    "tests/손계산대조.py::test_decision_matches_old_chains",
-    "tests/손계산대조.py::test_maturity_layer_in_distribution",
-    "tests/오라클.py::test_node_rule",
-    "tests/분기전수.py::pc_order=1"
+    "tests/손계산대조.py::test_decision_matches_old_chains"
    ],
-   "n_tests": 12
+   "n_tests": 15
   },
   {
    "case_id": "RCPS-pc_order-0",
@@ -3375,7 +3380,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 120
+   "n_tests": 123
   },
   {
    "case_id": "RCPS-ytm_cmp-0",
@@ -3575,7 +3580,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 140
+   "n_tests": 143
   },
   {
    "case_id": "CB-cmp_rf-4",
@@ -3894,7 +3899,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 139
+   "n_tests": 142
   },
   {
    "case_id": "CB-cmp_cr-12",
@@ -4162,7 +4167,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 137
+   "n_tests": 140
   },
   {
    "case_id": "CB-y_type-SPOT",
@@ -4335,7 +4340,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 138
+   "n_tests": 141
   },
   {
    "case_id": "CB-rate_mode-PICK",
@@ -4571,7 +4576,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 131
+   "n_tests": 134
   },
   {
    "case_id": "CB-put_bdt-1",
@@ -4710,7 +4715,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 137
+   "n_tests": 140
   },
   {
    "case_id": "CB-bdt_base-1",
@@ -5263,7 +5268,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 131
+   "n_tests": 134
   },
   {
    "case_id": "CB-fvpl_whole-1",
@@ -5401,7 +5406,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 139
+   "n_tests": 142
   },
   {
    "case_id": "CB-bs_net-1",
@@ -5900,7 +5905,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 140
+   "n_tests": 143
   },
   {
    "case_id": "CB-put-OFF",
@@ -6031,7 +6036,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 139
+   "n_tests": 142
   },
   {
    "case_id": "CB-call-OFF",
@@ -6210,7 +6215,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 121
+   "n_tests": 124
   },
   {
    "case_id": "RCPS-cpn-ON",
@@ -6368,7 +6373,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 117
+   "n_tests": 120
   },
   {
    "case_id": "RCPS-ytm-ON",
@@ -6526,7 +6531,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 132
+   "n_tests": 135
   },
   {
    "case_id": "RCPS-mid-ON",
@@ -6709,7 +6714,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 133
+   "n_tests": 136
   },
   {
    "case_id": "RCPS-cost-ON",
@@ -6823,7 +6828,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 141
+   "n_tests": 144
   },
   {
    "case_id": "CB-curve-OFF",
