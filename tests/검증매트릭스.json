@@ -1,25 +1,25 @@
 {
- "generated": "2026-09-09T04:45:31",
- "head": "19c27e5",
+ "generated": "2026-09-09T05:39:58",
+ "head": "c461c18",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
   "CB": {
-   "PASS": 87,
+   "PASS": 89,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 97,
+   "PASS": 99,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 91,
+   "PASS": 93,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -2483,6 +2483,135 @@
    "independent_oracle": false,
    "covered_by": [
     "tests/분기전수.py::k_lock_put=0"
+   ],
+   "n_tests": 1
+  },
+  {
+   "case_id": "CB-acc_basis-1",
+   "product": "CB",
+   "branch": "acc_basis",
+   "value": 1,
+   "label": "계약 개월 ÷ 12 — 계약서가 세는 방식",
+   "meaning": "행사금액 경과기간",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "engine_vs_workbook",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/값조서대조.py::equity·0·TF·1",
+    "tests/값조서대조.py::equity·0·TF·0",
+    "tests/값조서대조.py::equity·0·GS·1",
+    "tests/값조서대조.py::equity·0·GS·0",
+    "tests/값조서대조.py::equity·1·TF·1",
+    "tests/값조서대조.py::equity·1·TF·0",
+    "tests/값조서대조.py::equity·1·GS·1",
+    "tests/값조서대조.py::equity·1·GS·0",
+    "tests/값조서대조.py::equity·2·TF·1",
+    "tests/값조서대조.py::equity·2·TF·0",
+    "tests/값조서대조.py::equity·2·GS·1",
+    "tests/값조서대조.py::equity·2·GS·0"
+   ],
+   "n_tests": 141
+  },
+  {
+   "case_id": "CB-acc_basis-0",
+   "product": "CB",
+   "branch": "acc_basis",
+   "value": 0,
+   "label": "Actual/365 — 할인기간과 같은 잣대(종전)",
+   "meaning": "행사금액 경과기간",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "invariants",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/분기전수.py::acc_basis=0"
+   ],
+   "n_tests": 1
+  },
+  {
+   "case_id": "BW-acc_basis-1",
+   "product": "BW",
+   "branch": "acc_basis",
+   "value": 1,
+   "label": "계약 개월 ÷ 12 — 계약서가 세는 방식",
+   "meaning": "행사금액 경과기간",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "engine_vs_workbook",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
+    "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
+    "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
+    "tests/값조서대조.py::equity·0·TF·1·cpn=0.03,ytm=0.07,ipay=6.0,ytm_cmp=2,p_m",
+    "tests/값조서대조.py::equity·0·TF·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
+    "tests/값조서대조.py::equity·0·TF·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3",
+    "tests/값조서대조.py::equity·0·TF·1·inst=BW,bw_pay=0,bw_detach=0,k_w=0.0",
+    "tests/값조서대조.py::equity·0·TF·1·inst=BW,bw_pay=0,bw_detach=0,k_w=0.3",
+    "tests/값조서대조.py::equity·0·TF·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.0",
+    "tests/값조서대조.py::equity·0·TF·1·inst=BW,bw_pay=0,bw_detach=1,k_w=0.3",
+    "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
+    "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
+   ],
+   "n_tests": 41
+  },
+  {
+   "case_id": "BW-acc_basis-0",
+   "product": "BW",
+   "branch": "acc_basis",
+   "value": 0,
+   "label": "Actual/365 — 할인기간과 같은 잣대(종전)",
+   "meaning": "행사금액 경과기간",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "invariants",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/분기전수.py::acc_basis=0"
+   ],
+   "n_tests": 1
+  },
+  {
+   "case_id": "RCPS-acc_basis-1",
+   "product": "RCPS",
+   "branch": "acc_basis",
+   "value": 1,
+   "label": "계약 개월 ÷ 12 — 계약서가 세는 방식",
+   "meaning": "행사금액 경과기간",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "engine_vs_workbook",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::equity·1·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::equity·2·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::liability·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::liability·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::liability·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::liability·1·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::liability·2·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::equity·1·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
+    "tests/값조서대조.py::equity·2·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354"
+   ],
+   "n_tests": 48
+  },
+  {
+   "case_id": "RCPS-acc_basis-0",
+   "product": "RCPS",
+   "branch": "acc_basis",
+   "value": 0,
+   "label": "Actual/365 — 할인기간과 같은 잣대(종전)",
+   "meaning": "행사금액 경과기간",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "invariants",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/분기전수.py::acc_basis=0"
    ],
    "n_tests": 1
   },

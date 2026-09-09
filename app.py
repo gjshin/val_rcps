@@ -88,6 +88,10 @@ class Terms:
     n: int = 60                     # 노드 수 — derive() 가 채운다
     elapsed_m: float = 0.0          # 발행일 → 평가기준일 경과 개월
     rem_m: float = 60.0             # 평가기준일 → 만기 «계약상» 개월 — derive() 가 채운다
+    # 행사금액(조기상환·매도청구·만기)의 경과기간을 무엇으로 세는가.
+    # 1 계약 개월 ÷ 12 — 계약서가 「36개월 보장수익률」이라 쓰면 그 36개월이다 (기본)
+    # 0 Actual/365 — 할인기간과 같은 잣대. 종전 동작이라 옛 값을 재현할 때 쓴다
+    acc_basis: int = 1
     cpn: float = 0.0            # 표면이자율
     ipay: float = 3.0           # 이자 지급주기 (개월)
     ytm: float = 0.0            # 만기보장수익률
@@ -784,13 +788,23 @@ def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
       ``put(i)``     조기상환 행사금액 (행사 가능 여부는 보지 않는다 — 부르는 쪽이 판단)
       ``call(i)``    매도청구 행사금액
       ``red``        만기상환금액
+      ``put_at_month(m)`` · ``call_at_month(m)``  스텝이 아니라 **개월**로 묻는 입구.
+                     EIR 표·조건표처럼 격자가 없는 자리가 쓴다
     """
     ey = tm.elapsed_m/12
     rem_m = float(getattr(tm, "rem_m", 0.0) or tm.T*12)
     cmonth = lambda i: tm.elapsed_m + i*rem_m/max(1, n)
-    # 지금은 Actual/365 다. 계약 개월 기준으로 가르는 스위치는 다음 커밋에서 붙는다.
-    cyear = lambda i: i*dt_ + ey
-    mat_year = tm.T + ey
+    # 계약은 개월로 센다 — 「발행일로부터 6개월이 되는 날」의 조기상환율은 0.5년으로
+    # 계산한 값이다. 할인기간(Actual/365)을 그대로 쓰면 회차마다 조금씩 어긋나
+    # 조서가 공시 표와 맞지 않는다. acc_basis=0 이면 종전(Actual/365)이다.
+    if int(getattr(tm, "acc_basis", 1)):
+        yr_of = lambda mo: mo/12                       # 발행일부터 mo 개월
+        mat_year = (tm.elapsed_m + rem_m)/12
+    else:
+        # 종전 동작 — 개월을 Actual/365 연수로 되돌린다 (rem_m 개월 = T 년)
+        yr_of = lambda mo: ((mo - tm.elapsed_m)/max(1e-9, rem_m))*tm.T + ey
+        mat_year = tm.T + ey
+    cyear = lambda i: yr_of(cmonth(i))
 
     def put(i):
         if tm.p_mode == "accrue":
@@ -800,7 +814,15 @@ def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
     def call(i):
         return 100*(1 + accrue_rate(cyear(i), tm.k_prem, call_cpn(tm), tm.k_cmp))
 
+    def put_at_month(mo):
+        if tm.p_mode == "accrue":
+            return 100*(1 + accrue_rate(yr_of(mo), tm.p_yield, eff_cpn(tm), tm.p_cmp))
+        return float(tm.p_rate)
+
+    call_at_month = lambda mo: 100*(1 + accrue_rate(yr_of(mo), tm.k_prem,
+                                                    call_cpn(tm), tm.k_cmp))
     return dict(cmonth=cmonth, cyear=cyear, put=put, call=call,
+                put_at_month=put_at_month, call_at_month=call_at_month,
                 red=100*(1 + accrue_rate(mat_year, tm.ytm, eff_cpn(tm), tm.ytm_cmp)))
 
 
@@ -2320,8 +2342,7 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                           이유=["계약에 조기상환청구권이 없습니다."],
                           근거=[], 평가="—", 지표={})
     else:
-        pv = (100*(1 + accrue_rate(tm.p_s/12, tm.p_yield, eff_cpn(tm), tm.p_cmp))
-              if tm.p_mode == "accrue" else tm.p_rate)
+        pv = exercise_amounts(tm, 1, 0.0)["put_at_month"](tm.p_s)
         bv = amort_at(max(0.0, (tm.p_s - tm.elapsed_m)/12))
         gap, close = _close_test(pv, bv)
         why, cite = [], []
@@ -3374,8 +3395,8 @@ def eir_expect(tm: Terms):
     if m > tm.p_e + 1e-9: return None
     t_exp = (m - tm.elapsed_m)/12
     if t_exp < 0.01 or t_exp > tm.T - 1e-9: return None
-    amt = (100*(1 + accrue_rate(m/12, tm.p_yield, eff_cpn(tm), tm.p_cmp))
-           if tm.p_mode == "accrue" else float(tm.p_rate))
+    # 격자와 같은 산식에서 가져온다. 스텝이 아니라 «개월» 로 묻는다.
+    amt = exercise_amounts(tm, 1, 0.0)["put_at_month"](m)
     return (t_exp, amt, m)
 
 
@@ -3383,7 +3404,7 @@ def eir_table(tm: Terms, host, expect=None):
     """유효이자율 상각표. ``expect`` = eir_expect() — 있으면 그 연수·금액이 만기 대신 선다."""
     c = 100*eff_cpn(tm)*tm.ipay/12
     per = max(1e-6, tm.ipay/12)
-    red = 100*(1 + accrue_rate(tm.T + tm.elapsed_m/12, tm.ytm, eff_cpn(tm), tm.ytm_cmp))
+    red = exercise_amounts(tm, max(1, int(tm.n)), tm.T/max(1, int(tm.n)))["red"]
     hz = tm.T
     if expect is not None:
         hz, red = expect[0], expect[1]
@@ -5177,7 +5198,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
       ("2. 계약조건", [("발행일", tm.d_issue, None), ("평가기준일", tm.d_base, None),
         ("만기일", tm.d_mat, None), ("경과기간 (개월)", tm.elapsed_m, N2),
         ("평가기준일 주가", tm.S0, N2), ("현재 전환가액", tm.K0, N2),
-        ("잔존기간 (년)", tm.T, N4), ("노드 수", tm.n, N0), ("Δt", dt_, N4),
+        ("잔존기간 (년)", tm.T, N4), ("잔존기간 (계약상 개월)", tm.rem_m, N2),
+        ("행사금액 경과기간", ("계약 개월 ÷ 12" if int(getattr(tm, "acc_basis", 1))
+                              else "Actual/365 (할인기간과 같은 잣대)"), None),
+        ("노드 수", tm.n, N0), ("Δt", dt_, N4),
         ("표면이자율", tm.cpn, P2)]
         + ([("우선배당 처리", ("발행자 재량 — 부채 현금흐름에서 제외 (1032 AG37)"
                               if int(tm.div_mode) == 1 else
@@ -6011,6 +6035,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("BDT σ 출처", "rvhow", ((tm.rvol_how or "직접 입력") if put_bdt_on(tm) else "해당 없음 (BDT 미적용)"), None, True),
         ("현재 전환가액", "K0", tm.K0, N2, True),
         ("잔존기간 T (년)", "T", tm.T, N4, True),
+        # 할인은 Actual/365(T), 행사금액 산정은 계약 개월수다. 두 잣대를 따로 둔다.
+        ("잔존기간 (계약상 개월)", "remm", tm.rem_m, N2, True),
+        ("행사금액 경과기간 (1 계약 개월÷12 / 0 Actual/365)", "accb",
+         int(getattr(tm, "acc_basis", 1)), N0, True),
         ("노드 수 n", "n", n, N0, True),
         ("Δt", "dt", "@=C{T}/C{n}", N4, False),
         ("표면이자율", "cpn", tm.cpn, P2, True),
@@ -6023,10 +6051,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("만기보장 복리 횟수", "ycm", tm.ytm_cmp, N0, True),
         ("만기상환금액", "red",
          # 할증금은 음수가 될 수 없다. 엔진의 accrue_rate 와 같이 0 에서 끊는다.
-         "@=IF(C{ytm}<=0,100*(1+MAX(0,(C{ytm}-C{cpn})*(C{T}+C{elm}/12))),"
-         "100*(1+IF(C{ycm}<=0,MAX(0,(C{ytm}-C{cpn})*(C{T}+C{elm}/12)),"
+         # 만기까지의 경과연수도 가정 시트의 «행사금액 경과기간» 을 따른다.
+         "@=IF(C{ytm}<=0,100*(1+MAX(0,(C{ytm}-C{cpn})*IF(C{accb}=1,(C{elm}+C{remm})/12,C{T}+C{elm}/12))),"
+         "100*(1+IF(C{ycm}<=0,MAX(0,(C{ytm}-C{cpn})*IF(C{accb}=1,(C{elm}+C{remm})/12,C{T}+C{elm}/12)),"
          "MAX(0,(C{ytm}-C{cpn})/C{ytm}*"
-         "((1+C{ytm}/MAX(1,C{ycm}))^(MAX(1,C{ycm})*(C{T}+C{elm}/12))-1)))))", N2, False),
+         "((1+C{ytm}/MAX(1,C{ycm}))^(MAX(1,C{ycm})*IF(C{accb}=1,(C{elm}+C{remm})/12,C{T}+C{elm}/12))-1)))))", N2, False),
         ("최저 조정가액", "flr", tm.floor, N2, True),
         ("액면가", "par", tm.par, N2, True),
         # 상향 재조정의 상한은 **최초** 전환가액이다. 이미 하향 조정된 상품을
@@ -6174,7 +6203,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             # 머리는 모두 2행(스텝)을 참조한다. 2행 자신도 직전 열 + 1 이라,
             # 맨 앞 열의 0 하나에서 모든 열이 줄줄이 정해진다.
             st = f"{L}$2"                            # 이 열의 스텝
-            yr = f"({st}*{K['dt']}+{K['elm']}/12)"   # 발행일부터 흐른 연수
+            yr = (f"IF({K['accb']}=1,({K['elm']}+{st}*{K['remm']}/{K['n']})/12,"
+                  f"{st}*{K['dt']}+{K['elm']}/12)")   # 발행일부터 흐른 연수
             g(1, f"={K['d_base']}+{st}*{K['dt']}*365", DATE, GREY)
             g(2, (0 if i == 0 else f"={Lp}$2+1"), N0)
             g(3, f"=IF(OR(AND({st}>={cvs},{st}<={K['cve']}),"
@@ -6753,7 +6783,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         g = lambda r, v, fm=None, col="000000": put(D, r, 3+i, v, fmt=fm,
                                                     align="center", size=8, color=col)
         st = f"{L}$5"
-        yr = f"({st}*{K['dt']}+{K['elm']}/12)"
+        yr = (f"IF({K['accb']}=1,({K['elm']}+{st}*{K['remm']}/{K['n']})/12,"
+              f"{st}*{K['dt']}+{K['elm']}/12)")
         g(4, f"={K['d_base']}+{st}*{K['dt']}*365", DATE, GREY)
         g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
         g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
@@ -6793,7 +6824,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             g = lambda r, v, fm=None, col="000000": put(Dc, r, 3+i, v, fmt=fm,
                                                         align="center", size=8, color=col)
             st = f"{L}$5"
-            yr = f"({st}*{K['dt']}+{K['elm']}/12)"
+            yr = (f"IF({K['accb']}=1,({K['elm']}+{st}*{K['remm']}/{K['n']})/12,"
+                  f"{st}*{K['dt']}+{K['elm']}/12)")
             g(4, f"={K['d_base']}+{st}*{K['dt']}*365", DATE, GREY)
             g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
             g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
@@ -6842,7 +6874,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                 g = lambda r, v, fm=None, col="000000": put(W, r, 3+i, v, fmt=fm,
                                                             align="center", size=8, color=col)
                 st = f"{L}$5"
-                yr = f"({st}*{K['dt']}+{K['elm']}/12)"
+                yr = (f"IF({K['accb']}=1,({K['elm']}+{st}*{K['remm']}/{K['n']})/12,"
+                      f"{st}*{K['dt']}+{K['elm']}/12)")
                 g(4, f"={K['d_base']}+{st}*{K['dt']}*365", DATE, GREY)
                 g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
                 g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"

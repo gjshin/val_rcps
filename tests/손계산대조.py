@@ -946,14 +946,18 @@ def test_call_strike_switch():
         f0 = G["engine"](t0, call=True); f1 = G["engine"](t1, call=True)
         dt_ = t0.T/t0.n; i1 = round(1.0/dt_); i2 = round(2.0/dt_)
         ar, cc = G["accrue_rate"], G["call_cpn"]
-        # 계약값 — 발행일부터 정확히 1년·2년. 노드는 1년에 딱 떨어지지 않으므로(윤일) 산식으로 견준다
+        # 스텝 i 의 «계약상» 경과연수 — 계약은 개월로 센다. app.py 를 보지 않고 쓴 식이다.
+        cyr = lambda i: (t0.elapsed_m + i*t0.rem_m/t0.n)/12
+        # 계약값 — 발행일부터 정확히 1년·2년
         chk(f"{inst} · 차감 없음 — 1년 행사금액 (공시 101.5084)", 100*(1 + ar(1.0, .015, cc(t0), 4)), 101.5084, 1e-3)
         chk(f"{inst} · 차감 없음 — 2년 행사금액 (공시 103.0396)", 100*(1 + ar(2.0, .015, cc(t0), 4)), 103.0396, 1e-3)
-        chk(f"{inst} · 격자의 행사금액 = 그 노드 연수의 순수 복리", f0["kstrike"](i1),
-            100*(1 + ar(i1*dt_, .015, 0.0, 4)), 1e-9)
+        chk(f"{inst} · 격자의 행사금액 = 그 노드 «계약 개월» 의 순수 복리", f0["kstrike"](i1),
+            100*(1 + ar(cyr(i1), .015, 0.0, 4)), 1e-9)
+        # 노드가 계약상 12개월에 딱 떨어지면 공시값이 그대로 나온다 — 종전에는 윤일 때문에 어긋났다
+        chk(f"{inst} · 12개월 노드 = 공시 101.5084", f0["kstrike"](i1), 101.5084, 1e-3)
         chk_bool(f"{inst} · 차감(기본)이 차감 없음보다 낮다", f1["kstrike"](i1) < f0["kstrike"](i1))
-        chk(f"{inst} · 차감(기본) = 종전 산식", f1["kstrike"](i1),
-            100*(1 + ar(i1*dt_, .015, G["eff_cpn"](t1), 4)), 1e-9)
+        chk(f"{inst} · 차감 반영 = 같은 계약 개월의 산식", f1["kstrike"](i1),
+            100*(1 + ar(cyr(i1), .015, G["eff_cpn"](t1), 4)), 1e-9)
     # 값이 움직인다 — 행사금액이 오르면 발행자 권리는 싸진다 (매도청구권 ≤)
     t0 = Terms(**base, k_less_cpn=0); derive(t0); t1 = Terms(**base, k_less_cpn=1); derive(t1)
     _, _, _, _, ca0, _ = G["decompose"](t0); _, _, _, _, ca1, _ = G["decompose"](t1)

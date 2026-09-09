@@ -24,8 +24,8 @@ WANT = {
     4:  {"pst", "pen", "frq", "pt30"},         # Flag(조기상환) — ⑮ 는 pt30 (의무보유가 조기상환도 막는다)
     5:  {"kst", "ken", "kfrq"},                # Flag(매도청구)
     6:  {"roff", "cyc"},                       # Flag(리픽싱)
-    7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate", "pmode"},   # 조기상환금액
-    8:  {"prem", "cpn", "kcmp", "dt", "elm", "kless"},   # 매도청구금액 — kless 0 이면 지급분을 안 뺀다
+    7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate", "pmode", "accb", "remm", "n"},   # 조기상환금액 — accb/remm/n 은 경과기간 잣대
+    8:  {"prem", "cpn", "kcmp", "dt", "elm", "kless", "accb", "remm", "n"},   # 매도청구금액 — kless 0 이면 지급분을 안 뺀다
     # 지급일은 발행일 기준이라 리픽싱(roff)처럼 첫 지급 스텝을 함께 본다.
     9:  {"ipay", "payoff", "cpn", "ipaym"},    # 쿠폰
     10: {"n", "red"},                          # 만기상환
@@ -162,6 +162,11 @@ def main():
         per = lambda mth: max(1, int(round(mth*mper)))
         ar = G["accrue_rate"]
         inset = lambda i, a, b, fr: stp(a) <= i <= stp(b) and (i-stp(a)) % per(fr) == 0
+        # 행사금액의 경과연수 — 계약은 «개월» 로 센다 (acc_basis=1). 0 이면 종전 Actual/365.
+        # 여기 식은 app.py 를 보지 않고 계약이 세는 방식을 그대로 쓴 것이다.
+        cyr = (lambda i: (t.elapsed_m + i*t.rem_m/n)/12) if int(t.acc_basis) \
+            else (lambda i: i*dt_ + ey)
+        mat_yr = (t.elapsed_m + t.rem_m)/12 if int(t.acc_basis) else t.T + ey
         full, b0, b1, b2, ca, conv = G["decompose"](t)
         W = openpyxl.load_workbook(io.BytesIO(
             G["build_xlsx"](t, full, b0, b1, b2, ca, conv,
@@ -170,13 +175,13 @@ def main():
         for i in range(n+1):
             # 조기상환금액
             want = (0.0 if not inset(i, t.p_s, t.p_e, t.p_f) else
-                    (100*(1+ar(i*dt_+ey, t.p_yield, t.cpn, t.p_cmp))
+                    (100*(1+ar(cyr(i), t.p_yield, t.cpn, t.p_cmp))
                      if t.p_mode == "accrue" else t.p_rate))
             got = W.cell(7, 3+i).value or 0.0
             if abs(got-want) > worst[0][1]: worst = [("조기상환금액", abs(got-want))]
             # 매도청구금액
             want = (999999 if not inset(i, t.k_s, t.k_e, t.k_f) else
-                    100*(1+ar(i*dt_+ey, t.k_prem, t.cpn, t.k_cmp)))
+                    100*(1+ar(cyr(i), t.k_prem, t.cpn, t.k_cmp)))
             got = W.cell(8, 3+i).value or 0.0
             if abs(got-want) > worst[0][1]: worst = [("매도청구금액", abs(got-want))]
             # 쿠폰
@@ -185,7 +190,7 @@ def main():
             got = W.cell(9, 3+i).value or 0.0
             if abs(got-want) > worst[0][1]: worst = [("쿠폰", abs(got-want))]
             # 만기상환
-            want = 100*(1+ar(t.T+ey, t.ytm, t.cpn, t.ytm_cmp)) if i == n else 0.0
+            want = 100*(1+ar(mat_yr, t.ytm, t.cpn, t.ytm_cmp)) if i == n else 0.0
             got = W.cell(10, 3+i).value or 0.0
             if abs(got-want) > worst[0][1]: worst = [("만기상환", abs(got-want))]
         nm2, gap = worst[0]
