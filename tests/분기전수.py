@@ -64,6 +64,10 @@ COMPANION = {
     ("CB", "k_hold", 0):          dict(k_method=2),
     ("RCPS", "k_hold", 0):        dict(issuer_call=2, k_method=2),
     ("BW", "k_hold", 0):          dict(bw_pay=1, k_method=2),
+    # 의무보유가 조기상환 시작(24개월)보다 늦어야 「전환만 막는다」가 값을 바꾼다.
+    ("CB", "k_lock_put", 0):      dict(k_lock=30.),
+    ("RCPS", "k_lock_put", 0):    dict(issuer_call=2, k_lock=30.),
+    ("BW", "k_lock_put", 0):      dict(bw_pay=1, k_lock=30.),
     ("RCPS", "ipo_conv", 1):      dict(ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=600.),
     ("RCPS", "ipo_conv", 0):      dict(ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=600.),
     ("*", "ipo_on", 1):           dict(ipo_m=24., ipo_px=1200., ipo_min=600.),

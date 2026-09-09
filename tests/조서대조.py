@@ -34,6 +34,14 @@ CASES = [
     ("방법1 · 본문 4.3.3 전환확률", dict(k_method=1, k_split=1)),
     # 콜 대상물량 의무보유 없음 — 기초 사채가 정산되는 자리에서 콜도 소멸한다
     ("방법2 · 전환확률 · 의무보유 없음", dict(k_method=2, k_split=1, k_hold=0)),
+    # 의무보유가 콜 행사기간보다 먼저 끝난다 — 만료 뒤 노드에서 콜이 소멸한다 (lockend)
+    ("방법2 · 전환확률 · 의무보유 12개월", dict(k_method=2, k_split=1, k_lock=12.)),
+    # 의무보유가 전환만 막는다 — 유무가치비교법의 With 격자에서 조기상환이 살아 있다 (pt30)
+    ("유무가치 · 전환만 막는 의무보유", dict(k_method=0, k_lock=30., k_lock_put=0)),
+    ("유무가치 · 전환·조기상환 모두 막는 의무보유", dict(k_method=0, k_lock=30.)),
+    # ⑮ 트랜치의 GS 전환확률 동점 처리 — 전환가치와 상환금액이 같아지는 자리가 생긴다.
+    # 전환 시작과 조기상환 시작이 갈리면 드러난다 (종전에는 엔진과 어긋났다).
+    ("GS · 조기상환 시작 30개월", dict(model="GS", p_s=30.)),
     ("방법2 · 전환권 부채", dict(k_method=2, conv_class="liability")),
     # RCPS — 상품 스위치. 자동전환은 전환권이 있는 격자에서만 타므로 B0·B1 은 CB 와 같다.
     ("RCPS · 자동전환 · 발행자콜 없음", dict(inst="RCPS", mat_mode=0, issuer_call=0)),
@@ -283,8 +291,9 @@ def build(G, over, path):
         if k not in ("_gap", "_cr", "_rf"): setattr(t, k, v)
     derive(t)
     full, b0, b1, b2, ca, conv = decompose(t)
+    _cs, _ps = G["lock_delay"](t)
     b3 = G["pick"](G["engine"](t, conv=True, put=True, call=True,
-                               conv_start=max(t.cv_s, t.k_lock)), t.model)
+                               conv_start=_cs, put_start=_ps), t.model)
     ctp1 = G["call_third_party"](t, full, 1)
     ctp2 = G["call_third_party"](t, full, 2)
     open(path, "wb").write(

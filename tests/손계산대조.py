@@ -1125,10 +1125,32 @@ def test_call_split_text():
     _g1, _, _ = val(1, 0, k_hold=1); _g0, _, _ = val(1, 0, k_hold=0)
     chk_bool("방법1 에서도 같은 방향", _g1 > _g0 + 1e-6)
     chk_bool("Terms() 기본 k_hold = 1 (기준선 보존)", Terms().k_hold == 1)
-    # 유무가치비교법은 k_hold 를 보지 않는다 — 격자의 전환 지연으로 이미 반영하므로 이중반영 금지
+    # ── 의무보유는 두 평가방법이 «같은 기간·같은 권리» 를 본다 ──
+    # k_hold 가 있음/없음, k_lock 이 기간, k_lock_put 이 조기상환청구까지 막는가.
+    # 유무가치비교법도 k_hold 를 따른다 — 꺼 두면 격자의 전환·조기상환 지연이 사라진다.
     _u1 = G["decompose"](_mkt(base, k_method=0, k_hold=1))[4]
     _u0 = G["decompose"](_mkt(base, k_method=0, k_hold=0))[4]
-    chk("유무가치비교법은 k_hold 와 무관 (이중반영 금지)", _u1, _u0, 1e-12)
+    chk_bool(f"유무가치비교법도 의무보유를 따른다 (있음 {_u1:.4f} > 없음 {_u0:.4f})",
+             _u1 > _u0 + 1e-6)
+    # 계약 정의는 「전환 및 조기상환청구 불가」다. 조기상환까지 막으면 콜 대상물량이
+    # 빠져나가지 못해 유무가치법의 값이 «오른다».
+    _p1 = G["decompose"](_mkt(base, k_method=0, k_lock_put=1))[4]
+    _p0 = G["decompose"](_mkt(base, k_method=0, k_lock_put=0))[4]
+    chk_bool(f"조기상환도 막으면 유무가치 값이 오른다 ({_p0:.4f} → {_p1:.4f})",
+             _p1 > _p0 + 1e-6)
+    chk_bool("Terms() 기본 k_lock_put = 1 (계약 정의)", Terms().k_lock_put == 1)
+    # 의무보유가 조기상환 시작보다 이르면 아무 제약이 아니라 두 값이 같다.
+    _q1 = G["decompose"](_mkt(base, k_method=0, k_lock=6.0, k_lock_put=1))[4]
+    _q0 = G["decompose"](_mkt(base, k_method=0, k_lock=6.0, k_lock_put=0))[4]
+    chk("의무보유가 조기상환 시작보다 이르면 차이 없음", _q1, _q0, 1e-12)
+    # 옵션차익법의 존속도 같은 기간을 본다 — 의무보유가 짧을수록 콜이 일찍 죽어 값이 낮다.
+    _l_long, _, _ = val(2, 1, k_hold=1, k_lock=25.0)
+    _l_mid, _, _ = val(2, 1, k_hold=1, k_lock=18.0)
+    chk_bool(f"의무보유가 짧으면 옵션차익 값이 낮다 ({_l_long:.4f} > {_l_mid:.4f})",
+             _l_long > _l_mid + 1e-6)
+    _l_none, _, _ = val(2, 1, k_hold=1, k_lock=0.0)
+    _l_off, _, _ = val(2, 1, k_hold=0)
+    chk("의무보유 기간 0 = 의무보유 없음", _l_none, _l_off, 1e-12)
     # 문안
     for km, ks, kk, want in ((0, 0, 0, "유무가치비교법"), (2, 1, 0, "본문 4.3.3"), (2, 0, 0, "비례균등차감법"), (2, 1, 1, "주주간 분배")):
         t = Terms(**base, k_method=km, k_split=ks, k_kind=kk); derive(t)

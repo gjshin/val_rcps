@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 머리 행 -> 참조해야 하는 가정 항목 (키 이름)
 WANT = {
     3:  {"cvs", "cve", "cv30", "auto", "n"},                # Flag(전환) — ⑮ 는 cv30
-    4:  {"pst", "pen", "frq"},                 # Flag(조기상환)
+    4:  {"pst", "pen", "frq", "pt30"},         # Flag(조기상환) — ⑮ 는 pt30 (의무보유가 조기상환도 막는다)
     5:  {"kst", "ken", "kfrq"},                # Flag(매도청구)
     6:  {"roff", "cyc"},                       # Flag(리픽싱)
     7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate", "pmode"},   # 조기상환금액
@@ -80,8 +80,8 @@ def main():
     data = G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv, G["eir_table"](t, b0))
     wb = openpyxl.load_workbook(io.BytesIO(data))
     km = keymap(G)
-    # ⑯ 부채요소는 머리 행 구성이 다르므로 뺀다. ⑮ 30% 트랜치의 전환 Flag 는
-    # 의무보유를 반영한 cv30 을 쓰는 것이 맞다.
+    # ⑯ 부채요소는 머리 행 구성이 다르므로 뺀다. ⑮ 30% 트랜치의 전환·조기상환 Flag 는
+    # 의무보유를 반영한 cv30 · pt30 을 쓰는 것이 맞다.
     trees = [s for s in wb.sheetnames
              if re.match(r"^\d\d ", s) and not s.startswith("16 ")]
     for row, want in WANT.items():
