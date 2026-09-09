@@ -1176,6 +1176,20 @@ def test_call_split_text():
                      (0, "복합옵션")):
         t = Terms(**base, k_method=2, k_split=1, k_kind=kk); derive(t)
         chk_bool(f"화면 안내에 «{want}» (유형 {kk})", want in G["call_type_note"](t))
+    # ── 시나리오 JSON 의 평가체계 버전 ──
+    # 옛 파일에는 «_schema» 가 없다. 그때 Terms 기본값(유무가치비교법)으로 열려야
+    # 과거 조서가 그대로 재현된다. 새 파일에는 버전이 붙고, 옛 앱에서도 열려야 하므로
+    # Terms 에 없는 키는 버려진다.
+    import json as _json
+    _fields = Terms.__dataclass_fields__
+    _saved = _json.loads(_json.dumps({**G["asdict"](Terms()), "_schema": G["SCHEMA_VER"]},
+                                     ensure_ascii=False, default=str))
+    chk_bool("저장 파일에 «_schema» 가 붙는다", _saved.get("_schema") == G["SCHEMA_VER"])
+    chk_bool("Terms 에 없는 키는 버려진다 (옛 앱 호환)", "_schema" not in _fields)
+    _t_old = Terms(**{k: v for k, v in {"k_w": 0.3, "sig": 0.5}.items() if k in _fields})
+    chk_bool("«_schema» 없는 옛 파일 → 유무가치비교법 기본", _t_old.k_method == 0)
+    chk_bool("«_schema» 없는 옛 파일 → 행사가 분해 없음", _t_old.k_split == 0)
+    chk_bool("평가체계 버전 2", G["SCHEMA_VER"] == 2)
     # RCPS 발행자 상환권·없음 갈래는 k_kind 0
     tr = Terms(inst="RCPS", issuer_call=1, k_kind=1); derive(tr)
     chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)

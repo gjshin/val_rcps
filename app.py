@@ -320,6 +320,11 @@ COMPAT_BDT = ("BDT 금리격자는 전환권을 **자본**으로 두고 **TF** �
 
 # 알려진 한계 — (제목, 설명, 실려야 하는 곳). 화면 검산 탭 · 조서 99_모형검증 · README 「한계」 가
 # 모두 이 표에서 나온다. 시험(기능목록.py)이 README 에 제목이 있는지 확인한다.
+# 매도청구권 평가체계 버전. 1 = PR #13 이전(유무가치비교법 기본, 행사가 분해 없음),
+# 2 = 지금(옵션차익·TF식 + 본문 4.3.3 전환확률 분해, 의무보유 세 값). 시나리오 JSON 에
+# 「_schema」로 적어 두고, 옛 파일을 열면 저장된 대로 열되 그 사실을 알려 준다.
+SCHEMA_VER = 2
+
 MODEL_LIMITS = (
     ('복합내재파생이 음수',
      '발행자 상환권이 전환권보다 크면 부채 갈래 묶음이 음수 (대신증권 −9.0050)',
@@ -2927,6 +2932,9 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
         _std = ("유무가치비교법" if (issuer_redeem(tm) or not tm.k_third)
                 else "옵션차익혼합할인법")
         _now = "유무가치비교법" if int(tm.k_method) == 0 else "옵션차익혼합할인법"
+        out.append(("매도청구권 평가체계 버전", f"v{SCHEMA_VER}", "적합",
+                    "시나리오 JSON 의 «_schema» 와 같다 — 옛 파일은 저장된 대로 열리고 "
+                    "화면이 그 사실을 알려 준다"))
         out.append(("매도청구권 적용 방법 · 구분 기준",
                     K_METHODS[int(tm.k_method)]
                     + (" · " + K_SPLITS[int(tm.k_split)].split(" —")[0] if tm.k_method else "")
@@ -8204,7 +8212,7 @@ if "rate_series" not in st.session_state: st.session_state.rate_series = []
 # 위젯이 아니라 앱이 직접 관리하는 상태 — 시나리오를 불러와도 남긴다
 _KEEP_STATE = {"tm", "prices", "peers", "scen", "scen_id", "rf_txt", "cr_txt", "ca_txt", "cb_txt",
                "kis_rows", "kis_src", "peer_txt", "px_src", "rate_how", "rate_opt", "rate_series",
-               "report", "rvmode", "vol_opt", "sched_mode", "sched_mode_prev"}
+               "report", "rvmode", "vol_opt", "sched_mode", "sched_mode_prev", "scen_old"}
 # 행사 시점 칸의 key — 날짜/개월 모드를 바꾸면 다른 모드의 저장값이 되살아나지 않게 비운다
 _SCHED_KEYS = ["cvs", "cve", "ps", "pe", "ks", "ke", "klock", "ipom", "qipom",
                "shaps", "shape", "shacs", "shace"]
@@ -8243,6 +8251,10 @@ with st.sidebar:
                 st.session_state.ca_txt = _fmt(_tm.cr_curve)
             if _tm.cr_curve_b: st.session_state.cb_txt = _fmt(_tm.cr_curve_b)
             st.session_state.scen_id = _sid
+            # 매도청구권 평가체계가 바뀌기 «전» 에 저장된 파일이면 알려 준다. 값은 저장된
+            # 대로 연다 — 과거 조서의 재현성이 먼저다. 바꾸고 싶으면 버튼을 누른다.
+            st.session_state.scen_old = (int(o.get("_schema", 1)) < SCHEMA_VER
+                                         and float(o.get("k_w", 0) or 0) > 0)
             # key 가 있는 칸(조기상환·매도청구 시작/종료, 날짜 칸 …)은 한 번 그려지면 저장값이
             # value= 기본값을 이긴다. 비우지 않으면 시나리오의 값이 화면의 옛 값으로 되돌아간다.
             reset_widgets()
@@ -8251,6 +8263,18 @@ with st.sidebar:
         except Exception as ex:
             st.error(f"읽지 못했습니다 — {ex}")
     t = st.session_state.tm
+
+    if st.session_state.get("scen_old"):
+        st.info("이 시나리오는 **매도청구권 평가체계를 정리하기 전**에 저장되었습니다. "
+                "값은 **저장된 대로** 열었습니다 — 과거 조서를 그대로 재현하기 위해서입니다. "
+                "현재 기본 방법(옵션차익 · TF식 지분-채권 분리할인 + 본문 4.3.3 전환확률 분해, "
+                "의무보유는 기간·조기상환 제한까지 반영)으로 바꾸려면 아래를 누르십시오. "
+                "**값이 크게 달라질 수 있습니다.**")
+        if st.button("현재 기본 평가방법으로 전환", key="scen_upg", use_container_width=True):
+            t.k_method, t.k_split = 2, 1
+            st.session_state.scen_old = False
+            reset_widgets()
+            st.rerun()
 
     with st.expander("모형", expanded=True):
         _INSTS = ["CB", "BW", "RCPS", "SHA"]
@@ -9493,7 +9517,8 @@ with st.sidebar:
                        f"(스프레드 {math.exp(CRq(t.T))-math.exp(RFq(t.T)):.2%})")
 
     st.download_button("시나리오 저장",
-                       json.dumps(asdict(t), ensure_ascii=False, indent=2).encode(),
+                       json.dumps({**asdict(t), "_schema": SCHEMA_VER},
+                                  ensure_ascii=False, indent=2).encode(),
                        f"{lbl(t)['short']}평가_시나리오_{dt.date.today()}.json",
                        "application/json",
                        use_container_width=True)
