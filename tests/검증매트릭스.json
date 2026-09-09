@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-09T00:57:33",
- "head": "fefc9e6",
+ "generated": "2026-09-09T01:36:36",
+ "head": "57b25ac",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -1660,7 +1660,7 @@
     "tests/조서대조.py::방법2 · 전환권 부채",
     "tests/설정전수대조.py::평가방법 2 지분·부채"
    ],
-   "n_tests": 14
+   "n_tests": 15
   },
   {
    "case_id": "BW-k_method-0",
@@ -2122,9 +2122,10 @@
     "tests/조서대조.py::방법1 · 콜 우선 · 의무보유 없음",
     "tests/조서대조.py::방법2 · 콜 우선 · 의무보유 12개월",
     "tests/손계산대조.py::test_call_split_text",
+    "tests/오라클.py::test_call_tf",
     "tests/분기전수.py::k_split=1"
    ],
-   "n_tests": 9
+   "n_tests": 10
   },
   {
    "case_id": "BW-k_split-0",
@@ -2244,7 +2245,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 139
+   "n_tests": 140
   },
   {
    "case_id": "CB-k_hold-0",
@@ -2364,8 +2365,8 @@
    "meaning": "의무보유가 조기상환청구도 막는가",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -2380,7 +2381,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 140
+   "n_tests": 141
   },
   {
    "case_id": "CB-k_lock_put-0",
@@ -2510,7 +2511,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 142
+   "n_tests": 143
   },
   {
    "case_id": "CB-k_kind-1",
@@ -6036,7 +6037,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 142
+   "n_tests": 143
   },
   {
    "case_id": "CB-call-OFF",

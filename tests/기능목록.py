@@ -361,6 +361,9 @@ def collect_coverage(G):
         "test_bw_cash": [("BW", "bw_pay", 0), ("BW", "bw_detach", 1)],
         "test_sha_european": [("SHA", "sha_disc", 0), ("SHA", "sha_put_cmp", 1), ("SHA", "sha_call_cmp", 1),
                               ("SHA", "sha_put", True), ("SHA", "sha_call", True)],
+        # 제3자 매도청구권의 새 기본산식 — 손계산 함수가 app.py 를 보지 않고 쓴 독립 오라클이다
+        "test_call_tf": [("CB", "k_method", 2), ("CB", "k_split", 1), ("CB", "k_hold", 1),
+                         ("CB", "k_lock_put", 1), ("CB", "k_kind", 0), ("CB", "call", True)],
         "test_date_boundaries": [("CB", "mid", True), ("CB", "mid", False)],
         "test_sequential_identities": [("CB", "carry", 0), ("CB", "k_sep", 1), ("CB", "model", "TF")],
     }

@@ -384,64 +384,15 @@ def monotone(G, product, over, rng):
 
 
 def call_node_min(G, tm, method):
-    """콜 트리 전 노드의 최솟값과 뿌리값. call_third_party 를 노드마다 다시 재어 본다.
+    """콜 트리 전 노드의 최솟값과 뿌리값.
 
-    엔진은 뿌리값만 돌려주므로, 같은 격자에서 각 노드를 뿌리로 삼은 부분 트리를
-    다시 풀어 최솟값을 센다. 노드 수가 (n+1)(n+2)/2 라 캐시가 있어 한 번 훑는 값이다.
+    엔진 자신에게 노드를 받아 온다 (call_third_party 의 nodes 인자). 여기서 논리를
+    베껴 쓰면 엔진이 틀렸을 때 시험도 같이 틀리므로, 값만 받아서 본다.
     """
-    import math
     full = G["engine"](tm, call=False)
-    memo, dt_, ks = full["memo"], full["dt"], full["kstrike"]
-    qi, fRF, fCR = full["qi"], full["fwdRF"], full["fwdCR"]
-    ksplit = int(getattr(tm, "k_split", 0)) == 1
-    khold = int(getattr(tm, "k_hold", 1)) == 1
-    lock_end = full["st_hi"](tm.k_lock) if khold else -1
-    lkput = int(getattr(tm, "k_lock_put", 1)) == 1
-    kfirst = int(getattr(tm, "pc_order", 0)) == 1
-    cache = {}
-    def w(o):
-        v = o["E"] + o["B"]
-        return o["E"]/v if v > 1e-12 else 0.0
-    def split(o, i, pay):
-        K = ks(i)
-        if pay <= 0 or K is None: return 0.0, 0.0
-        if not ksplit:
-            ww = w(o); return pay*ww, pay*(1-ww)
-        P = o.get("P", 0.0)
-        return o["E"] - P*K, o["B"] - (1-P)*K
-    def rec(key, i):
-        if key in cache: return cache[key]
-        o = memo[key]; K = ks(i)
-        pay = max(o["E"] + o["B"] - K, 0.0) if K is not None else 0.0
-        kd = o.get("kind")
-        held = i <= lock_end and (lkput or kd != "put")
-        if not held and "up" in o and kd in ("conv", "auto", "ipo", "put", "call", "mat"):
-            if kfirst and kd in ("conv", "put") and pay > 0:
-                e_, b_ = split(o, i, pay); r = (pay, e_, b_)
-            else:
-                r = (0.0, 0.0, 0.0)
-        elif "up" not in o:
-            e_, b_ = split(o, i, pay); r = (pay, e_, b_)
-        else:
-            q, ou, od = qi(i), memo[o["up"]], memo[o["dn"]]
-            cu, eu, bu = rec(o["up"], i+1); cd, ed, bd = rec(o["dn"], i+1)
-            if method == 1:
-                g = lambda x: (x.get("P", 0.0) if ksplit else w(x))
-                yu = g(ou)*fRF(i) + (1-g(ou))*fCR(i)
-                yd = g(od)*fRF(i) + (1-g(od))*fCR(i)
-                cont = q*cu*math.exp(-yu*dt_) + (1-q)*cd*math.exp(-yd*dt_)
-                r = (max(pay, cont), 0.0, 0.0)
-            else:
-                he = (q*eu + (1-q)*ed) * math.exp(-fRF(i)*dt_)
-                hb = (q*bu + (1-q)*bd) * math.exp(-fCR(i)*dt_)
-                if pay > 0 and pay >= he + hb:
-                    e_, b_ = split(o, i, pay); r = (pay, e_, b_)
-                else:
-                    r = (he + hb, he, hb)
-        cache[key] = r
-        return r
-    root = rec(full["root"], 0)[0]
-    return (min(v[0] for v in cache.values()) if cache else 0.0), root
+    nodes = {}
+    root = G["call_third_party"](tm, full, method, nodes=nodes)
+    return (min(v[0] for v in nodes.values()) if nodes else 0.0), root
 
 
 # ══════════════════════════════════════════════════════════

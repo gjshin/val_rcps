@@ -1582,7 +1582,7 @@ def lock_delay(tm: Terms, lock=None):
 CB_SETTLED = ("conv", "auto", "ipo", "put", "call", "mat")
 
 
-def call_third_party(tm: Terms, full, method: int) -> float:
+def call_third_party(tm: Terms, full, method: int, nodes=None) -> float:
     """제3자 지정 가능 콜옵션 — 옵션차익혼합할인법.
 
     한국공인회계사회 『K-IFRS 실무사례와 해설 연구보고서 시리즈 11 복합금융상품』
@@ -1626,6 +1626,9 @@ def call_third_party(tm: Terms, full, method: int) -> float:
 
     그 제한으로 콜 대상 전환사채가 행사기간 동안 존속하여 콜의 행사 가능성이 유지되는
     효과만 콜 계약가치에 담는다. 0 이면 기초 사채가 소멸하는 노드에서 콜도 함께 사라진다.
+
+    ``nodes`` 에 사전을 넘기면 노드마다 ``(콜 가치, 지분 몫, 채권 몫)`` 을 채워 준다 —
+    불변식 시험이 뿌리뿐 아니라 «모든» 노드를 볼 수 있게 하려는 것이다.
     """
     memo, dt_ = full["memo"], full["dt"]
     qi, fRF, fCR = full["qi"], full["fwdRF"], full["fwdCR"]
@@ -1701,7 +1704,9 @@ def call_third_party(tm: Terms, full, method: int) -> float:
         cache[key] = r
         return r
 
-    return rec(full["root"], 0)[0]
+    v = rec(full["root"], 0)[0]
+    if nodes is not None: nodes.update(cache)
+    return v
 
 
 CALL_HOWTO = """\
