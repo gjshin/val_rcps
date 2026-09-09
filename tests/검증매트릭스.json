@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-09T02:03:39",
- "head": "2075727",
+ "generated": "2026-09-09T02:16:53",
+ "head": "a7295f5",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -35,7 +35,7 @@
   "ALL": {
    "PASS": 0,
    "EXPECTED_BLOCK": 5,
-   "KNOWN_LIMITATION": 16,
+   "KNOWN_LIMITATION": 18,
    "FAIL": 0,
    "NOT_TESTED": 0
   }
@@ -7175,6 +7175,54 @@
   {
    "case_id": "LIMIT-02",
    "product": "ALL",
+   "branch": "의무보유 물량 = 콜 대상비율",
+   "value": null,
+   "label": "의무보유 물량을 k_w 와 같다고 본다. 「콜 한도 30%인데 의무보유는 20%」처럼 두 물량이 다른 계약과 「30% → 20% → 10% 단계적 해제」처럼 물량이 시간에 따라 갈리는 계약은 담지 못한다 — 사채를 물량별로 쪼개 격자를 따로 풀고 조서에도 트리를 벌수만큼 실어야 한다. 기간(k_lock)과 제한 권리(k_lock_put)는 표현된다",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
+   "must_appear_in": [
+    "화면 매도청구권 캡션",
+    "README 「한계」",
+    "docs/의사결정규칙.md §29"
+   ],
+   "display_checked": true,
+   "note": ""
+  },
+  {
+   "case_id": "LIMIT-03",
+   "product": "ALL",
+   "branch": "부분 매도청구는 뿌리에서 비율로만 반영",
+   "value": null,
+   "label": "뿌리값에 k_w 를 곱한다. 행사금액이 물량에 비례하고 한도가 전체 기간에 하나뿐이면 발행자는 이득이 나는 순간 한도를 다 쓰는 것이 언제나 최선이므로 이 처리는 근사가 아니라 정확하다. 담지 못하는 것은 기간별 세부한도가 붙은 계약(「전체 30%인데 매년 10%씩만」)이다 — 남은 한도가 상태변수가 되어 상태확장이 필요하다",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
+   "must_appear_in": [
+    "화면 매도청구권 캡션",
+    "README 「한계」",
+    "docs/의사결정규칙.md §29"
+   ],
+   "display_checked": true,
+   "note": ""
+  },
+  {
+   "case_id": "LIMIT-04",
+   "product": "ALL",
    "branch": "배당가능이익·상환재원 제약 미반영",
    "value": null,
    "label": "계약상 상환일에 즉시 상환된다고 본다",
@@ -7197,7 +7245,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-03",
+   "case_id": "LIMIT-05",
    "product": "ALL",
    "branch": "IPO 는 가정 비교이지 PWERM 이 아니다",
    "value": null,
@@ -7221,7 +7269,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-04",
+   "case_id": "LIMIT-06",
    "product": "ALL",
    "branch": "자기신용위험 변동분(5.7.7) 분해 안 함",
    "value": null,
@@ -7246,7 +7294,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-05",
+   "case_id": "LIMIT-07",
    "product": "ALL",
    "branch": "리픽싱 근사법(경로가중 등)은 근사",
    "value": null,
@@ -7270,7 +7318,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-06",
+   "case_id": "LIMIT-08",
    "product": "ALL",
    "branch": "리픽싱 기준가 = 노드 주가 (VWAP 아님)",
    "value": null,
@@ -7293,7 +7341,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-07",
+   "case_id": "LIMIT-09",
    "product": "ALL",
    "branch": "사전통지기간 미반영",
    "value": null,
@@ -7315,7 +7363,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-08",
+   "case_id": "LIMIT-10",
    "product": "ALL",
    "branch": "BW: 신주인수권증권 자체에 대한 콜 미지원",
    "value": null,
@@ -7338,7 +7386,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-09",
+   "case_id": "LIMIT-11",
    "product": "ALL",
    "branch": "BW: 부분행사·다단계 행사가액 미지원",
    "value": null,
@@ -7360,7 +7408,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-10",
+   "case_id": "LIMIT-12",
    "product": "ALL",
    "branch": "SHA: 상대방 신용은 할인율로만",
    "value": null,
@@ -7383,7 +7431,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-11",
+   "case_id": "LIMIT-13",
    "product": "ALL",
    "branch": "SHA: Drag/Tag/ROFR·다단계 strike 미지원",
    "value": null,
@@ -7405,7 +7453,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-12",
+   "case_id": "LIMIT-14",
    "product": "ALL",
    "branch": "역산이 목표를 정확히 못 맞힐 수 있다",
    "value": null,
@@ -7428,7 +7476,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-13",
+   "case_id": "LIMIT-15",
    "product": "ALL",
    "branch": "자동전환·상장 강제전환 RCPS 의 전환권이 음수",
    "value": null,
@@ -7451,7 +7499,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-14",
+   "case_id": "LIMIT-16",
    "product": "ALL",
    "branch": "강제전환 할인율 효과로 매도청구권이 음수",
    "value": null,
@@ -7475,7 +7523,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-15",
+   "case_id": "LIMIT-17",
    "product": "ALL",
    "branch": "잔여 주계약 ≤ 0 이면 상각표 없음",
    "value": null,
@@ -7498,7 +7546,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-16",
+   "case_id": "LIMIT-18",
    "product": "ALL",
    "branch": "비분리형 BW 는 신주인수권 조기행사를 상태로 갖지 않는다",
    "value": null,
