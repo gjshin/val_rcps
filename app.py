@@ -167,6 +167,12 @@ class Terms:
     face_total: float = 25_000_000_000.0   # 전자등록총액 (원)
     ticker: str = ""              # 종목코드·티커 (주가·변동성 조회용, 비상장이면 빈칸)
     s0_src: str = ""              # 평가기준일 주가의 출처 ("야후 085660.KQ 2024-06-28 종가"). 빈칸 = 직접 입력
+    # 조회 결과를 그대로 남긴다 — 「무엇을 요청했고 무엇을 받았는가」가 조서에 있어야
+    # 나중에 분할·병합을 의심할 때 되짚을 수 있다. 빈칸이면 직접 입력이다.
+    s0_date: str = ""             # 실제로 쓴 거래일 (평가기준일이 휴장이면 직전 거래일)
+    s0_raw: float = -1.0          # 그날의 «원주가» (auto_adjust=False)
+    s0_adj: float = -1.0          # 그날의 «수정주가» (auto_adjust=True). 둘이 다르면 조정사건이 있었다
+    s0_splits: str = ""           # 야후가 기록한 분할 이력. "" 미조회 · "없음" 기록 없음 · 그 외 목록
     rate_mode: str = "direct"      # direct 직접 · pick 등급 하나 · rating 두 등급 보간
     cr_src: str = ""               # 위험 곡선을 어디서 가져왔는지 (조서에 적는다)     # direct 곡선 직접 / rating 등급 보간
     rt_a: str = "BBB+"            # 인풋 곡선 A 등급
@@ -3589,6 +3595,35 @@ def pc_compare(tm: Terms):
 CA_RATIOS = (2, 3, 4, 5, 10, 20, 100)
 
 
+def px_trace(tm: Terms) -> list:
+    """주가 조회 기록 다섯 줄 — ``[(항목, 문구)]``. 화면과 세 조서가 같은 것을 쓴다.
+
+    조서를 받은 사람이 **무엇을 요청했고 무엇을 받았는지** 알아야 분할·병합을 의심할 때
+    되짚을 수 있다. 직접 입력이면 조회 자체가 없었으니 그렇게 적는다.
+    """
+    src = (tm.s0_src or "").strip()
+    if not src:
+        return [("주가 출처", "직접 입력 — 야후 조회 없음"),
+                ("요청 평가기준일", tm.d_base),
+                ("실제 사용 거래일", "해당 없음 (직접 입력)"),
+                ("원주가 · 수정주가", "해당 없음 (직접 입력)"),
+                ("분할 기록", "조회하지 않음")]
+    dd = tm.s0_date or "?"
+    day = dd + ("" if dd == tm.d_base else "  (평가기준일이 휴장이라 직전 거래일)")
+    if tm.s0_raw > 0:
+        px = f"원주가 {tm.s0_raw:,.2f} · 수정주가 " + (
+            f"{tm.s0_adj:,.2f}" if tm.s0_adj > 0 else "받지 못함")
+        if tm.s0_adj > 0 and abs(tm.s0_adj - tm.s0_raw) > 0.005 * max(1.0, tm.s0_raw):
+            px += "  ← 다르다. 조회일 뒤 조정사건 가능"
+    else:
+        px = "기록 없음 (이전 판에서 만든 값이거나 손으로 고친 값)"
+    sp = tm.s0_splits or "조회하지 못함 — 확인 못 함"
+    if tm.s0_splits == "없음":
+        sp = "없음 — 다만 한국 종목은 무상증자가 야후에 기록되지 않는 경우가 많다"
+    return [("주가 출처", src), ("요청 평가기준일", tm.d_base),
+            ("실제 사용 거래일", day), ("원주가 · 수정주가", px), ("분할 기록", sp)]
+
+
 def basis_check(tm: Terms, px_last: float = None) -> list:
     """주가와 전환가가 **같은 기준(basis)** 위에 있는지 본다. 네트워크를 쓰지 않는다.
 
@@ -3950,6 +3985,10 @@ def fetch_close(code: str, market: str, on_date: str):
 
     변동성용 fetch_prices 와 달리 auto_adjust=False — 평가일의 주가는 그날 실제로 거래된
     값이어야지, 그 뒤의 증자·분할을 소급 반영한 수정주가가 아니다.
+
+    **수정주가도 함께 받아 둔다.** 둘이 다르면 조회일 뒤에 조정사건이 있었다는 뜻이고,
+    그때 전환가액이 어느 기준인지 확인해야 한다. 돌려주는 것은
+    ``(거래일, 원주가, 심볼, 수정주가)`` — 수정주가를 못 받으면 ``None`` 이다.
     """
     try:
         import yfinance as yf
@@ -3969,11 +4008,53 @@ def fetch_close(code: str, market: str, on_date: str):
             col = "Close" if "Close" in df.columns else df.columns[0]
             rows = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in df[col].dropna().items()]
             hit = pick_close(rows, on_date)
-            if hit: return hit[0], hit[1], sym
+            if hit:
+                adj = None
+                try:
+                    da = yf.download(sym, start=d1, end=d2 + dt.timedelta(days=1),
+                                     progress=False, auto_adjust=True, threads=False)
+                    if da is not None and not da.empty:
+                        if hasattr(da.columns, "nlevels") and da.columns.nlevels > 1:
+                            da = da.droplevel(1, axis=1)
+                        ca = "Close" if "Close" in da.columns else da.columns[0]
+                        ar = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in da[ca].dropna().items()]
+                        ah = pick_close(ar, on_date)
+                        if ah and ah[0] == hit[0]: adj = ah[1]
+                except Exception:
+                    adj = None           # 수정주가는 «참고» 다 — 못 받아도 원주가로 진행한다
+                return hit[0], hit[1], sym, adj
             errs.append(f"{sym} {on_date} 이전 거래일 없음")
         except Exception as e:
             errs.append(f"{sym} {e}")
     raise RuntimeError(" / ".join(errs) or "자료를 찾지 못했습니다")
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_splits(code: str, market: str, d1: str, d2: str):
+    """야후가 기록한 **분할·병합 이력**. 판정 근거가 아니라 «참고» 다.
+
+    돌려주는 것 — ``None`` 이면 **조회하지 못했다(모른다)**, ``[]`` 면 **기록이 없다**,
+    그 외는 ``[(날짜, 배수)]``. 이 셋을 구분하는 것이 요점이다.
+
+    한국 종목은 커버리지가 고르지 않다. 액면분할·병합은 대체로 잡히지만 **무상증자는
+    split 으로 기록되지 않는 경우가 많다.** 그래서 「기록이 없다」를 「사건이 없었다」로
+    읽으면 안 된다 — 화면·조서에 그 사실을 함께 적는다. 실제 판정은 basis_check() 가
+    네트워크 없이 한다.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        return None
+    for sym in _yf_symbols(code, market):
+        try:
+            sp = yf.Ticker(sym).splits
+            if sp is None: continue
+            out = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in sp.items()
+                   if d1 <= i.strftime("%Y-%m-%d") <= d2 and abs(float(v) - 1.0) > 1e-9]
+            return out
+        except Exception:
+            continue
+    return None
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -5426,7 +5507,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("풋·콜 우선순위", ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None),
         ("매도청구권 회계 처리",
          "별도 금융상품" if tm.k_sep else "복합내재파생에 포함", None)]),
-      ("5. 시장 인풋", [("주가 출처", (tm.s0_src or "직접 입력"), None),
+      ("5. 시장 인풋", [(_l, _v, None) for _l, _v in px_trace(tm)] + [
         ("위험 곡선 출처", (tm.cr_src or "직접 입력") + (f" · 평가대상 {tm.rt_tgt}" if tm.rate_mode != "direct" and tm.rt_tgt else ""), None),
         ("BDT σ 출처", (tm.rvol_how or "직접 입력") if put_bdt_on(tm) else "해당 없음 (BDT 미적용)", None),
         ("변동성 σ", tm.sig, P2),
@@ -6368,6 +6449,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 조서를 받은 사람이 무엇을 재고 무엇을 안 쟀는지 알아야 한다.
     put(A, nb+4, 2, SCOPE_NOTE.replace("**", ""), color=GREY, size=9)
     put(A, nb+5, 2, UNMODELLED_NOTE, color=AMB, size=9)
+    # 주가 조회 기록. spec «밖» 이라 ROWN 행 번호를 밀지 않는다 — 수식 배선은 그대로다.
+    put(A, nb+7, 2, "주가 조회 기록", bold=True, size=9)
+    for _i, (_l, _v) in enumerate(px_trace(tm)):
+        put(A, nb+8+_i, 2, _l, color=GREY, size=9)
+        put(A, nb+8+_i, 3, _v, color=GREY, size=9)
     if put_bdt_on(tm):
         put(A, nb+3, 2, "BDT 변동성 σ 도 마찬가지다. BDT 격자의 기준금리 a 는 "
             "「σ 가 지금 값일 때 시장 금리곡선을 맞추도록」 역산한 값이라 조서에 "
@@ -8184,7 +8270,8 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None):
         if key: K_[key] = f"{Q('가정')}!$C${r}"
 
     sec(A, 4, "1. 대상 지분", span=4)
-    kv(5, "평가기준일 주가 (원)", tm.S0, N2, "", "S0")
+    kv(5, "평가기준일 주가 (원)", tm.S0, N2,
+       " · ".join(f"{_l} {_v}" for _l, _v in px_trace(tm)), "S0")
     kv(6, "주당 인수가액 (원)", tm.K0, N2, "지분가치 = 100 × 주가 ÷ 이 값", "K0")
     kv(7, "평가기준일", dt.date.fromisoformat(tm.d_base), DATE, "", "d_base")
     kv(8, "투자일 → 평가기준일 경과 (개월)", tm.elapsed_m, N2, "", "elm")
@@ -8734,9 +8821,16 @@ with st.sidebar:
                       disabled=not t.ticker, key="btn_s0"):
             with st.spinner("받는 중"):
                 try:
-                    _dd, _px, _sym = fetch_close(t.ticker, _mkt, t.d_base)
+                    _dd, _px, _sym, _adj = fetch_close(t.ticker, _mkt, t.d_base)
                     t.S0 = float(_px)
                     t.s0_src = f"야후 {_sym} {_dd} 종가"
+                    t.s0_date, t.s0_raw = _dd, float(_px)
+                    t.s0_adj = float(_adj) if _adj is not None else -1.0
+                    # 분할 이력은 «참고» 다 — 발행일부터 평가기준일까지 조회한다.
+                    _sp = fetch_splits(t.ticker, _mkt, t.d_issue, t.d_base)
+                    t.s0_splits = ("" if _sp is None else
+                                   ("없음" if not _sp else
+                                    " · ".join(f"{d} {r:g}배" for d, r in _sp)))
                     st.rerun()
                 except Exception as ex:
                     st.warning(f"받지 못했습니다 — {ex}. 주가를 직접 넣으십시오.")
@@ -8747,11 +8841,25 @@ with st.sidebar:
                                      "비상장이면 별도 지분평가액 ÷ 주식수를 넣거나, 아래에서 "
                                      "발행가로 역산하십시오."))
         if abs(t.S0 - _s0_before) > 1e-9:
-            t.s0_src = ""                      # 손으로 고쳤다 — 출처는 더 이상 야후가 아니다
+            # 손으로 고쳤다 — 출처도 조회 기록도 더 이상 이 값의 근거가 아니다
+            t.s0_src = t.s0_date = t.s0_splits = ""
+            t.s0_raw = t.s0_adj = -1.0
         if t.s0_src:
             st.caption(f"출처 · {t.s0_src}")
-            if t.s0_src.split()[-2] != t.d_base:
+            # 조회 기록을 그대로 보여 준다 — 「무엇을 요청했고 무엇을 받았는가」.
+            st.caption(f"요청 평가기준일 {t.d_base} · 실제 사용 거래일 {t.s0_date or '?'}")
+            if t.s0_date and t.s0_date != t.d_base:
                 st.caption(f"평가기준일 {t.d_base} 은 휴장일이라 직전 거래일 종가입니다.")
+            if t.s0_raw > 0:
+                _adjtxt = (f"{t.s0_adj:,.0f} 원" if t.s0_adj > 0 else "받지 못함")
+                st.caption(f"원주가 {t.s0_raw:,.0f} 원 · 수정주가 {_adjtxt}")
+                if t.s0_adj > 0 and abs(t.s0_adj - t.s0_raw) > 0.005 * max(1.0, t.s0_raw):
+                    st.warning(f"원주가와 수정주가가 다릅니다 ({t.s0_raw:,.0f} → "
+                               f"{t.s0_adj:,.0f}). 조회일 뒤에 분할·병합·무상증자가 있었을 "
+                               f"수 있습니다. 전환가액이 같은 기준인지 확인하십시오.")
+            st.caption("분할 기록 · " + (t.s0_splits or "조회하지 못함 — 확인 못 함"))
+            st.caption("한국 종목은 **무상증자가 야후에 분할로 기록되지 않는 경우가 많습니다.** "
+                       "「없음」이 「사건이 없었다」는 뜻은 아니니 공시로 확인하십시오.")
         # 발행가 역산 (책 5-1). 비상장 발행회사는 관측 주가가 없으니 「발행된 값이
         # 곧 공정가치」로 놓고 전체 가치가 발행가가 되는 주가를 격자에서 찾는다.
         bc1, bc2 = st.columns([1, 1])

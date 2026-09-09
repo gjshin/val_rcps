@@ -1206,6 +1206,33 @@ def test_call_split_text():
                  _bc(Terms(S0=1000., K0=1000., K_cap=1000., floor=200., par=100., rfx_mode=1))))
     chk_bool("시계열이 없으면(px_last=None) 주가 대조는 건너뛴다",
              not any("변동성 시계열" in x for x in _bc(Terms(S0=200., K0=1000., **_BB))))
+    # ── 주가 조회 기록 (px_trace) ──
+    # 조서를 받은 사람이 「무엇을 요청했고 무엇을 받았는지」 알아야 분할·병합을
+    # 의심할 때 되짚을 수 있다. 네트워크를 쓰지 않는다 — 기록을 직접 세워 시험한다.
+    _pt = G["px_trace"]
+    _d = dict(_pt(Terms(d_base="2026-06-05")))
+    chk_bool("직접 입력이면 조회가 없었다고 적는다", "직접 입력" in _d["주가 출처"])
+    chk_bool("직접 입력이면 분할 기록도 «조회하지 않음»", _d["분할 기록"] == "조회하지 않음")
+    chk_bool("조회 기록은 다섯 줄", len(_pt(Terms())) == 5)
+    _YK = dict(d_base="2026-06-06", s0_src="야후 085660.KQ 2026-06-05 종가",
+               s0_date="2026-06-05", s0_raw=1103., s0_adj=1103., s0_splits="없음")
+    _y = lambda **kw: Terms(**{**_YK, **kw})
+    _d = dict(_pt(_y()))
+    chk_bool("요청 평가기준일을 그대로 적는다", _d["요청 평가기준일"] == "2026-06-06")
+    chk_bool("휴장이면 직전 거래일임을 적는다", "휴장" in _d["실제 사용 거래일"])
+    chk_bool("원주가·수정주가가 같으면 조용하다", "조정사건" not in _d["원주가 · 수정주가"])
+    chk_bool("«없음» 은 «사건이 없었다»가 아니라고 적는다", "무상증자" in _d["분할 기록"])
+    _d = dict(_pt(_y(s0_adj=551.5, s0_splits="")))
+    chk_bool("원주가와 수정주가가 다르면 알린다", "조정사건" in _d["원주가 · 수정주가"])
+    chk_bool("분할 조회 실패는 «확인 못 함»", "확인 못 함" in _d["분할 기록"])
+    _d = dict(_pt(_y(s0_splits="2026-03-02 5배")))
+    chk_bool("분할 기록이 있으면 그대로 싣는다", _d["분할 기록"] == "2026-03-02 5배")
+    # 조회 실패(None)와 기록 없음([])을 구분한다 — 야후를 부르지 않고 규약만 본다.
+    import inspect as _ins
+    _fs = _ins.getsource(G["fetch_splits"])
+    chk_bool("fetch_splits 는 실패 시 None 을 돌려준다", "return None" in _fs)
+    chk_bool("fetch_splits 는 기록이 없으면 빈 목록을 돌려준다", "return out" in _fs)
+
     # ── 시나리오 JSON 의 평가체계 버전 ──
     # 옛 파일에는 «_schema» 가 없다. 그때 Terms 기본값(유무가치비교법)으로 열려야
     # 과거 조서가 그대로 재현된다. 새 파일에는 버전이 붙고, 옛 앱에서도 열려야 하므로
