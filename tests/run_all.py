@@ -30,7 +30,16 @@ SUITES = [
     ("설정전수대조", ["python3", "tests/설정전수대조.py"],        False, "30분"),
 ]
 
-BASELINE = dict(주계약=37.5208, 부채요소=73.1837, 전체=114.8781, 매도청구권=13.0762)
+# app.py 의 BASELINE_BASE 를 그대로 읽는다 — 조서·화면·시험이 한 원본을 본다.
+# 종전에는 여기와 조서에 숫자를 따로 박아 두어 값이 움직인 뒤 둘이 갈렸다.
+def _baseline_from_app():
+    import re as _re
+    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
+    m = _re.search(r"^BASELINE_BASE = dict\((.+?)\)$", src, _re.M)
+    return eval("dict(" + m.group(1) + ")") if m else {}
+
+
+BASELINE = _baseline_from_app()
 
 
 def baseline_now():

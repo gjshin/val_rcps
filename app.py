@@ -335,6 +335,11 @@ COMPAT_BDT = ("BDT 금리격자는 전환권을 **자본**으로 두고 **TF** �
 # 「_schema」로 적어 두고, 옛 파일을 열면 저장된 대로 열되 그 사실을 알려 준다.
 SCHEMA_VER = 2
 
+# 기준선 — 화면·조서 99_모형검증·tests/run_all.py 가 «같은 원본» 을 본다.
+# 종전에는 조서에 숫자를 직접 박아 두어, 값이 움직인 뒤에도 옛 숫자가 실려 나갔다.
+BASELINE_BASE = dict(주계약=37.5208, 부채요소=73.1837, 전체=114.8781, 매도청구권=13.0762)
+BASELINE_TEXT = " · ".join(f"{k} {v:,.4f}" for k, v in BASELINE_BASE.items())
+
 MODEL_LIMITS = (
     ('복합내재파생이 음수',
      '발행자 상환권이 전환권보다 크면 부채 갈래 묶음이 음수 (대신증권 −9.0050)',
@@ -3378,7 +3383,8 @@ def write_check_sheets(wb, tm: Terms, checks, after="결과", review=None, xl=No
             put(V, r, 4, _ms["head"], size=9, color=RPT["grey"], border=True); r += 1
     r += 1
     put(V, r, 2, "4. 기준선 (docs/검증기준선.md)", bold=True, fill=RPT["band"]); put(V, r, 3, "", fill=RPT["band"]); put(V, r, 4, "", fill=RPT["band"]); r += 1
-    put(V, r, 2, "기본 계약 (carry=1)", border=True); put(V, r, 3, "주계약 37.5208 · 부채요소 73.1837 · 전체 114.8781 · 매도청구권 12.2404", border=True); r += 1
+    put(V, r, 2, "기본 계약 (carry=1)", border=True)
+    put(V, r, 3, BASELINE_TEXT, border=True); r += 1
     put(V, r, 2, "허용오차", border=True); put(V, r, 3, "이자율·확률 1e-12 · 금액(100 기준) 1e-6 · 조서 대 엔진 1e-4 · 역산 0.25 — docs/골든값과_허용오차.md", size=9, border=True, wrap=True); r += 1
     V.sheet_properties.tabColor = RPT["sub"]
     return C, V
@@ -8880,7 +8886,20 @@ with st.sidebar:
         with st.expander(L["put"]):
             _p1, _p2 = st.columns(2)
             t.p_s, t.p_e = _sched_pair(_p1, _p2, t.p_s, t.p_e, "p", none_lab="이 권리 없음")
-            t.p_f = st.number_input("주기 (개월)", value=float(t.p_f), step=1.0, key="pf")
+            _pmode = st.radio("행사 방식", ["특정일 1회", "정기", "기간 중 언제든지"],
+                              index=(0 if t.p_s >= t.p_e - 1e-9 else
+                                     (2 if t.p_f <= t.gap_m + 1e-9 else 1)),
+                              horizontal=True, key="pmode_ui", help="계약이 정한 행사 방식입니다.\n\n**특정일 1회** — 시작일 하나에만 행사할 수 있습니다(종료일을 시작일로 맞춥니다).\n\n**정기** — 「6개월이 되는 날 및 이후 매 3개월」처럼 주기가 있습니다. 아래 주기 칸을 씁니다.\n\n**기간 중 언제든지** — 주기 없이 행사기간 내내 행사할 수 있습니다. 주기를 노드 간격으로 맞춰 모든 노드에서 행사 가능하게 합니다 — 노드가 촘촘할수록 정확합니다.")
+            if _pmode == "특정일 1회":
+                t.p_e = t.p_s
+                t.p_f = max(1.0, float(t.p_f))
+                st.caption(f"발행일 기준 {t.p_s:,.0f}개월 하루만 행사할 수 있습니다.")
+            elif _pmode == "기간 중 언제든지":
+                t.p_f = t.gap_m
+                st.caption(f"주기를 노드 간격({t.gap_m:g}개월)으로 맞췄습니다 — 행사기간의 "
+                           "모든 노드에서 행사할 수 있습니다.")
+            else:
+                t.p_f = st.number_input("주기 (개월)", value=float(t.p_f), step=1.0, key="pf")
             t.p_mode = st.selectbox("행사금액 산정", ["fixed", "accrue"],
                                     index=0 if t.p_mode == "fixed" else 1,
                                     format_func=lambda x: "고정률" if x == "fixed" else "보장수익률 복리")
