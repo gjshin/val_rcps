@@ -187,7 +187,7 @@ def terms_enum_fields(G):
         if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src",
                  "rvol_rating", "rvol_how", "k_basis",
                  # 조회 기록 — 계산 갈래가 아니라 「무엇을 받았는가」의 기록이다
-                 "s0_date", "s0_splits"): continue
+                 "s0_date", "s0_splits", "scen_md5"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty

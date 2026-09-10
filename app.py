@@ -172,6 +172,9 @@ class Terms:
     k_cpn_add: int = 0            # 매도청구 행사일 이자 별도지급
     face_total: float = 25_000_000_000.0   # 전자등록총액 (원)
     ticker: str = ""              # 종목코드·티커 (주가·변동성 조회용, 비상장이면 빈칸)
+    # 불러온 원본 시나리오 JSON 의 지문. 계산에 쓰이지 않으므로 _stamp 은 이 값을 뺀다 —
+    # 그래야 「원본 지문」과 「계산 지문」을 나란히 적을 수 있다.
+    scen_md5: str = ""
     s0_src: str = ""              # 평가기준일 주가의 출처 ("야후 085660.KQ 2024-06-28 종가"). 빈칸 = 직접 입력
     # 조회 결과를 그대로 남긴다 — 「무엇을 요청했고 무엇을 받았는가」가 조서에 있어야
     # 나중에 분할·병합을 의심할 때 되짚을 수 있다. 빈칸이면 직접 입력이다.
@@ -5356,9 +5359,18 @@ def _stamp(tm: Terms, kind: str = "") -> str:
     바뀌면 예전 파일은 더 이상 그 계약의 조서가 아니므로 내주지 않는다.
     """
     import hashlib
-    d = {k: v for k, v in asdict(tm).items()}
+    # 원본 시나리오 지문은 «계산에 쓰이지 않는 기록» 이라 뺀다. 넣으면 같은 계약을
+    # 파일에서 열었는지 손으로 넣었는지에 따라 계산 지문이 갈린다.
+    d = {k: v for k, v in asdict(tm).items() if k != "scen_md5"}
     return hashlib.md5(
         (kind + json.dumps(d, sort_keys=True, default=str)).encode()).hexdigest()
+
+
+def scen_stamp(obj: dict) -> str:
+    """저장·불러온 **원본 시나리오 JSON** 의 지문. ``_meta`` 는 빼고 잰다."""
+    import hashlib
+    d = {k: v for k, v in (obj or {}).items() if not str(k).startswith("_")}
+    return hashlib.md5(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()
 
 
 _RUN_ENV: dict = {}
@@ -5402,8 +5414,11 @@ def run_stamp(tm: Terms, kind: str = "") -> dict:
     수식 조서는 조정일 처리를 바꾼 사본으로 트리를 만들므로 그 사본을 넘겨야 한다.
     """
     e = _run_env()
+    _n = max(1, int(tm.n))
     return dict(app_sha12=e["app_sha12"], git_head=e["git_head"], schema=SCHEMA_VER,
-                terms_md5=_stamp(tm, kind), d_base=tm.d_base,
+                terms_md5=_stamp(tm, kind), scen_md5=(tm.scen_md5 or ""),
+                gap_req=float(tm.gap_m), gap_act=float(tm.rem_m)/_n,
+                dt_yr=float(tm.T)/_n, d_base=tm.d_base,
                 s0_date=(tm.s0_date or ""), px_src=(tm.s0_src or "직접 입력"),
                 cr_src=(tm.cr_src or "직접 입력"), sig=float(tm.sig), n=int(tm.n),
                 gap_m=float(tm.gap_m), model=str(tm.model), carry=int(tm.carry),
@@ -5419,12 +5434,19 @@ def stamp_rows(tm: Terms, kind: str = "") -> list:
             ("앱 판 (app.py SHA-256 앞 12자리)", m["app_sha12"] or "확인 못 함"),
             ("소스 판 (git HEAD)", m["git_head"] or "확인 못 함"),
             ("평가체계 버전", f"{m['schema']}"),
-            ("인풋 지문 (MD5)", m["terms_md5"]),
+            # 두 지문은 다른 것을 가리킨다. 다른 것이 정상이다 — 원본을 열면
+            # derive() 가 경과기간·노드 수를 채우고 compat 가 지원하지 않는 조합을
+            # 되돌리므로, 실제로 계산에 들어간 Terms 는 파일과 같지 않다.
+            ("시나리오 지문 (불러온 원본 JSON)",
+             (m["scen_md5"] or "해당 없음 — 화면에서 직접 입력")),
+            ("계산 지문 (derive·되돌린 설정 반영 후)", m["terms_md5"]),
+            ("노드 — 요청 간격 · 실제",
+             f"요청 {m['gap_req']:g}개월 · 노드 {m['n']}개 · "
+             f"실제 간격 {m['gap_act']:,.3f}개월 · Δt {m['dt_yr']:,.4f}년"),
             ("평가기준일 · 주가 거래일", f"{m['d_base']} · {m['s0_date'] or '해당 없음'}"),
             ("주가 출처", m["px_src"]),
             ("위험 곡선 출처", m["cr_src"]),
-            ("변동성 σ · 노드 수 · 노드 간격(개월)",
-             f"{m['sig']:.4f} · {m['n']} · {m['gap_m']:g}"),
+            ("변동성 σ", f"{m['sig']:.4f}"),
             ("신용위험 처리 · 조정일 처리 · 리픽싱 · 행사금액 경과기간",
              f"{m['model']} · {m['carry']} · {m['rfx_mode']} · "
              f"{'계약 개월÷12' if m['acc_basis'] else 'Actual/365'}"),
@@ -8968,12 +8990,16 @@ with st.sidebar:
             # 대로 연다 — 과거 조서의 재현성이 먼저다. 바꾸고 싶으면 버튼을 누른다.
             st.session_state.scen_old = (int(o.get("_schema", 1)) < SCHEMA_VER
                                          and float(o.get("k_w", 0) or 0) > 0)
-            # 저장 당시의 지문. 지금 인풋으로 다시 뜬 지문과 다르면 파일이 손질되었거나
-            # 화면 칸이 저장값을 덮어썼다는 뜻이라 알려 준다. 계산은 막지 않는다.
+            # 원본 시나리오 지문을 Terms 에 싣고 다닌다 — 조서에 「시나리오 지문」과
+            # 「계산 지문」을 나란히 적기 위해서다. 두 지문이 다른 것은 정상이다:
+            # derive() 가 경과기간·노드 수를 채우고 compat 가 지원하지 않는 조합을
+            # 되돌리므로 계산에 들어간 Terms 는 파일과 같지 않다. 그래서 계산 지문이
+            # 달라도 «불일치» 라고 부르지 않는다. 파일 자체가 손질됐는지만 가른다.
             _mo = o.get("_meta") or {}
+            _now = scen_stamp(o)
+            st.session_state.tm.scen_md5 = _now
             st.session_state.scen_meta = (
-                _mo if (_mo.get("terms_md5") and
-                        _mo["terms_md5"] != _stamp(st.session_state.tm)) else None)
+                _mo if (_mo.get("scen_md5") and _mo["scen_md5"] != _now) else None)
             # key 가 있는 칸(조기상환·매도청구 시작/종료, 날짜 칸 …)은 한 번 그려지면 저장값이
             # value= 기본값을 이긴다. 비우지 않으면 시나리오의 값이 화면의 옛 값으로 되돌아간다.
             reset_widgets()
@@ -8985,11 +9011,16 @@ with st.sidebar:
 
     _sm = st.session_state.get("scen_meta")
     if _sm:
-        st.warning(f"이 시나리오의 **인풋 지문이 저장 당시와 다릅니다** "
-                   f"(저장 {_sm['terms_md5'][:8]} · 지금 {_stamp(t)[:8]}). "
-                   f"저장한 앱 판 {_sm.get('app_sha12') or '?'} · "
-                   f"소스 {_sm.get('git_head') or '?'} · {_sm.get('made_at', '?')}. "
-                   "화면 칸이 저장값을 덮어썼는지 확인하십시오.")
+        st.warning(f"이 시나리오 **파일이 저장된 뒤에 손질되었습니다** "
+                   f"(저장 당시 {str(_sm.get('scen_md5', ''))[:8]} · "
+                   f"지금 {str(t.scen_md5)[:8]}). 저장한 앱 판 "
+                   f"{_sm.get('app_sha12') or '?'} · 소스 {_sm.get('git_head') or '?'} · "
+                   f"{_sm.get('made_at', '?')}. 값은 파일에 있는 대로 열었습니다.")
+    elif t.scen_md5:
+        st.caption(f"시나리오 지문 {t.scen_md5[:8]} · 계산 지문 {_stamp(t)[:8]} — "
+                   "두 지문은 다른 것을 가리킵니다. 계산 지문은 경과기간·노드 수를 채우고 "
+                   "지원하지 않는 조합을 되돌린 «실제로 계산에 쓴» 값의 지문이라 "
+                   "파일과 같지 않은 것이 정상입니다.")
 
     if st.session_state.get("scen_old"):
         st.info("이 시나리오는 **매도청구권 평가체계를 정리하기 전**에 저장되었습니다. "
@@ -10395,7 +10426,8 @@ with st.sidebar:
 
     st.download_button("시나리오 저장",
                        json.dumps({**asdict(t), "_schema": SCHEMA_VER,
-                                   "_meta": run_stamp(t)},
+                                   "_meta": {**run_stamp(t),
+                                             "scen_md5": scen_stamp(asdict(t))}},
                                   ensure_ascii=False, indent=2).encode(),
                        f"{lbl(t)['short']}평가_시나리오_{dt.date.today()}.json",
                        "application/json",

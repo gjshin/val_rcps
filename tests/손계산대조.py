@@ -1304,9 +1304,30 @@ def test_call_split_text():
     chk_bool("계산에 쓴 Terms 로 지문을 뜬다", _rs(_tf)["terms_md5"] != _m1["terms_md5"])
     chk_bool("종류(값·수식)가 다르면 지문도 다르다", _rs(_t1, "수식")["terms_md5"] != _m1["terms_md5"])
     _rows = dict(_sr(_t1))
-    for _k in ("생성시각", "평가체계 버전", "인풋 지문 (MD5)", "주가 출처", "위험 곡선 출처"):
+    for _k in ("생성시각", "평가체계 버전", "계산 지문 (derive·되돌린 설정 반영 후)",
+               "시나리오 지문 (불러온 원본 JSON)", "주가 출처", "위험 곡선 출처"):
         chk_bool(f"조서 재현 기록에 «{_k}»", _k in _rows)
-    chk_bool("조서 재현 기록은 11줄", len(_sr(_t1)) == 11)
+    chk_bool("조서 재현 기록은 13줄", len(_sr(_t1)) == 13)
+    # 두 지문은 다른 것을 가리킨다. 원본 시나리오 지문은 계산에 쓰이지 않으므로 계산
+    # 지문에 섞이지 않아야 한다 — 섞이면 같은 계약이 파일에서 열렸는지에 따라 갈린다.
+    _t1b = Terms(**{**G["asdict"](_t1), "scen_md5": "deadbeef"})
+    chk_bool("원본 지문을 실어도 계산 지문은 그대로", _st(_t1b) == _st(_t1))
+    _rr = dict(_sr(_t1b))
+    chk_bool("조서에 시나리오 지문 줄", _rr["시나리오 지문 (불러온 원본 JSON)"] == "deadbeef")
+    chk_bool("조서에 계산 지문 줄", _rr["계산 지문 (derive·되돌린 설정 반영 후)"] == _st(_t1))
+    chk_bool("직접 입력이면 시나리오 지문은 «해당 없음»",
+             "해당 없음" in dict(_sr(_t1))["시나리오 지문 (불러온 원본 JSON)"])
+    # 요청한 노드 간격과 실제로 쓴 간격은 다를 수 있다 — 둘을 나눠 적는다.
+    _nd = _rr["노드 — 요청 간격 · 실제"]
+    chk_bool("요청 간격을 적는다", f"요청 {_t1.gap_m:g}개월" in _nd)
+    chk_bool("실제 노드 수를 적는다", f"노드 {int(_t1.n)}개" in _nd)
+    chk_bool("실제 간격과 Δt 를 적는다", "실제 간격" in _nd and "Δt" in _nd)
+    # 원본 지문은 _meta 를 뺀 나머지로 잰다 — 저장·재저장으로 값이 흔들리지 않는다.
+    _o = G["asdict"](_t1)
+    chk_bool("scen_stamp 은 _meta 를 보지 않는다",
+             G["scen_stamp"]({**_o, "_meta": {"x": 1}}) == G["scen_stamp"](_o))
+    chk_bool("한 칸만 달라도 원본 지문이 달라진다",
+             G["scen_stamp"](_o) != G["scen_stamp"]({**_o, "sig": .99}))
     # 검산요약에도 한 줄 — 조서를 열면 어느 판에서 나왔는지 바로 보인다.
     _f1, _b0, _b1, _b2, _ca, _cv = G["decompose"](_t1)
     _ck = dict((x[0], x) for x in G["model_checks"](_t1, _f1, _b0, _b1, _b2, _ca))
