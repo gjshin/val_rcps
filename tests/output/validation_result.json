@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-10 03:34",
- "head": "09e5a89",
- "app_sha256_12": "d1fd7dcdd095",
+ "generated": "2026-09-10 06:14",
+ "head": "fe565f2",
+ "app_sha256_12": "7478f0a094da",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 51.9,
+   "sec": 52.0,
    "last": "모두 통과",
    "tail": []
   },
@@ -28,8 +28,8 @@
    "cmd": "python3 tests/분기전수.py",
    "ok": true,
    "code": 0,
-   "sec": 8.5,
-   "last": "→ tests/output/분기전수.json 337 줄",
+   "sec": 9.1,
+   "last": "→ tests/output/분기전수.json 349 줄",
    "tail": []
   },
   {
@@ -38,7 +38,7 @@
    "ok": true,
    "code": 0,
    "sec": 0.6,
-   "last": "   → tests/검증매트릭스.json (362 행)",
+   "last": "   → tests/검증매트릭스.json (374 행)",
    "tail": []
   },
   {
@@ -46,8 +46,8 @@
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 86.6,
-   "last": "→ tests/output/조합시험.json 1899 줄 · 실패 0 (tests/output/조합시험_실패.json) · 86초",
+   "sec": 91.4,
+   "last": "→ tests/output/조합시험.json 1900 줄 · 실패 0 (tests/output/조합시험_실패.json) · 91초",
    "tail": []
   },
   {
@@ -55,7 +55,7 @@
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 45.1,
+   "sec": 50.6,
    "last": "",
    "tail": []
   },
@@ -64,7 +64,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 65.7,
+   "sec": 68.5,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +73,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 36.6,
+   "sec": 37.3,
    "last": "",
    "tail": []
   }
@@ -93,21 +93,21 @@
  "baseline_ok": true,
  "matrix": {
   "CB": {
-   "PASS": 93,
+   "PASS": 97,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 103,
+   "PASS": 107,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 97,
+   "PASS": 101,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -129,5 +129,5 @@
   }
  },
  "all_ok": true,
- "sec": 296.5
+ "sec": 310.9
 }

@@ -24,8 +24,12 @@ WANT = {
     4:  {"pst", "pen", "frq", "pt30"},         # Flag(조기상환) — ⑮ 는 pt30 (의무보유가 조기상환도 막는다)
     5:  {"kst", "ken", "kfrq"},                # Flag(매도청구)
     6:  {"roff", "cyc"},                       # Flag(리픽싱)
-    7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate", "pmode", "accb", "remm", "n"},   # 조기상환금액 — accb/remm/n 은 경과기간 잣대
-    8:  {"prem", "cpn", "kcmp", "dt", "elm", "kless", "accb", "remm", "n"},   # 매도청구금액 — kless 0 이면 지급분을 안 뺀다
+    # 조기상환금액 — accb/remm/n 은 경과기간 잣대, pcadd·ipay·ipaym·payoff 는
+    # 「행사일이 이자지급일이면 그 날 이자를 따로 받는다」 스위치가 보는 값이다
+    7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate", "pmode", "accb", "remm", "n",
+        "pcadd", "ipay", "ipaym", "payoff"},
+    8:  {"prem", "cpn", "kcmp", "dt", "elm", "kless", "accb", "remm", "n",
+        "kcadd", "ipay", "ipaym", "payoff"},   # 매도청구금액 — kless 0 이면 지급분을 안 뺀다
     # 지급일은 발행일 기준이라 리픽싱(roff)처럼 첫 지급 스텝을 함께 본다.
     9:  {"ipay", "payoff", "cpn", "ipaym"},    # 쿠폰
     10: {"n", "red"},                          # 만기상환

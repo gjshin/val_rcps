@@ -58,6 +58,13 @@ CASES = [
     # 엑셀에서 기간 권리로 부풀고 그 자리 금액이 보장수익률 0% 산식으로 계산됐다.
     ("조기상환 표 한 줄 (특정일 1회) · 보장수익률 0",
      dict(p_sched="24 104.0000", p_mode="accrue", p_yield=0.0, p_s=6., p_e=54., p_f=6.)),
+    # 행사일이 이자지급일과 겹칠 때 그 날 이자를 따로 받는 계약. 엔진·값 조서·수식 조서가
+    # 같은 자리에서 같은 금액을 얹어야 한다.
+    ("행사일 이자 별도지급 (조기상환)", dict(p_cpn_add=1, cpn=.05, ipay=6., ytm=.07,
+                                       p_mode="accrue", p_yield=.07)),
+    ("행사일 이자 별도지급 (조기상환·매도청구 둘 다)",
+     dict(p_cpn_add=1, k_cpn_add=1, cpn=.05, ipay=6., ytm=.07,
+          p_mode="accrue", p_yield=.07, k_method=0)),
     ("조기상환·매도청구 표가 서로 다른 회차", 
      dict(p_sched="24 104.0000", k_sched="36 106.0000", k_method=0)),
     ("행사금액 경과기간 Actual/365 (종전)", dict(acc_basis=0)),

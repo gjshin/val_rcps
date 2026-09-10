@@ -1233,6 +1233,33 @@ def test_call_split_text():
              (lambda r: r[2] - r[1] > 0.005)(_sy(_bad9, .03, 4)))
     chk_bool("읽을 회차가 없으면 None", _sy([], .03, 4) is None)
 
+    # ── 행사일 이자를 «따로» 받는 계약 (p_cpn_add · k_cpn_add) ──
+    # 계약이 「조기상환일에 원금과 그 날까지의 이자를 함께 지급」이라고 쓰면 행사금액 위에
+    # 그 날 이자가 더 얹힌다. 계약 해석은 앱이 아니라 사용자가 정한다 — 스위치로 받는다.
+    _CB = dict(d_issue="2024-01-05", d_base="2024-01-05", d_mat="2029-01-05", gap_m=6.0,
+               cpn=.05, ipay=6.0, ytm=.07, ytm_cmp=2, p_mode="accrue", p_yield=.07,
+               p_cmp=2, p_s=12., p_e=54., p_f=6., k_w=0.0, sig=.40, carry=1)
+    _c0 = Terms(**_CB); _c1 = Terms(**dict(_CB, p_cpn_add=1))
+    for _t in (_c0, _c1):
+        _t.rf_curve = [(1, .0226), (3, .0240), (5, .0252)]
+        _t.cr_curve = [(1, .1409), (3, .1740), (5, .1905)]
+        derive(_t)
+    _CPN = 100*G["eff_cpn"](_c0)*_c0.ipay/12
+    _m0 = G["engine"](_c0)["memo"]; _m1 = G["engine"](_c1)["memo"]
+    _dif = sorted({round(_m1[k]["pv"] - _m0[k]["pv"], 6)
+                   for k in _m0 if _m0[k].get("pv", 0) > 0 and "pv" in _m1.get(k, {})})
+    chk_bool("차이는 0 아니면 «그 날 이자» 뿐", set(_dif) <= {0.0, round(_CPN, 6)})
+    chk_bool("이자지급일에 얹히는 자리가 실제로 있다", round(_CPN, 6) in _dif)
+    chk("얹히는 금액 = 표면이자 회당 지급액", max(_dif), _CPN, 1e-9)
+    # 켜면 조기상환권이 커진다 — 같은 자리에서 더 받기 때문이다.
+    _v0 = G["decompose"](_c0); _v1 = G["decompose"](_c1)
+    chk_bool("행사일 이자를 받으면 부채요소가 커진다", _v1[2] > _v0[2] + 1e-9)
+    chk_bool("기본값은 종전 동작 (끔)", Terms().p_cpn_add == 0 and Terms().k_cpn_add == 0)
+    # 만기 노드는 스위치와 무관하다 — 만기에는 어느 갈래든 마지막 이자를 함께 받는다.
+    _mk = [k for k in _m0 if _m0[k].get("kind") in ("mat", "put") and "pv" not in _m0[k]]
+    chk_bool("만기 노드는 스위치가 건드리지 않는다",
+             all(abs(_m1[k]["B"] - _m0[k]["B"]) < 1e-9 for k in _mk))
+
     # ── 주가 조회 기록 (px_trace) ──
     # 조서를 받은 사람이 「무엇을 요청했고 무엇을 받았는지」 알아야 분할·병합을
     # 의심할 때 되짚을 수 있다. 네트워크를 쓰지 않는다 — 기록을 직접 세워 시험한다.
@@ -1382,6 +1409,42 @@ def test_call_split_text():
     chk_bool("관문 ③ 이 만기금액에서 역산한 보장수익률을 쓴다 (0% 이 아니다)",
              "보장 0.00%" not in _g3)
     chk_bool("역산값이 연 실효 5.09% 근처", "보장 5.09%" in _g3)
+
+    # ── 풋·콜 우선순위 검산은 «실제로 열린 행사 노드» 로 센다 ──
+    # 날짜·주기만 견주면 계약서 행사금액표를 넣은 계약에서 겹침을 놓친다. 또 겹치더라도
+    # 조기상환금액이 매도청구금액을 넘지 않으면 두 순서가 같은 값을 낸다 — 이것은
+    # 어림짐작이 아니라 node_decide 에서 따라 나오는 항등식이라 못박아 둔다.
+    _POV, _PCM, _MC = G["pc_overlap"], G["pc_compare"], G["model_checks"]
+    _tov = Terms(**{**_D9, "p_sched": _S9, "k_w": .80, "k_s": 6., "k_e": 33., "k_f": 3.,
+                    "k_hold": 0, "k_method": 0})
+    _tov.rf_curve = list(_tS.rf_curve); _tov.cr_curve = list(_tS.cr_curve); derive(_tov)
+    _ov = _POV(_tov)
+    chk_bool("표를 넣어도 겹치는 노드를 찾는다", len(_ov) > 0)
+    _big = [x for x in _ov if x[2] > x[3] + 1e-9]
+    _f0, *_r0 = G["decompose"](_tov)
+    _row = dict((x[0], x) for x in _MC(_tov, _f0, *_r0[:4]))["풋·콜 우선순위 · 겹치는 행사노드"]
+    chk_bool("검산요약이 겹침 노드 수를 적는다", f"{len(_ov)}개" in _row[1])
+    chk_bool("금액이 갈리는 자리 수도 적는다", f"{len(_big)}개" in _row[1])
+    chk_bool("갈리는 자리가 있으면 두 값과 차이를 함께 싣는다",
+             (len(_big) == 0) or
+             ("투자자 우선" in dict((x[0], x) for x in
+                                 _MC(_tov, _f0, *_r0[:4]))["매도청구권 · 우선순위별 차이"][3]))
+    # 겹치되 «금액이 갈리지 않는» 계약 — 매도청구금액이 늘 조기상환금액보다 크게 만든다.
+    # 그때 두 순서가 같은 값이라는 것은 어림짐작이 아니라 node_decide 의 항등식이다.
+    _tsm = Terms(**{**G["asdict"](_tov), "k_prem": .30}); derive(_tsm)
+    _ovs = _POV(_tsm)
+    chk_bool("겹치지만 금액이 갈리는 자리가 없는 계약", len(_ovs) > 0
+             and not [x for x in _ovs if x[2] > x[3] + 1e-9])
+    _va = []
+    for _po in (0, 1):
+        _tp = Terms(**G["asdict"](_tsm)); _tp.pc_order = _po; derive(_tp)
+        _va.append(G["decompose"](_tp)[4])
+    chk("겹치되 금액이 갈리지 않으면 두 순서가 같은 값", _va[0], _va[1], 1e-9)
+    _fs, *_rs = G["decompose"](_tsm)
+    _rows = dict((x[0], x) for x in _MC(_tsm, _fs, *_rs[:4]))
+    chk_bool("그 사실을 문구로 적는다 (겹치지만 같은 값)",
+             "같은 값" in _rows["풋·콜 우선순위 · 겹치는 행사노드"][3])
+
     # RCPS 발행자 상환권·없음 갈래는 k_kind 0
     tr = Terms(inst="RCPS", issuer_call=1, k_kind=1); derive(tr)
     chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)

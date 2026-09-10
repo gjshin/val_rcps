@@ -164,6 +164,12 @@ class Terms:
     p_mode: str = "fixed"        # fixed 고정률 / accrue 보장수익률 복리
     p_yield: float = 0.0         # 조기상환 보장수익률
     p_cmp: int = 4               # 조기상환 보장수익률 복리 횟수
+    # 행사일이 이자지급일과 겹칠 때 그날 이자를 «따로» 받는가. 계약이 정하는 것이지
+    # 앱이 정할 일이 아니다. 0 = 행사금액만 받는다(종전 동작) · 1 = 행사금액 + 그날 이자.
+    # k_less_cpn 과는 다른 물음이다 — 그것은 «산식이 기지급분을 빼는가» 이고,
+    # 이것은 «행사하는 날의 이자를 위에 더 얹는가» 다.
+    p_cpn_add: int = 0            # 조기상환 행사일 이자 별도지급
+    k_cpn_add: int = 0            # 매도청구 행사일 이자 별도지급
     face_total: float = 25_000_000_000.0   # 전자등록총액 (원)
     ticker: str = ""              # 종목코드·티커 (주가·변동성 조회용, 비상장이면 빈칸)
     s0_src: str = ""              # 평가기준일 주가의 출처 ("야후 085660.KQ 2024-06-28 종가"). 빈칸 = 직접 입력
@@ -1456,6 +1462,13 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
             KK = K if exact else Kg[i][j]
             cv = 100*S(i, j)/KK if conv_ok(i) else 0.0
             pv, kv = put_a(i), call_a(i)
+            # 행사일이 이자지급일과 겹칠 때 그날 이자를 «따로» 받는 계약이 있다. 계약이
+            # 정하는 것이라 스위치로 받는다 (기본은 받지 않는다 — 행사금액에 이미
+            # 들어 있다고 본다). 만기 노드는 여기 오지 않는다 — 만기에는 상환이든
+            # 조기상환이든 마지막 이자를 받는 것이 관행이라 위에서 늘 더한다.
+            if c > 0:
+                if int(getattr(tm, "p_cpn_add", 0)) and pv > 0: pv += c
+                if int(getattr(tm, "k_cpn_add", 0)) and kv < math.inf: kv += c
             if bwc:
                 # 신주인수권은 행사해도 사채가 남으므로 사채 결정과 별개다.
                 # 미국형이라 「지금 행사」와 「계속 보유」 중 큰 쪽을 고른다.
@@ -3252,15 +3265,35 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
         out.append(("상각표 기말 = 상환금액", f"{end:,.6f} = {red_:,.6f}", "적합" if abs(end - red_) <= 1e-6 else "확인 필요",
                     f"유효이자율 {r_:.4%}" + (" · 기대만기 = 첫 조기상환 가능일 (조기상환권 비분리)"
                                           if eir_expect(tm) is not None else "")))
+    # 우선순위 검산은 «실제로 열린 행사 노드» 로 센다. 날짜·주기만 견주면 계약서
+    # 행사금액표를 넣은 계약에서 겹침을 놓친다. 겹치는 자리가 있으면 그 수를 적고,
+    # 값이 갈릴 수 있는 자리(조기상환금액 > 매도청구금액)가 있으면 격자를 두 번 돌려
+    # 두 값과 차이를 싣는다.
+    _ovall = (pc_overlap(tm) if (tm.k_w > 0 and not is_sha(tm)) else [])
+    _ovbig = [x for x in _ovall if x[2] > x[3] + 1e-9]
     pcc = pc_compare(tm)
     if pcc is None:
-        out.append(("매도청구권 · 우선순위별 차이", "겹치지 않음", "해당 없음",
-                    "조기상환금액 > 매도청구금액인 겹침 노드가 없어 두 우선순위가 같은 답"))
+        out.append(("풋·콜 우선순위 · 겹치는 행사노드",
+                    f"{len(_ovall)}개 (금액이 갈리는 자리 0개)", "해당 없음",
+                    ("두 권리가 함께 열리는 노드는 있으나 그 자리의 조기상환금액이 "
+                     "매도청구금액을 넘지 않는다. 그때는 어느 쪽이 먼저 움직여도 같은 값이다"
+                     if _ovall else "두 권리가 함께 열리는 노드가 없다")))
     else:
         dpc = abs(pcc[0][1] - pcc[1][1])
-        out.append(("매도청구권 · 우선순위별 차이", f"{dpc:,.4f}", "적합" if dpc <= 1e-6 else "한계",
-                    "계약의 통지기간·번복 조항이 정한다 — 결과 시트에 두 값을 나란히 실었다. "
-                    "고른 근거를 조서에 적을 것" if dpc > 1e-6 else "두 우선순위가 같은 값"))
+        _p0 = next((v for lb, v, _, _ in pcc if lb.startswith("투자자")), None)
+        _p1 = next((v for lb, v, _, _ in pcc if lb.startswith("발행자")), None)
+        out.append(("풋·콜 우선순위 · 겹치는 행사노드",
+                    f"{len(_ovall)}개 (금액이 갈리는 자리 {len(_ovbig)}개)",
+                    "적합" if dpc <= 1e-6 else "한계",
+                    (f"처음 갈리는 곳은 발행일 기준 {_ovbig[0][1]:,.0f}개월(스텝 {_ovbig[0][0]}) — "
+                     f"조기상환 {_ovbig[0][2]:,.4f} 대 매도청구 {_ovbig[0][3]:,.4f}"
+                     if _ovbig else "격자를 두 번 돌려 견주었다")))
+        out.append(("매도청구권 · 우선순위별 차이",
+                    f"{dpc:,.4f}", "적합" if dpc <= 1e-6 else "한계",
+                    (f"투자자 우선 {_p0:,.4f} · 발행자 우선 {_p1:,.4f}. "
+                     "계약의 통지기간·번복 조항이 정한다 — 결과 시트에 두 값을 나란히 "
+                     "실었다. 고른 근거를 조서에 적을 것" if dpc > 1e-6 else
+                     "격자를 두 번 돌린 결과가 같다")))
     if put_bdt_on(tm):
         bp = bdt_parts(tm)
         dmax = max(abs(sum(bp["Q"][k]) - bp["mkt"][k]) for k in range(int(bp["n"]) + 1))
@@ -5599,10 +5632,18 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             (lambda i: in_set(i, tm.p_s, tm.p_e, tm.p_f)))
     _kin = (EA["k_on"] if EA["k_on"] else
             (lambda i: in_set(i, tm.k_s, tm.k_e, tm.k_f)))
+    # 행사일이 이자지급일과 겹칠 때 그날 이자를 따로 받는가 (엔진과 같은 스위치).
+    # 만기 스텝은 더하지 않는다 — 만기에는 «쿠폰» 열이 따로 더해지기 때문이다.
+    _ispay = lambda i: (eff_cpn(tm) > 0 and i > 0 and i >= pay_offset(tm, stp_lo)
+                        and (i - pay_offset(tm, stp_lo)) % per_(tm.ipay) == 0)
+    _pcx = lambda i: (cpn_amt if (i < n and _ispay(i)
+                                  and int(getattr(tm, "p_cpn_add", 0))) else 0.0)
+    _kcx = lambda i: (cpn_amt if (i < n and _ispay(i)
+                                  and int(getattr(tm, "k_cpn_add", 0))) else 0.0)
     def put_amt(i):
-        return EA["put"](i) if _pin(i) else 0.0
+        return (EA["put"](i) + _pcx(i)) if _pin(i) else 0.0
     def call_amt(i, on=True):
-        return EA["call"](i) if (on and _kin(i)) else 999999
+        return (EA["call"](i) + _kcx(i)) if (on and _kin(i)) else 999999
 
     HEAD = ["Date", "time-step", "Flag(전환)", "Flag(조기상환)", "Flag(매도청구)",
             "Flag(리픽싱)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환",
@@ -6561,6 +6602,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("조기상환 종료 (스텝)", "pen", stp_hi(tm.p_e), N0, True),
         ("조기상환 주기 (스텝)", "frq", max(1, int(round(tm.p_f*mper))), N0, True),
         ("조기상환 행사금액", "prate", tm.p_rate, N2, True),
+        # 행사일이 이자지급일과 겹칠 때 그날 이자를 «따로» 받는가. 계약이 정한다.
+        ("조기상환 행사일 이자 별도지급 (1/0)", "pcadd",
+         int(getattr(tm, "p_cpn_add", 0)), N0, True),
+        ("매도청구 행사일 이자 별도지급 (1/0)", "kcadd",
+         int(getattr(tm, "k_cpn_add", 0)), N0, True),
         ("조기상환 산식 (1 보장수익률 복리 / 0 확정 금액)", "pmode", (1 if tm.p_mode == "accrue" else 0), N0, True),
         ("조기상환 시작 (발행일 기준 개월)", "psm", tm.p_s, N0, True),
         ("조기상환 보장수익률", "pyld", tm.p_yield, P2, True),
@@ -6748,11 +6794,19 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         if not _srow: return per
         return f"IF({K['ksch']}=1,IF({_kv0(st)}>0,1,0),{per})"
 
+    # 행사일 이자 — 그날이 이자지급일이고 스위치가 켜져 있으면 행사금액 위에 더 얹는다.
+    # 만기 스텝은 빼 둔다. 만기 행은 「쿠폰」 열을 따로 더하므로 두 번 세게 된다.
+    def _cadd(st, key):
+        return (f"IF(AND({K[key]}=1,{st}<{K['n']},{st}>0,{st}>={K['payoff']},"
+                f"MOD({st}-{K['payoff']},{K['ipay']})=0),"
+                f"100*{K['cpn']}*{K['ipaym']}/12,0)")
+
     def x_pamt(st, yr):
         f_ = (f"IF({K['pmode']}=1,"
               f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),{K['prate']})")
-        if not _srow: return f_
-        return f"IF(AND({K['psch']}=1,{_pv0(st)}>0),{_pv0(st)},{f_})"
+        if _srow:
+            f_ = f"IF(AND({K['psch']}=1,{_pv0(st)}>0),{_pv0(st)},{f_})"
+        return f"({f_}+{_cadd(st, 'pcadd')})"
 
     # 개월로 묻는 자리(상각표의 기대만기 · 분리 판단의 첫 조기상환일)도 표를 먼저 본다.
     _SC = f"'{SSC}'!$C$4:$D${3+len(_srow)}" if _srow else None
@@ -6769,8 +6823,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         f_ = (f"IF({K['prem']}>0,"
               f"100*(1+{xl_prem(K['prem'], _KC, K['kcmp'], yr)}),"
               f"100*(1+MAX(0,-{_KC}*{yr})))")
-        if not _srow: return f_
-        return f"IF(AND({K['ksch']}=1,{_kv0(st)}>0),{_kv0(st)},{f_})"
+        if _srow:
+            f_ = f"IF(AND({K['ksch']}=1,{_kv0(st)}>0),{_kv0(st)},{f_})"
+        return f"({f_}+{_cadd(st, 'kcadd')})"
 
     def newsheet(name, ttl, note, refs, call_on=True, conv_cell=None,
                  put_cell=None):
@@ -9382,6 +9437,9 @@ with st.sidebar:
                     st.caption("행사금액 = 100 × (1 + 실효수익률)^경과연수")
             if _pl:
                 for _c in sched_lock_note(_pl, eff_cpn(t), t.p_cmp): st.caption(_c)
+            t.p_cpn_add = 1 if st.checkbox(
+                "행사일이 이자지급일이면 그 날 이자를 «따로» 받는다",
+                value=bool(getattr(t, "p_cpn_add", 0)), key="pcadd", help="계약이 「조기상환일에 원금과 «그 날까지의 이자» 를 함께 지급한다」고 쓰여 있으면 켜십시오. 행사금액표나 보장수익률 산식이 이미 그 이자를 담고 있으면 끕니다 — 켜면 두 번 세게 됩니다. **계약 해석은 앱이 정할 일이 아닙니다.** 만기는 스위치와 무관하게 마지막 이자를 함께 받습니다.") else 0
 
             with st.expander("조기상환 행사금액표 직접 입력 (선택)"):
                 t.p_sched = st.text_area(
@@ -9676,6 +9734,10 @@ with st.sidebar:
                 t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자·배당 차감", value=bool(t.k_less_cpn),
                                                key="kless1", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다.",
                                                disabled=bool(_kl)))
+                t.k_cpn_add = 1 if st.checkbox(
+                    "행사일이 이자지급일이면 그 날 이자를 «따로» 받는다",
+                    value=bool(getattr(t, "k_cpn_add", 0)), key="kcadd1",
+                    help="계약이 「매도청구일에 매매대금과 «그 날까지의 이자» 를 함께 지급한다」고 쓰여 있으면 켜십시오. 행사금액이 이미 그 이자를 담고 있으면 끕니다 — 켜면 두 번 세게 됩니다. 바로 위의 「기 지급 이자·배당 차감」과는 다른 물음입니다: 그것은 산식이 이미 준 이자를 «빼는가» 이고, 이것은 행사하는 날의 이자를 «더 얹는가» 입니다.") else 0
                 if _kl:
                     for _c in sched_lock_note(_kl, call_cpn(t), t.k_cmp): st.caption(_c)
                 st.caption("상환청구권과 하나의 **복합내재파생상품**으로 묶어 순액으로 봅니다 "
@@ -9697,6 +9759,10 @@ with st.sidebar:
                 t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자·배당 차감", value=bool(t.k_less_cpn),
                                                key="kless2", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다.",
                                                disabled=bool(_kl)))
+                t.k_cpn_add = 1 if st.checkbox(
+                    "행사일이 이자지급일이면 그 날 이자를 «따로» 받는다",
+                    value=bool(getattr(t, "k_cpn_add", 0)), key="kcadd2",
+                    help="계약이 「매도청구일에 매매대금과 «그 날까지의 이자» 를 함께 지급한다」고 쓰여 있으면 켜십시오. 행사금액이 이미 그 이자를 담고 있으면 끕니다 — 켜면 두 번 세게 됩니다. 바로 위의 「기 지급 이자·배당 차감」과는 다른 물음입니다: 그것은 산식이 이미 준 이자를 «빼는가» 이고, 이것은 행사하는 날의 이자를 «더 얹는가» 입니다.") else 0
                 # 콜 갈래를 바꾸면 derive 가 k_w 를 0(없음)이나 1(발행자 상환권)로
                 # 눌러 놓는다. 그 값을 그대로 보이면 한도가 0% 로 뜨므로, 처음
                 # 열릴 때는 실무에서 흔한 20% 를 채워 둔다. 계약서 값으로 고치면 된다.
@@ -9772,7 +9838,11 @@ with st.sidebar:
                                             disabled=bool(_kl)))
               t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자 차감", value=bool(t.k_less_cpn),
                                              key="kless3", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다.",
-                                               disabled=bool(_kl)))
+                                             disabled=bool(_kl)))
+              t.k_cpn_add = 1 if st.checkbox(
+                  "행사일이 이자지급일이면 그 날 이자를 «따로» 받는다",
+                  value=bool(getattr(t, "k_cpn_add", 0)), key="kcadd3",
+                  help="계약이 「매도청구일에 매매대금과 «그 날까지의 이자» 를 함께 지급한다」고 쓰여 있으면 켜십시오. 행사금액이 이미 그 이자를 담고 있으면 끕니다 — 켜면 두 번 세게 됩니다. 바로 위의 「기 지급 이자·배당 차감」과는 다른 물음입니다: 그것은 산식이 이미 준 이자를 «빼는가» 이고, 이것은 행사하는 날의 이자를 «더 얹는가» 입니다.") else 0
 
               with st.expander("매도청구 행사금액표 직접 입력 (선택)"):
                   t.k_sched = st.text_area(
