@@ -214,6 +214,48 @@ def accrue_rate(t_year: float, g: float, c: float, m: int) -> float:
     return max(0.0, (g - c)/g * ((1 + g/m)**(m*t_year) - 1))
 
 
+def implied_yield(prem: float, t_year: float, c: float, m: int):
+    """할증금률에서 **보장수익률을 되찾는다** — ``accrue_rate`` 의 역함수.
+
+    계약이 회차별 금액을 확정 숫자로 주면 보장수익률은 화면에 적을 자리가 없다. 그러나
+    그 표가 계약서의 몇 %와 맞는지는 확인해야 한다 — 「연 5% 분기복리」라고 쓰인 계약의
+    표에서 4.2% 가 나오면 표를 잘못 옮긴 것이다. 그래서 역산해 보여 준다.
+
+    ``accrue_rate`` 는 ``g ≤ c`` 에서 0 으로 끊기므로 **``g ≥ c`` 구간에서만** 단조증가한다.
+    그 구간에서 이분법으로 찾는다 (BDT 기준금리·발행가 역산과 같은 방식). 단리(``m=0``)는
+    닫힌 해가 있다.
+
+    돌려주는 것 — 연 보장수익률, 또는 되찾을 수 없으면 ``None`` (할증금이 0 이하이거나
+    기간이 0 이면 어떤 수익률도 그 금액을 설명하지 못한다).
+    """
+    if t_year <= 0 or prem <= 1e-12: return None
+    m = int(m)
+    if m <= 0: return prem/t_year + c                  # 단리 — (g − c)·t = prem
+    lo, hi = max(c, 0.0), max(c, 0.0) + 2.0
+    if accrue_rate(t_year, hi, c, m) < prem: return None   # 연 200% 로도 못 미친다
+    for _ in range(200):
+        mid = (lo + hi)/2
+        if accrue_rate(t_year, mid, c, m) < prem: lo = mid
+        else: hi = mid
+    return (lo + hi)/2
+
+
+def sched_yield(rows: list, c: float, m: int):
+    """행사금액표가 **암시하는 보장수익률** — (대표값, 최소, 최대) 또는 None.
+
+    회차마다 역산한다. 한 보장수익률로 만든 표라면 회차별 값이 거의 같고, 벌어지면
+    표를 잘못 옮겼거나 계약이 회차마다 다른 수익률을 쓴 것이다 — 값싼 검산이다.
+
+    대표값은 **마지막 회차**다. 기간이 길어 소수점 반올림에 가장 둔감하다. 기간은
+    계약 개월÷12 로 센다 — 표는 계약서의 회차표이므로 계약이 세는 방식을 따른다.
+    """
+    got = [(mo, implied_yield(v/100 - 1, mo/12, c, m)) for mo, v in rows if mo > 0]
+    got = [(mo, g) for mo, g in got if g is not None]
+    if not got: return None
+    ys = [g for _, g in got]
+    return (got[-1][1], min(ys), max(ys))
+
+
 def xl_prem(g: str, c: str, m: str, yr: str) -> str:
     """상환할증금률의 엑셀 식. 엔진의 accrue_rate 와 같은 갈래를 탄다.
 
