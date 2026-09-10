@@ -1260,6 +1260,38 @@ def test_call_split_text():
     chk_bool("만기 노드는 스위치가 건드리지 않는다",
              all(abs(_m1[k]["B"] - _m0[k]["B"]) < 1e-9 for k in _mk))
 
+    # ── 위험 곡선 방식 — 「표에서 등급 하나 고르기」를 없앴다 ──
+    # 고시표를 올려 「이 곡선 적용」 을 누르면 그 곡선이 직접 입력 칸에 들어오므로 같은
+    # 일을 두 번 묻던 갈래였다. 옛 시나리오는 cr_curve 를 들고 있어 같은 값으로 열린다.
+    _tp0 = Terms(rate_mode="pick", cr_curve=[(1, .11), (3, .13), (5, .14)])
+    _tp0.rf_curve = [(1, .026), (3, .028), (5, .030)]; derive(_tp0)
+    chk_bool("옛 «pick» 시나리오가 직접 입력으로 열린다", _tp0.rate_mode == "direct")
+    _tp1 = Terms(rate_mode="direct", cr_curve=list(_tp0.cr_curve))
+    _tp1.rf_curve = list(_tp0.rf_curve); derive(_tp1)
+    chk("옛 «pick» 과 직접 입력이 같은 곡선·같은 값",
+        G["decompose"](_tp0)[3], G["decompose"](_tp1)[3], 1e-12)
+    chk_bool("남은 방식은 둘뿐", set(f.default for f in [Terms.__dataclass_fields__["rate_mode"]])
+             == {"direct"})
+
+    # ── BDT 를 켤 수 있는 자리인가 (put_bdt_avail · put_bdt_block) ──
+    # 같은 조건이 사이드바·검토 화면·put_bdt_on 세 군데에 손으로 적혀 있어, 화면이
+    # 사이드바의 잠금을 모르고 「켜십시오」라고 권했다. 규칙은 한 곳에서 나온다.
+    _AV, _BL, _ON = G["put_bdt_avail"], G["put_bdt_block"], G["put_bdt_on"]
+    _bb = dict(conv_class="equity", model="TF", p_s=6., p_e=54.)
+    chk_bool("자본 + TF + 조기상환권 → 켤 수 있다", _AV(Terms(**_bb)))
+    chk_bool("전환권이 부채면 못 켠다", not _AV(Terms(**{**_bb, "conv_class": "liability"})))
+    chk_bool("GS 면 못 켠다", not _AV(Terms(**{**_bb, "model": "GS"})))
+    chk_bool("조기상환권이 없으면 못 켠다", not _AV(Terms(**{**_bb, "p_s": 60., "p_e": 6.})))
+    chk_bool("막힌 이유를 적는다 (부채)",
+             _BL(Terms(**{**_bb, "conv_class": "liability"})) == "전환권이 파생상품부채다")
+    chk_bool("막힌 이유를 적는다 (GS)", _BL(Terms(**{**_bb, "model": "GS"})) == "신용위험 처리가 GS 다")
+    chk_bool("켤 수 있으면 이유는 빈 문구", _BL(Terms(**_bb)) == "")
+    chk_bool("put_bdt_on 은 avail 과 어긋나지 않는다",
+             all(_ON(Terms(**{**_bb, "put_bdt": 1, **_ch})) == _AV(Terms(**{**_bb, **_ch}))
+                 for _ch in ({}, {"conv_class": "liability"}, {"model": "GS"},
+                             {"p_s": 60., "p_e": 6.})))
+    chk_bool("켜지 않으면 avail 이어도 꺼져 있다", not _ON(Terms(**_bb)))
+
     # ── 주가 조회 기록 (px_trace) ──
     # 조서를 받은 사람이 「무엇을 요청했고 무엇을 받았는지」 알아야 분할·병합을
     # 의심할 때 되짚을 수 있다. 네트워크를 쓰지 않는다 — 기록을 직접 세워 시험한다.

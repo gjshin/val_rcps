@@ -1,32 +1,32 @@
 {
- "generated": "2026-09-10T06:20:50",
- "head": "a73acad",
+ "generated": "2026-09-10T06:36:10",
+ "head": "9d4f4ca",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
   "CB": {
-   "PASS": 97,
+   "PASS": 96,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 107,
+   "PASS": 106,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 101,
+   "PASS": 100,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "SHA": {
-   "PASS": 44,
+   "PASS": 43,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -4974,7 +4974,7 @@
    "product": "CB",
    "branch": "rate_mode",
    "value": "direct",
-   "label": "직접 입력",
+   "label": "직접 입력 (고시표 적용 포함)",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
    "status": "PASS",
@@ -4997,22 +4997,6 @@
    "n_tests": 148
   },
   {
-   "case_id": "CB-rate_mode-PICK",
-   "product": "CB",
-   "branch": "rate_mode",
-   "value": "pick",
-   "label": "등급 하나",
-   "meaning": "위험 곡선 출처",
-   "kind": "enum",
-   "status": "PASS",
-   "oracle": "invariants",
-   "independent_oracle": false,
-   "covered_by": [
-    "tests/분기전수.py::rate_mode=pick"
-   ],
-   "n_tests": 1
-  },
-  {
    "case_id": "CB-rate_mode-RATING",
    "product": "CB",
    "branch": "rate_mode",
@@ -5033,7 +5017,7 @@
    "product": "RCPS",
    "branch": "rate_mode",
    "value": "direct",
-   "label": "직접 입력",
+   "label": "직접 입력 (고시표 적용 포함)",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
    "status": "PASS",
@@ -5056,22 +5040,6 @@
    "n_tests": 48
   },
   {
-   "case_id": "RCPS-rate_mode-PICK",
-   "product": "RCPS",
-   "branch": "rate_mode",
-   "value": "pick",
-   "label": "등급 하나",
-   "meaning": "위험 곡선 출처",
-   "kind": "enum",
-   "status": "PASS",
-   "oracle": "invariants",
-   "independent_oracle": false,
-   "covered_by": [
-    "tests/분기전수.py::rate_mode=pick"
-   ],
-   "n_tests": 1
-  },
-  {
    "case_id": "RCPS-rate_mode-RATING",
    "product": "RCPS",
    "branch": "rate_mode",
@@ -5092,7 +5060,7 @@
    "product": "BW",
    "branch": "rate_mode",
    "value": "direct",
-   "label": "직접 입력",
+   "label": "직접 입력 (고시표 적용 포함)",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
    "status": "PASS",
@@ -5115,22 +5083,6 @@
    "n_tests": 41
   },
   {
-   "case_id": "BW-rate_mode-PICK",
-   "product": "BW",
-   "branch": "rate_mode",
-   "value": "pick",
-   "label": "등급 하나",
-   "meaning": "위험 곡선 출처",
-   "kind": "enum",
-   "status": "PASS",
-   "oracle": "invariants",
-   "independent_oracle": false,
-   "covered_by": [
-    "tests/분기전수.py::rate_mode=pick"
-   ],
-   "n_tests": 1
-  },
-  {
    "case_id": "BW-rate_mode-RATING",
    "product": "BW",
    "branch": "rate_mode",
@@ -5151,7 +5103,7 @@
    "product": "SHA",
    "branch": "rate_mode",
    "value": "direct",
-   "label": "직접 입력",
+   "label": "직접 입력 (고시표 적용 포함)",
    "meaning": "위험 곡선 출처",
    "kind": "enum",
    "status": "PASS",
@@ -5172,22 +5124,6 @@
     "tests/주주간계약대조.py::월 노드"
    ],
    "n_tests": 16
-  },
-  {
-   "case_id": "SHA-rate_mode-PICK",
-   "product": "SHA",
-   "branch": "rate_mode",
-   "value": "pick",
-   "label": "등급 하나",
-   "meaning": "위험 곡선 출처",
-   "kind": "enum",
-   "status": "PASS",
-   "oracle": "invariants",
-   "independent_oracle": false,
-   "covered_by": [
-    "tests/분기전수.py::rate_mode=pick"
-   ],
-   "n_tests": 1
   },
   {
    "case_id": "SHA-rate_mode-RATING",

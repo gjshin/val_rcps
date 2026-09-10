@@ -182,7 +182,8 @@ class Terms:
     s0_raw: float = -1.0          # 그날의 «원주가» (auto_adjust=False)
     s0_adj: float = -1.0          # 그날의 «수정주가» (auto_adjust=True). 둘이 다르면 조정사건이 있었다
     s0_splits: str = ""           # 야후가 기록한 분할 이력. "" 미조회 · "없음" 기록 없음 · 그 외 목록
-    rate_mode: str = "direct"      # direct 직접 · pick 등급 하나 · rating 두 등급 보간
+    rate_mode: str = "direct"      # direct 직접 입력 · rating 두 등급 보간
+                                   # (옛 "pick" 은 derive() 가 direct 로 옮긴다)
     cr_src: str = ""               # 위험 곡선을 어디서 가져왔는지 (조서에 적는다)     # direct 곡선 직접 / rating 등급 보간
     rt_a: str = "BBB+"            # 인풋 곡선 A 등급
     rt_b: str = "BBB-"            # 인풋 곡선 B 등급
@@ -529,6 +530,10 @@ def derive(tm: Terms) -> Terms:
     내야 하기 때문이다. 되돌린 내역은 ``forced_notes`` 에 남는다 (두 번째 호출은 이미
     되돌린 뒤라 비어 있으므로 덮어쓰지 않는다).
     """
+    # 「표에서 등급 하나 고르기」는 없앴다. 고시표를 올려 「이 곡선 적용」 을 누르면
+    # 그 곡선이 직접 입력 칸에 들어오므로 같은 일을 두 번 묻던 갈래였다. 옛 시나리오는
+    # cr_curve 를 그대로 들고 있어 직접 입력으로 열면 **같은 곡선·같은 값**이다.
+    if tm.rate_mode == "pick": tm.rate_mode = "direct"
     _f = compat(tm)
     if _f:
         tm.forced_notes = _f
@@ -2401,8 +2406,24 @@ def put_bdt_on(tm: Terms) -> bool:
     부채요소만 바꿔도 배분이 그대로 성립하지만, 부채로 두면 복합내재파생을
     전체로서 재야 해서 전체 가치(주가 격자)까지 같이 손봐야 하기 때문이다.
     """
-    return bool(tm.put_bdt) and tm.conv_class == "equity" and tm.model == "TF" \
-        and tm.p_s <= tm.p_e
+    return bool(tm.put_bdt) and put_bdt_avail(tm)
+
+
+def put_bdt_avail(tm: Terms) -> bool:
+    """BDT 를 **켤 수 있는 자리인가** (켜져 있는지와 별개다).
+
+    같은 조건이 사이드바·검토 화면·put_bdt_on 세 군데에 손으로 적혀 있었다. 그래서 화면이
+    사이드바의 잠금을 모르고 「BDT 를 켜십시오」라고 권했다 — 켤 수 없는 자리에서.
+    """
+    return (tm.conv_class == "equity" and tm.model == "TF" and tm.p_s <= tm.p_e)
+
+
+def put_bdt_block(tm: Terms) -> str:
+    """켤 수 없는 이유. 켤 수 있으면 빈 문자열이다."""
+    if tm.p_s > tm.p_e: return "조기상환청구권이 없다"
+    if tm.conv_class != "equity": return "전환권이 파생상품부채다"
+    if tm.model != "TF": return "신용위험 처리가 GS 다"
+    return ""
 
 
 def decompose(tm: Terms):
@@ -9132,13 +9153,34 @@ with st.sidebar:
         reset_widgets(_SCHED_KEYS); st.session_state.sched_mode_prev = st.session_state.sched_mode; st.rerun()
     st.session_state.sched_mode_prev = st.session_state.sched_mode
 
+    def exercise_mode_ui(s_, e_, f_, key, gap_m):
+        """행사 방식 — 특정일 1회 / 정기 / 기간 중 언제든지. ``(종료, 주기)`` 를 돌려준다.
+
+        조기상환에만 있던 것을 매도청구도 함께 쓴다. 「기간 중 언제든지」는 주기를 노드
+        간격으로 맞추면 그 구간의 모든 노드가 열린다 — **엔진은 이미 할 수 있고**
+        화면에서 고를 수 없었을 뿐이다.
+        """
+        _m = st.radio("행사 방식", ["특정일 1회", "정기", "기간 중 언제든지"],
+                      index=(0 if s_ >= e_ - 1e-9 else
+                             (2 if f_ <= gap_m + 1e-9 else 1)),
+                      horizontal=True, key=key, help="계약이 정한 행사 방식입니다.\n\n**특정일 1회** — 시작일 하나에만 행사할 수 있습니다(종료일을 시작일로 맞춥니다).\n\n**정기** — 「6개월이 되는 날 및 이후 매 3개월」처럼 주기가 있습니다. 아래 주기 칸을 씁니다.\n\n**기간 중 언제든지** — 주기 없이 행사기간 내내 행사할 수 있습니다. 주기를 노드 간격으로 맞춰 모든 노드에서 행사 가능하게 합니다 — 노드가 촘촘할수록 정확합니다.")
+        if _m == "특정일 1회":
+            st.caption(f"발행일 기준 {s_:,.0f}개월 하루만 행사할 수 있습니다.")
+            return s_, max(1.0, float(f_))
+        if _m == "기간 중 언제든지":
+            st.caption(f"주기를 노드 간격({gap_m:g}개월)으로 맞췄습니다 — 행사기간의 "
+                       "모든 노드에서 행사할 수 있습니다.")
+            return e_, gap_m
+        return e_, st.number_input("주기 (개월)", value=float(f_), step=1.0,
+                                   key=key + "_f")
+
     def _sched_one(col, lab_m, lab_d, m, key, **kw):
         """한 시점. 날짜 모드면 date_input, 아니면 number_input. 개월을 돌려준다."""
         if not _DATE_MODE:
             return col.number_input(lab_m, value=float(m), step=1.0, key=key, **kw)
         kw.pop("min_value", None)
         d = col.date_input(lab_d, value=months_to_date(t.d_issue, m), key=key + "_d",
-                           help=kw.get("help"))
+                           help=kw.get("help"), disabled=kw.get("disabled", False))
         mm = date_to_months(t.d_issue, d)
         col.caption(f"발행일 기준 {mm:,.1f}개월")
         return mm
@@ -9433,20 +9475,7 @@ with st.sidebar:
         with st.expander(L["put"]):
             _p1, _p2 = st.columns(2)
             t.p_s, t.p_e = _sched_pair(_p1, _p2, t.p_s, t.p_e, "p", none_lab="이 권리 없음")
-            _pmode = st.radio("행사 방식", ["특정일 1회", "정기", "기간 중 언제든지"],
-                              index=(0 if t.p_s >= t.p_e - 1e-9 else
-                                     (2 if t.p_f <= t.gap_m + 1e-9 else 1)),
-                              horizontal=True, key="pmode_ui", help="계약이 정한 행사 방식입니다.\n\n**특정일 1회** — 시작일 하나에만 행사할 수 있습니다(종료일을 시작일로 맞춥니다).\n\n**정기** — 「6개월이 되는 날 및 이후 매 3개월」처럼 주기가 있습니다. 아래 주기 칸을 씁니다.\n\n**기간 중 언제든지** — 주기 없이 행사기간 내내 행사할 수 있습니다. 주기를 노드 간격으로 맞춰 모든 노드에서 행사 가능하게 합니다 — 노드가 촘촘할수록 정확합니다.")
-            if _pmode == "특정일 1회":
-                t.p_e = t.p_s
-                t.p_f = max(1.0, float(t.p_f))
-                st.caption(f"발행일 기준 {t.p_s:,.0f}개월 하루만 행사할 수 있습니다.")
-            elif _pmode == "기간 중 언제든지":
-                t.p_f = t.gap_m
-                st.caption(f"주기를 노드 간격({t.gap_m:g}개월)으로 맞췄습니다 — 행사기간의 "
-                           "모든 노드에서 행사할 수 있습니다.")
-            else:
-                t.p_f = st.number_input("주기 (개월)", value=float(t.p_f), step=1.0, key="pf")
+            t.p_e, t.p_f = exercise_mode_ui(t.p_s, t.p_e, t.p_f, "pmode_ui", t.gap_m)
             # 표가 있으면 아래 산식 칸은 계산에 쓰이지 않는다. 칸을 그리기 «전» 에
             # 직전 실행의 텍스트를 읽어 잠근다 — 위젯 순서를 바꾸지 않아도 된다.
             _pl = sched_rows(st.session_state.get("p_sched", t.p_sched), t)
@@ -9512,7 +9541,7 @@ with st.sidebar:
 
             st.divider()
             st.markdown("**평가 방법**")
-            _ok = (t.conv_class == "equity" and t.model == "TF" and t.p_s <= t.p_e)
+            _ok = put_bdt_avail(t)
             t.put_bdt = int(st.checkbox(
                 "BDT 금리격자로 평가", value=bool(t.put_bdt), disabled=not _ok,
                 help="전환을 끄면 격자가 주가와 무관해져 조기상환권이 확정 계산이 "
@@ -9754,7 +9783,7 @@ with st.sidebar:
             if t.issuer_call == 1:
                 _k1, _k2 = st.columns(2)
                 t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
-                t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
+                t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m)
                 _kl = sched_rows(t.k_sched, t)     # 이 갈래에는 표 칸이 없다 — Terms 값을 본다
                 t.k_prem = st.number_input("상환 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
                                            help="발행자 상환가액 = 100 × (1 + 보장수익률 복리)^경과연수 "
@@ -9777,7 +9806,7 @@ with st.sidebar:
             elif t.issuer_call == 2:
                 _k1, _k2 = st.columns(2)
                 t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
-                t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
+                t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m)
                 _kl = sched_rows(st.session_state.get("ksched_rcps", t.k_sched), t)
                 t.k_prem = st.number_input(
                     "매수대금 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
@@ -9818,9 +9847,19 @@ with st.sidebar:
                         st.warning("읽지 못한 줄 — " + ", ".join(str(x) for x in _kb[:8]) + "번째.")
                 if _kl:
                     for _c in sched_lock_note(_kl, call_cpn(t), t.k_cmp): st.caption(_c)
+                # 의무보유는 «있는가 → 언제까지 → 무엇을 막는가» 순서로 묻는다. 종전에는
+                # 있는지 묻는 체크박스가 개월 칸 아래에 있어, 껐는데도 위 칸이 열려 있어
+                # 그 값이 쓰이는 줄 알았다.
+                t.k_hold = 1 if st.checkbox(
+                    "콜 대상물량 의무보유 있음",
+                    value=bool(t.k_hold), key="khold_rcps", help='**의무보유 있음**: 콜 대상비율에 해당하는 물량을 아래 「의무보유 (개월)」 동안 전환(과 조기상환청구)이 불가능한 상태로 보유한다고 가정합니다. 그 기간에는 콜 대상물량이 남아 있어 콜을 행사할 수 있습니다.\n\n**없음**: 투자자가 먼저 전환하거나 조기상환을 청구해 그 물량을 소멸시키면 그것을 사는 콜도 함께 사라집니다.\n\n한공회 4.4.2·4.4.3 은 **기초자산**에서 의무보유를 빼라고 하고, 같은 문단이 「계약조건의 특성을 가치평가에 반영해야 한다」고도 합니다. 그래서 기초자산은 그대로 두고 **콜 계약층에서 «행사기회가 유지되는가»로만** 반영합니다. 값 차이가 매우 큽니다.\n\n유무가치비교법에서는 같은 기간의 전환(·조기상환) 시작을 늦추는 방식으로 들어갑니다 — **두 방법이 같은 기간·같은 권리를 봅니다.**' ) else 0
                 t.k_lock = _sched_one(
                     st, "의무보유 (개월)", "의무보유 만료일", t.k_lock, "klock",
-                    help="인수인이 콜옵션 대상주식을 **묶어 두어야** 하는 기간입니다. 매도청구 종료일까지 두는 계약이 많습니다. **두 평가방법이 모두 이 기간을 봅니다** — 유무가치비교법은 이 기간 동안 전환(과 아래 체크박스가 켜져 있으면 조기상환청구)을 막고, 옵션차익법은 이 기간 안에서만 콜 대상물량이 존속한다고 봅니다. 의무보유 자체가 없으면 아래 「콜 대상물량 의무보유」를 끄십시오.")
+                    disabled=not t.k_hold,
+                    help="인수인이 콜옵션 대상주식을 **묶어 두어야** 하는 기간입니다. 매도청구 종료일까지 두는 계약이 많습니다. **두 평가방법이 모두 이 기간을 봅니다** — 유무가치비교법은 이 기간 동안 전환(과 아래 체크박스가 켜져 있으면 조기상환청구)을 막고, 옵션차익법은 이 기간 안에서만 콜 대상물량이 존속한다고 봅니다.")
+                if not t.k_hold:
+                    st.caption("의무보유가 없으므로 이 칸은 계산에 쓰지 않습니다. "
+                               "위 체크를 켜면 다시 열립니다.")
                 # 옵션차익혼합할인법은 노드의 지분·부채 분해 위에 정의된 산식이라 TF
                 # 전용이다 (한공회 4.4.3). GS 를 고르면 기초상품만 GS 이고 콜은 TF 라
                 # 표시와 계산이 어긋나므로 조합 자체를 막는다.
@@ -9843,9 +9882,6 @@ with st.sidebar:
                 t.k_basis = st.text_input("평가기법 선택 근거 (조서 문안)", value=t.k_basis, key="kbasis_rcps",
                                           help="한공회 4.6.2 — 복수의 기법이 가능한 자리에서 고른 이유를 적어 조서에 남깁니다. "
                                                "바꾸면 그 사유도 여기에.")
-                t.k_hold = 1 if st.checkbox(
-                    "콜 대상물량 의무보유 있음",
-                    value=bool(t.k_hold), key="khold_rcps", help='**의무보유 있음**: 콜 대상비율에 해당하는 물량을 위 「의무보유 (개월)」 동안 전환(과 조기상환청구)이 불가능한 상태로 보유한다고 가정합니다. 그 기간에는 콜 대상물량이 남아 있어 콜을 행사할 수 있습니다.\n\n**없음**: 투자자가 먼저 전환하거나 조기상환을 청구해 그 물량을 소멸시키면 그것을 사는 콜도 함께 사라집니다.\n\n한공회 4.4.2·4.4.3 은 **기초자산**에서 의무보유를 빼라고 하고, 같은 문단이 「계약조건의 특성을 가치평가에 반영해야 한다」고도 합니다. 그래서 기초자산은 그대로 두고 **콜 계약층에서 «행사기회가 유지되는가»로만** 반영합니다. 값 차이가 매우 큽니다.\n\n유무가치비교법에서는 같은 기간의 전환(·조기상환) 시작을 늦추는 방식으로 들어갑니다 — **두 방법이 같은 기간·같은 권리를 봅니다.**') else 0
                 if t.k_hold:
                     t.k_lock_put = 1 if st.checkbox(
                         "이 기간에 조기상환청구도 막는다",
@@ -9859,7 +9895,7 @@ with st.sidebar:
           else:
               _k1, _k2 = st.columns(2)
               t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
-              t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
+              t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m)
               _kl = sched_rows(st.session_state.get("ksched_cb", t.k_sched), t)
               t.k_prem = st.number_input("프리미엄 (연 %)", value=t.k_prem*100, step=0.5,
                                          disabled=bool(_kl))/100
@@ -9890,14 +9926,19 @@ with st.sidebar:
               if _kl:
                   for _c in sched_lock_note(_kl, call_cpn(t), t.k_cmp): st.caption(_c)
               t.k_w = st.number_input("행사 한도 (%)", value=t.k_w*100, step=5.0)/100
-              t.k_lock = _sched_one(
-                  st, "의무보유 (개월)", "의무보유 만료일", t.k_lock, "klock",
-                  help="인수인이 콜옵션 대상물량을 **묶어 두어야** 하는 기간입니다. 매도청구 "
-                       "종료일까지 두는 계약이 많습니다. **두 평가방법이 모두 이 기간을 봅니다.** "
-                       "의무보유 자체가 없으면 아래 「콜 대상물량 의무보유 있음」을 끄십시오.")
+              # 있는가 → 언제까지 → 무엇을 막는가. 껐는데 개월 칸이 열려 있으면
+              # 그 값이 쓰이는 줄 안다.
               t.k_hold = 1 if st.checkbox(
                   "콜 대상물량 의무보유 있음",
-                  value=bool(t.k_hold), key="khold_cb", help='**의무보유 있음**: 콜 대상비율에 해당하는 물량을 위 「의무보유 (개월)」 동안 전환(과 조기상환청구)이 불가능한 상태로 보유한다고 가정합니다. 그 기간에는 콜 대상물량이 남아 있어 콜을 행사할 수 있습니다.\n\n**없음**: 투자자가 먼저 전환하거나 조기상환을 청구해 그 물량을 소멸시키면 그것을 사는 콜도 함께 사라집니다.\n\n한공회 4.4.2·4.4.3 은 **기초자산**에서 의무보유를 빼라고 하고, 같은 문단이 「계약조건의 특성을 가치평가에 반영해야 한다」고도 합니다. 그래서 기초자산은 그대로 두고 **콜 계약층에서 «행사기회가 유지되는가»로만** 반영합니다. 값 차이가 매우 큽니다.\n\n유무가치비교법에서는 같은 기간의 전환(·조기상환) 시작을 늦추는 방식으로 들어갑니다 — **두 방법이 같은 기간·같은 권리를 봅니다.**') else 0
+                  value=bool(t.k_hold), key="khold_cb", help='**의무보유 있음**: 콜 대상비율에 해당하는 물량을 아래 「의무보유 (개월)」 동안 전환(과 조기상환청구)이 불가능한 상태로 보유한다고 가정합니다. 그 기간에는 콜 대상물량이 남아 있어 콜을 행사할 수 있습니다.\n\n**없음**: 투자자가 먼저 전환하거나 조기상환을 청구해 그 물량을 소멸시키면 그것을 사는 콜도 함께 사라집니다.\n\n한공회 4.4.2·4.4.3 은 **기초자산**에서 의무보유를 빼라고 하고, 같은 문단이 「계약조건의 특성을 가치평가에 반영해야 한다」고도 합니다. 그래서 기초자산은 그대로 두고 **콜 계약층에서 «행사기회가 유지되는가»로만** 반영합니다. 값 차이가 매우 큽니다.\n\n유무가치비교법에서는 같은 기간의 전환(·조기상환) 시작을 늦추는 방식으로 들어갑니다 — **두 방법이 같은 기간·같은 권리를 봅니다.**' ) else 0
+              t.k_lock = _sched_one(
+                  st, "의무보유 (개월)", "의무보유 만료일", t.k_lock, "klock",
+                  disabled=not t.k_hold,
+                  help="인수인이 콜옵션 대상물량을 **묶어 두어야** 하는 기간입니다. 매도청구 "
+                       "종료일까지 두는 계약이 많습니다. **두 평가방법이 모두 이 기간을 봅니다.**")
+              if not t.k_hold:
+                  st.caption("의무보유가 없으므로 이 칸은 계산에 쓰지 않습니다. "
+                             "위 체크를 켜면 다시 열립니다.")
               if t.k_hold:
                   t.k_lock_put = 1 if st.checkbox(
                       "이 기간에 조기상환청구도 막는다",
@@ -10302,6 +10343,10 @@ with st.sidebar:
                     st.session_state.rf_txt = curve_text(_rows[_ri][1])
                     st.session_state.cr_txt = curve_text(_rows[_ci][1])
                     st.session_state.kis_src = (_lbl[_ri], _lbl[_ci])
+                    # 아래 직접 입력 칸이 «어디서 온 곡선인지» 알아야 조서에 출처를
+                    # 그대로 실을 수 있다. 채워 넣은 원문을 함께 남겨 두고, 손으로
+                    # 고쳤는지 그 원문과 대조해 가른다.
+                    st.session_state.cr_applied = (st.session_state.cr_txt, _lbl[_ci])
                     st.rerun()
                 # 등급 보간 칸이 같은 표에서 곡선을 고를 수 있도록 남긴다
                 st.session_state.kis_rows = _rows
@@ -10321,54 +10366,36 @@ with st.sidebar:
                                        "48\t6.65%\n60\t7.05%")
         rf_txt = st.text_area("무위험 곡선 (국공채 YTM)", key="rf_txt", height=130)
         t.rf_curve = parse_yields(rf_txt, unit)
-        _MODES = ["pick", "direct", "rating"]
-        _MODE_NM = {"pick": "표에서 등급 하나 고르기",
-                    "direct": "YTM 직접 입력",
-                    "rating": "두 등급 곡선으로 보간"}
+        _MODES = ["direct", "rating"]
+        _MODE_NM = {"direct": "YTM 직접 입력", "rating": "두 등급 곡선으로 보간"}
         if t.rate_mode not in _MODES: t.rate_mode = "direct"
         t.rate_mode = st.selectbox("위험 곡선", _MODES,
                                    index=_MODES.index(t.rate_mode),
                                    format_func=lambda x: _MODE_NM[x],
-                                   help="고시표를 올리셨으면 **등급 하나 고르기**가 "
-                                        "가장 짧습니다. 평가대상 등급이 표에 없을 "
-                                        "때만 두 등급 보간을 쓰십시오.")
+                                   help="고시표를 올려 **「이 곡선 적용」** 을 누르면 그 곡선이 "
+                                        "아래 직접 입력 칸에 들어옵니다 — 그것이 가장 짧은 "
+                                        "길입니다. 평가대상 등급이 고시표에 없을 때만 "
+                                        "**두 등급 보간**을 쓰십시오.")
         _kr = st.session_state.get("kis_rows") or []
         _kg = [(i, rating_in(L)) for i, (L, _) in enumerate(_kr)]
         _kg = [(i, g) for i, g in _kg if g]
         _pick = sorted({g for _, g in _kg}, key=rating_idx)
 
-        if t.rate_mode == "pick":
-            # 고시표의 한 줄을 그대로 위험 곡선으로 쓴다. 텍스트 칸을 거치지
-            # 않으므로 "고른 등급과 실제로 쓰인 곡선이 다른" 사고가 없다.
-            if not _kr:
-                st.info("고시표를 아직 올리지 않으셨습니다. 위에서 KIS-Net 표를 "
-                        "올리시거나, **YTM 직접 입력**으로 바꾸십시오. 그동안은 "
-                        "아래 직접 입력 칸을 씁니다.")
-                cr_txt = st.text_area("위험 곡선 (등급별 회사채 YTM)",
-                                      key="cr_txt", height=130)
-                t.cr_curve = parse_yields(cr_txt, unit); t.cr_curve_b = []
-                t.cr_src = "직접 입력"
-            else:
-                _idx = [i for i, _ in _kg] or list(range(len(_kr)))
-                _prev = next((i for i in _idx if _kr[i][0] == t.cr_src), _idx[0])
-                _pi = st.selectbox("위험 곡선으로 쓸 줄", _idx,
-                                   index=_idx.index(_prev),
-                                   format_func=lambda i: _kr[i][0])
-                t.cr_curve = list(_kr[_pi][1]); t.cr_curve_b = []
-                t.cr_src = _kr[_pi][0]
-                _g = rating_in(t.cr_src)
-                if _g: t.rt_tgt = _g
-                st.success(f"**{t.cr_src}** 을 그대로 씁니다 — "
-                           + " · ".join(f"{int(round(m*12))}월 {y*100:.2f}%"
-                                        for m, y in t.cr_curve[:6])
-                           + (" …" if len(t.cr_curve) > 6 else ""))
-                st.caption("표의 만기가 그대로 들어갑니다. 아래 직접 입력 칸은 이 "
-                           "방식에서는 쓰이지 않습니다.")
-        elif t.rate_mode == "direct":
+        if t.rate_mode == "direct":
             cr_txt = st.text_area("위험 곡선 (등급별 회사채 YTM)", key="cr_txt", height=130)
             t.cr_curve = parse_yields(cr_txt, unit)
             t.cr_curve_b = []
-            t.cr_src = "직접 입력"
+            # 출처를 지우지 않는다. 고시표에서 받은 곡선을 「직접 입력」이라고 적으면
+            # 조서가 근거를 잃는다 — 손으로 고쳤는지만 가려 적는다.
+            _ap = st.session_state.get("cr_applied")
+            if _ap and _ap[0].strip() == (cr_txt or "").strip():
+                t.cr_src = _ap[1]
+                _g = rating_in(t.cr_src)
+                if _g: t.rt_tgt = _g                  # 줄 이름에 등급이 있으면 평가대상도
+                st.caption(f"출처 · 고시표 **{t.cr_src}** 을 그대로 씁니다. "
+                           "이 칸을 고치면 「직접 입력」으로 바뀝니다.")
+            else:
+                t.cr_src = ("직접 입력 (고시표를 고쳤음)" if _ap else "직접 입력")
         else:
             # 표를 올리셨으면 **그 표에 있는 등급만** 고르게 한다. 고시표에 없는
             # 등급을 곡선으로 고르면 붙여 넣을 자료가 없다 — 무보증 공모사채는
@@ -11212,13 +11239,25 @@ with tabs[2]:
     st.markdown("## 평가방법 — 어떻게 잴 것인가")
 
     # ── 조기상환권 : 확정 계산으로 충분한가, 금리모형이 필요한가 ──
-    st.markdown(inst_text(t, "### 조기상환청구권 — 금리모형(BDT)을 켤 것인가"))
-    st.caption(inst_text(t, "전환을 끄면 격자가 주가와 무관해져 스텝마다 값이 하나뿐입니다. "
-               "즉 지금 조기상환권은 **미리 내다보고 액면이 더 크면 행사한다**는 "
-               "확정 계산이고, 옵션의 시간가치가 들어 있지 않습니다. "
-               "행사가 뻔하면 그래도 맞는 답이 나오지만, 애매하면 값을 0 에 "
-               "가깝게 잡습니다. 그 자리가 금리모형이 필요한 자리입니다."))
-    if t.p_s <= t.p_e and t.T > 0:
+    # 켤 수 없는 자리에서 「켜십시오」라고 권하지 않는다. 전환권이 파생상품부채면
+    # 조기상환권을 따로 재지 않으므로 이 절 자체가 해당 없음이다.
+    _bblk = put_bdt_block(t)
+    _bdt_na = (_bblk == "전환권이 파생상품부채다")
+    if _bdt_na:
+        st.markdown(inst_text(t, "### 조기상환청구권 — 금리모형은 해당 없음"))
+        st.info(inst_text(t,
+                "전환권이 파생상품부채라 전환권·조기상환청구권·매도청구권이 **하나의 "
+                "복합내재파생상품**입니다 (기준서 1109 문단 B4.3.4). 조기상환권을 따로 "
+                "재지 않으므로 금리모형을 켤 자리가 없습니다. 위 네 관문의 ① 이 그 이유로 "
+                "닫혀 조서에는 「검토했으나 적용하지 않음」으로 남습니다."))
+    else:
+        st.markdown(inst_text(t, "### 조기상환청구권 — 금리모형(BDT)을 켤 것인가"))
+        st.caption(inst_text(t, "전환을 끄면 격자가 주가와 무관해져 스텝마다 값이 하나뿐입니다. "
+                   "즉 지금 조기상환권은 **미리 내다보고 액면이 더 크면 행사한다**는 "
+                   "확정 계산이고, 옵션의 시간가치가 들어 있지 않습니다. "
+                   "행사가 뻔하면 그래도 맞는 답이 나오지만, 애매하면 값을 0 에 "
+                   "가깝게 잡습니다. 그 자리가 금리모형이 필요한 자리입니다."))
+    if (not _bdt_na) and t.p_s <= t.p_e and t.T > 0:
         _r0 = engine(t, conv=False, put=False, call=False)
         _dtx = t.T/int(t.n)
         _lo2, _hi2 = step_mapper(t, int(t.n), _dtx)
@@ -11254,16 +11293,20 @@ with tabs[2]:
                        "행사가 확정적이라 금리를 흔들어도 판단이 안 바뀝니다. "
                        "**1 근처(0.97~1.03)이거나 1보다 작으면** 금리에 따라 판단이 "
                        "갈리므로 확정 계산이 값을 적게 잡습니다.")
+            # 켤 수 있으면 「켜십시오」, GS 라서 막혔으면 「TF 로 바꾸십시오」 — 한 자리에서.
+            _adv = ("사이드바에서 BDT 를 켜십시오." if not _bblk else
+                    "BDT 는 **TF 갈래 전용**입니다 (한공회 4.4.3 과 같은 이유). 금리 "
+                    "민감도를 보려면 신용위험 처리를 TF 로 바꾸어 다시 재십시오.")
             if _otm2 == len(_rat2):
                 st.error(f"모든 행사일이 **외가격**입니다 (비율 최대 {max(_rat2):.3f}). "
                          f"지금 모델은 조기상환권을 {b1-b0:,.2f} 로 계산하는데, "
                          "외가격 옵션에도 시간가치가 있습니다. **금리모형 없이는 값을 "
-                         "0 에 가깝게 잡습니다.** 사이드바에서 BDT 를 켜십시오.")
+                         "0 에 가깝게 잡습니다.** " + _adv)
             elif _atm2 + _otm2 > 0:
                 st.warning(f"등가격 근처가 {_atm2}회, 외가격이 {_otm2}회 있습니다 "
                            f"(비율 {min(_rat2):.3f} ~ {max(_rat2):.3f}). 행사 여부가 "
-                           "금리에 따라 갈릴 수 있으므로 BDT 를 켜서 차이를 "
-                           "확인하고 그 판단을 조서에 남기십시오.")
+                           "금리에 따라 갈릴 수 있으므로 그 차이를 확인하고 판단을 "
+                           "조서에 남기십시오. " + _adv)
             else:
                 st.success(f"모든 행사일에서 행사금액이 계속보유가치보다 큽니다 "
                            f"(비율 {min(_rat2):.3f} ~ {max(_rat2):.3f}). 행사가 "
@@ -11273,8 +11316,9 @@ with tabs[2]:
                    + ("**BDT 금리격자**로 잽니다." if put_bdt_on(t) else
                       "**금리 고정 격자**로 잽니다.")
                    + ("" if put_bdt_on(t) else
-                      "  BDT 는 전환권이 자본이고 TF 일 때만 켤 수 있습니다.")))
-    else:
+                      (f"  BDT 는 켤 수 없습니다 — {_bblk}." if _bblk else
+                       "  BDT 는 사이드바에서 켤 수 있습니다."))))
+    elif not _bdt_na:
         st.info(inst_text(t, "조기상환청구권이 없어 판단할 것이 없습니다."))
 
     # ── 매도청구권 : 세 방법을 나란히 ──
