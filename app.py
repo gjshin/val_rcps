@@ -214,6 +214,10 @@ def accrue_rate(t_year: float, g: float, c: float, m: int) -> float:
     return max(0.0, (g - c)/g * ((1 + g/m)**(m*t_year) - 1))
 
 
+# 회차별 역산 보장수익률이 이보다 벌어지면 한 수익률로 만든 표가 아니다 — 오타를 의심한다
+SCHED_Y_TOL = 0.005
+
+
 def implied_yield(prem: float, t_year: float, c: float, m: int):
     """할증금률에서 **보장수익률을 되찾는다** — ``accrue_rate`` 의 역함수.
 
@@ -238,6 +242,26 @@ def implied_yield(prem: float, t_year: float, c: float, m: int):
         if accrue_rate(t_year, mid, c, m) < prem: lo = mid
         else: hi = mid
     return (lo + hi)/2
+
+
+def sched_lock_note(rows: list, c: float, m: int) -> list:
+    """행사금액표가 있을 때 산식 칸 아래에 붙일 캡션 — 문구 목록.
+
+    계산에 쓰이지 않는 칸이 열려 있으면 이용자는 그 값이 쓰인다고 오해한다. 칸은
+    화면에서 잠그고, 대신 **그 표가 암시하는 보장수익률**을 적어 계약서와 대조하게 한다.
+    """
+    out = ["**행사금액표가 정합니다** — 이 칸은 계산에 쓰지 않습니다. "
+           "표를 지우면 다시 열립니다."]
+    got = sched_yield(rows, c, m)
+    if got is None:
+        out.append("표에 할증금이 없어(금액 ≤ 100) 보장수익률을 역산할 수 없습니다.")
+    else:
+        rep_, lo, hi = got
+        out.append(f"이 표가 암시하는 보장수익률 **연 {rep_*100:,.2f}%** "
+                   f"(회차별 {lo*100:,.2f}~{hi*100:,.2f}%). 계약서 수치와 대조하십시오."
+                   + ("  회차별로 크게 갈립니다 — 표를 잘못 옮겼는지 확인하십시오."
+                      if hi - lo > SCHED_Y_TOL else ""))
+    return out
 
 
 def sched_yield(rows: list, c: float, m: int):
@@ -9133,10 +9157,15 @@ with st.sidebar:
                     st.caption("자동전환은 **전환권이 있는 격자**에서만 탑니다. 전환권을 뺀 "
                                "부채요소는 보통주가 될 수 없으니 아래 보장수익률로 상환받는 "
                                "것으로 잽니다 — 그래서 이 값이 여전히 필요합니다.")
-            t.ytm = st.number_input(f"{L['ytm']} (%)", value=t.ytm*100, step=0.1, format="%.4f")/100
+            # 만기금액을 계약서 숫자로 직접 넣으면 아래 보장수익률 산식은 쓰이지 않는다.
+            # 칸을 그리기 «전» 에 직전 실행의 체크 상태를 읽어 잠근다.
+            _mlk = bool(st.session_state.get("matfix", float(t.mat_amt) > 0))
+            t.ytm = st.number_input(f"{L['ytm']} (%)", value=t.ytm*100, step=0.1,
+                                    format="%.4f", disabled=_mlk)/100
             t.ytm_cmp = int(st.number_input("보장 복리 횟수 (연)", value=int(t.ytm_cmp),
                                             step=1, min_value=0, max_value=12,
-                                            help="공시 상환율이 분기복리면 4, 반기면 2. " + HLP_CMP))
+                                            help="공시 상환율이 분기복리면 4, 반기면 2. " + HLP_CMP,
+                                            disabled=_mlk))
             _mfix = st.checkbox("만기상환금액을 계약서 숫자로 직접 넣는다",
                                 value=(float(t.mat_amt) > 0), key="matfix",
                                 help="공시 「원금상환방법」에 「만기에 106.4302% 를 일시 상환한다」처럼 "
@@ -9150,6 +9179,17 @@ with st.sidebar:
                                             step=0.1, format="%.4f", key="matamt")
             else:
                 t.mat_amt = -1.0
+            if _mlk and float(t.mat_amt) > 0:
+                # 계약서 숫자를 그대로 쓴다 — 위 산식 칸은 잠갔다. 그 숫자가 계약서의
+                # 몇 %를 뜻하는지 역산해 함께 적는다.
+                st.caption("**만기상환금액을 계약서 숫자로 씁니다** — 위 보장수익률 칸은 "
+                           "계산에 쓰지 않습니다. 체크를 끄면 다시 열립니다.")
+                _my = implied_yield(float(t.mat_amt)/100 - 1,
+                                    (t.elapsed_m + t.rem_m)/12, eff_cpn(t), t.ytm_cmp)
+                st.caption(f"{L['red']} = **{float(t.mat_amt):,.4f}**"
+                           + (f"   ·   이 금액이 암시하는 보장수익률 **연 {_my*100:,.2f}%**"
+                              if _my is not None else
+                              "   ·   할증금이 없어 보장수익률을 역산할 수 없습니다"))
             t.face_total = st.number_input(
                 ("발행총액 (원)" if is_rcps(t) else "전자등록총액 (원)"),
                 value=float(t.face_total), step=1e8, format="%.0f",
@@ -9161,9 +9201,10 @@ with st.sidebar:
                      "배분된 발행금액에 비례하여 요소별로 나눕니다. 부채요소 몫은 "
                      "부채에서 차감해 유효이자율에 녹이고, 파생상품부채 몫은 당기손익-"
                      "공정가치라 즉시 비용, 자본요소 몫은 자본에서 직접 뺍니다.")
-            st.caption(f"{L['red']} = {100*(1+accrue_rate(t.T+t.elapsed_m/12, t.ytm, eff_cpn(t), t.ytm_cmp)):,.4f}   "
-                       + ("계약서의 상환가액 산식과 대조하십시오." if is_rcps(t)
-                          else "공시 만기상환율과 대조하십시오."))
+            if not (_mlk and float(t.mat_amt) > 0):
+                st.caption(f"{L['red']} = {100*(1+accrue_rate(t.T+t.elapsed_m/12, t.ytm, eff_cpn(t), t.ytm_cmp)):,.4f}   "
+                           + ("계약서의 상환가액 산식과 대조하십시오." if is_rcps(t)
+                              else "공시 만기상환율과 대조하십시오."))
 
     # 주주간계약에는 사채가 없다. 전환·조기상환·매도청구·상각 관련 칸은 뜻이
     # 없으므로 통째로 빼고, 대신 아래 「주주간계약」 칸을 연다.
@@ -9248,17 +9289,27 @@ with st.sidebar:
                            "모든 노드에서 행사할 수 있습니다.")
             else:
                 t.p_f = st.number_input("주기 (개월)", value=float(t.p_f), step=1.0, key="pf")
+            # 표가 있으면 아래 산식 칸은 계산에 쓰이지 않는다. 칸을 그리기 «전» 에
+            # 직전 실행의 텍스트를 읽어 잠근다 — 위젯 순서를 바꾸지 않아도 된다.
+            _pl = sched_rows(st.session_state.get("p_sched", t.p_sched), t)
             t.p_mode = st.selectbox("행사금액 산정", ["fixed", "accrue"],
                                     index=0 if t.p_mode == "fixed" else 1,
-                                    format_func=lambda x: "고정률" if x == "fixed" else "보장수익률 복리")
+                                    format_func=lambda x: "고정률" if x == "fixed" else "보장수익률 복리",
+                                    disabled=bool(_pl))
             if t.p_mode == "fixed":
-                t.p_rate = st.number_input("행사금액 (%)", value=float(t.p_rate), step=1.0)
+                t.p_rate = st.number_input("행사금액 (%)", value=float(t.p_rate), step=1.0,
+                                           disabled=bool(_pl))
             else:
                 t.p_yield = st.number_input(f"{'상환' if is_rcps(t) else '조기상환'} 보장수익률 (%)",
-                                            value=t.p_yield*100, step=0.5)/100
+                                            value=t.p_yield*100, step=0.5,
+                                            disabled=bool(_pl))/100
                 t.p_cmp = int(st.number_input("복리 횟수 (연)", value=int(t.p_cmp), step=1,
-                                              min_value=0, help=HLP_CMP))
-                st.caption("행사금액 = 100 × (1 + 실효수익률)^경과연수")
+                                              min_value=0, help=HLP_CMP,
+                                              disabled=bool(_pl)))
+                if not _pl:
+                    st.caption("행사금액 = 100 × (1 + 실효수익률)^경과연수")
+            if _pl:
+                for _c in sched_lock_note(_pl, eff_cpn(t), t.p_cmp): st.caption(_c)
 
             with st.expander("조기상환 행사금액표 직접 입력 (선택)"):
                 t.p_sched = st.text_area(
@@ -9543,13 +9594,18 @@ with st.sidebar:
                 _k1, _k2 = st.columns(2)
                 t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
                 t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
+                _kl = sched_rows(t.k_sched, t)     # 이 갈래에는 표 칸이 없다 — Terms 값을 본다
                 t.k_prem = st.number_input("상환 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
                                            help="발행자 상환가액 = 100 × (1 + 보장수익률 복리)^경과연수 "
-                                                "− 기지급배당. 상환청구권과 같은 산식입니다.")/100
+                                                "− 기지급배당. 상환청구권과 같은 산식입니다.",
+                                           disabled=bool(_kl))/100
                 t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
-                                              help=HLP_CMP))
+                                              help=HLP_CMP, disabled=bool(_kl)))
                 t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자·배당 차감", value=bool(t.k_less_cpn),
-                                               key="kless1", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다."))
+                                               key="kless1", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다.",
+                                               disabled=bool(_kl)))
+                if _kl:
+                    for _c in sched_lock_note(_kl, call_cpn(t), t.k_cmp): st.caption(_c)
                 st.caption("상환청구권과 하나의 **복합내재파생상품**으로 묶어 순액으로 봅니다 "
                            "(기준서 1109 문단 B4.3.4). 전환권을 자본으로 두면 부채요소는 "
                            "「우선주 + 상환청구권 − 발행자 상환권」입니다.")
@@ -9557,14 +9613,18 @@ with st.sidebar:
                 _k1, _k2 = st.columns(2)
                 t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
                 t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
+                _kl = sched_rows(st.session_state.get("ksched_rcps", t.k_sched), t)
                 t.k_prem = st.number_input(
                     "매수대금 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
                     help="매매대금 = 인수대금 × (1 + 보장수익률 복리)^경과연수. "
-                         "계약서의 회차별 매도청구권 행사금액(%) 표와 대조하십시오.")/100
+                         "계약서의 회차별 매도청구권 행사금액(%) 표와 대조하십시오.",
+                    disabled=bool(_kl))/100
                 t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
-                                              help="공시 행사금액표가 분기복리면 4. " + HLP_CMP))
+                                              help="공시 행사금액표가 분기복리면 4. " + HLP_CMP,
+                                              disabled=bool(_kl)))
                 t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자·배당 차감", value=bool(t.k_less_cpn),
-                                               key="kless2", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다."))
+                                               key="kless2", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다.",
+                                               disabled=bool(_kl)))
                 # 콜 갈래를 바꾸면 derive 가 k_w 를 0(없음)이나 1(발행자 상환권)로
                 # 눌러 놓는다. 그 값을 그대로 보이면 한도가 0% 로 뜨므로, 처음
                 # 열릴 때는 실무에서 흔한 20% 를 채워 둔다. 계약서 값으로 고치면 된다.
@@ -9587,6 +9647,8 @@ with st.sidebar:
                                      hide_index=True, use_container_width=True)
                     if _kb:
                         st.warning("읽지 못한 줄 — " + ", ".join(str(x) for x in _kb[:8]) + "번째.")
+                if _kl:
+                    for _c in sched_lock_note(_kl, call_cpn(t), t.k_cmp): st.caption(_c)
                 t.k_lock = _sched_one(
                     st, "의무보유 (개월)", "의무보유 만료일", t.k_lock, "klock",
                     help="인수인이 콜옵션 대상주식을 **묶어 두어야** 하는 기간입니다. 매도청구 종료일까지 두는 계약이 많습니다. **두 평가방법이 모두 이 기간을 봅니다** — 유무가치비교법은 이 기간 동안 전환(과 아래 체크박스가 켜져 있으면 조기상환청구)을 막고, 옵션차익법은 이 기간 안에서만 콜 대상물량이 존속한다고 봅니다. 의무보유 자체가 없으면 아래 「콜 대상물량 의무보유」를 끄십시오.")
@@ -9629,12 +9691,16 @@ with st.sidebar:
               _k1, _k2 = st.columns(2)
               t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
               t.k_f = st.number_input("주기 (개월)", value=float(t.k_f), step=1.0, key="kf")
-              t.k_prem = st.number_input("프리미엄 (연 %)", value=t.k_prem*100, step=0.5)/100
+              _kl = sched_rows(st.session_state.get("ksched_cb", t.k_sched), t)
+              t.k_prem = st.number_input("프리미엄 (연 %)", value=t.k_prem*100, step=0.5,
+                                         disabled=bool(_kl))/100
               t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
                                             help="분기복리 4 · 반기 2 · 연 1. " + HLP_CMP
-                                                 + " 계약서의 매수대금 표와 맞는지 확인하십시오."))
+                                                 + " 계약서의 매수대금 표와 맞는지 확인하십시오.",
+                                            disabled=bool(_kl)))
               t.k_less_cpn = int(st.checkbox("행사금액에서 기 지급 이자 차감", value=bool(t.k_less_cpn),
-                                             key="kless3", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다."))
+                                             key="kless3", help="상환가액(풋·만기)은 「보장수익률 복리 − 기 지급 이자·배당」이 관행이라 뺍니다. 매도청구 행사금액은 계약마다 갈립니다 — 계약서의 회차별 행사금액표가 순수 복리(예: 분기복리 1.5% → 1년 101.5084%)면 끄십시오. 차바이오텍 RCPS 가 그렇습니다.",
+                                               disabled=bool(_kl)))
 
               with st.expander("매도청구 행사금액표 직접 입력 (선택)"):
                   t.k_sched = st.text_area(
@@ -9648,6 +9714,8 @@ with st.sidebar:
                                    hide_index=True, use_container_width=True)
                   if _kb:
                       st.warning("읽지 못한 줄 — " + ", ".join(str(x) for x in _kb[:8]) + "번째.")
+              if _kl:
+                  for _c in sched_lock_note(_kl, call_cpn(t), t.k_cmp): st.caption(_c)
               t.k_w = st.number_input("행사 한도 (%)", value=t.k_w*100, step=5.0)/100
               t.k_lock = _sched_one(
                   st, "의무보유 (개월)", "의무보유 만료일", t.k_lock, "klock",
