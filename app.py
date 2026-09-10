@@ -924,6 +924,27 @@ def sched_at(rows: list, month: float, tol: float = 0.5):
     return best
 
 
+def sched_steps(rows: list, cmonth, n: int) -> dict:
+    """계약서의 **한 회차를 격자의 한 스텝에** 배정한다 — ``{스텝: (개월, 금액)}``.
+
+    계약이 「2026-12-05 하루」라고 정한 조기상환을 격자가 여러 노드에서 열면, 특정일
+    권리가 **기간 권리로 부풀어** 값이 커진다. 그래서 회차마다 가장 가까운 스텝 «하나» 만
+    고른다. 거리가 같으면 **앞선 스텝**을 고른다 — 규칙을 정해 두어야 같은 계약이 항상
+    같은 격자를 만든다.
+
+    노드가 회차보다 성기면 두 회차가 한 스텝에 몰린다. 그때는 **그 스텝에 더 가까운
+    회차**가 이기고(거리가 같으면 앞선 회차), 밀려난 회차는 격자에서 사라진다 —
+    ``validate()`` 가 그 사실을 경고한다. 노드를 늘려야 담긴다.
+    """
+    out = {}
+    for mo, v in rows:
+        i = min(range(n + 1), key=lambda k: (abs(cmonth(k) - mo), k))
+        d = abs(cmonth(i) - mo)
+        if i in out and (abs(cmonth(i) - out[i][0]), out[i][0]) <= (d, mo): continue
+        out[i] = (mo, v)
+    return out
+
+
 def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
     """조기상환·매도청구·만기 **행사금액** 을 한 곳에서 만든다.
 
@@ -967,21 +988,30 @@ def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
     p_rows = sched_rows(getattr(tm, "p_sched", ""), tm)
     k_rows = sched_rows(getattr(tm, "k_sched", ""), tm)
     tol = max(0.5, 0.5*rem_m/max(1, n))
+    # 회차 하나가 스텝 하나다. 개월 거리로 「가까우면 맞다」고 보면 노드가 성길 때 한
+    # 회차가 여러 스텝을 열어 특정일 권리가 기간 권리로 부푼다.
+    p_steps = sched_steps(p_rows, cmonth, n)
+    k_steps = sched_steps(k_rows, cmonth, n)
 
-    def put_at_month(mo):
-        hit = sched_at(p_rows, mo, tol)
-        if hit is not None: return float(hit)
+    def _formula_put(mo):
         if tm.p_mode == "accrue":
             return 100*(1 + accrue_rate(yr_of(mo), tm.p_yield, eff_cpn(tm), tm.p_cmp))
         return float(tm.p_rate)
 
-    def call_at_month(mo):
-        hit = sched_at(k_rows, mo, tol)
-        if hit is not None: return float(hit)
+    def _formula_call(mo):
         return 100*(1 + accrue_rate(yr_of(mo), tm.k_prem, call_cpn(tm), tm.k_cmp))
 
-    put = lambda i: put_at_month(cmonth(i))
-    call = lambda i: call_at_month(cmonth(i))
+    def put_at_month(mo):
+        # 개월로 묻는 자리(상각표의 기대만기)는 표를 개월로 찾는다 — 스텝이 없다.
+        hit = sched_at(p_rows, mo, tol)
+        return float(hit) if hit is not None else _formula_put(mo)
+
+    def call_at_month(mo):
+        hit = sched_at(k_rows, mo, tol)
+        return float(hit) if hit is not None else _formula_call(mo)
+
+    put = lambda i: (float(p_steps[i][1]) if i in p_steps else _formula_put(cmonth(i)))
+    call = lambda i: (float(k_steps[i][1]) if i in k_steps else _formula_call(cmonth(i)))
 
     # 만기상환금액도 계약이 확정 숫자를 주면 그것을 쓴다 (제9회 106.4302%).
     _ma = float(getattr(tm, "mat_amt", -1.0))
@@ -989,12 +1019,12 @@ def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
            100*(1 + accrue_rate(mat_year, tm.ytm, eff_cpn(tm), tm.ytm_cmp)))
     # 표를 넣으면 «행사 가능 시점» 도 표가 정한다 — 계약서의 회차가 곧 행사일이다.
     # 표가 없으면 None 을 돌려주어 부르는 쪽이 종전대로 시작·종료·주기를 쓴다.
-    p_on = ((lambda i: sched_at(p_rows, cmonth(i), tol) is not None) if p_rows else None)
-    k_on = ((lambda i: sched_at(k_rows, cmonth(i), tol) is not None) if k_rows else None)
+    p_on = ((lambda i: i in p_steps) if p_rows else None)
+    k_on = ((lambda i: i in k_steps) if k_rows else None)
     return dict(cmonth=cmonth, cyear=cyear, put=put, call=call,
                 put_at_month=put_at_month, call_at_month=call_at_month,
                 p_rows=p_rows, k_rows=k_rows, tol=tol, red=red,
-                p_on=p_on, k_on=k_on)
+                p_on=p_on, k_on=k_on, p_steps=p_steps, k_steps=k_steps)
 
 
 def lbl(tm: Terms) -> dict:
@@ -1256,7 +1286,9 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     put_amt = EA["put"]
     # 계약서의 회차별 표를 넣었으면 그 회차가 곧 행사일이다. 의무보유(ps)는 그때도
     # 앞쪽 회차를 막는다 — 표에 있는 날이라도 묶여 있으면 청구할 수 없다.
-    _pin = ((lambda i: EA["p_on"](i) and EA["cmonth"](i) >= ps - EA["tol"])
+    # 의무보유는 «스텝» 으로 견준다. 개월에 반 노드 허용오차를 두면 조서(스텝 비교)와
+    # 경계에서 갈려, 의무보유가 걸린 트랜치에서 매도청구권 값이 어긋난다.
+    _pin = ((lambda i: EA["p_on"](i) and i >= st_lo(ps))
             if EA["p_on"] else (lambda i: in_set(i, ps, tm.p_e, tm.p_f)))
     _kin = (EA["k_on"] if EA["k_on"] else
             (lambda i: in_set(i, tm.k_s, tm.k_e, tm.k_f)))
@@ -3675,7 +3707,7 @@ def pc_overlap(tm: Terms):
         per = max(1, int(round(fr*mper)))
         return (i - s0) % per == 0
 
-    p_in = ((lambda i: EA["p_on"](i) and EA["cmonth"](i) >= tm.p_s - EA["tol"])
+    p_in = ((lambda i: EA["p_on"](i) and i >= lo(tm.p_s))
             if EA["p_on"] else (lambda i: opened(i, tm.p_s, tm.p_e, tm.p_f)))
     k_in = (EA["k_on"] if EA["k_on"] else
             (lambda i: opened(i, tm.k_s, tm.k_e, tm.k_f)))
@@ -5562,7 +5594,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     def in_set(i, a, b, fr):
         lo, hi = stp_lo(a), stp_hi(b)
         return lo <= i <= hi and (i-lo) % per_(fr) == 0
-    _pin = (EA["p_on"] if EA["p_on"] else
+    # 표가 있어도 시작 전 회차는 열리지 않는다 — 엔진·수식 조서와 «스텝» 으로 견준다.
+    _pin = ((lambda i: EA["p_on"](i) and i >= stp_lo(tm.p_s)) if EA["p_on"] else
             (lambda i: in_set(i, tm.p_s, tm.p_e, tm.p_f)))
     _kin = (EA["k_on"] if EA["k_on"] else
             (lambda i: in_set(i, tm.k_s, tm.k_e, tm.k_f)))
@@ -6664,15 +6697,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     # 계약서가 회차별 금액을 확정 숫자로 준 경우 그 표를 시트로 싣고 트리가 참조한다.
     # 스텝 번호로 찾게 두어 노드 간격이 회차 간격과 어긋나도 어긋난 채로 맞는다 —
     # 어느 스텝이 어느 회차인지는 엔진이 이미 정했고, 그 결과를 그대로 적는다.
+    # 엔진이 배정한 «회차 = 스텝» 을 그대로 옮긴다. 여기서 다시 고르면 엑셀과 격자가
+    # 다른 회차를 열어 값이 갈린다.
     _EA = exercise_amounts(tm, n, dt_)
     _srow = {}
-    if _EA["p_rows"] or _EA["k_rows"]:
-        for i in range(n+1):
-            mo = _EA["cmonth"](i)
-            pv = sched_at(_EA["p_rows"], mo, _EA["tol"])
-            kv = sched_at(_EA["k_rows"], mo, _EA["tol"])
-            if pv is not None or kv is not None:
-                _srow[i] = (mo, pv, kv)
+    for i in sorted(set(_EA["p_steps"]) | set(_EA["k_steps"])):
+        _pv = _EA["p_steps"].get(i)
+        _kv = _EA["k_steps"].get(i)
+        _srow[i] = (_EA["cmonth"](i),
+                    (_pv[1] if _pv else None), (_kv[1] if _kv else None))
     if _srow:
         SC = wb.create_sheet(SSC); SC.sheet_view.showGridLines = False
         for cc, w_ in (("B", 10), ("C", 18), ("D", 16), ("E", 16)): SC.column_dimensions[cc].width = w_
@@ -6689,13 +6722,55 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             put(SC, r_, 5, (round(kv, 6) if kv is not None else None), fmt=N4,
                 align="right", border=True, color=RED)
         SC.sheet_properties.tabColor = RFXC
-    _SB = f"'{SSC}'!$B$4:$B${3+len(_srow)}" if _srow else None
     _SD = f"'{SSC}'!$B$4:$D${3+len(_srow)}" if _srow else None
     _SE = f"'{SSC}'!$B$4:$E${3+len(_srow)}" if _srow else None
-    _phit = (lambda st: f"ISNUMBER(MATCH({st},{_SB},0))") if _srow else None
     # 표에서 그 스텝의 금액을 꺼낸다. 빈 칸(그 회차에 그 권리가 없음)이면 0 이 나오므로
     # 값이 있는지는 MATCH 가 아니라 «0 보다 큰가» 로 본다.
     _VL = (lambda st, rng, col: f"VLOOKUP({st},{rng},{col},FALSE)") if _srow else None
+    # 표에 없는 스텝의 VLOOKUP 은 #N/A 다. AND 는 인자를 모두 계산하므로 그 오류가
+    # 번진다 — IFERROR 로 0 에 떨어뜨려 「표에 있고 그 권리의 금액이 있다」를 한 식으로.
+    _pv0 = (lambda st: f"IFERROR({_VL(st, _SD, 3)},0)") if _srow else None
+    _kv0 = (lambda st: f"IFERROR({_VL(st, _SE, 4)},0)") if _srow else None
+
+    # ── 행사 가능 여부와 행사금액을 만드는 «한 곳» ──
+    # 트리 4·7·5·8행, 16 부채요소, 16c 부채요소, BDT 부채요소가 모두 이것을 부른다.
+    # 시트마다 따로 계산하면 계약서 표를 넣은 계약에서 시트마다 다른 금액이 나온다.
+    def x_pflag(st, pst_=None):
+        pst_ = pst_ or K["pst"]
+        per = (f"IF(AND({st}>={pst_},{st}<={K['pen']},"
+               f"MOD({st}-{pst_},{K['frq']})=0),1,0)")
+        if not _srow: return per
+        return f"IF({K['psch']}=1,IF(AND({_pv0(st)}>0,{st}>={pst_}),1,0),{per})"
+
+    def x_kflag(st):
+        per = (f"IF(AND({st}>={K['kst']},{st}<={K['ken']},"
+               f"MOD({st}-{K['kst']},{K['kfrq']})=0),1,0)")
+        if not _srow: return per
+        return f"IF({K['ksch']}=1,IF({_kv0(st)}>0,1,0),{per})"
+
+    def x_pamt(st, yr):
+        f_ = (f"IF({K['pmode']}=1,"
+              f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),{K['prate']})")
+        if not _srow: return f_
+        return f"IF(AND({K['psch']}=1,{_pv0(st)}>0),{_pv0(st)},{f_})"
+
+    # 개월로 묻는 자리(상각표의 기대만기 · 분리 판단의 첫 조기상환일)도 표를 먼저 본다.
+    _SC = f"'{SSC}'!$C$4:$D${3+len(_srow)}" if _srow else None
+
+    def x_pamt_month(mo):
+        f_ = (f"IF({K['pmode']}=1,"
+              f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], '(' + mo + '/12)')}),"
+              f"{K['prate']})")
+        if not _srow: return f_
+        v = f"IFERROR(VLOOKUP(ROUND({mo},4),{_SC},2,FALSE),0)"
+        return f"IF(AND({K['psch']}=1,{v}>0),{v},{f_})"
+
+    def x_kamt(st, yr):
+        f_ = (f"IF({K['prem']}>0,"
+              f"100*(1+{xl_prem(K['prem'], _KC, K['kcmp'], yr)}),"
+              f"100*(1+MAX(0,-{_KC}*{yr})))")
+        if not _srow: return f_
+        return f"IF(AND({K['ksch']}=1,{_kv0(st)}>0),{_kv0(st)},{f_})"
 
     def newsheet(name, ttl, note, refs, call_on=True, conv_cell=None,
                  put_cell=None):
@@ -6719,30 +6794,17 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             g(2, (0 if i == 0 else f"={Lp}$2+1"), N0)
             g(3, f"=IF(OR(AND({st}>={cvs},{st}<={K['cve']}),"
                  f"AND({K['auto']}=1,{st}={K['n']})),1,0)", N0)
-            _p4 = (f"AND({K['psch']}=1,{_phit(st)},{st}>={pst})" if _srow else "FALSE")
-            _k4 = (f"AND({K['ksch']}=1,{_phit(st)},"
-                   f"ISNUMBER({_VL(st, _SE, 4)}))" if _srow else "FALSE")
-            g(4, f"=IF({_p4},1,IF(AND({st}>={pst},{st}<={K['pen']},"
-                 f"MOD({st}-{pst},{K['frq']})=0),1,0))", N0)
-            g(5, (f"=IF({_k4},1,IF(AND({st}>={K['kst']},{st}<={K['ken']},"
-                  f"MOD({st}-{K['kst']},{K['kfrq']})=0),1,0))" if call_on else 0), N0)
+            # 표를 넣으면 «표가 정한 회차만» 열린다. 종전에는 표에 없는 스텝도 시작·주기
+            # 산식으로 열려, 계약이 특정일 하루로 정한 권리가 엑셀에서 기간 권리로
+            # 부풀고 그 자리의 금액이 보장수익률 0% 산식으로 계산됐다.
+            g(4, "=" + x_pflag(st, pst), N0)
+            g(5, (0 if not call_on else "=" + x_kflag(st)), N0)
             g(6, f"=IF(AND({st}>0,{st}>={K['roff']},"
                  f"MOD({st}-{K['roff']},{K['cyc']})=0),1,0)", N0, RED)
             # 상환할증금 = (g−c)/g × ((1+g/m)^(m·t) − 1).  g 가 0 이면 (g−c)·t
             # 계약서 표가 있으면 그 금액이 산식보다 앞선다.
-            _p7 = (f"IF({K['pmode']}=1,"
-                   f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
-                   f"{K['prate']})")
-            _k8 = (f"IF({K['prem']}>0,"
-                   f"100*(1+{xl_prem(K['prem'], _KC, K['kcmp'], yr)}),"
-                   f"100*(1+MAX(0,-{_KC}*{yr})))")
-            if _srow:
-                _p7 = (f"IF(AND({K['psch']}=1,{_phit(st)}),"
-                       f"IFERROR({_VL(st, _SD, 3)},{_p7}),{_p7})")
-                _k8 = (f"IF(AND({K['ksch']}=1,{_phit(st)}),"
-                       f"IFERROR({_VL(st, _SE, 4)},{_k8}),{_k8})")
-            g(7, f"=IF({L}$4=1,{_p7},0)", N2)
-            g(8, f"=IF({L}$5=1,{_k8},999999)", N2)
+            g(7, f"=IF({L}$4=1,{x_pamt(st, yr)},0)", N2)
+            g(8, f"=IF({L}$5=1,{x_kamt(st, yr)},999999)", N2)
             g(9, f"=IF(AND({st}>0,{st}>={K['payoff']},"
                  f"MOD({st}-{K['payoff']},{K['ipay']})=0),"
                  f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
@@ -7308,11 +7370,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
               f"{st}*{K['dt']}+{K['elm']}/12)")
         g(4, f"={K['d_base']}+{st}*{K['dt']}*365", DATE, GREY)
         g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
-        g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
-             f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
-        g(7, f"=IF({L}$6=1,IF({K['pmode']}=1,"
-             f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
-             f"{K['prate']}),0)", N2)
+        # 트리와 «같은 함수» 로 만든다. 여기서 다시 계산하면 계약서 표를 넣은 계약에서
+        # 트리와 부채요소가 다른 금액을 쓴다 — 엑셀에서 재계산할 때만 드러나는 어긋남이다.
+        g(6, "=" + x_pflag(st), N0)
+        g(7, f"=IF({L}$6=1,{x_pamt(st, yr)},0)", N2)
         g(8, f"=IF(AND({st}>0,{st}>={K['payoff']},"
              f"MOD({st}-{K['payoff']},{K['ipay']})=0),"
              f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
@@ -7349,21 +7410,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                   f"{st}*{K['dt']}+{K['elm']}/12)")
             g(4, f"={K['d_base']}+{st}*{K['dt']}*365", DATE, GREY)
             g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
-            g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
-                 f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
-            g(7, f"=IF({L}$6=1,IF({K['pmode']}=1,"
-                 f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
-                 f"{K['prate']}),0)", N2)
+            g(6, "=" + x_pflag(st), N0)
+            g(7, f"=IF({L}$6=1,{x_pamt(st, yr)},0)", N2)
             g(8, f"=IF(AND({st}>0,{st}>={K['payoff']},"
                  f"MOD({st}-{K['payoff']},{K['ipay']})=0),"
                  f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
             g(9, f"=IF({st}={K['n']},{K['red']},0)", N2)
             if i < n: g(10, forward_rate(CR, i*dt_, (i+1)*dt_), P2, AMB)
-            g(11, f"=IF(AND({st}>={K['kst']},{st}<={K['ken']},"
-                  f"MOD({st}-{K['kst']},{K['kfrq']})=0),1,0)", N0)
-            g(12, f"=IF({L}$11=1,IF({K['prem']}>0,"
-                  f"100*(1+{xl_prem(K['prem'], _KC, K['kcmp'], yr)}),"
-                  f"100*(1+MAX(0,-{_KC}*{yr}))),999999)", N2)
+            g(11, "=" + x_kflag(st), N0)
+            g(12, f"=IF({L}$11=1,{x_kamt(st, yr)},999999)", N2)
             _cont = f"{Ln}13*EXP(-{L}$10*{K['dt']})+{L}$8"
             # 전환이 없는 갈래라 xl_decide 의 cv=None 과 같은 모양이다.
             g(13, (f"=MAX({L}$7,{L}$9)+{L}$8" if i == n else
@@ -7399,11 +7454,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                       f"{st}*{K['dt']}+{K['elm']}/12)")
                 g(4, f"={K['d_base']}+{st}*{K['dt']}*365", DATE, GREY)
                 g(5, (0 if i == 0 else f"={Lp}$5+1"), N0)
-                g(6, f"=IF(AND({st}>={K['pst']},{st}<={K['pen']},"
-                     f"MOD({st}-{K['pst']},{K['frq']})=0),1,0)", N0)
-                g(7, f"=IF({L}$6=1,IF({K['pmode']}=1,"
-                     f"100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)}),"
-                     f"{K['prate']}),0)", N2)
+                g(6, "=" + x_pflag(st), N0)
+                g(7, f"=IF({L}$6=1,{x_pamt(st, yr)},0)", N2)
                 g(8, f"=IF(AND({st}>0,{st}>={K['payoff']},"
                      f"MOD({st}-{K['payoff']},{K['ipay']})=0),"
                      f"100*{K['cpn']}*{K['ipaym']}/12,0)", N2)
@@ -7822,7 +7874,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
                 # 조기상환권 비분리면 기대만기(첫 조기상환 가능일)의 행사금액이 만기 현금흐름이다.
                 # 그 개월(psm 또는 그 뒤 첫 주기)이 가정의 psm 과 같으면 수식, 아니면 값.
                 ((("기대만기 상환금액 (첫 조기상환 가능일 행사금액)",
-                   (f"=IF({K['pmode']}=1,100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], '(' + K['psm'] + '/12)')}),{K['prate']})"
+                   (("=" + x_pamt_month(K['psm']))
                     if abs(_exf[2] - tm.p_s) < 1e-9 else None), N2, _exf[1])
                   if _exf is not None else ("만기상환금액", f"={K['red']}", N2, None))),
                 ("표면이자 (회당)", f"=100*{K['cpn']}*{K['ipaym']}/12", N2, None),
@@ -8121,7 +8173,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
             _re = _rs + len(_e0rows) - 1
             _rpv, _rbv, _rt, _rg, _rv, _rr = _r, _r+1, _r+2, _r+3, _r+4, _r+6
             put(J, _rpv, 2, "첫 조기상환일 행사금액", border=True)
-            put(J, _rpv, 3, f"=IF({K['pmode']}=1,100*(1+{xl_prem(K['pyld'], K['cpn'], K['pcmp'], '(' + K['psm'] + '/12)')}),{K['prate']})",
+            put(J, _rpv, 3, "=" + x_pamt_month(K['psm']),
                 fmt=N4, align="right", border=True)
             put(J, _rbv, 2, "같은 시점 상각후원가 (B0 기준)", border=True)
             _idx = f'(COUNTIF($C${_rs}:$C${_re},"<"&(C{_rt}-0.000000001))+1)'
