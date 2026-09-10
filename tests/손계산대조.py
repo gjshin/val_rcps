@@ -1206,6 +1206,92 @@ def test_call_split_text():
                  _bc(Terms(S0=1000., K0=1000., K_cap=1000., floor=200., par=100., rfx_mode=1))))
     chk_bool("시계열이 없으면(px_last=None) 주가 대조는 건너뛴다",
              not any("변동성 시계열" in x for x in _bc(Terms(S0=200., K0=1000., **_BB))))
+    # ── 행사금액표가 암시하는 보장수익률 (implied_yield · sched_yield) ──
+    # 계약이 회차별 금액을 확정 숫자로 주면 보장수익률을 적을 자리가 없다. 그래도 그 표가
+    # 계약서의 몇 %와 맞는지는 확인해야 하므로 역산해 보여 준다. 왕복이 닫혀야 한다.
+    _ar, _iy, _sy = G["accrue_rate"], G["implied_yield"], G["sched_yield"]
+    for _g, _c, _m, _t in ((.05, .03, 4, 3.0), (.05, .00, 4, 0.5), (.08, .02, 2, 2.5),
+                           (.06, .03, 0, 1.5), (.10, .00, 1, 5.0), (.05, .03, 4, 0.5)):
+        _p = _ar(_t, _g, _c, _m)
+        chk(f"역산 왕복 g={_g:.2%} c={_c:.0%} m={_m} t={_t:g}", _iy(_p, _t, _c, _m), _g, 1e-7)
+    chk_bool("할증금이 0 이면 역산할 수 없다 (None)", _iy(0.0, 1.0, .03, 4) is None)
+    chk_bool("기간이 0 이면 역산할 수 없다 (None)", _iy(.05, 0.0, .03, 4) is None)
+    chk_bool("연 200% 로도 못 미치는 금액은 None", _iy(50.0, 0.5, .03, 4) is None)
+    # 다이나믹솔루션 제9회 공시 표 — 계약은 「연 5% 분기복리」다. 표에서 그 5% 가 나와야
+    # 표를 옳게 옮겼다고 말할 수 있다.
+    _D9R = sorted({6: 101.0063, 9: 101.5188, 12: 102.0378, 15: 102.5633, 18: 103.0953,
+                   21: 103.6340, 24: 104.1794, 27: 104.7317, 30: 105.2908,
+                   33: 105.8570}.items())
+    _rep, _lo, _hi = _sy(_D9R, .03, 4)
+    chk("제9회 표가 암시하는 보장수익률 = 연 5%", _rep, 0.05, 1e-5)
+    chk("회차별 역산 범위 (최대 − 최소)", _hi - _lo, 0.0, 5e-6)
+    chk("제9회 만기 106.4302% 가 암시하는 보장수익률",
+        _iy(1.064302 - 1, 3.0, .03, 4), 0.05, 1e-6)
+    # 한 줄만 어긋난 표는 범위가 벌어진다 — 오타를 잡는 값싼 검산이다.
+    _bad9 = [(mo, (v + 1.0 if mo == 18 else v)) for mo, v in _D9R]
+    chk_bool("한 줄만 어긋나면 회차별 범위가 벌어진다",
+             (lambda r: r[2] - r[1] > 0.005)(_sy(_bad9, .03, 4)))
+    chk_bool("읽을 회차가 없으면 None", _sy([], .03, 4) is None)
+
+    # ── 행사일 이자를 «따로» 받는 계약 (p_cpn_add · k_cpn_add) ──
+    # 계약이 「조기상환일에 원금과 그 날까지의 이자를 함께 지급」이라고 쓰면 행사금액 위에
+    # 그 날 이자가 더 얹힌다. 계약 해석은 앱이 아니라 사용자가 정한다 — 스위치로 받는다.
+    _CB = dict(d_issue="2024-01-05", d_base="2024-01-05", d_mat="2029-01-05", gap_m=6.0,
+               cpn=.05, ipay=6.0, ytm=.07, ytm_cmp=2, p_mode="accrue", p_yield=.07,
+               p_cmp=2, p_s=12., p_e=54., p_f=6., k_w=0.0, sig=.40, carry=1)
+    _c0 = Terms(**_CB); _c1 = Terms(**dict(_CB, p_cpn_add=1))
+    for _t in (_c0, _c1):
+        _t.rf_curve = [(1, .0226), (3, .0240), (5, .0252)]
+        _t.cr_curve = [(1, .1409), (3, .1740), (5, .1905)]
+        derive(_t)
+    _CPN = 100*G["eff_cpn"](_c0)*_c0.ipay/12
+    _m0 = G["engine"](_c0)["memo"]; _m1 = G["engine"](_c1)["memo"]
+    _dif = sorted({round(_m1[k]["pv"] - _m0[k]["pv"], 6)
+                   for k in _m0 if _m0[k].get("pv", 0) > 0 and "pv" in _m1.get(k, {})})
+    chk_bool("차이는 0 아니면 «그 날 이자» 뿐", set(_dif) <= {0.0, round(_CPN, 6)})
+    chk_bool("이자지급일에 얹히는 자리가 실제로 있다", round(_CPN, 6) in _dif)
+    chk("얹히는 금액 = 표면이자 회당 지급액", max(_dif), _CPN, 1e-9)
+    # 켜면 조기상환권이 커진다 — 같은 자리에서 더 받기 때문이다.
+    _v0 = G["decompose"](_c0); _v1 = G["decompose"](_c1)
+    chk_bool("행사일 이자를 받으면 부채요소가 커진다", _v1[2] > _v0[2] + 1e-9)
+    chk_bool("기본값은 종전 동작 (끔)", Terms().p_cpn_add == 0 and Terms().k_cpn_add == 0)
+    # 만기 노드는 스위치와 무관하다 — 만기에는 어느 갈래든 마지막 이자를 함께 받는다.
+    _mk = [k for k in _m0 if _m0[k].get("kind") in ("mat", "put") and "pv" not in _m0[k]]
+    chk_bool("만기 노드는 스위치가 건드리지 않는다",
+             all(abs(_m1[k]["B"] - _m0[k]["B"]) < 1e-9 for k in _mk))
+
+    # ── 위험 곡선 방식 — 「표에서 등급 하나 고르기」를 없앴다 ──
+    # 고시표를 올려 「이 곡선 적용」 을 누르면 그 곡선이 직접 입력 칸에 들어오므로 같은
+    # 일을 두 번 묻던 갈래였다. 옛 시나리오는 cr_curve 를 들고 있어 같은 값으로 열린다.
+    _tp0 = Terms(rate_mode="pick", cr_curve=[(1, .11), (3, .13), (5, .14)])
+    _tp0.rf_curve = [(1, .026), (3, .028), (5, .030)]; derive(_tp0)
+    chk_bool("옛 «pick» 시나리오가 직접 입력으로 열린다", _tp0.rate_mode == "direct")
+    _tp1 = Terms(rate_mode="direct", cr_curve=list(_tp0.cr_curve))
+    _tp1.rf_curve = list(_tp0.rf_curve); derive(_tp1)
+    chk("옛 «pick» 과 직접 입력이 같은 곡선·같은 값",
+        G["decompose"](_tp0)[3], G["decompose"](_tp1)[3], 1e-12)
+    chk_bool("남은 방식은 둘뿐", set(f.default for f in [Terms.__dataclass_fields__["rate_mode"]])
+             == {"direct"})
+
+    # ── BDT 를 켤 수 있는 자리인가 (put_bdt_avail · put_bdt_block) ──
+    # 같은 조건이 사이드바·검토 화면·put_bdt_on 세 군데에 손으로 적혀 있어, 화면이
+    # 사이드바의 잠금을 모르고 「켜십시오」라고 권했다. 규칙은 한 곳에서 나온다.
+    _AV, _BL, _ON = G["put_bdt_avail"], G["put_bdt_block"], G["put_bdt_on"]
+    _bb = dict(conv_class="equity", model="TF", p_s=6., p_e=54.)
+    chk_bool("자본 + TF + 조기상환권 → 켤 수 있다", _AV(Terms(**_bb)))
+    chk_bool("전환권이 부채면 못 켠다", not _AV(Terms(**{**_bb, "conv_class": "liability"})))
+    chk_bool("GS 면 못 켠다", not _AV(Terms(**{**_bb, "model": "GS"})))
+    chk_bool("조기상환권이 없으면 못 켠다", not _AV(Terms(**{**_bb, "p_s": 60., "p_e": 6.})))
+    chk_bool("막힌 이유를 적는다 (부채)",
+             _BL(Terms(**{**_bb, "conv_class": "liability"})) == "전환권이 파생상품부채다")
+    chk_bool("막힌 이유를 적는다 (GS)", _BL(Terms(**{**_bb, "model": "GS"})) == "신용위험 처리가 GS 다")
+    chk_bool("켤 수 있으면 이유는 빈 문구", _BL(Terms(**_bb)) == "")
+    chk_bool("put_bdt_on 은 avail 과 어긋나지 않는다",
+             all(_ON(Terms(**{**_bb, "put_bdt": 1, **_ch})) == _AV(Terms(**{**_bb, **_ch}))
+                 for _ch in ({}, {"conv_class": "liability"}, {"model": "GS"},
+                             {"p_s": 60., "p_e": 6.})))
+    chk_bool("켜지 않으면 avail 이어도 꺼져 있다", not _ON(Terms(**_bb)))
+
     # ── 주가 조회 기록 (px_trace) ──
     # 조서를 받은 사람이 「무엇을 요청했고 무엇을 받았는지」 알아야 분할·병합을
     # 의심할 때 되짚을 수 있다. 네트워크를 쓰지 않는다 — 기록을 직접 세워 시험한다.
@@ -1250,9 +1336,30 @@ def test_call_split_text():
     chk_bool("계산에 쓴 Terms 로 지문을 뜬다", _rs(_tf)["terms_md5"] != _m1["terms_md5"])
     chk_bool("종류(값·수식)가 다르면 지문도 다르다", _rs(_t1, "수식")["terms_md5"] != _m1["terms_md5"])
     _rows = dict(_sr(_t1))
-    for _k in ("생성시각", "평가체계 버전", "인풋 지문 (MD5)", "주가 출처", "위험 곡선 출처"):
+    for _k in ("생성시각", "평가체계 버전", "계산 지문 (derive·되돌린 설정 반영 후)",
+               "시나리오 지문 (불러온 원본 JSON)", "주가 출처", "위험 곡선 출처"):
         chk_bool(f"조서 재현 기록에 «{_k}»", _k in _rows)
-    chk_bool("조서 재현 기록은 11줄", len(_sr(_t1)) == 11)
+    chk_bool("조서 재현 기록은 13줄", len(_sr(_t1)) == 13)
+    # 두 지문은 다른 것을 가리킨다. 원본 시나리오 지문은 계산에 쓰이지 않으므로 계산
+    # 지문에 섞이지 않아야 한다 — 섞이면 같은 계약이 파일에서 열렸는지에 따라 갈린다.
+    _t1b = Terms(**{**G["asdict"](_t1), "scen_md5": "deadbeef"})
+    chk_bool("원본 지문을 실어도 계산 지문은 그대로", _st(_t1b) == _st(_t1))
+    _rr = dict(_sr(_t1b))
+    chk_bool("조서에 시나리오 지문 줄", _rr["시나리오 지문 (불러온 원본 JSON)"] == "deadbeef")
+    chk_bool("조서에 계산 지문 줄", _rr["계산 지문 (derive·되돌린 설정 반영 후)"] == _st(_t1))
+    chk_bool("직접 입력이면 시나리오 지문은 «해당 없음»",
+             "해당 없음" in dict(_sr(_t1))["시나리오 지문 (불러온 원본 JSON)"])
+    # 요청한 노드 간격과 실제로 쓴 간격은 다를 수 있다 — 둘을 나눠 적는다.
+    _nd = _rr["노드 — 요청 간격 · 실제"]
+    chk_bool("요청 간격을 적는다", f"요청 {_t1.gap_m:g}개월" in _nd)
+    chk_bool("실제 노드 수를 적는다", f"노드 {int(_t1.n)}개" in _nd)
+    chk_bool("실제 간격과 Δt 를 적는다", "실제 간격" in _nd and "Δt" in _nd)
+    # 원본 지문은 _meta 를 뺀 나머지로 잰다 — 저장·재저장으로 값이 흔들리지 않는다.
+    _o = G["asdict"](_t1)
+    chk_bool("scen_stamp 은 _meta 를 보지 않는다",
+             G["scen_stamp"]({**_o, "_meta": {"x": 1}}) == G["scen_stamp"](_o))
+    chk_bool("한 칸만 달라도 원본 지문이 달라진다",
+             G["scen_stamp"](_o) != G["scen_stamp"]({**_o, "sig": .99}))
     # 검산요약에도 한 줄 — 조서를 열면 어느 판에서 나왔는지 바로 보인다.
     _f1, _b0, _b1, _b2, _ca, _cv = G["decompose"](_t1)
     _ck = dict((x[0], x) for x in G["model_checks"](_t1, _f1, _b0, _b1, _b2, _ca))
@@ -1314,6 +1421,83 @@ def test_call_split_text():
     chk_bool("날짜·쉼표·공백 세 형식을 모두 읽는다",
              [x[0] for x in _pr[:3]] == [6.0, 9.0, 12.0])
     chk_bool("못 읽은 줄은 (None, 원문) 으로 남는다", _pr[3][0] is None)
+
+    # ── 표를 넣으면 «보조 화면·상각표» 도 표를 본다 ──
+    # 표가 산식을 이기는 것은 격자만이 아니다. 겹침 판정·BDT 검토·기대만기가 산식으로
+    # 되돌아가면 화면과 조서가 서로 다른 행사금액을 말한다.
+    _S9 = "\n".join(f"{mo}\t{v:.4f}" for mo, v in _D9R)
+    _tS = Terms(**{**_D9, "p_sched": _S9, "k_w": .80, "k_s": 6., "k_e": 33., "k_f": 3.,
+                   "conv_class": "equity", "k_sep": 1, "p_sep": 0, "k_method": 0})
+    _tS.rf_curve = [(1, .026), (3, .028), (5, .030)]
+    _tS.cr_curve = [(1, .11), (3, .13), (5, .14)]; derive(_tS)
+    _EAS = G["exercise_amounts"](_tS, _tS.n, _tS.T/_tS.n)
+    _ov = G["pc_overlap"](_tS)
+    chk_bool("겹치는 노드가 있다 (표 기준)", len(_ov) > 0)
+    chk("겹침표의 조기상환금액 = 격자의 금액 (최대 오차)",
+        max(abs(pv - _EAS["put"](i)) for i, _, pv, _ in _ov), 0.0, 1e-12)
+    chk("겹침표의 매도청구금액 = 격자의 금액 (최대 오차)",
+        max(abs(kv - _EAS["call"](i)) for i, _, _, kv in _ov), 0.0, 1e-12)
+    chk_bool("겹치는 자리는 모두 표의 회차다",
+             all(G["sched_at"](_EAS["p_rows"], mo, _EAS["tol"]) is not None
+                 for _, mo, _, _ in _ov))
+    # 기대만기 — 표를 넣으면 첫 «회차» 가 첫 행사일이다. 시작·주기로 걸으면 표에 없는
+    # 달을 잡아 산식으로 되돌아간다.
+    _ex = G["eir_expect"](_tS)
+    chk_bool("표가 있으면 기대만기를 낸다", _ex is not None)
+    chk("기대만기 시점 = 표의 첫 회차 (개월)", _ex[2], 6.0, 1e-9)
+    chk("기대만기 현금흐름 = 그 회차의 표 금액", _ex[1], 101.0063, 5e-4)
+    # 표가 없으면 종전 걸음 그대로 — 회귀
+    _tN = Terms(**{**_D9, "k_w": .80, "k_s": 6., "k_e": 33., "k_f": 3.,
+                   "conv_class": "equity", "k_sep": 1, "p_sep": 0, "k_method": 0})
+    _tN.rf_curve = list(_tS.rf_curve); _tN.cr_curve = list(_tS.cr_curve); derive(_tN)
+    chk("표가 없으면 기대만기 시점은 p_s", G["eir_expect"](_tN)[2], 6.0, 1e-9)
+    # ── 만기금액을 직접 넣으면 BDT 관문 ③ 도 그 금액에서 역산한다 ──
+    # 계약서 숫자를 넣고 보장수익률 칸을 0 으로 두는 계약이 많다. 그 0 을 격차에
+    # 그대로 넣으면 「보장 0% 대 할인 13%」 가 되어 관문 판정이 뜻을 잃는다.
+    _tM = Terms(**{**_D9, "ytm": 0.0, "mat_amt": 106.4302, "conv_class": "equity"})
+    _tM.rf_curve = list(_tS.rf_curve); _tM.cr_curve = list(_tS.cr_curve); derive(_tM)
+    _fM = G["decompose"](_tM)[0]
+    _rv = G["bdt_review"](_tM, _fM, *G["decompose"](_tM)[1:5])
+    _g3 = next(r for r in _rv["관문"] if r[0] == 3)[2]
+    chk_bool("관문 ③ 이 만기금액에서 역산한 보장수익률을 쓴다 (0% 이 아니다)",
+             "보장 0.00%" not in _g3)
+    chk_bool("역산값이 연 실효 5.09% 근처", "보장 5.09%" in _g3)
+
+    # ── 풋·콜 우선순위 검산은 «실제로 열린 행사 노드» 로 센다 ──
+    # 날짜·주기만 견주면 계약서 행사금액표를 넣은 계약에서 겹침을 놓친다. 또 겹치더라도
+    # 조기상환금액이 매도청구금액을 넘지 않으면 두 순서가 같은 값을 낸다 — 이것은
+    # 어림짐작이 아니라 node_decide 에서 따라 나오는 항등식이라 못박아 둔다.
+    _POV, _PCM, _MC = G["pc_overlap"], G["pc_compare"], G["model_checks"]
+    _tov = Terms(**{**_D9, "p_sched": _S9, "k_w": .80, "k_s": 6., "k_e": 33., "k_f": 3.,
+                    "k_hold": 0, "k_method": 0})
+    _tov.rf_curve = list(_tS.rf_curve); _tov.cr_curve = list(_tS.cr_curve); derive(_tov)
+    _ov = _POV(_tov)
+    chk_bool("표를 넣어도 겹치는 노드를 찾는다", len(_ov) > 0)
+    _big = [x for x in _ov if x[2] > x[3] + 1e-9]
+    _f0, *_r0 = G["decompose"](_tov)
+    _row = dict((x[0], x) for x in _MC(_tov, _f0, *_r0[:4]))["풋·콜 우선순위 · 겹치는 행사노드"]
+    chk_bool("검산요약이 겹침 노드 수를 적는다", f"{len(_ov)}개" in _row[1])
+    chk_bool("금액이 갈리는 자리 수도 적는다", f"{len(_big)}개" in _row[1])
+    chk_bool("갈리는 자리가 있으면 두 값과 차이를 함께 싣는다",
+             (len(_big) == 0) or
+             ("투자자 우선" in dict((x[0], x) for x in
+                                 _MC(_tov, _f0, *_r0[:4]))["매도청구권 · 우선순위별 차이"][3]))
+    # 겹치되 «금액이 갈리지 않는» 계약 — 매도청구금액이 늘 조기상환금액보다 크게 만든다.
+    # 그때 두 순서가 같은 값이라는 것은 어림짐작이 아니라 node_decide 의 항등식이다.
+    _tsm = Terms(**{**G["asdict"](_tov), "k_prem": .30}); derive(_tsm)
+    _ovs = _POV(_tsm)
+    chk_bool("겹치지만 금액이 갈리는 자리가 없는 계약", len(_ovs) > 0
+             and not [x for x in _ovs if x[2] > x[3] + 1e-9])
+    _va = []
+    for _po in (0, 1):
+        _tp = Terms(**G["asdict"](_tsm)); _tp.pc_order = _po; derive(_tp)
+        _va.append(G["decompose"](_tp)[4])
+    chk("겹치되 금액이 갈리지 않으면 두 순서가 같은 값", _va[0], _va[1], 1e-9)
+    _fs, *_rs = G["decompose"](_tsm)
+    _rows = dict((x[0], x) for x in _MC(_tsm, _fs, *_rs[:4]))
+    chk_bool("그 사실을 문구로 적는다 (겹치지만 같은 값)",
+             "같은 값" in _rows["풋·콜 우선순위 · 겹치는 행사노드"][3])
+
     # RCPS 발행자 상환권·없음 갈래는 k_kind 0
     tr = Terms(inst="RCPS", issuer_call=1, k_kind=1); derive(tr)
     chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)
