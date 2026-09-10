@@ -3039,7 +3039,16 @@ def bdt_review(tm: Terms, full, b0, b1, b2, ca, sig=None):
     RFc, CRc = curves(tm)
     rd = math.exp(CRc(tm.T)) - 1                      # 위험할인율, 연 실효
     m = int(tm.ytm_cmp)
-    g = ((1 + tm.ytm/m)**m - 1) if m > 0 else tm.ytm  # 보장수익률, 연 실효 (단리면 그대로)
+    # 만기상환금액을 계약서 숫자로 직접 넣으면 tm.ytm 은 계산에 쓰이지 않는다. 그것을
+    # 그대로 격차에 넣으면(0 으로 두는 계약이 많다) 관문 판정이 뜻을 잃으므로, 실제로
+    # 쓰는 금액에서 보장수익률을 역산해 쓴다.
+    _gy = tm.ytm
+    if float(getattr(tm, "mat_amt", -1.0)) > 0:
+        _iy = implied_yield(float(tm.mat_amt)/100 - 1,
+                            (tm.elapsed_m + float(getattr(tm, "rem_m", 0.0) or tm.T*12))/12,
+                            eff_cpn(tm), m)
+        if _iy is not None: _gy = _iy
+    g = ((1 + _gy/m)**m - 1) if m > 0 else _gy       # 보장수익률, 연 실효 (단리면 그대로)
     gap = rd - g
     D = full["dist"]
     conv_share = D["conv"]
@@ -3581,10 +3590,19 @@ def eir_expect(tm: Terms):
     if fvpl_on(tm) or is_sha(tm) or is_bw(tm): return None
     if not (tm.conv_class == "equity" and tm.k_sep != 0 and int(tm.p_sep) == 0): return None
     if tm.p_s > tm.p_e: return None
-    m = float(tm.p_s)
-    step = max(float(tm.p_f), 1e-6)
-    while m < tm.elapsed_m - 1e-9 and m <= tm.p_e + 1e-9: m += step
-    if m > tm.p_e + 1e-9: return None
+    # 계약서의 회차별 행사금액표를 넣으면 «행사 가능 시점도 표가 정한다» (exercise_amounts).
+    # 그때 시작·주기로 걸으면 표에 없는 달을 첫 행사일로 잡아 산식으로 되돌아간다.
+    _rows = sched_rows(getattr(tm, "p_sched", ""), tm)
+    if _rows:
+        _hit = [mo for mo, _ in _rows
+                if mo >= tm.elapsed_m - 1e-9 and mo >= tm.p_s - 1e-9]
+        if not _hit: return None
+        m = float(_hit[0])
+    else:
+        m = float(tm.p_s)
+        step = max(float(tm.p_f), 1e-6)
+        while m < tm.elapsed_m - 1e-9 and m <= tm.p_e + 1e-9: m += step
+        if m > tm.p_e + 1e-9: return None
     t_exp = (m - tm.elapsed_m)/12
     if t_exp < 0.01 or t_exp > tm.T - 1e-9: return None
     # 격자와 같은 산식에서 가져온다. 스텝이 아니라 «개월» 로 묻는다.
@@ -3646,6 +3664,10 @@ def pc_overlap(tm: Terms):
     n = max(1, int(tm.n)); dt_ = tm.T/n
     mper = n/(tm.T*12); ey = tm.elapsed_m/12
     lo, hi = step_mapper(tm, n, dt_)
+    # 금액과 열림 판정을 «엔진과 같은 곳» 에서 가져온다. 계약서의 회차별 행사금액표를
+    # 넣으면 표가 산식을 이기고 행사 가능 시점도 표가 정하므로, 여기서 산식으로 다시
+    # 계산하면 겹침 판정이 격자와 어긋난다.
+    EA = exercise_amounts(tm, n, dt_)
 
     def opened(i, a, b, fr):
         s0, s1 = lo(a), hi(b)
@@ -3653,16 +3675,15 @@ def pc_overlap(tm: Terms):
         per = max(1, int(round(fr*mper)))
         return (i - s0) % per == 0
 
+    p_in = ((lambda i: EA["p_on"](i) and EA["cmonth"](i) >= tm.p_s - EA["tol"])
+            if EA["p_on"] else (lambda i: opened(i, tm.p_s, tm.p_e, tm.p_f)))
+    k_in = (EA["k_on"] if EA["k_on"] else
+            (lambda i: opened(i, tm.k_s, tm.k_e, tm.k_f)))
+
     out = []
     for i in range(n+1):
-        if not (opened(i, tm.p_s, tm.p_e, tm.p_f)
-                and opened(i, tm.k_s, tm.k_e, tm.k_f)):
-            continue
-        t_ = i*dt_ + ey
-        pv = (100*(1 + accrue_rate(t_, tm.p_yield, eff_cpn(tm), tm.p_cmp))
-              if tm.p_mode == "accrue" else tm.p_rate)
-        kv = 100*(1 + accrue_rate(t_, tm.k_prem, call_cpn(tm), tm.k_cmp))
-        out.append((i, t_*12, pv, kv))
+        if not (p_in(i) and k_in(i)): continue
+        out.append((i, EA["cmonth"](i), EA["put"](i), EA["call"](i)))
     return out
 
 
@@ -3965,7 +3986,6 @@ def validate(tm: Terms, px_last: float = None):
             w.append(f"{_nm} 행사금액표의 마지막 회차가 만기보다 뒤입니다 — "
                      "발행일 기준 개월인지 확인하십시오.")
     if float(getattr(tm, "mat_amt", -1.0)) > 0 and tm.ytm > 0:
-        _calc = exercise_amounts(tm, max(1, int(tm.n)), tm.T/max(1, int(tm.n)))
         _f = 100*(1 + accrue_rate((tm.elapsed_m + tm.rem_m)/12, tm.ytm,
                                   eff_cpn(tm), tm.ytm_cmp))
         if abs(_f - float(tm.mat_amt)) > 0.05:
@@ -11051,18 +11071,21 @@ with tabs[2]:
         _mp = int(t.n)/(t.T*12)
         _pr = max(1, int(round(t.p_f*_mp)))
         _s2, _e2 = _lo2(t.p_s), _hi2(t.p_e)
+        # 금액과 열림 판정을 엔진과 같은 곳에서 가져온다 — 행사금액표를 넣으면
+        # 표가 산식을 이기고 행사 가능 시점도 표가 정한다.
+        _EA2 = exercise_amounts(t, int(t.n), _dtx)
+        _open2 = (_EA2["p_on"] if _EA2["p_on"] else
+                  (lambda i: max(_s2, 0) <= i <= _e2 and (i - _s2) % _pr == 0))
         _at2 = {}
         for _k3, _v3 in _r0["memo"].items():
             _at2.setdefault(_k3[0], _v3)
         _rows2, _rat2 = [], []
         for _i3 in range(max(_s2, 0), _e2+1):
-            if (_i3-_s2) % _pr or _i3 not in _at2: continue
+            if not _open2(_i3) or _i3 not in _at2: continue
             _hold = _at2[_i3]["E"] + _at2[_i3]["B"]
-            _amt = (100*(1 + accrue_rate(_i3*_dtx + t.elapsed_m/12, t.p_yield,
-                                         eff_cpn(t), t.p_cmp))
-                    if t.p_mode == "accrue" else t.p_rate)
+            _amt = _EA2["put"](_i3)
             _rat2.append(_amt/max(_hold, 1e-9))
-            _rows2.append([_i3, round(t.elapsed_m + _i3*_dtx*12), _amt, _hold,
+            _rows2.append([_i3, round(_EA2["cmonth"](_i3)), _amt, _hold,
                            _rat2[-1]])
         if _rows2:
             _atm2 = sum(1 for x in _rat2 if 0.97 <= x <= 1.03)

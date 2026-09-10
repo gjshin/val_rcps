@@ -1341,6 +1341,47 @@ def test_call_split_text():
     chk_bool("날짜·쉼표·공백 세 형식을 모두 읽는다",
              [x[0] for x in _pr[:3]] == [6.0, 9.0, 12.0])
     chk_bool("못 읽은 줄은 (None, 원문) 으로 남는다", _pr[3][0] is None)
+
+    # ── 표를 넣으면 «보조 화면·상각표» 도 표를 본다 ──
+    # 표가 산식을 이기는 것은 격자만이 아니다. 겹침 판정·BDT 검토·기대만기가 산식으로
+    # 되돌아가면 화면과 조서가 서로 다른 행사금액을 말한다.
+    _S9 = "\n".join(f"{mo}\t{v:.4f}" for mo, v in _D9R)
+    _tS = Terms(**{**_D9, "p_sched": _S9, "k_w": .80, "k_s": 6., "k_e": 33., "k_f": 3.,
+                   "conv_class": "equity", "k_sep": 1, "p_sep": 0, "k_method": 0})
+    _tS.rf_curve = [(1, .026), (3, .028), (5, .030)]
+    _tS.cr_curve = [(1, .11), (3, .13), (5, .14)]; derive(_tS)
+    _EAS = G["exercise_amounts"](_tS, _tS.n, _tS.T/_tS.n)
+    _ov = G["pc_overlap"](_tS)
+    chk_bool("겹치는 노드가 있다 (표 기준)", len(_ov) > 0)
+    chk("겹침표의 조기상환금액 = 격자의 금액 (최대 오차)",
+        max(abs(pv - _EAS["put"](i)) for i, _, pv, _ in _ov), 0.0, 1e-12)
+    chk("겹침표의 매도청구금액 = 격자의 금액 (최대 오차)",
+        max(abs(kv - _EAS["call"](i)) for i, _, _, kv in _ov), 0.0, 1e-12)
+    chk_bool("겹치는 자리는 모두 표의 회차다",
+             all(G["sched_at"](_EAS["p_rows"], mo, _EAS["tol"]) is not None
+                 for _, mo, _, _ in _ov))
+    # 기대만기 — 표를 넣으면 첫 «회차» 가 첫 행사일이다. 시작·주기로 걸으면 표에 없는
+    # 달을 잡아 산식으로 되돌아간다.
+    _ex = G["eir_expect"](_tS)
+    chk_bool("표가 있으면 기대만기를 낸다", _ex is not None)
+    chk("기대만기 시점 = 표의 첫 회차 (개월)", _ex[2], 6.0, 1e-9)
+    chk("기대만기 현금흐름 = 그 회차의 표 금액", _ex[1], 101.0063, 5e-4)
+    # 표가 없으면 종전 걸음 그대로 — 회귀
+    _tN = Terms(**{**_D9, "k_w": .80, "k_s": 6., "k_e": 33., "k_f": 3.,
+                   "conv_class": "equity", "k_sep": 1, "p_sep": 0, "k_method": 0})
+    _tN.rf_curve = list(_tS.rf_curve); _tN.cr_curve = list(_tS.cr_curve); derive(_tN)
+    chk("표가 없으면 기대만기 시점은 p_s", G["eir_expect"](_tN)[2], 6.0, 1e-9)
+    # ── 만기금액을 직접 넣으면 BDT 관문 ③ 도 그 금액에서 역산한다 ──
+    # 계약서 숫자를 넣고 보장수익률 칸을 0 으로 두는 계약이 많다. 그 0 을 격차에
+    # 그대로 넣으면 「보장 0% 대 할인 13%」 가 되어 관문 판정이 뜻을 잃는다.
+    _tM = Terms(**{**_D9, "ytm": 0.0, "mat_amt": 106.4302, "conv_class": "equity"})
+    _tM.rf_curve = list(_tS.rf_curve); _tM.cr_curve = list(_tS.cr_curve); derive(_tM)
+    _fM = G["decompose"](_tM)[0]
+    _rv = G["bdt_review"](_tM, _fM, *G["decompose"](_tM)[1:5])
+    _g3 = next(r for r in _rv["관문"] if r[0] == 3)[2]
+    chk_bool("관문 ③ 이 만기금액에서 역산한 보장수익률을 쓴다 (0% 이 아니다)",
+             "보장 0.00%" not in _g3)
+    chk_bool("역산값이 연 실효 5.09% 근처", "보장 5.09%" in _g3)
     # RCPS 발행자 상환권·없음 갈래는 k_kind 0
     tr = Terms(inst="RCPS", issuer_call=1, k_kind=1); derive(tr)
     chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)
