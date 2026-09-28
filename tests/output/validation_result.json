@@ -1,133 +1,194 @@
 {
- "generated": "2026-09-28 07:34",
- "head": "64e503e",
- "app_sha256_12": "6dba43875904",
- "quick": true,
- "python": "3.11.15",
- "suites": [
-  {
-   "suite": "손계산대조",
-   "cmd": "python3 tests/손계산대조.py",
-   "ok": true,
-   "code": 0,
-   "sec": 215.6,
-   "last": "모두 통과",
-   "tail": []
+  "status": "기록된 검증 범위 모두 통과",
+  "generated": "2026-09-29T08:41:41+09:00",
+  "head": "390e5e122c9f550da7800a82a1f4a9bf68d581bb",
+  "execution_mode": "composite",
+  "app_sha256_12": "4532e35734ee",
+  "legacy_sha256": "4532e35734eef6c05a7659117b02eee802f6ae0eab7f21b50b30d8fdbb7abdff",
+  "all_ok": true,
+  "suites": [
+    {
+      "suite": "손계산대조",
+      "cmd": "python3 tests/손계산대조.py",
+      "ok": true,
+      "code": 0,
+      "sec": 188.0,
+      "last": "모두 통과",
+      "tail": [],
+      "evidence": "docs/판단규칙_회귀시험.json",
+      "execution": "판단 규칙·문서 수정 후 재실행"
+    },
+    {
+      "suite": "오라클",
+      "ok": true,
+      "sec": 1.1,
+      "last": "모두 통과",
+      "evidence": "docs/전체검증_초기실행.txt",
+      "execution": "초기 실행 중 완료된 시험"
+    },
+    {
+      "suite": "분기전수",
+      "ok": true,
+      "sec": 9.2,
+      "last": "→ tests/output/분기전수.json 374 줄",
+      "evidence": "docs/전체검증_초기실행.txt",
+      "execution": "초기 실행 중 완료된 시험"
+    },
+    {
+      "suite": "기능목록",
+      "cmd": "python3 tests/기능목록.py --strict",
+      "ok": true,
+      "code": 0,
+      "sec": 0.8,
+      "last": "   → tests/검증매트릭스.json (401 행)",
+      "tail": [],
+      "evidence": "docs/판단규칙_회귀시험.json",
+      "execution": "판단 규칙·문서 수정 후 재실행"
+    },
+    {
+      "suite": "조합시험",
+      "ok": true,
+      "sec": 84.0,
+      "last": "→ tests/output/조합시험.json 1899 줄 · 실패 0 (tests/output/조합시험_실패.json) · 83초",
+      "evidence": "docs/전체검증_초기실행.txt",
+      "execution": "초기 실행 중 완료된 시험"
+    },
+    {
+      "suite": "검산수식대조",
+      "ok": true,
+      "sec": 61.1,
+      "last": "",
+      "evidence": "docs/전체검증_초기실행.txt",
+      "execution": "초기 실행 중 완료된 시험"
+    },
+    {
+      "suite": "배선대조",
+      "ok": true,
+      "sec": 59.7,
+      "last": "배선 이상 없음",
+      "evidence": "docs/전체검증_초기실행.txt",
+      "execution": "초기 실행 중 완료된 시험"
+    },
+    {
+      "suite": "리포트대조",
+      "cmd": "python3 tests/리포트대조.py",
+      "ok": true,
+      "code": 0,
+      "sec": 46.4,
+      "last": "",
+      "tail": [],
+      "evidence": "docs/판단규칙_회귀시험.json",
+      "execution": "판단 규칙·문서 수정 후 재실행"
+    },
+    {
+      "suite": "값조서대조",
+      "ok": true,
+      "sec": 250.0,
+      "last": "모든 항목 일치",
+      "evidence": "docs/전체검증_초기실행.txt",
+      "execution": "초기 실행 중 완료된 시험"
+    },
+    {
+      "suite": "주주간계약대조",
+      "ok": true,
+      "sec": 146.1,
+      "last": "",
+      "evidence": "docs/전체검증_초기실행.txt",
+      "execution": "초기 실행 중 완료된 시험"
+    },
+    {
+      "suite": "조합시험 전체",
+      "ok": true,
+      "sec": 301.5,
+      "last": "→ tests/output/조합시험.json 4936 줄 · 실패 0 (tests/output/조합시험_실패.json) · 301초",
+      "evidence": "docs/전체검증_초기실행.txt",
+      "execution": "초기 실행 중 완료된 시험"
+    },
+    {
+      "suite": "조서대조",
+      "ok": true,
+      "code": 0,
+      "cases": 96,
+      "evidence": "docs/장시간_조서설정_회귀시험.json",
+      "execution": "원 검증식의 사례별 실행·설정 간 변화 검사는 원 순서로 취합"
+    },
+    {
+      "suite": "설정전수대조",
+      "ok": true,
+      "code": 0,
+      "cases": 62,
+      "evidence": "docs/장시간_조서설정_회귀시험.json",
+      "execution": "원 검증식의 사례별 실행·설정 간 변화 검사는 원 순서로 취합"
+    }
+  ],
+  "baseline": {
+    "주계약": 37.5208,
+    "부채요소": 73.1837,
+    "전체": 114.8781,
+    "매도청구권": 13.0762
   },
-  {
-   "suite": "오라클",
-   "cmd": "python3 tests/오라클.py",
-   "ok": true,
-   "code": 0,
-   "sec": 1.5,
-   "last": "모두 통과",
-   "tail": []
+  "baseline_expected": {
+    "주계약": 37.5208,
+    "부채요소": 73.1837,
+    "전체": 114.8781,
+    "매도청구권": 13.0762
   },
-  {
-   "suite": "분기전수",
-   "cmd": "python3 tests/분기전수.py",
-   "ok": true,
-   "code": 0,
-   "sec": 11.5,
-   "last": "→ tests/output/분기전수.json 374 줄",
-   "tail": []
+  "baseline_ok": true,
+  "workflow": {
+    "passed": 103,
+    "command": "python -m pytest -q tests/test_v2_workflow.py tests/test_business_workflow.py tests/test_engagement_evidence.py",
+    "output": "........................................................................ [ 69%]\n...............................                                          [100%]\n103 passed in 53.64s",
+    "packages": {
+      "streamlit": "1.64.0",
+      "numpy": "2.3.5",
+      "openpyxl": "3.1.5",
+      "formulas": "1.3.4",
+      "pytest": "9.1.1",
+      "pypdf": "6.10.0"
+    }
   },
-  {
-   "suite": "기능목록",
-   "cmd": "python3 tests/기능목록.py --strict",
-   "ok": true,
-   "code": 0,
-   "sec": 0.8,
-   "last": "   → tests/검증매트릭스.json (401 행)",
-   "tail": []
+  "book_excerpts": 13,
+  "reference_topics": 12,
+  "legacy_changed_definitions": [
+    "bdt_review",
+    "write_check_sheets"
+  ],
+  "resource_retry": {
+    "parallel_jobs": 8,
+    "memory_limit_gib": 8,
+    "interrupted_cases": [
+      {
+        "suite": "조서대조",
+        "index": 61,
+        "label": "월 노드 · 리픽싱 7스텝",
+        "code": -9,
+        "seconds": 142.95
+      },
+      {
+        "suite": "조서대조",
+        "index": 62,
+        "label": "월 노드 · 리픽싱 7스텝 · 방법1 · 부채",
+        "code": -9,
+        "seconds": 133.56
+      }
+    ],
+    "retry_jobs": 1,
+    "retry_all_ok": true,
+    "note": "병렬 실행 중 메모리 한도에 도달해 종료된 두 사례를 순차 재실행했다. 완료 사례는 같은 소스 지문의 저장 결과를 재사용했다."
   },
-  {
-   "suite": "조합시험",
-   "cmd": "python3 tests/조합시험.py --quick",
-   "ok": true,
-   "code": 0,
-   "sec": 99.0,
-   "last": "→ tests/output/조합시험.json 1899 줄 · 실패 0 (tests/output/조합시험_실패.json) · 98초",
-   "tail": []
+  "initial_run": {
+    "head": "fd57bbb",
+    "legacy_sha256_12": "be0a325dbf50",
+    "completed_suites": 11,
+    "interrupted_during": "조서대조",
+    "original_feature_failure": "README 한계 안내 22건 누락. 복원 후 기능목록 --strict 재시험 통과."
   },
-  {
-   "suite": "검산수식대조",
-   "cmd": "python3 tests/검산수식대조.py --quick",
-   "ok": true,
-   "code": 0,
-   "sec": 66.2,
-   "last": "",
-   "tail": []
-  },
-  {
-   "suite": "배선대조",
-   "cmd": "python3 tests/배선대조.py",
-   "ok": true,
-   "code": 0,
-   "sec": 71.8,
-   "last": "배선 이상 없음",
-   "tail": []
-  },
-  {
-   "suite": "리포트대조",
-   "cmd": "python3 tests/리포트대조.py",
-   "ok": true,
-   "code": 0,
-   "sec": 40.3,
-   "last": "",
-   "tail": []
-  }
- ],
- "baseline": {
-  "주계약": 37.5208,
-  "부채요소": 73.1837,
-  "전체": 114.8781,
-  "매도청구권": 13.0762
- },
- "baseline_expected": {
-  "주계약": 37.5208,
-  "부채요소": 73.1837,
-  "전체": 114.8781,
-  "매도청구권": 13.0762
- },
- "baseline_ok": true,
- "matrix": {
-  "CB": {
-   "PASS": 105,
-   "EXPECTED_BLOCK": 0,
-   "KNOWN_LIMITATION": 0,
-   "FAIL": 0,
-   "NOT_TESTED": 0
-  },
-  "RCPS": {
-   "PASS": 117,
-   "EXPECTED_BLOCK": 0,
-   "KNOWN_LIMITATION": 0,
-   "FAIL": 0,
-   "NOT_TESTED": 0
-  },
-  "BW": {
-   "PASS": 109,
-   "EXPECTED_BLOCK": 0,
-   "KNOWN_LIMITATION": 0,
-   "FAIL": 0,
-   "NOT_TESTED": 0
-  },
-  "SHA": {
-   "PASS": 43,
-   "EXPECTED_BLOCK": 0,
-   "KNOWN_LIMITATION": 0,
-   "FAIL": 0,
-   "NOT_TESTED": 0
-  },
-  "ALL": {
-   "PASS": 0,
-   "EXPECTED_BLOCK": 5,
-   "KNOWN_LIMITATION": 22,
-   "FAIL": 0,
-   "NOT_TESTED": 0
-  }
- },
- "all_ok": true,
- "sec": 507.0
+  "scope_notes": [
+    "초기 실행·판단 규칙 정정 후 재시험·현재 계산부의 장시간 시험을 합친 기록이다. 단일 HEAD에서 전체 명령을 한 번에 재실행했다는 뜻이 아니다.",
+    "가격결정 함수는 초기 실행과 동일하다. 변경된 판단·검토조서 함수는 정정 후 손계산·리포트 시험과 장시간 수식 시험으로 확인했다.",
+    "Python formulas와 축소 격자의 대조다. Microsoft Excel에서 전체 크기 파일을 직접 재계산한 결과가 아니다.",
+    "기존 실제 사례 3건은 새 서비스와 기존 엔진의 재현성 대조이며 실제 공정가치나 모든 계약의 모형 적정성에 대한 독립 의견이 아니다.",
+    "계약조건 일정 분석은 조건부 계산이며 이익·현금·주가의 공동확률모형과 회차 간 청산·희석 배분은 지원하지 않는다."
+  ],
+  "pending": []
 }

@@ -66,8 +66,8 @@ python tools/run_engagement.py /outside-repo/case.json --scenario "상환 지연
 - [근거 연결·용역 기능의 변경 및 검증 범위](docs/근거연결_업무개편.md)
 - [앞선 업무 화면 개편](docs/업무용_개편결과.md)
 - [업무용 개편 기준](docs/업무용_개편기준.md)
-- [기존 모형의 검증 범위와 미완료 시험](docs/V2_검증기록.md)
-- [모형 후속 개발 범위](docs/V2_개편설계.md)
+- [1차 개편 당시 검증기록](docs/V2_검증기록.md)
+- [초기 설계 및 모형 개발 항목](docs/V2_개편설계.md)
 - [기존 상세 앱 기능 기록](docs/기존상세앱_사용법.md)
 
 ```bash
