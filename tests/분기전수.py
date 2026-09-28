@@ -37,7 +37,9 @@ BASE = {
                  cpn=.02, ytm=.05, p_s=24., p_e=57., k_s=12., k_e=24., k_w=.3, issue_cost=2e8),
     "RCPS": dict(inst="RCPS", d_issue="2025-03-31", d_base="2025-09-30", d_mat="2030-03-31", gap_m=3.0,
                  cpn=.02, ytm=.05, p_s=24., p_e=57., issuer_call=2, k_s=12., k_e=24., k_w=.3,
-                 mat_mode=0, issue_cost=2e8),
+                 mat_mode=0, issue_cost=2e8,
+                 # 액면 기준 배당률 갈래가 실제로 환산되도록 발행가를 채워 둔다 (발행가 기준이면 쓰지 않는다)
+                 issue_px=5000.0),
     "BW":   dict(inst="BW", d_issue="2025-03-31", d_base="2025-09-30", d_mat="2030-03-31", gap_m=3.0,
                  cpn=.02, ytm=.05, p_s=24., p_e=57., k_s=12., k_e=24., k_w=.3, bw_pay=0, bw_detach=1,
                  issue_cost=2e8),

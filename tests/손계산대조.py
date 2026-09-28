@@ -945,7 +945,8 @@ def test_call_strike_switch():
         t1 = Terms(**base, **extra, k_less_cpn=1); derive(t1)
         f0 = G["engine"](t0, call=True); f1 = G["engine"](t1, call=True)
         dt_ = t0.T/t0.n; i1 = round(1.0/dt_); i2 = round(2.0/dt_)
-        ar, cc = G["accrue_rate"], G["call_cpn"]
+        ar = G["accrue_rate"]
+        cc = lambda t: (G["eff_cpn"](t) if int(t.k_less_cpn) == 1 else 0.0)   # 1 이자 붙여 / 0 안 뺌
         # 스텝 i 의 «계약상» 경과연수 — 계약은 개월로 센다. app.py 를 보지 않고 쓴 식이다.
         cyr = lambda i: (t0.elapsed_m + i*t0.rem_m/t0.n)/12
         # 계약값 — 발행일부터 정확히 1년·2년
@@ -1503,6 +1504,170 @@ def test_call_split_text():
     chk_bool("RCPS 발행자 상환권 → k_kind 0", tr.k_kind == 0)
 
 
+def test_deduction_methods():
+    """이미 지급한 이자·배당을 행사금액에서 빼는 세 방식 — 기대값은 계약 문언으로 센 값이다.
+
+        ㉠ 이자를 붙여 공제  100·(1 + (g−c)/g·((1+g/m)^(mt) − 1))   투자자 수익률 = g
+        ㉡ 받은 금액만 공제  100·(1+g/m)^(mt) − 100·c·ipay/12·지급회차
+        ㉢ 공제하지 않음    100·(1+g/m)^(mt)
+    """
+    print("\n[28] 이미 지급한 이자·배당의 공제 방식 — 이자 붙여 · 받은 금액만 · 공제 안 함")
+    import math as _m
+    dp, di = G["ded_prem"], G["ded_implied"]
+    # 계획서 표의 손계산 (연복리, 연 1회 지급)
+    for (t_, g, c, want) in ((10, .07, .01, (182.90, 186.72, 196.72)),
+                             (3, .05, .02, (109.46, 109.76, 115.76)),
+                             (5, .08, .03, (129.33, 131.93, 146.93))):
+        for d, w in zip((1, 2, 0), want):
+            chk(f"{t_}년 보장 {g:.0%} · 배당 {c:.0%} · 방식 {d}", 100*(1 + dp(t_, g, c, 1, d, t_*12, 12)), w, 5e-3)
+    # 독립 산식 — 분기복리 · 반기 지급 · 2.5년
+    g, c, m, ip, mo = .06, .02, 4, 6., 30.
+    t_ = mo/12
+    fv = (1 + g/m)**(m*t_)
+    chk("방식 1 = (g−c)/g 비례식", 100*(1 + dp(t_, g, c, m, 1, mo, ip)), 100*(1 + (g - c)/g*(fv - 1)), 1e-9)
+    chk("방식 2 = 순수 복리 − 명목 지급 5회", 100*(1 + dp(t_, g, c, m, 2, mo, ip)), 100*fv - 100*c*ip/12*5, 1e-9)
+    chk("방식 0 = 순수 복리", 100*(1 + dp(t_, g, c, m, 0, mo, ip)), 100*fv, 1e-9)
+    # 역산 왕복 — 세 방식 모두
+    for d in (1, 2, 0):
+        pr = dp(t_, g, c, m, d, mo, ip)
+        chk(f"방식 {d} · 보장수익률 역산 왕복", di(pr, t_, c, m, d, mo, ip), g, 1e-9)
+    # 방식 1 은 투자자 수익률을 정확히 g 로 맞춘다 — 반기 지급·반기복리 3년
+    g, c = .07, .03
+    R = 100*(1 + dp(3.0, g, c, 2, 1, 36., 6.))
+    pv = sum(100*c/2/(1 + g/2)**k for k in range(1, 7)) + R/(1 + g/2)**6
+    chk("방식 1 — 이표 + 상환금액의 수익률 = 보장수익률 (현재가치 100)", pv, 100.0, 1e-9)
+    chk_bool("방식 2 는 방식 1 보다 크고 방식 0 보다 작다",
+             dp(3.0, g, c, 2, 1, 36., 6.) < dp(3.0, g, c, 2, 2, 36., 6.) < dp(3.0, g, c, 2, 0, 36., 6.))
+    chk("지급 회차 — 행사일 당일 지급분까지 센다", G["paid_count"](36.0, 6.0), 6, 1e-12)
+    chk("지급 회차 — 행사일 전날이면 하나 적다", G["paid_count"](35.99, 6.0), 5, 1e-12)
+
+    # 엔진 — 세 권리 · 세 상품 · 세 방식에서 exercise_amounts 가 독립 산식과 같다
+    base = dict(cpn=.03, ipay=6., ytm=.07, ytm_cmp=2, p_mode="accrue", p_yield=.07, p_cmp=2,
+                p_s=24., p_e=48., k_prem=.05, k_cmp=2, k_w=.3, k_s=12., k_e=24., gap_m=1.,
+                rf_curve=[(1, .03), (3, .031), (5, .032)], cr_curve=[(1, .10), (3, .11), (5, .12)])
+    def want_amt(g, c, m, d, mo, ip):
+        t_ = mo/12
+        fv = (1 + g/m)**(m*t_)
+        if d == 1: return 100*(1 + max(0.0, (g - c)/g*(fv - 1)))
+        if d == 2: return 100 + max(0.0, 100*(fv - 1) - 100*c*ip/12*_m.floor(mo/ip + 1e-9))
+        return 100*fv
+    for inst, extra in (("CB", {}), ("RCPS", dict(inst="RCPS", issuer_call=2, div_mode=0, mat_mode=1)),
+                        ("BW", dict(inst="BW"))):
+        for d in (1, 2, 0):
+            tm = Terms(**base, **extra, p_less_cpn=d, k_less_cpn=d, m_less_cpn=d); derive(tm)
+            n = int(tm.n); EA = G["exercise_amounts"](tm, n, tm.T/n)
+            c = G["eff_cpn"](tm)
+            for i in (n//3, n//2):
+                mo = EA["cmonth"](i)
+                chk(f"{inst} · 방식 {d} · 조기상환금액 (스텝 {i})", EA["put"](i), want_amt(.07, c, 2, d, mo, 6.), 1e-9)
+                chk(f"{inst} · 방식 {d} · 매도청구금액 (스텝 {i})", EA["call"](i), want_amt(.05, c, 2, d, mo, 6.), 1e-9)
+            chk(f"{inst} · 방식 {d} · 만기상환금액", EA["red"],
+                want_amt(.07, c, 2, d, tm.elapsed_m + tm.rem_m, 6.), 1e-9)
+            full, b0, b1, b2, ca, conv = G["decompose"](tm)
+            chk_bool(f"{inst} · 방식 {d} · 격자가 선다", all(_m.isfinite(x) for x in (b0, b1, b2, ca)))
+    # 기본값 1 은 종전 산식 그대로다 — 옛 시나리오의 값이 움직이지 않는다
+    t1 = Terms(**base); derive(t1)
+    n = int(t1.n); EA = G["exercise_amounts"](t1, n, t1.T/n)
+    mo = EA["cmonth"](n//2)
+    chk("기본값(이자 붙여 공제) = 종전 accrue_rate", EA["put"](n//2),
+        100*(1 + G["accrue_rate"](mo/12, .07, .03, 2)), 1e-12)
+    # 재량 배당이면 공제할 것이 없어 세 방식이 같다
+    _v = []
+    for d in (1, 2, 0):
+        tr = Terms(**base, inst="RCPS", div_mode=1, mat_mode=1, p_less_cpn=d); derive(tr)
+        _v.append(G["decompose"](tr)[2])     # 부채요소 b1
+    chk("재량 배당 — 세 방식의 부채요소가 같다 (1 대 2)", _v[0], _v[1], 1e-12)
+    chk("재량 배당 — 세 방식의 부채요소가 같다 (1 대 0)", _v[0], _v[2], 1e-12)
+    # 조서 문구
+    chk_bool("조건표에 받은 금액만 공제가 적힌다",
+             "명목 합계" in G["ded_suffix"](Terms(**base, p_less_cpn=2), "p"))
+
+
+def test_div_basis():
+    """우선배당률 액면 기준 — 계약 「1주당 액면가액(500원) 기준 연 1%」, 1주당 인수금액 59,390원."""
+    print("\n[29] 우선배당률 기준 — 액면가 기준을 발행가 100 기준으로 옮긴다")
+    base = dict(inst="RCPS", cpn=.01, par=500., issue_px=59390., ipay=12., p_mode="accrue", p_yield=.07,
+                p_cmp=1, ytm=.07, ytm_cmp=1, mat_mode=0, issuer_call=0,
+                d_issue="2026-04-07", d_base="2026-04-07", d_mat="2036-04-07", p_s=36., p_e=120.,
+                rf_curve=[(1, .025), (3, .027), (10, .03)], cr_curve=[(1, .20), (3, .22), (10, .25)])
+    t1 = Terms(**base, div_basis=1); derive(t1)
+    chk("환산 배당률 = 1% × 500 ÷ 59,390", G["eff_cpn"](t1), .01*500/59390, 1e-15)
+    chk("10년 상환금액 (이자 붙여 공제) = 196.6", G["mat_red_formula"](t1), 196.5988, 5e-4)
+    t0 = Terms(**base, div_basis=0); derive(t0)
+    chk("그대로 1% 로 넣으면 182.9", G["mat_red_formula"](t0), 182.9, 5e-3)
+    # 환산은 eff_cpn 한 곳에서만 — 액면 기준 = 환산한 숫자를 발행가 기준으로 넣은 것
+    tx = Terms(**{**base, "cpn": .01*500/59390}, div_basis=0); derive(tx)
+    for k, nm in ((1, "주계약"), (2, "부채요소"), (3, "전체")):
+        chk(f"액면 기준 = 환산값 직접 입력 · {nm}", G["decompose"](t1)[k], G["decompose"](tx)[k], 1e-9)
+    chk_bool("조서 문구에 환산 전·후가 모두 있다",
+             "액면 500원" in G["div_basis_text"](t1) and "0.0084%" in G["div_basis_text"](t1))
+    # 재량 배당이면 0
+    tr = Terms(**base, div_basis=1, div_mode=1); derive(tr)
+    chk("재량 배당이면 환산 뒤에도 0", G["eff_cpn"](tr), 0.0, 1e-15)
+    # 사채는 권면 기준 — 스위치가 먹지 않는다
+    tc = Terms(cpn=.01, par=500., issue_px=59390., div_basis=1); derive(tc)
+    chk("CB 는 액면 기준 스위치를 보지 않는다", G["eff_cpn"](tc), .01, 1e-15)
+    # 발행가가 비면 발행가 기준으로 되돌리고 알린다
+    tb = Terms(**{**base, "issue_px": 0.0}, div_basis=1); derive(tb)
+    chk("발행가가 없으면 발행가 기준으로 되돌린다", tb.div_basis, 0, 1e-12)
+    chk_bool("되돌린 사유가 경고로 남는다",
+             any(G["COMPAT_DIVBASIS"][:20] in x for x in [m for _, _, m in tb.forced_notes]))
+
+
+def test_rfx_anytime():
+    """리픽싱 「언제든지」 — 주기를 노드 간격으로 두면 모든 노드에서 조정한다."""
+    print("\n[30] 리픽싱 언제든지 — 매 노드 조정")
+    RF = [(1, .030), (3, .031), (5, .032)]; CR = [(1, .14), (3, .17), (5, .19)]
+    vals = []
+    for carry in (0, 1, 2):
+        t = Terms(rf_curve=RF, cr_curve=CR, gap_m=1., rfx_cyc=1., rfx_mode=2, carry=carry); derive(t)
+        vals.append(G["decompose"](t)[0]["TF"])
+    chk_bool("언제든지로 인식한다", G["rfx_any"](t))
+    chk_bool("조건표에 「언제든지」 라고 적는다", "언제든지" in G["rfx_cycle_text"](t))
+    # 하향+상향을 매 노드에서 하면 전환가액이 그 노드 주가만으로 정해진다 — 경로가 필요 없다
+    chk("매 노드 조정 · 상태확장 = 경로가중", vals[0], vals[1], 1e-6)
+    chk("매 노드 조정 · 상태확장 = 확률가중", vals[0], vals[2], 1e-6)
+    chk_bool("노드 간격보다 짧다는 경고를 내지 않는다",
+             not any("조정 주기가 노드 간격보다 짧습니다" in w for w in G["validate"](t)))
+    t3 = Terms(rf_curve=RF, cr_curve=CR, gap_m=1., rfx_cyc=3.); derive(t3)
+    chk_bool("3개월 주기는 정기", not G["rfx_any"](t3))
+
+
+def test_display_only_fields():
+    """회차 표시 · 반영하지 않은 권리 · 희석 주식수 — 값을 바꾸지 않고 조서에만 실린다."""
+    print("\n[31] 표시 전용 칸 — 회차 · 반영하지 않은 권리 · 희석 경고")
+    import io, openpyxl
+    RF = [(1, .030), (3, .031), (5, .032)]; CR = [(1, .14), (3, .17), (5, .19)]
+    t0 = Terms(rf_curve=RF, cr_curve=CR, carry=1); derive(t0)
+    t1 = Terms(rf_curve=RF, cr_curve=CR, carry=1, tranche="1차 납입분 84,189주",
+               unmod_note="주식매수청구권 — 위반 조건부\n잔여재산 분배 우선권 — 범위 밖",
+               base_shares=1630868., dil_shares=473729.); derive(t1)
+    r0, r1 = G["decompose"](t0), G["decompose"](t1)
+    for k, nm in ((1, "주계약"), (2, "부채요소"), (3, "전체"), (4, "매도청구권")):
+        chk(f"표시 칸은 값을 바꾸지 않는다 · {nm}", r1[k], r0[k], 1e-12)
+    chk_bool("비어 있으면 표지 문구가 없다", G["unmod_text"](t0) == "")
+    chk_bool("적으면 한 줄로 이어 싣는다",
+             G["unmod_text"](t1).startswith("이 계약에서 반영하지 않은 권리")
+             and " / 잔여재산" in G["unmod_text"](t1))
+    chk_bool("파일 이름 표시", G["tranche_tag"](t1) == "_1차납입분84189주")
+    chk_bool("재현 기록 첫 줄이 회차", G["stamp_rows"](t1)[0] == ("회차", "1차 납입분 84,189주"))
+    chk_bool("회차가 없으면 재현 기록에 줄을 더하지 않는다", G["stamp_rows"](t0)[0][0] == "생성시각")
+    w = G["validate"](t1)
+    chk_bool("희석 29.0% 경고", any("29.0%" in x for x in w))
+    t2 = Terms(rf_curve=RF, cr_curve=CR, base_shares=1630868., dil_shares=50000.); derive(t2)
+    chk_bool("희석 3% 면 경고하지 않는다", not any("전환 시 보통주가" in x for x in G["validate"](t2)))
+    # 값 조서 가정 6행 · 수식 조서 가정 표지 — 비면 비고, 적으면 실린다
+    full, b0, b1, b2, ca, conv = r1
+    for kind, fn in (("값", "build_xlsx"), ("수식", "build_xlsx_formula")):
+        for tt, rr in ((t0, r0), (t1, r1)):
+            f_, a0, a1, a2, aca, acv = rr
+            wb = openpyxl.load_workbook(io.BytesIO(G[fn](tt, f_, a0, a1, a2, aca, acv,
+                                                         G["eir_or_none"](tt, f_, a0, a1, a2, aca))))
+            txt = [c.value for row in wb["가정"].iter_rows() for c in row if isinstance(c.value, str)]
+            has = any(x.startswith("이 계약에서 반영하지 않은 권리") for x in txt)
+            chk_bool(f"{kind} 조서 표지 — {'적음' if tt is t1 else '비움'}", has == (tt is t1))
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -1532,6 +1697,10 @@ def main():
     test_call_strike_switch()
     test_eir_expected_maturity()
     test_call_split_text()
+    test_deduction_methods()
+    test_div_basis()
+    test_rfx_anytime()
+    test_display_only_fields()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

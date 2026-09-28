@@ -26,10 +26,11 @@ WANT = {
     6:  {"roff", "cyc"},                       # Flag(리픽싱)
     # 조기상환금액 — accb/remm/n 은 경과기간 잣대, pcadd·ipay·ipaym·payoff 는
     # 「행사일이 이자지급일이면 그 날 이자를 따로 받는다」 스위치가 보는 값이다
+    # pless 는 「이미 지급한 이자·배당을 어떻게 빼는가」 (1 이자 붙여 / 2 받은 금액만 / 0 안 뺌)
     7:  {"pyld", "cpn", "pcmp", "dt", "elm", "prate", "pmode", "accb", "remm", "n",
-        "pcadd", "ipay", "ipaym", "payoff"},
+        "pcadd", "ipay", "ipaym", "payoff", "pless"},
     8:  {"prem", "cpn", "kcmp", "dt", "elm", "kless", "accb", "remm", "n",
-        "kcadd", "ipay", "ipaym", "payoff"},   # 매도청구금액 — kless 0 이면 지급분을 안 뺀다
+        "kcadd", "ipay", "ipaym", "payoff"},   # 매도청구금액 — kless 가 지급분 공제 방식을 고른다
     # 지급일은 발행일 기준이라 리픽싱(roff)처럼 첫 지급 스텝을 함께 본다.
     9:  {"ipay", "payoff", "cpn", "ipaym"},    # 쿠폰
     10: {"n", "red"},                          # 만기상환

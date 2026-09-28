@@ -68,6 +68,15 @@ CASES = [
     ("조기상환·매도청구 표가 서로 다른 회차", 
      dict(p_sched="24 104.0000", k_sched="36 106.0000", k_method=0)),
     ("행사금액 경과기간 Actual/365 (종전)", dict(acc_basis=0)),
+    # 이미 지급한 이자·배당의 공제 방식 — 엔진·값 조서·수식 조서가 같은 식을 쓴다
+    ("지급분 공제 · 받은 금액만 (조기상환·매도청구·만기)",
+     dict(cpn=.03, ipay=6., ytm=.07, ytm_cmp=2, p_mode="accrue", p_yield=.07, p_cmp=2,
+          k_prem=.05, k_cmp=2, p_less_cpn=2, k_less_cpn=2, m_less_cpn=2)),
+    ("지급분 공제 · 공제하지 않음 (셋 다)",
+     dict(cpn=.03, ipay=6., ytm=.07, ytm_cmp=2, p_mode="accrue", p_yield=.07, p_cmp=2,
+          k_prem=.05, k_cmp=2, p_less_cpn=0, k_less_cpn=0, m_less_cpn=0)),
+    # 리픽싱 언제든지 — 주기 = 노드 간격이라 모든 노드에서 조정한다
+    ("리픽싱 언제든지 (매 노드)", dict(_gap=3.0, rfx_cyc=3.0)),
     # 발행자 콜 우선 — 투자자의 전환·조기상환이 매도청구에 밀려 콜이 소멸하지 않는다
     ("방법2 · 콜 우선 · 의무보유 없음", dict(k_method=2, k_split=1, k_hold=0, pc_order=1)),
     ("방법1 · 콜 우선 · 의무보유 없음", dict(k_method=1, k_split=1, k_hold=0, pc_order=1)),
@@ -78,6 +87,11 @@ CASES = [
     ("방법2 · 전환권 부채", dict(k_method=2, conv_class="liability")),
     # RCPS — 상품 스위치. 자동전환은 전환권이 있는 격자에서만 타므로 B0·B1 은 CB 와 같다.
     ("RCPS · 자동전환 · 발행자콜 없음", dict(inst="RCPS", mat_mode=0, issuer_call=0)),
+    # 우선배당률 액면 기준 — 수식 조서의 「계산에 쓰는 값」 셀이 액면가 ÷ 발행가로 옮긴다
+    ("RCPS · 액면 기준 우선배당 · 받은 금액만 공제",
+     dict(inst="RCPS", mat_mode=0, issuer_call=0, cpn=.05, div_basis=1, par=500., issue_px=2000.,
+          ipay=12., ytm=.07, ytm_cmp=1, p_mode="accrue", p_yield=.07, p_cmp=1,
+          p_less_cpn=2, m_less_cpn=2)),
     ("RCPS · 자동전환 · 발행자콜 있음", dict(inst="RCPS", mat_mode=0, issuer_call=1)),
     ("RCPS · 만료 상환 · 발행자콜 있음", dict(inst="RCPS", mat_mode=1, issuer_call=1)),
     ("RCPS · 자동전환 · 전환권 부채", dict(inst="RCPS", issuer_call=1, conv_class="liability")),

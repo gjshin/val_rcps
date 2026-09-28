@@ -63,7 +63,10 @@ MANIFEST = {
     "k_method":    ("매도청구권 평가방법", {0: "유무가치비교", 1: "옵션차익 · GS식 전환가중확률할인",
                                       2: "옵션차익 · TF식 지분-채권 분리할인"}, ("CB", "BW", "RCPS")),
     "k_sep":       ("매도청구권 회계", {1: "별도 금융상품", 0: "복합내재파생에 포함"}, ("CB", "BW", "RCPS")),
-    "k_less_cpn":  ("매도청구금액 산식", {1: "보장수익률 복리 − 기 지급 이자·배당", 0: "순수 복리 (차감 없음)"}, ("CB", "BW", "RCPS")),
+    # 이미 지급한 이자·배당을 행사금액에서 어떻게 빼는가 — 계약 문언이 정한다 (권리마다 따로)
+    "k_less_cpn":  ("매도청구금액 지급분 공제", {1: "이자를 붙여 공제 — 투자자 수익률 = 보장수익률", 2: "받은 금액만 공제 — 「지급된 배당금을 공제」", 0: "공제하지 않음 — 순수 복리"}, ("CB", "BW", "RCPS")),
+    "p_less_cpn":  ("조기상환금액 지급분 공제", {1: "이자를 붙여 공제 — 투자자 수익률 = 보장수익률", 2: "받은 금액만 공제 — 「지급된 배당금을 공제」", 0: "공제하지 않음 — 순수 복리"}, P_BOND),
+    "m_less_cpn":  ("만기상환금액 지급분 공제", {1: "이자를 붙여 공제 — 투자자 수익률 = 보장수익률", 2: "받은 금액만 공제 — 「지급된 배당금을 공제」", 0: "공제하지 않음 — 순수 복리"}, P_BOND),
     "k_split":     ("옵션차익법 지분·채권 구분 기준", {0: "비례균등차감법 — 가치 구성비율", 1: "한공회 본문 4.3.3 — GS 전환확률"}, ("CB", "BW", "RCPS")),
     "k_hold":      ("콜 대상물량 의무보유", {1: "있음 — 의무보유 기간 동안 존속", 0: "없음 — 전환·조기상환으로 콜도 소멸"}, ("CB", "BW", "RCPS")),
     "k_lock_put":  ("의무보유가 조기상환청구도 막는가", {1: "막는다 — 계약 정의", 0: "전환만 막는다"}, ("CB", "BW", "RCPS")),
@@ -96,6 +99,7 @@ MANIFEST = {
     "mat_mode":    ("존속기간 만료 시", {0: "보통주 자동전환", 1: "상환"}, ("RCPS",)),
     "issuer_call": ("발행자 측 권리", {0: "없음", 1: "발행자 상환권", 2: "제3자 지정 매도청구권"}, ("RCPS",)),
     "div_mode":    ("우선배당 성격", {0: "미지급분 상환가액 가산 (부채)", 1: "발행자 재량 (제외)"}, ("RCPS",)),
+    "div_basis":   ("우선배당률 기준", {0: "발행가 기준 — 그대로 쓴다", 1: "액면가 기준 — × 액면가 ÷ 발행가"}, ("RCPS",)),
     "ipo_on":      ("적격상장 조항", {0: "없음", 1: "격자에 넣음"}, ("RCPS", "SHA")),
     "ipo_conv":    ("상장 시 강제전환", {0: "리픽싱만", 1: "보통주로 강제전환"}, ("RCPS",)),
     # ── BW ──
@@ -132,11 +136,11 @@ def selectable(G, product, field, value):
     # 상품 필드는 그 상품 값 하나만 「선택」이다 — CB 행에 RCPS 값이 있을 수 없다
     if field == "inst": return value == product
     if product == "SHA":
-        forced = dict(mat_mode=1, issuer_call=0, div_mode=0, rfx_mode=0, k_method=0,
+        forced = dict(mat_mode=1, issuer_call=0, div_mode=0, div_basis=0, rfx_mode=0, k_method=0,
                       p_sep=1, k_sep=1, put_bdt=0, ipo_conv=0, carry=1)
         if field in forced: return forced[field] == value
     if product == "BW":
-        forced = dict(mat_mode=1, issuer_call=0, div_mode=0)
+        forced = dict(mat_mode=1, issuer_call=0, div_mode=0, div_basis=0)
         if field in forced: return forced[field] == value
     if product == "RCPS" and field == "k_transfer":
         # 세 콜 갈래(issuer_call 0·1·2) 모두 k_transfer=0 으로 되돌린다 — 「독립 양도」는
@@ -145,7 +149,7 @@ def selectable(G, product, field, value):
     if product == "RCPS" and field in ("k_sep", "k_third", "k_method"):
         # RCPS 콜 갈래(issuer_call)가 정한다 — 세 값 다 어느 갈래에선가 나온다
         return True
-    if product == "CB" and field in ("mat_mode", "issuer_call", "div_mode", "ipo_conv",
+    if product == "CB" and field in ("mat_mode", "issuer_call", "div_mode", "div_basis", "ipo_conv",
                                      "bw_pay", "bw_detach"):
         return False
     return True
@@ -189,7 +193,9 @@ def terms_enum_fields(G):
         if f in ("d_issue", "d_base", "d_mat", "cr_src", "rt_a", "rt_b", "rt_tgt", "ticker", "s0_src",
                  "rvol_rating", "rvol_how", "k_basis",
                  # 조회 기록 — 계산 갈래가 아니라 「무엇을 받았는가」의 기록이다
-                 "s0_date", "s0_splits", "scen_md5"): continue
+                 "s0_date", "s0_splits", "scen_md5",
+                 # 표시·기록 전용 — 회차 표시와 「평가에 반영하지 않은 권리」 문안
+                 "tranche", "unmod_note"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty
@@ -347,6 +353,12 @@ def collect_coverage(G):
         "test_call_strike_switch": [("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1),
                                     ("RCPS", "k_less_cpn", 0), ("BW", "k_less_cpn", 0), ("CB", "call", True)],
         "test_eir_expected_maturity": [("CB", "p_sep", 0), ("CB", "p_sep", 1), ("CB", "k_sep", 1)],
+        # 이미 지급한 이자·배당의 공제 방식 — 세 권리 · 세 상품 · 세 방식을 독립 산식과 대조
+        "test_deduction_methods": [("CB", "p_less_cpn", 0), ("CB", "p_less_cpn", 1), ("CB", "p_less_cpn", 2), ("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1), ("CB", "k_less_cpn", 2), ("CB", "m_less_cpn", 0), ("CB", "m_less_cpn", 1), ("CB", "m_less_cpn", 2), ("RCPS", "p_less_cpn", 0), ("RCPS", "p_less_cpn", 1), ("RCPS", "p_less_cpn", 2), ("RCPS", "k_less_cpn", 0), ("RCPS", "k_less_cpn", 1), ("RCPS", "k_less_cpn", 2), ("RCPS", "m_less_cpn", 0), ("RCPS", "m_less_cpn", 1), ("RCPS", "m_less_cpn", 2), ("BW", "p_less_cpn", 0), ("BW", "p_less_cpn", 1), ("BW", "p_less_cpn", 2), ("BW", "k_less_cpn", 0), ("BW", "k_less_cpn", 1), ("BW", "k_less_cpn", 2), ("BW", "m_less_cpn", 0), ("BW", "m_less_cpn", 1), ("BW", "m_less_cpn", 2)],
+        "test_div_basis": [("RCPS", "div_basis", 0), ("RCPS", "div_basis", 1), ("RCPS", "div_mode", 1)],
+        "test_rfx_anytime": [("CB", "rfx_mode", 2), ("CB", "carry", 0), ("CB", "carry", 1), ("CB", "carry", 2)],
+        # 표시 전용 칸(회차·반영하지 않은 권리·희석 주식수)이 값을 바꾸지 않고 조서에만 실린다
+        "test_display_only_fields": [("CB", "carry", 1)],
         "test_bdt_review_gates": [("CB", "conv_class", "equity"), ("CB", "conv_class", "liability"),
                                   ("CB", "put_bdt", 1), ("CB", "put_bdt", 0), ("CB", "put", True), ("CB", "put", False)],
     }
