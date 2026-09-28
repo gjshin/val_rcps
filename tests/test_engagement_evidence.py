@@ -168,6 +168,32 @@ def test_legacy_export_sources_leave_numerical_formulas_untouched():
     assert updated['판단근거']['B2'].data_type=='s'
 
 
+def test_legacy_cli_refuses_implicit_formula_approximation_before_writing(tmp_path):
+    import subprocess, sys
+    case=synthetic();case.contract['rfx_mode']=1;case.method['carry']=0
+    input_path=tmp_path/'case.json';input_path.write_text(json.dumps(case.effective()))
+    target=tmp_path/'output'
+    run=subprocess.run([sys.executable,str(ROOT/'tools/run_valuation.py'),str(input_path),'--out',str(target)],capture_output=True,text=True)
+    assert run.returncode != 0
+    assert '--no-formula' in run.stderr
+    assert not target.exists()
+
+
+def test_legacy_import_preserves_values_and_rejects_case_envelopes():
+    from valuation.bridge import legacy_term_values
+    from tools.run_valuation import make_terms
+    case = synthetic()
+    values = case.effective()
+    values['_schema'] = 4
+    assert legacy_term_values(values)['S0'] == case.market['S0']
+    assert legacy_term_values(values)['rf_curve'] == case.market['rf_curve']
+    for payload in (case.to_dict(), {'schema':'valuation-engagement/1','cases':[]}, [], {'notes':'memo'}):
+        with pytest.raises(ValueError):
+            legacy_term_values(payload)
+        with pytest.raises(ValueError):
+            make_terms(vars(legacy), payload, {})
+
+
 def test_bridge_changes_override_without_destroying_contract_facts():
     case=synthetic();original=case.market['S0']
     case.assumptions=[dict(field='S0',value=original+5,rationale='Conditional evidence')]

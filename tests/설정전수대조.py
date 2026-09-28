@@ -251,15 +251,16 @@ def run_one(idx):
     return 0
 
 
-def main():
+def main(completed=None):
     import json, subprocess
     bad, dead, base = [], [], {}      # 기준선은 격자별로 따로 잡는다
     # 열은 ROWS 를 따라간다. 조서에 실리는 항목이 바뀌면 여기도 같이 바뀐다.
     _hdr = "%-22s" + " %10s"*len(ROWS) + "  %s"
     print(_hdr % ("설정", *[nm for nm, _, _ in ROWS], "판정"))
     for idx in range(len(CASES)):
-        r = subprocess.run([sys.executable, os.path.abspath(__file__), str(idx)],
-                           capture_output=True, text=True)
+        r = (completed[idx] if completed is not None else
+             subprocess.run([sys.executable, os.path.abspath(__file__), str(idx)],
+                            capture_output=True, text=True))
         line = [x for x in r.stdout.splitlines() if x.startswith("@@")]
         if not line:
             lbl = CASES[idx][0]

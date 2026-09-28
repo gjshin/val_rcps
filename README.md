@@ -74,7 +74,12 @@ python tools/run_engagement.py /outside-repo/case.json --scenario "상환 지연
 pip install -r requirements-dev.txt
 python -m pytest tests/test_v2_workflow.py tests/test_business_workflow.py tests/test_engagement_evidence.py -q
 python tests/benchmark_workflow.py --out /outside-repo/benchmark.json
+python tests/run_all.py --quick
+python tests/run_long_checks.py --jobs 4 --out /outside-repo/long-checks
 ```
+
+장시간 조서·설정 시험은 사례별 결과를 저장한다. 같은 명령을 다시 실행하면 계산부와 시험
+코드가 일치하는 완료 사례를 재사용하고, 설정 간 결과 변화 검사는 원래 순서로 수행한다.
 
 ## 기존 계산부의 한계
 

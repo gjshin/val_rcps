@@ -68,8 +68,9 @@ def apply_set(G, t, kv: dict):
 
 
 def make_terms(G, scen: dict, over: dict):
+    from valuation.bridge import legacy_term_values
     T = G["Terms"]
-    t = T(**{k: v for k, v in scen.items() if k in T.__dataclass_fields__})
+    t = T(**legacy_term_values(scen))
     apply_set(G, t, over)
     G["derive"](t)
     return t
@@ -152,6 +153,8 @@ def main():
     t = make_terms(G, scen, over)
     if G["is_sha"](t): raise SystemExit("주주간계약은 아직 이 도구에서 돌리지 않습니다 — 앱을 쓰십시오.")
     if len(t.rf_curve) < 2 or len(G["credit_curve"](t)) < 2: raise SystemExit("이자율 곡선이 없습니다.")
+    if not a.no_formula and t.carry == 0 and t.rfx_mode > 0:
+        raise SystemExit('상태확장 리픽싱은 같은 방법의 수식 조서를 지원하지 않습니다. --no-formula로 값 조서를 만들거나, 입력의 계산방법을 명시적으로 변경한 뒤 다시 실행하십시오.')
     os.makedirs(a.out, exist_ok=True)
     L = G["lbl"](t)
     name = a.name or f"{L['short']}평가{G['tranche_tag'](t)}_{t.d_base}"
@@ -169,7 +172,6 @@ def main():
     checks.append(("값 조서 손상 검사", scan(data)))
     if not a.no_formula:
         tf = G["Terms"](**asdict(t))
-        if tf.carry == 0 and tf.rfx_mode > 0: tf.carry = 1      # 앱과 같다 — 상태확장은 엑셀로 못 옮긴다
         F = run(G, tf)
         data = G["build_xlsx_formula"](tf, F["full"], F["b0"], F["b1"], F["b2"], F["ca"], F["conv"],
                                        G["eir_or_none"](tf, F["full"], F["b0"], F["b1"], F["b2"], F["ca"]),

@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 """Existing detailed UI. Shared calculation code lives in valuation.legacy."""
 import streamlit as st
+from hashlib import sha256
 from valuation.legacy import *
+from valuation.bridge import legacy_term_values
 
 # Cache only at the UI boundary; the engine imports without Streamlit.
 korean_font = st.cache_data(show_spinner=False)(korean_font)
@@ -166,13 +168,12 @@ with st.sidebar:
     up = st.file_uploader("시나리오 불러오기", type=["json"], key="scen")
     # 업로더는 지운 뒤에도 같은 파일을 계속 돌려준다. 실행마다 다시 읽으면
     # 그 뒤에 손으로 바꾼 값이 매번 되돌아가므로 한 번만 읽는다.
-    _sid = (up.name, up.size) if up is not None else None
+    _sid = (up.name, sha256(up.getvalue()).hexdigest()) if up is not None else None
     if up is not None and st.session_state.get("scen_id") != _sid:
         try:
             up.seek(0)
             o = json.load(up)
-            st.session_state.tm = Terms(**{k: v for k, v in o.items()
-                                           if k in Terms.__dataclass_fields__})
+            st.session_state.tm = Terms(**legacy_term_values(o))
             st.session_state.blank = set()
             # 이자율 곡선은 아래 텍스트 칸이 실행마다 t.rf_curve·t.cr_curve 를
             # 통째로 덮어쓴다. 시나리오의 곡선을 그 칸에 직접 써 넣지 않으면
@@ -207,6 +208,7 @@ with st.sidebar:
             st.rerun()
         except Exception as ex:
             st.error(f"읽지 못했습니다 — {ex}")
+            st.stop()
     t = st.session_state.tm
 
     _sm = st.session_state.get("scen_meta")
