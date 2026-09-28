@@ -9417,11 +9417,26 @@ def holder_ui(t, full, b0, b1, b2, ca):
     st.caption(HOLDER_GROUP)
 
 
-def vol_basis_opt():
-    """변동성 산출내역 조서에 적을 설정 — 피어로 산출했으면 피어 칸, 아니면 대상회사 칸."""
-    if st.session_state.get("peers"):
-        return st.session_state.get("peer_opt") or st.session_state.get("vol_opt")
-    return st.session_state.get("vol_opt")
+def vol_listed() -> bool:
+    """변동성 칸의 「대상회사 — 상장사 / 비상장사」. 상장사면 대상회사 주가, 비상장사면 피어로 잰다.
+
+    기본은 「기본」 칸에 종목코드가 있으면 상장사, 없으면 비상장사다.
+    """
+    return st.session_state.get("vol_listed", "상장사" if st.session_state.tm.ticker else "비상장사") == "상장사"
+
+
+def vol_attach():
+    """조서에 싣는 변동성 산출 자료 — (시계열 목록, 설정) 또는 None.
+
+    고른 쪽 자료만 싣는다. 비상장인데 대상회사 칸에 예전 시계열이 남아 있거나, 상장사인데
+    피어가 남아 있어도 조서에 섞이지 않는다.
+    """
+    if vol_listed():
+        px = st.session_state.get("prices")
+        return (([(st.session_state.get("px_src") or "대상회사", px)], st.session_state.get("vol_opt"))
+                if px else None)
+    pe = st.session_state.get("peers")
+    return (pe, st.session_state.get("peer_opt")) if pe else None
 
 # 위젯이 아니라 앱이 직접 관리하는 상태 — 시나리오를 불러와도 남긴다
 _KEEP_STATE = {"tm", "prices", "peers", "scen", "scen_id", "rf_txt", "cr_txt", "ca_txt", "cb_txt",
@@ -10744,18 +10759,30 @@ with st.sidebar:
                     format="%.4f")/100
 
     with st.expander("변동성", expanded=True):
+        # 상장사면 대상회사 주가로, 비상장사면 피어로 잰다. 쓰지 않는 쪽 칸은 잠근다 — 비상장인데
+        # 대상회사 칸의 예시 종목 주가가 올라와 σ 로 적용되거나 주가 배수 경고가 뜨던 자리다.
+        _lst = st.radio("대상회사", ["상장사", "비상장사"], horizontal=True, key="vol_listed",
+                        index=(0 if vol_listed() else 1),
+                        help="**상장사** — 대상회사 주가로 변동성을 잽니다. 피어 칸은 잠깁니다.\n\n"
+                             "**비상장사** — 유사기업(피어) 주가로 잽니다. 대상회사 주가 칸은 "
+                             "잠깁니다.\n\n조서의 변동성 산출내역과 「적용하지 않은 변동성」 "
+                             "경고도 고른 쪽 자료만 봅니다.") == "상장사"
+        _tg = not _lst                     # 대상회사 칸 잠금
+        st.markdown("**상장 — 대상회사 주가로 산출**")
+        if _tg:
+            st.caption("비상장사를 고르셨습니다 — 이 칸은 쓰지 않습니다. 아래 피어 칸에서 산출하십시오.")
         c1, c2 = st.columns([2, 1])
-        code = c1.text_input("종목코드 · 티커", value=(t.ticker or "057680"),
+        code = c1.text_input("종목코드 · 티커", value=t.ticker,
                              help="국내는 6자리 숫자, 해외는 티커. 「기본」의 종목코드를 따라옵니다.",
-                             key="vol_code")
-        mkt = c2.selectbox("시장", ["KQ", "KS", ""],
+                             key="vol_code", disabled=_tg)
+        mkt = c2.selectbox("시장", ["KQ", "KS", ""], disabled=_tg,
                            index=["KQ", "KS", ""].index(st.session_state.get("s0_mkt", "KQ")),
                            format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x],
                            key="vol_mkt")
         c3, c4 = st.columns(2)
-        pdays = int(c3.number_input("조회 일수", value=250, step=10, min_value=30))
+        pdays = int(c3.number_input("조회 일수", value=250, step=10, min_value=30, disabled=_tg))
         tdays = int(c4.number_input(
-            "연 거래일수", value=250, step=5,
+            "연 거래일수", value=250, step=5, disabled=_tg,
             help="1년에 며칠 거래하나입니다. 국내 증시는 약 245~250일입니다. "
                  "**받아온 자료가 며칠치인가(조회 일수)와 다릅니다.** 여기에 "
                  "관측 개수를 넣으면 연환산이 어긋납니다."))
@@ -10767,12 +10794,13 @@ with st.sidebar:
                        f"{(tdays/250)**0.5:.3f} 배로 나옵니다.")
         st.caption("야후 파이낸스 수정주가를 씁니다. 유상증자·액면분할·배당이 반영된 종가입니다.")
         # 평가기준일까지의 주가로 변동성을 잰다. 기준일 뒤의 값이 섞이면 결산일 평가가 아니다.
-        asof = st.date_input("조회 종료일", value=dt.date.fromisoformat(t.d_base),
+        asof = st.date_input("조회 종료일", value=dt.date.fromisoformat(t.d_base), disabled=_tg,
                              help="기본은 평가기준일입니다. 기준일 뒤 주가로 변동성을 재면 안 됩니다.")
-        drop = st.checkbox("이상치 제거 (중앙값 절대편차 2.5배)", value=True,
+        drop = st.checkbox("이상치 제거 (중앙값 절대편차 2.5배)", value=True, disabled=_tg,
                            help="MAD × 1.4826 × 2.5 밖의 일간수익률을 뺍니다. "
-                                "책 사례 5-2 와 같은 배수입니다.")
-        if st.button("주가 수집", use_container_width=True, type="secondary"):
+                                "책 사례 5-2 와 같은 배수입니다. 대상회사 주가에만 씁니다 — "
+                                "피어는 아래 피어 칸에서 따로 고릅니다.")
+        if st.button("주가 수집", use_container_width=True, type="secondary", disabled=_tg):
             with st.spinner("받는 중"):
                 try:
                     px, src = fetch_prices(code.strip(), pdays, mkt, asof.isoformat())
@@ -10782,7 +10810,7 @@ with st.sidebar:
                 except Exception as ex:
                     st.error(f"받지 못했습니다 — {ex}\n\n"
                              "종목코드와 시장을 확인하시거나 아래에서 파일을 넣으십시오.")
-        pf = st.file_uploader("주가 파일 (엑셀 · csv · txt)",
+        pf = st.file_uploader("주가 파일 (엑셀 · csv · txt)", disabled=_tg,
                               type=["xlsx", "xlsm", "xls", "csv", "txt", "tsv"], key="pxf")
         if pf is not None:
             try:
@@ -10797,7 +10825,7 @@ with st.sidebar:
                 else:
                     st.error(f"종가를 {len(rows)}개밖에 찾지 못했습니다. "
                              "머리글에 '종가' 또는 'Close' 가 있는지 확인하십시오.")
-        if st.session_state.prices:
+        if st.session_state.prices and not _tg:
             v = vol_from(st.session_state.prices, tdays, drop)
             if v:
                 st.metric("연 변동성", f"{v['annual']*100:.2f}%",
@@ -10816,9 +10844,13 @@ with st.sidebar:
 
         st.divider()
         st.markdown("**비상장 — 피어로 산출**")
-        st.caption("대상회사 주가가 없으면 유사기업 여럿의 변동성을 모아 씁니다. "
-                   "업종·규모·상장기간이 비슷한 회사를 고르고, 왜 골랐는지 조서에 남기십시오.")
-        ptxt = st.text_area("피어 목록 — 한 줄에 하나, `코드` 또는 `코드,이름`",
+        _pg = _lst                          # 피어 칸 잠금
+        if _pg:
+            st.caption("상장사를 고르셨습니다 — 이 칸은 쓰지 않습니다. 위 대상회사 주가로 산출하십시오.")
+        else:
+            st.caption("대상회사 주가가 없으면 유사기업 여럿의 변동성을 모아 씁니다. "
+                       "업종·규모·상장기간이 비슷한 회사를 고르고, 왜 골랐는지 조서에 남기십시오.")
+        ptxt = st.text_area("피어 목록 — 한 줄에 하나, `코드` 또는 `코드,이름`", disabled=_pg,
                             value=st.session_state.get("peer_txt", ""),
                             height=90, placeholder="122870,와이지엔터\n035900,JYP\n041510,SM")
         st.session_state.peer_txt = ptxt
@@ -10830,10 +10862,10 @@ with st.sidebar:
         # 맞추거나(예: 180영업일) 기준일을 달리 잡는 일이 흔하다.
         pc1, pc2 = st.columns(2)
         p_pdays = int(pc1.number_input("조회 일수", value=250, step=10, min_value=30,
-                                       key="p_pdays",
+                                       key="p_pdays", disabled=_pg,
                                        help="피어마다 받아올 거래일 수입니다."))
         p_tdays = int(pc2.number_input(
-            "연 거래일수", value=250, step=5, key="p_tdays",
+            "연 거래일수", value=250, step=5, key="p_tdays", disabled=_pg,
             help="1년에 며칠 거래하나입니다. 국내 증시는 약 245~250일입니다. "
                  "**받아온 자료가 며칠치인가(조회 일수)와 다릅니다.**"))
         if not 200 <= p_tdays <= 300:
@@ -10842,15 +10874,21 @@ with st.sidebar:
                        f"칸입니다. 지금 값이면 σ 가 √({p_tdays}÷250) = "
                        f"{(p_tdays/250)**0.5:.3f} 배로 나옵니다.")
         p_asof = st.date_input("조회 종료일", value=dt.date.fromisoformat(t.d_base),
-                               key="p_asof",
+                               key="p_asof", disabled=_pg,
                                help="기본은 평가기준일입니다. 기준일 뒤 주가로 변동성을 "
                                     "재면 안 됩니다.")
         if p_asof > dt.date.fromisoformat(t.d_base):
             st.warning("조회 종료일이 평가기준일보다 뒤입니다. 기준일 뒤 주가가 섞입니다.")
-        vpick = st.selectbox("종합 방법", ["median", "mean", "max", "min"],
+        # 이상치 제거도 피어 칸에서 따로 고른다 — 대상회사 칸과 다르게 둘 수 있어야 한다
+        p_drop = st.checkbox("이상치 제거 (중앙값 절대편차 2.5배)", value=True, key="p_drop",
+                             disabled=_pg,
+                             help="피어마다 MAD × 1.4826 × 2.5 밖의 일간수익률을 뺍니다. "
+                                  "책 사례 5-2 와 같은 배수입니다. 전기 평가와 같은 방식으로 "
+                                  "맞추십시오.")
+        vpick = st.selectbox("종합 방법", ["median", "mean", "max", "min"], disabled=_pg,
                              format_func=lambda x: {"median": "중앙값", "mean": "단순평균",
                                                     "max": "최댓값", "min": "최솟값"}[x])
-        if st.button("피어 주가 수집", use_container_width=True):
+        if st.button("피어 주가 수집", use_container_width=True, disabled=_pg):
             got, fail = [], []
             with st.spinner("받는 중"):
                 for line in ptxt.splitlines():
@@ -10867,7 +10905,7 @@ with st.sidebar:
             st.session_state.peers = got
             if got: st.success(f"{len(got)}개 수집 · " + " · ".join(n for n, _ in got))
             if fail: st.error("못 받은 것: " + " / ".join(fail))
-        mf = st.file_uploader("여러 종목 종가 파일 (첫 열 일자, 나머지 열 종목)",
+        mf = st.file_uploader("여러 종목 종가 파일 (첫 열 일자, 나머지 열 종목)", disabled=_pg,
                               type=["xlsx", "xlsm", "csv", "txt", "tsv"], key="mpxf")
         if mf is not None:
             try:
@@ -10883,8 +10921,9 @@ with st.sidebar:
                     st.error("종목별 종가를 찾지 못했습니다. 첫 줄이 머리글이고 "
                              "첫 열이 일자인지 확인하십시오.")
         peers = st.session_state.get("peers") or []
-        if peers:
-            pv = [(nm, vol_from(px, p_tdays, drop)) for nm, px in peers]
+        st.session_state.peer_agg = None
+        if peers and not _pg:
+            pv = [(nm, vol_from(px, p_tdays, p_drop)) for nm, px in peers]
             pv = [(nm, x) for nm, x in pv if x]
             if pv:
                 ann = sorted(x["annual"] for _, x in pv)
@@ -10898,12 +10937,17 @@ with st.sidebar:
                 st.metric("피어 종합", f"{agg*100:.2f}%",
                           {"median": "중앙값", "mean": "단순평균",
                            "max": "최댓값", "min": "최솟값"}[vpick])
+                st.session_state.peer_agg = agg
+                if abs(agg - t.sig) > 5e-5:
+                    st.warning(f"아직 **적용하지 않았습니다**. 지금 조서에 들어가는 값은 "
+                               f"**{t.sig*100:.2f}%** 입니다. 아래 단추를 누르셔야 피어 종합값이 "
+                               "계산에 들어갑니다.")
                 if st.button("피어 종합 적용", use_container_width=True, type="primary"):
                     t.sig = agg
         st.session_state.vol_opt = dict(tdays=tdays, drop=drop, pick=vpick,
                                         asof=asof.isoformat(), days=pdays)
-        # 피어로 산출하면 산출내역 조서도 피어의 설정으로 적는다 (vol_basis_opt).
-        st.session_state.peer_opt = dict(tdays=p_tdays, drop=drop, pick=vpick,
+        # 비상장이면 산출내역 조서도 피어의 설정으로 적는다 (vol_attach).
+        st.session_state.peer_opt = dict(tdays=p_tdays, drop=p_drop, pick=vpick,
                                          asof=p_asof.isoformat(), days=p_pdays)
         t.sig = st.number_input("변동성 (%)", value=t.sig*100, step=0.5)/100
         # 배당수익률은 위험중립 드리프트에서 빠진다. 배당은 주주에게 가고
@@ -11095,7 +11139,9 @@ t = st.session_state.tm
 # corporate action 의 가장 싼 탐지 신호다.
 _pxl = None
 try:
-    _pxl = float(st.session_state.prices[-1][1]) if st.session_state.get("prices") else None
+    # 비상장이면 대상회사 시계열이 없다 — 남아 있는 예전 시계열로 주가 배수를 따지지 않는다
+    _pxl = (float(st.session_state.prices[-1][1])
+            if (st.session_state.get("prices") and vol_listed()) else None)
 except Exception:
     _pxl = None
 warn = validate(t, _pxl)
@@ -11349,7 +11395,7 @@ if is_sha(t):
         st.write("사이드바 **변동성** 칸에서 산출한 값입니다. 비상장 대상회사면 "
                  "유사기업(피어) 변동성을 쓰고 그 근거를 조서에 남기십시오.")
         st.metric("적용 변동성 σ", f"{t.sig:.2%}")
-        _pv2 = st.session_state.get("prices") or []
+        _pv2 = (st.session_state.get("prices") or []) if vol_listed() else []
         if _pv2:
             _vv2 = vol_from(_pv2, (st.session_state.get("vol_opt") or {}).get("tdays", 250),
                             (st.session_state.get("vol_opt") or {}).get("drop", True))
@@ -11373,11 +11419,7 @@ if is_sha(t):
                      key="sha_build"):
             try:
                 with st.spinner("엑셀 작성 중"):
-                    _px = st.session_state.get("peers") or (
-                        [(st.session_state.get("px_src") or "대상회사",
-                          st.session_state.prices)]
-                        if st.session_state.get("prices") else None)
-                    _att = dict(px=(_px, vol_basis_opt()) if _px else None,
+                    _att = dict(px=vol_attach(),
                                 rate=None, rate_how="",
                                 ir=bool(len(t.rf_curve) >= 2
                                         and len(credit_curve(t)) >= 2))
@@ -12112,6 +12154,26 @@ with tabs[3]:
                "격자의 한 스텝 할인이 이 값을 씁니다.")
 
 with tabs[4]:
+  if not vol_listed():
+    # 비상장 — 대상회사 주가가 없다. 피어별 변동성을 보여 준다
+    _pe = st.session_state.get("peers") or []
+    _po = st.session_state.get("peer_opt") or {}
+    if not _pe:
+        st.info("비상장사로 두셨습니다. 왼쪽 변동성 칸의 **피어** 칸에서 피어 주가를 수집하거나 "
+                "여러 종목 종가 파일을 넣으십시오.")
+    else:
+        _pvv = [(nm, vol_from(px, _po.get("tdays", 250), _po.get("drop", True)), px) for nm, px in _pe]
+        st.dataframe(pd.DataFrame(
+            [[nm, x["annual"], x["daily"], x["n"], x["removed"], px[0][0], px[-1][0]]
+             for nm, x, px in _pvv if x],
+            columns=["피어", "연 변동성", "일 변동성", "수익률", "제외", "시작", "끝"]).style.format(
+            {"연 변동성": "{:.2%}", "일 변동성": "{:.2%}"}), use_container_width=True, hide_index=True)
+        _ag = st.session_state.get("peer_agg")
+        st.caption(f"연 거래일수 {_po.get('tdays', 250)}일 · 이상치 제거 "
+                   f"{'함' if _po.get('drop', True) else '안 함'} · 조회 종료일 {_po.get('asof', '')}"
+                   + (f" · 피어 종합 {_ag*100:.2f}%" if _ag is not None else "")
+                   + f" · 적용 σ {t.sig*100:.2f}%")
+  else:
     if not st.session_state.prices:
         st.info("왼쪽 변동성 칸에서 주가를 수집하거나 파일을 넣으십시오. "
                 "국내 6자리 종목은 한국거래소를, 실패하면 야후 파이낸스를 씁니다.")
@@ -12544,7 +12606,11 @@ with tabs[9]:
     # 산출해 놓고 적용하지 않은 변동성이 있으면 여기서 막아 세운다. 조서를
     # 만드는 자리가 마지막 관문이라, 사이드바 경고를 놓쳐도 여기서는 보인다.
     _unap = []
-    _pv = st.session_state.get("prices") or []
+    _pv = (st.session_state.get("prices") or []) if vol_listed() else []
+    _pa = st.session_state.get("peer_agg") if not vol_listed() else None
+    if _pa is not None and abs(_pa - t.sig) > 5e-5:
+        _unap.append(f"피어 종합 변동성 — 산출 **{_pa*100:.2f}%** / "
+                     f"조서에 들어가는 값 **{t.sig*100:.2f}%**")
     if _pv:
         _vv = vol_from(_pv, (st.session_state.get("vol_opt") or {}).get("tdays", 250),
                        (st.session_state.get("vol_opt") or {}).get("drop", True))
@@ -12570,14 +12636,11 @@ with tabs[9]:
             with st.spinner("엑셀 작성 중"):
                 # 산출내역을 조서 안에 함께 싣는다. 수식 조서에서는 종가·고시
                 # 수익률이 트리까지 이어져, 한 파일 안에서 인풋을 흔들 수 있다.
-                _px = st.session_state.get("peers") or (
-                    [(st.session_state.get("px_src") or "대상회사",
-                      st.session_state.prices)]
-                    if st.session_state.get("prices") else None)
+
                 _rt = ([(st.session_state.get("rate_src") or "금리",
                          st.session_state.rate_series)]
                        if st.session_state.get("rate_series") else None)
-                _att = dict(px=(_px, vol_basis_opt()) if _px else None,
+                _att = dict(px=vol_attach(),
                             rate=(_rt, st.session_state.get("rate_opt")) if _rt else None,
                             rate_how=st.session_state.get("rate_how", ""),
                             ir=bool(len(t.rf_curve) >= 2 and len(credit_curve(t)) >= 2))
