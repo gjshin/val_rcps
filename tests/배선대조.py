@@ -44,14 +44,14 @@ def load_app():
     stub = types.ModuleType("streamlit"); stub.cache_data = lambda **k: (lambda f: f)
     sys.modules["streamlit"] = stub
     m = types.ModuleType("cbapp"); sys.modules["cbapp"] = m
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    exec(compile(src.split("st.set_page_config")[0], "app.py", "exec"), m.__dict__)
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read()
+    exec(compile(src.split("st.set_page_config")[0], os.path.join(ROOT, "valuation", "legacy.py"), "exec"), m.__dict__)
     return m.__dict__
 
 
 def keymap(G):
     """가정 시트 행 번호 -> 키 이름.  cb_app 의 spec 순서를 그대로 읽는다."""
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read()
     i = src.index('        ("평가기준일 주가", "S0"')
     j = src.index("    ROWN = {key:")
     keys = re.findall(r'\(\s*f?"[^"]*"\s*,\s*"(\w+)"', src[i:j])

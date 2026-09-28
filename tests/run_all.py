@@ -34,7 +34,7 @@ SUITES = [
 # 종전에는 여기와 조서에 숫자를 따로 박아 두어 값이 움직인 뒤 둘이 갈렸다.
 def _baseline_from_app():
     import re as _re
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read()
     m = _re.search(r"^BASELINE_BASE = dict\((.+?)\)$", src, _re.M)
     return eval("dict(" + m.group(1) + ")") if m else {}
 
@@ -48,8 +48,8 @@ def baseline_now():
     stub = types.ModuleType("streamlit"); stub.cache_data = lambda **k: (lambda f: f)
     sys.modules["streamlit"] = stub
     m = types.ModuleType("cbapp"); sys.modules["cbapp"] = m
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    exec(compile(src.split("st.set_page_config")[0], "app.py", "exec"), m.__dict__)
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read()
+    exec(compile(src.split("st.set_page_config")[0], os.path.join(ROOT, "valuation", "legacy.py"), "exec"), m.__dict__)
     G = m.__dict__
     # 검증기준선 §3-1 의 «기본 계약» 은 설정전수대조.py 의 기준 — Terms() 기본값 · carry=1 · 노드 6개월
     t = G["Terms"](carry=1, gap_m=6.0, rf_curve=[(1, .0226), (3, .0240), (5, .0252)], cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
@@ -64,7 +64,7 @@ def main():
     only = [x.strip() for x in a.only.split(",") if x.strip()]
     todo = [s for s in SUITES if (s[0] in only if only else (s[2] or not a.quick))]
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-    src_hash = hashlib.sha256(open(os.path.join(ROOT, "app.py"), "rb").read()).hexdigest()[:12]
+    src_hash = hashlib.sha256(open(os.path.join(ROOT, "valuation", "legacy.py"), "rb").read()).hexdigest()[:12]
     print(f"검증 스위트 — HEAD {head} · app.py {src_hash} · {len(todo)} 개" + (" (빠른 세트)" if a.quick else ""))
     res = []; t0 = time.time()
     for nm, cmd, _, est in todo:

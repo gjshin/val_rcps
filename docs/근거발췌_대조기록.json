@@ -1,0 +1,75 @@
+{
+  "book_sha256": "7f6bfa85c78f7ea6a333205c5c846b4905fa39e8c755c581c9cc594d1c2b53d6",
+  "source_version": "7339e84519b991486c5bcc0aa6ee536ac1efafdf99853cd10a50d6e6d85c2089",
+  "checks": [
+    {
+      "topic": "classification",
+      "location": "2.1.1.3 복합금융상품의 분리 · 책 20쪽 / PDF 40쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "redemption_constraint",
+      "location": "3.3.3.2 상환권 행사의 제약 · 책 91쪽 / PDF 111쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "redemption_constraint",
+      "location": "3.3.3.3~4 감액·추정손익 가정 · 책 92쪽 / PDF 112쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "embedded",
+      "location": "2.1.3.1 분리 조건 · 책 26쪽 / PDF 46쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "residual",
+      "location": "사례 1108 부채요소 평가 · 책 162쪽 / PDF 182쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "residual",
+      "location": "3.3.2.2 평가방법 적용 시 유의사항 · 책 89쪽 / PDF 109쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "third_party_call",
+      "location": "사례 1105 제3자 지정 가능 콜옵션 · 책 158쪽 / PDF 178쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "third_party_call",
+      "location": "4.3.2 발행자 콜옵션 · 책 145쪽 / PDF 165쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "third_party_call",
+      "location": "4.3.4 제3자 콜옵션 · 책 146쪽 / PDF 166쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "bdt",
+      "location": "3.3.1.4 금리 모형 적용 검토 · 책 87쪽 / PDF 107쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "bdt",
+      "location": "3.3.2.2 평가방법 적용 시 유의사항 · 책 89쪽 / PDF 109쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "dilution_backsolve",
+      "location": "3.4.1.3 내재적 희석 반영 · 책 98쪽 / PDF 118쪽",
+      "excerpt_found": true
+    },
+    {
+      "topic": "method_change",
+      "location": "4.6.2 평가기법 선택 근거 문서화 · 책 151쪽 / PDF 171쪽",
+      "excerpt_found": true
+    }
+  ],
+  "legacy_changed_functions": [
+    "bdt_review",
+    "write_check_sheets"
+  ]
+}

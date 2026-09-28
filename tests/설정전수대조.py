@@ -136,8 +136,8 @@ def load_app():
     stub = types.ModuleType("streamlit"); stub.cache_data = lambda **k: (lambda f: f)
     sys.modules["streamlit"] = stub
     m = types.ModuleType("cbapp"); sys.modules["cbapp"] = m
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    exec(compile(src.split("st.set_page_config")[0], "app.py", "exec"), m.__dict__)
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read()
+    exec(compile(src.split("st.set_page_config")[0], os.path.join(ROOT, "valuation", "legacy.py"), "exec"), m.__dict__)
     return m.__dict__
 
 
@@ -251,15 +251,16 @@ def run_one(idx):
     return 0
 
 
-def main():
+def main(completed=None):
     import json, subprocess
     bad, dead, base = [], [], {}      # 기준선은 격자별로 따로 잡는다
     # 열은 ROWS 를 따라간다. 조서에 실리는 항목이 바뀌면 여기도 같이 바뀐다.
     _hdr = "%-22s" + " %10s"*len(ROWS) + "  %s"
     print(_hdr % ("설정", *[nm for nm, _, _ in ROWS], "판정"))
     for idx in range(len(CASES)):
-        r = subprocess.run([sys.executable, os.path.abspath(__file__), str(idx)],
-                           capture_output=True, text=True)
+        r = (completed[idx] if completed is not None else
+             subprocess.run([sys.executable, os.path.abspath(__file__), str(idx)],
+                            capture_output=True, text=True))
         line = [x for x in r.stdout.splitlines() if x.startswith("@@")]
         if not line:
             lbl = CASES[idx][0]

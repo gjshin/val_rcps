@@ -1,0 +1,88 @@
+{
+ "generated": "2026-09-28 23:54",
+ "head": "fd57bbb",
+ "app_sha256_12": "4532e35734ee",
+ "quick": false,
+ "python": "3.12.14",
+ "suites": [
+  {
+   "suite": "손계산대조",
+   "cmd": "python3 tests/손계산대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 188.0,
+   "last": "모두 통과",
+   "tail": []
+  },
+  {
+   "suite": "기능목록",
+   "cmd": "python3 tests/기능목록.py --strict",
+   "ok": true,
+   "code": 0,
+   "sec": 0.8,
+   "last": "   → tests/검증매트릭스.json (401 행)",
+   "tail": []
+  },
+  {
+   "suite": "리포트대조",
+   "cmd": "python3 tests/리포트대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 46.4,
+   "last": "",
+   "tail": []
+  }
+ ],
+ "baseline": {
+  "주계약": 37.5208,
+  "부채요소": 73.1837,
+  "전체": 114.8781,
+  "매도청구권": 13.0762
+ },
+ "baseline_expected": {
+  "주계약": 37.5208,
+  "부채요소": 73.1837,
+  "전체": 114.8781,
+  "매도청구권": 13.0762
+ },
+ "baseline_ok": true,
+ "matrix": {
+  "CB": {
+   "PASS": 105,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
+  "RCPS": {
+   "PASS": 117,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
+  "BW": {
+   "PASS": 109,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
+  "SHA": {
+   "PASS": 43,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
+  "ALL": {
+   "PASS": 0,
+   "EXPECTED_BLOCK": 5,
+   "KNOWN_LIMITATION": 22,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  }
+ },
+ "all_ok": true,
+ "sec": 235.8
+}
