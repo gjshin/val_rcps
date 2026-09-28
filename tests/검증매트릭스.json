@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-28T02:30:09",
- "head": "740ebf7",
+ "generated": "2026-09-28T03:34:05",
+ "head": "8322e5a",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -6609,7 +6609,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 151
+   "n_tests": 152
   },
   {
    "case_id": "CB-view-HOLDER",
@@ -6625,9 +6625,10 @@
    "covered_by": [
     "tests/조서대조.py::투자자 관점 · 기본 (콜은 별도 파생상품부채)",
     "tests/조서대조.py::투자자 관점 · 후속 (전기말 공정가치)",
-    "tests/손계산대조.py::test_holder_view"
+    "tests/손계산대조.py::test_holder_view",
+    "tests/분기전수.py::view=holder"
    ],
-   "n_tests": 3
+   "n_tests": 4
   },
   {
    "case_id": "RCPS-view-ISSUER",
@@ -6654,7 +6655,7 @@
     "tests/값조서대조.py::equity·1·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
     "tests/값조서대조.py::equity·2·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354"
    ],
-   "n_tests": 49
+   "n_tests": 50
   },
   {
    "case_id": "RCPS-view-HOLDER",
@@ -6669,9 +6670,10 @@
    "independent_oracle": true,
    "covered_by": [
     "tests/조서대조.py::투자자 관점 · RCPS 발행자 상환권 (콜이 계약에 녹는다)",
-    "tests/손계산대조.py::test_holder_view"
+    "tests/손계산대조.py::test_holder_view",
+    "tests/분기전수.py::view=holder"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "BW-view-ISSUER",
@@ -6698,7 +6700,7 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.0",
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
-   "n_tests": 41
+   "n_tests": 42
   },
   {
    "case_id": "BW-view-HOLDER",
@@ -6712,9 +6714,10 @@
    "oracle": "hand_calc_independent",
    "independent_oracle": true,
    "covered_by": [
-    "tests/손계산대조.py::test_holder_view"
+    "tests/손계산대조.py::test_holder_view",
+    "tests/분기전수.py::view=holder"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-sha_writer-0",
