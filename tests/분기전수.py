@@ -37,7 +37,9 @@ BASE = {
                  cpn=.02, ytm=.05, p_s=24., p_e=57., k_s=12., k_e=24., k_w=.3, issue_cost=2e8),
     "RCPS": dict(inst="RCPS", d_issue="2025-03-31", d_base="2025-09-30", d_mat="2030-03-31", gap_m=3.0,
                  cpn=.02, ytm=.05, p_s=24., p_e=57., issuer_call=2, k_s=12., k_e=24., k_w=.3,
-                 mat_mode=0, issue_cost=2e8),
+                 mat_mode=0, issue_cost=2e8,
+                 # 액면 기준 배당률 갈래가 실제로 환산되도록 발행가를 채워 둔다 (발행가 기준이면 쓰지 않는다)
+                 issue_px=5000.0),
     "BW":   dict(inst="BW", d_issue="2025-03-31", d_base="2025-09-30", d_mat="2030-03-31", gap_m=3.0,
                  cpn=.02, ytm=.05, p_s=24., p_e=57., k_s=12., k_e=24., k_w=.3, bw_pay=0, bw_detach=1,
                  issue_cost=2e8),
@@ -144,7 +146,11 @@ def run_bond(G, t):
         # 부채가 지분으로 바뀌어 할인율이 낮아지고 전체 가치가 **오를** 수 있다 — 그러면
         # 유무가치비교법의 매도청구권이 음수다. 모형 성질이라 KNOWN_LIMITATION 이다.
         # 강제전환이 실제로 있었는지(분포)로 그 경우만 허용한다.
-        r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=max(t.cv_s, t.k_lock))
+        # 앱이 매도청구권을 재는 격자와 **같은** 격자에서 센다 (decompose 의 lock_delay).
+        # 종전에는 의무보유 유무(k_hold)를 보지 않고 늘 전환을 k_lock 까지 늦춘 격자를 써서,
+        # 의무보유가 없는 계약에서 실제로 있었던 강제전환을 0 으로 재고 한계를 결함으로 불렀다.
+        _cs, _ps = G["lock_delay"](t)
+        r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=_cs, put_start=_ps)
         fc = r3["dist"].get("conv_called", 0.0)
         # 비분리형 BW 는 «신주인수권을 이미 행사했는가» 를 상태로 갖지 않는다. 자식 노드의 콜은
         # 신주인수권이 살아 있다고 보고 결정되는데, 부모에서 투자자가 미리 행사하면 그 콜은
