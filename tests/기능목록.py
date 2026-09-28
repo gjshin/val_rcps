@@ -361,6 +361,8 @@ def collect_coverage(G):
         "test_rfx_anytime": [("CB", "rfx_mode", 2), ("CB", "carry", 0), ("CB", "carry", 1), ("CB", "carry", 2)],
         # 표시 전용 칸(회차·반영하지 않은 권리·희석 주식수)이 값을 바꾸지 않고 조서에만 실린다
         "test_display_only_fields": [("CB", "carry", 1)],
+        # 엑셀 한 칸 수식 한도 · 이자율 곡선 범위 경고
+        "test_excel_limits_and_curves": [("CB", "carry", 1), ("SHA", "inst", "SHA")],
         # 평가 관점 — 값은 같고 회계 단위만 갈린다. 세 상품 · 두 관점
         "test_holder_view": [("CB", "view", "issuer"), ("CB", "view", "holder"), ("RCPS", "view", "issuer"),
                              ("RCPS", "view", "holder"), ("BW", "view", "issuer"), ("BW", "view", "holder"),

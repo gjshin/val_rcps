@@ -1729,6 +1729,39 @@ def test_holder_view():
         chk_bool(f"{kind} 조서 · 가정에 평가 관점", "투자자 — 보유 금융자산" in txt)
 
 
+def test_excel_limits_and_curves():
+    """엑셀 한 칸 수식 한도(8,192자) · 곡선 범위 경고 · 예시 곡선 경고."""
+    print("\n[33] 엑셀 수식 한도 · 이자율 곡선 범위")
+    import io, openpyxl
+    RF = [(1, .030), (3, .031), (5, .032)]; CR = [(1, .14), (3, .17), (5, .19)]
+    # 주 단위 노드(5년 → 260개) — 노드마다 EXP 를 이어 붙이던 마팅게일 검산이 한도를 넘었다
+    tw = Terms(rf_curve=RF, cr_curve=CR, gap_m=12/52, carry=1); derive(tw)
+    chk_bool("주 단위 노드가 200개를 넘는다", tw.n > 200)
+    full, b0, b1, b2, ca, conv = G["decompose"](tw)
+    wb = openpyxl.load_workbook(io.BytesIO(G["build_xlsx_formula"](tw, full, b0, b1, b2, ca, conv, None)))
+    L = max((len(c.value), ws.title, c.coordinate) for ws in wb.worksheets for row in ws.iter_rows()
+            for c in row if isinstance(c.value, str) and c.value.startswith("="))
+    chk_bool(f"수식 조서 · 가장 긴 수식 {L[0]}자 ({L[1]}!{L[2]}) ≤ 8,192", L[0] <= 8192)
+    ts = Terms(inst="SHA", S0=1000., K0=1000., rf_curve=RF, cr_curve=CR, gap_m=12/52,
+               sha_put_s=36., sha_put_e=60., sha_call_s=12., sha_call_e=36.); derive(ts)
+    R = G["sha_engine"](ts)
+    wb2 = openpyxl.load_workbook(io.BytesIO(G["build_xlsx_sha"](ts, R, formula=True)))
+    L2 = max((len(c.value), ws.title, c.coordinate) for ws in wb2.worksheets for row in ws.iter_rows()
+             for c in row if isinstance(c.value, str) and c.value.startswith("="))
+    chk_bool(f"주주간계약 수식 조서 · 가장 긴 수식 {L2[0]}자 ({L2[1]}!{L2[2]}) ≤ 8,192", L2[0] <= 8192)
+    # 곡선이 잔존기간에 못 미치면 알린다 — 10년 계약에 5년까지만 있는 곡선
+    t10 = Terms(rf_curve=RF, cr_curve=CR, d_mat="2035-03-31"); derive(t10)
+    ns = G["curve_notes"](t10)
+    chk_bool("5년 곡선 · 10년 잔존 → 무위험·위험 두 경고", sum("평평하게 연장" in x for x in ns) == 2)
+    chk_bool("validate 에도 실린다", any("평평하게 연장" in x for x in G["validate"](t10)))
+    t5 = Terms(rf_curve=RF, cr_curve=CR); derive(t5)
+    chk_bool("곡선이 잔존기간을 덮으면 경고 없음", not G["curve_notes"](t5))
+    te = Terms(rf_curve=list(G["EXAMPLE_RF"]), cr_curve=CR); derive(te)
+    chk_bool("예시 무위험 곡선이 남아 있으면 알린다", any("예시 곡선" in x for x in G["curve_notes"](te)))
+    # 보외 구간은 앱과 엑셀 모두 마지막 수익률로 평평하다 — 결함이 아니라 규칙이다
+    chk("곡선 끝 뒤 보간 = 마지막 수익률", G["_lin"](RF, 9.0), 0.032, 1e-15)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -1763,6 +1796,7 @@ def main():
     test_rfx_anytime()
     test_display_only_fields()
     test_holder_view()
+    test_excel_limits_and_curves()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

@@ -4459,6 +4459,8 @@ def validate(tm: Terms, px_last: float = None):
             w.append(f"만기상환금액을 직접 넣으셨습니다 ({tm.mat_amt:,.4f}%). "
                      f"보장수익률 산식으로는 {_f:,.4f}% 입니다 — 계약서와 대조하십시오.")
     w += basis_check(tm, px_last)
+    if not is_sha(tm) or tm.rf_curve:
+        w += [x.replace("**", "") for x in curve_notes(tm)]
     if holder_on(tm) and (tm.prev_deriv >= 0 or tm.prev_host >= 0) and float(tm.prev_hold) < 0:
         w.append("투자자 관점인데 발행자의 전기말 장부금액(파생상품부채·주계약)이 들어 있습니다. "
                  "투자자 분개에는 쓰이지 않습니다 — 「전기말 장부금액(공정가치)」 칸에 전기말 "
@@ -5198,6 +5200,40 @@ def report_kit(wb, font="맑은 고딕"):
     return dict(put=put, head=head, sec=sec, cols=cols, note=note, sheet=sheet, gl=gl)
 
 
+# 화면 이자율 칸의 예시 곡선. 이대로 조서가 나가면 평가기준일 곡선이 아니다.
+EXAMPLE_RF = [(0.25, .024), (0.5, .0238), (1.0, .0225), (2.0, .0233), (3.0, .0234), (5.0, .025)]
+EXAMPLE_CR = [(1.0, .051), (2.0, .057), (3.0, .062), (4.0, .0665), (5.0, .0705)]
+
+
+CURVE_TOL = 0.05        # 년 — 곡선 끝과 잔존기간이 이만큼(약 18일) 안이면 보외로 보지 않는다
+
+
+def curve_is_example(pts, ex) -> bool:
+    return (len(pts) == len(ex)
+            and all(abs(a - c) < 1e-9 and abs(b - d) < 1e-9 for (a, b), (c, d) in zip(pts, ex)))
+
+
+def curve_notes(tm) -> list:
+    """이자율 곡선 경고 — 예시 곡선이 남아 있는가 · 곡선이 잔존기간까지 닿는가.
+
+    곡선의 마지막 만기 뒤는 **마지막 수익률로 평평하게 연장**한다(보외 — _lin · lerp_formula).
+    오류는 아니지만 잔존기간이 그보다 길면 그 뒤 구간의 할인율이 전부 한 값이 된다.
+    """
+    out = []
+    for nm, pts, ex in (("무위험", tm.rf_curve, EXAMPLE_RF), ("위험", credit_curve(tm), EXAMPLE_CR)):
+        if not pts: continue
+        if curve_is_example(pts, ex):
+            out.append(f"**{nm} 곡선이 화면의 예시 곡선 그대로입니다.** 평가기준일({tm.d_base})의 "
+                       "고시 곡선으로 바꾸십시오 — KIS-Net 기준수익률 표를 올리고 「이 곡선 적용」을 "
+                       "누르면 고시된 모든 만기가 들어갑니다.")
+        last = max(x for x, _ in pts)
+        if last < tm.T - CURVE_TOL:
+            out.append(f"{nm} 곡선이 **{last:g}년**까지만 있습니다. 잔존기간 {tm.T:.2f}년 가운데 "
+                       f"{last:g}년 뒤({tm.T - last:.2f}년)는 마지막 수익률 {dict(pts)[last]*100:.3f}% 로 "
+                       "평평하게 연장합니다(보외). 고시표의 그 뒤 만기(7년·10년 등)까지 넣으십시오.")
+    return out
+
+
 def _brackets(pts, t):
     """t 를 감싸는 입력곡선 두 점의 번호. 범위 밖이면 (i, i) 로 한 점만 준다."""
     if not pts: return (0, 0)
@@ -5208,18 +5244,28 @@ def _brackets(pts, t):
     return (len(pts)-1, len(pts)-1)
 
 
-def lerp_formula(t, pts, col, row0, sh=None):
+def lerp_formula(t, pts, col, row0, sh=None, tref=None, xcol=None, xsh=None):
     """엑셀에서 선형보간. 입력 셀을 가리키므로 노란 셀을 고치면 따라 움직인다.
 
     col 은 값이 든 열 문자, row0 은 첫 점의 행, sh 는 그 표가 있는 시트다.
     범위 밖이면 끝점을 그대로 쓴다 — 앱의 _lin 과 같다.
+
+    ``tref`` 를 주면 보간 시점을 숫자 대신 **그 셀**에서 읽는다(같은 행의 t 열). ``xcol`` 을
+    주면 두 만기도 숫자 대신 그 표의 만기 열에서 읽는다 — 시점·만기 칸을 고치면 보간값이
+    따라온다. 어느 두 점 사이인지는 구조라 숫자 t 로 정한다.
     """
     q = f"'{sh}'!" if sh else ""
     i, j = _brackets(pts, t)
     if i == j: return f"={q}${col}${row0+i}"
     x0, x1 = pts[i][0], pts[j][0]
+    tt = tref if tref else f"{t:.12g}"
+    if xcol:
+        qx = f"'{xsh or sh}'!" if (xsh or sh) else ""
+        X0, X1 = f"{qx}${xcol}${row0+i}", f"{qx}${xcol}${row0+j}"
+    else:
+        X0, X1 = f"{x0:.12g}", f"{x1:.12g}"
     return (f"={q}${col}${row0+i}+({q}${col}${row0+j}-{q}${col}${row0+i})"
-            f"*({t:.12g}-{x0:.12g})/({x1:.12g}-{x0:.12g})")
+            f"*({tt}-{X0})/({X1}-{X0})")
 
 
 def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
@@ -5518,6 +5564,8 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
                  ("위험 곡선 출처", tm.cr_src or "직접 입력"),
                  ("평가기준일", tm.d_base), ("만기일", tm.d_mat),
                  ("잔존기간 T (년)", round(T, 8)), ("노드 수 n", n),
+                 ("무위험 곡선 마지막 만기 (년)", max(x for x, _ in tm.rf_curve)),
+                 ("위험 곡선 마지막 만기 (년)", max(x for x, _ in cc)),
                  ("한 구간 Δt (년)", round(dt_, 8)),
                  ("주가 변동성 σ", tm.sig)]
                 + ([("BDT 단기이자율 변동성 σ", tm.bdt_sig),
@@ -5531,6 +5579,8 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
             align=None if isinstance(v, str) else "right", wrap=True)
         r += 1
     r += 1
+    for _cn in curve_notes(tm):
+        note(C, r, _cn.replace("**", "")); r += 1
     note(C, r, "노란 셀만 입력이다. 만기와 수익률을 고치면 부트스트래핑부터 선도까지 "
                "전부 다시 계산된다. 다만 만기 칸을 늘리거나 줄이려면 앱에서 곡선을 "
                "바꿔 리포트를 다시 만들어야 한다 — 표의 길이는 구조라 수식으로 늘지 않는다.")
@@ -5603,14 +5653,19 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
             put(W, 6, 2, f"c = 그 만기 수익률 ÷ {cmp_}   (연 {cmp_}회 이표 가정) · "
                          f"현물 = −ln(DF) ÷ t", color=RPT["grey"], size=9)
             cols(W, R0-1, ["k", "만기 t", "보간 수익률", "c", "누적 DF", "DF",
-                           "현물 (연속)"], [8, 13, 15, 13, 15, 15, 15])
+                           "현물 (연속)", "비고"], [8, 13, 15, 13, 15, 15, 15, 30])
             N = max(1, int(math.ceil(T*cmp_)))
+            _last = max(x for x, _ in pts)
             for k in range(1, N+1):
                 rr, t_ = R0 + k - 1, k/cmp_
                 put(W, rr, 2, k, fmt=R_N0, border=True, align="center")
-                put(W, rr, 3, round(t_, 12), fmt="0.0000", border=True, align="right")
-                put(W, rr, 4, lerp_formula(t_, pts, ycol, R0IN, IN), fmt=R_P4,
-                    border=True, align="right")
+                # 만기 = k ÷ 이표 횟수 — 수식으로 두어 보간 수익률이 이 칸을 읽는다
+                put(W, rr, 3, f"=B{rr}/{cmp_}", fmt="0.0000", border=True, align="right")
+                put(W, rr, 4, lerp_formula(t_, pts, ycol, R0IN, IN, tref=f"C{rr}",
+                                           xcol=mcol), fmt=R_P4, border=True, align="right")
+                if t_ > _last + 1e-9:
+                    put(W, rr, 9, f"보외 — 마지막 만기 {_last:g}년 수익률 연장",
+                        color=RPT["red"], size=9, border=True)
                 put(W, rr, 5, f"=D{rr}/{cmp_}", fmt=R_N6, border=True, align="right")
                 put(W, rr, 6, ("=0" if k == 1 else f"=F{rr-1}+G{rr-1}"),
                     fmt=R_N6, border=True, align="right")
@@ -5621,14 +5676,15 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
             made[lbl] = dict(sh=sn, r0=R0, tcol="C", rcol="H",
                              pts=[(k/cmp_, None) for k in range(1, N+1)])
             note(W, R0+N+1, "DF 는 앞 회차 결과를 이어 받는다. 첫 줄의 누적 DF 가 0 인 "
-                            "것은 그 앞에 이표가 없기 때문이다.", span=7)
+                            "것은 그 앞에 이표가 없기 때문이다. 입력 곡선의 마지막 만기 뒤는 "
+                            "마지막 수익률로 평평하게 연장한다(보외) — 비고 열에 표시한다.", span=8)
 
     # ── 선도이자율 ──
-    def spot_ref(leg, t):
-        """산출 시트의 현물 표에서 t 의 값을 뽑는 수식."""
+    def spot_ref(leg, t, tref=None):
+        """산출 시트의 현물 표에서 t 의 값을 뽑는 수식. tref 셀에서 시점을 읽는다."""
         d = made[leg]
         pts = [(x, 0.0) for x, _ in d["pts"]]
-        return lerp_formula(t, pts, d["rcol"], d["r0"], d["sh"])
+        return lerp_formula(t, pts, d["rcol"], d["r0"], d["sh"], tref=tref, xcol=d["tcol"])
 
     FS = f"{P}선도이자율"
     F = sheet(FS, tab=RPT["green"],
@@ -5650,26 +5706,34 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
     put(F, 7, 8, "d", bold=True, border=True, fill=RPT["light"])
     put(F, 7, 9, "=1/$G$7", fmt=R_N6, border=True, align="right")
     cols(F, 9, ["스텝", "t₀", "t₁", "무위험 r(t₀)", "무위험 r(t₁)", "무위험 선도",
-                "위험 r(t₀)", "위험 r(t₁)", "위험 선도", "스프레드", "q"],
-         [8, 13, 13, 14, 14, 14, 14, 14, 14, 14, 12])
+                "위험 r(t₀)", "위험 r(t₁)", "위험 선도", "스프레드", "q", "비고"],
+         [8, 13, 13, 14, 14, 14, 14, 14, 14, 14, 12, 30])
+    _lastc = min(max(x for x, _ in tm.rf_curve), max(x for x, _ in cc))
     for i in range(n):
         rr = 10 + i
         t0, t1 = i*dt_, (i+1)*dt_
         put(F, rr, 2, i, fmt=R_N0, border=True, align="center")
-        put(F, rr, 3, round(t0, 12), fmt="0.000000", border=True, align="right")
-        put(F, rr, 4, round(t1, 12), fmt="0.000000", border=True, align="right")
-        put(F, rr, 5, spot_ref("무위험", t0), fmt=R_P4, border=True, align="right")
-        put(F, rr, 6, spot_ref("무위험", t1), fmt=R_P4, border=True, align="right")
+        # t₀ = 스텝 × Δt, t₁ = t₀ + Δt — 현물 네 열이 이 두 칸을 읽는다
+        put(F, rr, 3, f"=B{rr}*$C$7", fmt="0.000000", border=True, align="right")
+        put(F, rr, 4, f"=C{rr}+$C$7", fmt="0.000000", border=True, align="right")
+        put(F, rr, 5, spot_ref("무위험", t0, f"C{rr}"), fmt=R_P4, border=True, align="right")
+        put(F, rr, 6, spot_ref("무위험", t1, f"D{rr}"), fmt=R_P4, border=True, align="right")
         put(F, rr, 7, f"=(F{rr}*D{rr}-E{rr}*C{rr})/(D{rr}-C{rr})", fmt=R_P4,
             border=True, align="right", bold=True)
-        put(F, rr, 8, spot_ref("위험", t0), fmt=R_P4, border=True, align="right")
-        put(F, rr, 9, spot_ref("위험", t1), fmt=R_P4, border=True, align="right")
+        put(F, rr, 8, spot_ref("위험", t0, f"C{rr}"), fmt=R_P4, border=True, align="right")
+        put(F, rr, 9, spot_ref("위험", t1, f"D{rr}"), fmt=R_P4, border=True, align="right")
         put(F, rr, 10, f"=(I{rr}*D{rr}-H{rr}*C{rr})/(D{rr}-C{rr})", fmt=R_P4,
             border=True, align="right", bold=True)
         put(F, rr, 11, f"=J{rr}-G{rr}", fmt=R_P4, border=True, align="right")
         put(F, rr, 12, f"=(EXP(G{rr}*$C$7)-$I$7)/($G$7-$I$7)", fmt=R_N4,
             border=True, align="right")
-    note(F, 10+n+1, "스프레드가 음수인 줄이 있으면 두 곡선을 바꿔 넣은 것이다. "
+        if t1 > _lastc + 1e-9:
+            put(F, rr, 13, f"보외 — 곡선 마지막 만기 {_lastc:g}년 뒤", color=RPT["red"],
+                size=9, border=True)
+    note(F, 10+n+1, "t₀·t₁ 은 Δt 로 계산되고 현물 네 열은 그 두 칸을 읽는다. 곡선의 마지막 만기 "
+                    "뒤는 마지막 수익률로 평평하게 연장하므로(보외) 선도이자율이 한 값으로 "
+                    "굳는다 — 비고 열에 표시한다. "
+                    "스프레드가 음수인 줄이 있으면 두 곡선을 바꿔 넣은 것이다. "
                     "q 가 0 과 1 밖으로 나가면 변동성이 너무 낮거나 노드가 너무 성긴 "
                     "것이다 — 격자가 무차익 조건을 못 맞춘다.", span=11)
     # 조서 안에 심은 경우 — 트리 11·12행이 참조할 시트 이름과 첫 자료행
@@ -8265,8 +8329,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     _LN = gl(3+n)
     # 위험중립 드리프트는 (f − δ) 다 — q 가 그렇게 만들어졌으므로(16행) 성장도 δ 를 빼야 1 이 된다.
     # δ 를 빼지 않으면 배당수익률이 있을 때 exp(−δT) 가 나와 «확인 필요» 가 잘못 뜬다.
-    _GRW = "*".join(f"EXP(({Q(S1)}!{gl(3+i)}$11-{K['divy']})*{K['dt']})"
-                    for i in range(n)) or "1"
+    # EXP(a)·EXP(b)·… = EXP(a+b+…). 노드마다 EXP 를 이어 붙이면 주 단위 노드(469개)에서
+    # 수식이 18,000자를 넘어 엑셀의 한 칸 한도(8,192자)를 넘고 파일이 «손상» 으로 열린다.
+    _GRW = (f"EXP((SUM({Q(S1)}!{gl(3)}$11:{gl(2+n)}$11)-{n}*{K['divy']})*{K['dt']})"
+            if n > 0 else "1")
     _MG = (f"=SUMPRODUCT(도달확률!{_LN}5:{_LN}{5+n},"
            f"'01 주가'!{_LN}{R0}:{_LN}{R0+n})/({_GRW})/{K['S0']}")
     sec(R, 27, "3. 검산", span=5)
@@ -9259,7 +9325,8 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None):
     _g = R["gross"]
     _fp = _g["step"] if _g else 0
     _LF = gl(3+_fp)
-    _dfx = "*".join(f"EXP(-{Q(S3)}!{gl(3+i)}$8*{K_['dt']})" for i in range(_fp)) or "1"
+    # 노드마다 EXP 를 곱하지 않고 합을 한 번에 — 엑셀 한 칸 수식 한도(8,192자) 때문이다
+    _dfx = (f"EXP(-SUM({Q(S3)}!{gl(3)}$8:{gl(2+_fp)}$8)*{K_['dt']})" if _fp > 0 else "1")
     sec(RS, 4, "1. 옵션가치 (투자원금 100 기준)", span=4)
     cols(RS, 5, ["항목", "100 기준", "전액 기준 (원)", "설명"],
          widths=[42, 16, 18, 46])
@@ -9305,7 +9372,7 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None):
 
     sec(RS, 18, "3. 검산", span=4)
     _LN = gl(3+n)
-    _grw = "*".join(f"EXP({Q(S1)}!{gl(3+i)}$9*{K_['dt']})" for i in range(n)) or "1"
+    _grw = (f"EXP(SUM({Q(S1)}!{gl(3)}$9:{gl(2+n)}$9)*{K_['dt']})" if n > 0 else "1")
     _chk = [
         ("위험중립가중치 q", V(round(R["q"], 6), f"={Q(S1)}!C$13"), N4,
          '=IF(AND(C19>0,C19<1),"적합","확인 필요")'),
@@ -11031,13 +11098,12 @@ with st.sidebar:
         # 날짜 열이 앞에 붙어 있어도 그대로 읽는다.
         st.caption("형식은 두 곡선이 같습니다 — 한 줄에 **만기 · 수익률**. "
                    "고시표를 날짜 열까지 통째로 붙여 넣어도 날짜는 알아서 버립니다.")
-        if "rf_txt" not in st.session_state:
-            st.session_state.rf_txt = ("3\t2.40%\n6\t2.38%\n12\t2.25%\n"
-                                       "24\t2.33%\n36\t2.34%\n60\t2.50%")
-        if "cr_txt" not in st.session_state:
-            st.session_state.cr_txt = ("12\t5.10%\n24\t5.70%\n36\t6.20%\n"
-                                       "48\t6.65%\n60\t7.05%")
-        rf_txt = st.text_area("무위험 곡선 (국공채 YTM)", key="rf_txt", height=130)
+        # 첫 실행에는 곡선을 비워 둔다. 예시 곡선이 채워져 있으면 평가기준일 곡선으로 바꾸지
+        # 않은 채 조서가 나간다 — 빈칸이면 계산이 멈추고 곡선을 넣으라고 알린다.
+        if "rf_txt" not in st.session_state: st.session_state.rf_txt = ""
+        if "cr_txt" not in st.session_state: st.session_state.cr_txt = ""
+        rf_txt = st.text_area("무위험 곡선 (국공채 YTM)", key="rf_txt", height=130,
+                              placeholder="만기(개월)  수익률 — 예)\n3\t2.40%\n12\t2.25%\n60\t2.50%\n120\t2.80%")
         t.rf_curve = parse_yields(rf_txt, unit)
         _MODES = ["direct", "rating"]
         _MODE_NM = {"direct": "YTM 직접 입력", "rating": "두 등급 곡선으로 보간"}
@@ -11055,7 +11121,8 @@ with st.sidebar:
         _pick = sorted({g for _, g in _kg}, key=rating_idx)
 
         if t.rate_mode == "direct":
-            cr_txt = st.text_area("위험 곡선 (등급별 회사채 YTM)", key="cr_txt", height=130)
+            cr_txt = st.text_area("위험 곡선 (등급별 회사채 YTM)", key="cr_txt", height=130,
+                                  placeholder="만기(개월)  수익률 — 예)\n12\t9.40%\n60\t14.90%\n120\t16.50%")
             t.cr_curve = parse_yields(cr_txt, unit)
             t.cr_curve_b = []
             # 출처를 지우지 않는다. 고시표에서 받은 곡선을 「직접 입력」이라고 적으면
@@ -11094,12 +11161,12 @@ with st.sidebar:
                     st.session_state.ca_txt = curve_text(_kr[_byg[t.rt_a]][1])
                     st.session_state.cb_txt = curve_text(_kr[_byg[t.rt_b]][1])
                     st.rerun()
-            if "ca_txt" not in st.session_state:
-                st.session_state.ca_txt = "12\t4.60%\n36\t5.40%\n60\t6.10%"
-            if "cb_txt" not in st.session_state:
-                st.session_state.cb_txt = "12\t5.80%\n36\t7.20%\n60\t8.30%"
-            ca_txt = st.text_area(f"{t.rt_a} 곡선", key="ca_txt", height=100)
-            cb_txt = st.text_area(f"{t.rt_b} 곡선", key="cb_txt", height=100)
+            if "ca_txt" not in st.session_state: st.session_state.ca_txt = ""
+            if "cb_txt" not in st.session_state: st.session_state.cb_txt = ""
+            ca_txt = st.text_area(f"{t.rt_a} 곡선", key="ca_txt", height=100,
+                                  placeholder="만기(개월)  수익률")
+            cb_txt = st.text_area(f"{t.rt_b} 곡선", key="cb_txt", height=100,
+                                  placeholder="만기(개월)  수익률")
             t.cr_curve = parse_yields(ca_txt, unit)
             t.cr_curve_b = parse_yields(cb_txt, unit)
             t.cr_src = f"{t.rt_a}·{t.rt_b} 두 등급 보간 → {t.rt_tgt}"
@@ -11115,7 +11182,10 @@ with st.sidebar:
                 st.caption(f"가중치 — {t.rt_a} {1-w:.0%} · {t.rt_b} {w:.0%}"
                            + ("   (등급 범위 밖이라 외삽합니다)" if not 0 <= w <= 1 else ""))
         cc = credit_curve(t)
-        if len(t.rf_curve) < 2 or len(cc) < 2:
+        if not t.rf_curve and not cc:
+            st.info("곡선이 비어 있습니다 — 평가기준일의 무위험·위험 곡선을 넣으십시오 "
+                    "(한 줄에 「만기(개월) 수익률」).")
+        elif len(t.rf_curve) < 2 or len(cc) < 2:
             st.error(f"읽힌 줄 — 무위험 {len(t.rf_curve)}개, 위험 {len(cc)}개. "
                      "만기가 다른 값이 각각 두 개 이상 필요합니다.")
         else:
@@ -11123,6 +11193,8 @@ with st.sidebar:
             st.success(f"부트스트래핑 완료 · {t.T:.2f}년 무위험 {math.exp(RFq(t.T))-1:.2%} "
                        f"위험 {math.exp(CRq(t.T))-1:.2%} "
                        f"(스프레드 {math.exp(CRq(t.T))-math.exp(RFq(t.T)):.2%})")
+            # 예시 곡선이 남았거나 곡선이 잔존기간에 못 미치면 여기서 바로 알린다
+            for _cn in curve_notes(t): st.warning(_cn)
 
     st.download_button("시나리오 저장",
                        json.dumps({**asdict(t), "_schema": SCHEMA_VER,
@@ -11144,6 +11216,12 @@ try:
             if (st.session_state.get("prices") and vol_listed()) else None)
 except Exception:
     _pxl = None
+if len(t.rf_curve) < 2 or len(credit_curve(t)) < 2:
+    st.info("**이자율 곡선을 넣으십시오.** 사이드바 「이자율」 칸에 무위험 곡선과 위험 곡선을 "
+            "각각 두 만기 이상 넣어야 계산을 시작합니다 — 평가기준일의 고시 곡선을 쓰십시오. "
+            "KIS-Net 기준수익률 표를 올리고 「이 곡선 적용」을 누르면 고시된 모든 만기가 "
+            "들어갑니다. 시나리오 파일을 불러오면 저장된 곡선이 채워집니다.")
+    st.stop()
 warn = validate(t, _pxl)
 if warn:
     st.warning("확인이 필요합니다\n\n" + "\n".join(f"- {w}" for w in warn))
