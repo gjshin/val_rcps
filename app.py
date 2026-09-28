@@ -181,6 +181,12 @@ class Terms:
     # 불러온 원본 시나리오 JSON 의 지문. 계산에 쓰이지 않으므로 _stamp 은 이 값을 뺀다 —
     # 그래야 「원본 지문」과 「계산 지문」을 나란히 적을 수 있다.
     scen_md5: str = ""
+    # ── 평가 관점 ─────────────────────────────────────────────
+    # 공정가치는 누가 들고 있든 같다(제1113호 — 시장참여자의 교환가격). 갈리는 것은
+    # 회계 단위다. 발행자는 부채·자본을 가르고 요소별로 배분한다(1032·1109 4.3.3).
+    # 투자자는 주계약이 금융자산이라 내재파생을 분리하지 않고 전체를 하나로 잰다(4.3.2).
+    view: str = "issuer"          # "issuer" 발행자 / "holder" 투자자
+    prev_hold: float = -1.0       # 투자자 전기말 장부금액(= 전기말 공정가치, 순액 · 100 기준). 음수면 없음
     # ── 표시·기록 전용 (계산에 쓰지 않는다) ──────────────────────
     tranche: str = ""             # 회차 표시 — 분할납입이면 회차마다 따로 평가해 합산한다
     unmod_note: str = ""          # 이 계약에서 평가에 반영하지 않은 권리와 그 이유 (조서 표지)
@@ -654,6 +660,7 @@ def derive(tm: Terms) -> Terms:
         # 주주간계약에는 사채가 없다. 사채·우선주 전용 스위치를 모두 끈다.
         # 지분가치는 100 × 주가 ÷ 주당 인수가액이라 리픽싱도 없다.
         tm.mat_mode = 1; tm.issuer_call = 0; tm.div_mode = 0; tm.div_basis = 0
+        tm.view = "issuer"       # 주주간계약은 회계처리 화면에 세 관점이 따로 있다
         tm.rfx_mode = 0; tm.cpn = 0.0; tm.ytm = 0.0
         tm.k_w = 0.0; tm.k_method = 0; tm.k_lock = 0.0
         tm.p_sep = 1; tm.k_sep = 1
@@ -915,6 +922,179 @@ def fv_only_rows(tm: Terms, full, b0, b1, b2, ca):
     if tm.conv_class == "equity" and not is_bw(tm):
         out.append(("전환권대가 (자본 · 재측정 없음 · 참고)", 100 - b1 + (ca if ca > 0 else 0.0)))
     return out
+
+
+def holder_on(tm: Terms) -> bool:
+    """투자자 관점으로 회계처리를 만드는가. 주주간계약은 자기 화면에 세 관점이 따로 있다."""
+    return (not is_sha(tm)) and str(getattr(tm, "view", "issuer")) == "holder"
+
+
+def holder_call_sep(tm: Terms, ca: float) -> bool:
+    """투자자에게 매도청구권이 **따로 떨어진 파생상품부채**인가.
+
+    거래상대방이 발행회사가 아닌 제3자이거나(지정 가능 · 기특정) 사채와 따로 양도되면
+    투자자가 써 준 별도의 옵션이다(4.3.1 과 같은 이유). 발행자 상환권처럼 거래상대방이
+    그대로이면 계약의 일부라 복합계약 전체의 공정가치 안에 녹는다.
+    """
+    return abs(ca) > 1e-12 and int(tm.k_sep) != 0 and not issuer_redeem(tm)
+
+
+def holder_class(tm: Terms):
+    """투자자의 분류 — (결론, 근거 문장)."""
+    if bw_cash(tm) and int(tm.bw_detach) == 1:
+        return ("사채와 신주인수권증권을 따로 인식한다",
+                "분리형 BW 는 두 증권을 따로 양도할 수 있어 각각 별개의 금융자산이다. "
+                "신주인수권증권은 파생상품이라 당기손익-공정가치로 측정한다(제1109호 문단 4.1.4). "
+                "사채는 사업모형과 계약상 현금흐름 특성에 따라 상각후원가·기타포괄손익-공정가치·"
+                "당기손익-공정가치 가운데 하나다(문단 4.1.1~4.1.4) — 상각후원가로 분류하면 장부금액은 "
+                "이 공정가치가 아니다.")
+    if is_rcps(tm) and tm.p_s > tm.p_e:
+        return ("지분상품 — 당기손익-공정가치 (기타포괄손익-공정가치 선택 가능)",
+                "투자자에게 상환청구권이 없어 발행회사가 자본으로 분류할 수 있는 우선주다. 발행회사 "
+                "입장의 지분상품이면 투자자는 당기손익-공정가치로 측정하되, 단기매매가 아니면 최초 "
+                "인식 때 기타포괄손익-공정가치를 취소불가능하게 선택할 수 있다(제1109호 문단 5.7.5). "
+                "발행회사가 부채로 분류하는 조건이 따로 있으면 채무상품이라 당기손익-공정가치다.")
+    return ("복합계약 전체 — 당기손익-공정가치",
+            "주계약이 제1109호 적용범위의 금융자산이므로 내재파생상품을 분리하지 않고 복합계약 "
+            "전체를 분류한다(제1109호 문단 4.3.2). "
+            + ("전환권 때문에" if not is_bw(tm) else "신주인수권 때문에")
+            + " 계약상 현금흐름이 원금과 이자의 지급만으로 구성되지 않으므로(문단 4.1.2⑵·B4.1.14) "
+              "당기손익-공정가치로 측정한다(문단 4.1.4).")
+
+
+HOLDER_NOTE = (
+    "공정가치는 누가 들고 있든 같습니다(제1113호 — 시장참여자 사이의 교환가격). 발행자 관점과 "
+    "값이 같고, 갈리는 것은 **회계 단위와 분개**입니다. 투자자는 내재파생을 떼지 않고 전체를 "
+    "하나로 잽니다(제1109호 문단 4.3.2).")
+HOLDER_DAY1 = (
+    "거래가격(100)과 공정가치의 차이는 공정가치가 활성시장 공시가격이나 관측가능한 시장자료만으로 "
+    "산정된 경우에만 당기손익으로 인식하고, 그 밖에는 이연한다(제1109호 문단 B5.1.2A). 비상장 "
+    "증권은 보통 이연이다.")
+HOLDER_GROUP = (
+    "투자자가 발행회사의 지배기업이면 연결재무제표에서는 내부거래로 제거됩니다. 별도재무제표·"
+    "관계기업 투자는 이 증권이 발행회사 입장의 지분상품인지에 따라 적용 기준서가 갈리므로 따로 "
+    "검토하십시오.")
+
+
+def holder_rows(tm: Terms, full, b0, b1, b2, ca) -> dict:
+    """투자자 관점 — 재무상태표 줄 · 참고 분해 · 분개. 화면·값 조서·수식 조서가 같이 쓴다.
+
+    투자자가 실제로 들고 있는 것은 **B2 − 매도청구권**(화면의 B3)이다. 매도청구권은 투자자가
+    써 준 권리라 부호가 발행자와 반대다.
+    """
+    L = lbl(tm)
+    net = b2 - ca
+    sep = holder_call_sep(tm, ca)
+    split_bw = bw_cash(tm) and int(tm.bw_detach) == 1
+    ttl, basis = holder_class(tm)
+    pos = [("투자자 순포지션 (자산 − 부채)", net)]
+    if split_bw:
+        pos += [("사채 · 금융자산 (분류는 사업모형에 따른다)", b1),
+                ("신주인수권증권 · 파생상품자산 (당기손익-공정가치)", b2 - b1)]
+    else:
+        pos += [("복합계약 전체 · 당기손익-공정가치측정 금융자산", b2 if sep else net)]
+    if sep:
+        pos += [(f"{L['call']} — 투자자가 써 준 권리 · 파생상품부채 (당기손익-공정가치)", ca)]
+    conv_nm = inst_text(tm, "전환권") if not is_bw(tm) else "신주인수권"
+    parts = [(L["host"].split(" (")[0] + " (옵션 없음)", b0), (L["put"], b1 - b0),
+             (conv_nm, b2 - b1)]
+    if abs(ca) > 1e-12: parts.append((L["call"] + " (투자자 부담 — 차감)", -ca))
+    parts.append(("합계 = 투자자 순포지션", net))
+
+    J = []                                   # (차변/대변, 계정, 100 기준)
+    if tm.elapsed_m <= 0.01:
+        mode = "initial"
+        if split_bw:
+            J += [("차변", "금융자산 — 사채", b1), ("차변", "파생상품자산 — 신주인수권증권", b2 - b1)]
+        else:
+            J += [("차변", "당기손익-공정가치측정금융자산", b2 if sep else net)]
+        J += [("대변", "현금 (거래가격)", 100.0)]
+        if sep: J += [("대변", f"파생상품부채 — {L['call']}", ca)]
+        d = net - 100.0
+        if abs(d) > 1e-12:
+            J += [("대변" if d > 0 else "차변", "최초 인식 차이 — 이연 (문단 B5.1.2A)", abs(d))]
+        c100 = (tm.issue_cost/tm.face_total*100) if tm.issue_cost and tm.face_total else 0.0
+        if c100 > 0 and not split_bw:
+            J += [("차변", "지급수수료 (당기비용 · 문단 5.1.1)", c100), ("대변", "현금 (거래원가)", c100)]
+    elif float(getattr(tm, "prev_hold", -1.0)) >= 0:
+        mode = "subsequent"
+        d = net - float(tm.prev_hold)
+        if d >= 0:
+            J += [("차변", "당기손익-공정가치측정금융자산 (순액)", d), ("대변", "금융자산평가이익", d)]
+        else:
+            J += [("차변", "금융자산평가손실", -d), ("대변", "당기손익-공정가치측정금융자산 (순액)", -d)]
+    else:
+        mode = "fv"
+    return dict(title=ttl, basis=basis, pos=pos, parts=parts, journal=J, mode=mode, sep=sep,
+                net=net)
+
+
+def write_holder_sheet(wb, tm: Terms, h: dict, put, sec, title, N4, N0, LIGHT, RED, GREY):
+    """「회계처리」 시트를 투자자 관점으로 바꿔 그린다. 값 조서·수식 조서가 같이 쓴다.
+
+    첫 표의 첫 줄(C10)이 투자자 순포지션이다 — 조서대조가 엔진의 B2 − 매도청구권과 대조한다.
+    """
+    from openpyxl.styles import Alignment
+    _ei = wb.sheetnames.index("회계처리"); wb.remove(wb["회계처리"])
+    E = wb.create_sheet("회계처리", _ei); E.sheet_view.showGridLines = False
+    for cc, w in (("B", 58), ("C", 16), ("D", 18)): E.column_dimensions[cc].width = w
+    title(E, 2, "회계처리 — 투자자 관점", span=3)
+    for _i, (_tx, _col, _b) in enumerate(((HOLDER_NOTE.replace("**", ""), RED, True),
+                                          ("분류 — " + h["title"], "000000", True),
+                                          (h["basis"], GREY, False))):
+        put(E, 4+_i, 2, _tx, color=_col, bold=_b, size=(10 if _b else 9))
+        E.merge_cells(start_row=4+_i, start_column=2, end_row=4+_i, end_column=4)
+        E.cell(row=4+_i, column=2).alignment = Alignment(wrap_text=True, vertical="top")
+        E.row_dimensions[4+_i].height = 30 if _i != 1 else 15
+    sec(E, 8, "평가기준일 공정가치 — 재무상태표", span=3)
+    for i, hh in enumerate(["항목", "100 기준", "전액 기준 (원)"]):
+        put(E, 9, 2+i, hh, bold=True, fill=LIGHT, align="center", border=True, size=9)
+    r = 10
+    for k, v in h["pos"]:
+        put(E, r, 2, k, border=True, bold=(r == 10))
+        put(E, r, 3, v, fmt=N4, align="right", border=True)
+        put(E, r, 4, v/100*tm.face_total, fmt=N0, align="right", border=True)
+        r += 1
+    r += 1
+    sec(E, r, "참고 — 구성요소 분해 (회계 단위가 아니다)", span=3); r += 1
+    for k, v in h["parts"]:
+        put(E, r, 2, k, border=True, bold=k.startswith("합계"))
+        put(E, r, 3, v, fmt=N4, align="right", border=True)
+        put(E, r, 4, v/100*tm.face_total, fmt=N0, align="right", border=True)
+        r += 1
+    r += 1
+    sec(E, r, "분개 — " + holder_mode_text(h), span=3); r += 1
+    if h["journal"]:
+        for i, hh in enumerate(["계정", "100 기준", "전액 기준 (원)"]):
+            put(E, r, 2+i, hh, bold=True, fill=LIGHT, align="center", border=True, size=9)
+        r += 1
+        for side, acct, v in h["journal"]:
+            put(E, r, 2, ("(차) " if side == "차변" else "　　(대) ") + acct, border=True)
+            put(E, r, 3, v, fmt=N4, align="right", border=True)
+            put(E, r, 4, v/100*tm.face_total, fmt=N0, align="right", border=True)
+            r += 1
+    r += 1
+    for _tx in ((HOLDER_DAY1,) if h["mode"] == "initial" else ()) + (
+            "이 조서의 「분리 판단」 시트는 발행자 관점의 판단이다 — 투자자는 문단 4.3.2 에 따라 "
+            "내재파생상품을 분리하지 않는다.", HOLDER_GROUP):
+        put(E, r, 2, _tx, color=GREY, size=9)
+        E.merge_cells(start_row=r, start_column=2, end_row=r, end_column=4)
+        E.cell(row=r, column=2).alignment = Alignment(wrap_text=True, vertical="top")
+        E.row_dimensions[r].height = 30
+        r += 1
+    return E
+
+
+def view_text(tm: Terms) -> str:
+    return ("투자자 — 보유 금융자산 · 복합계약 전체 공정가치 (1109 문단 4.3.2)" if holder_on(tm)
+            else "발행자 — 부채·자본 분류와 요소별 배분 (1032 · 1109 문단 4.3.3)")
+
+
+def holder_mode_text(h: dict) -> str:
+    return {"initial": "최초 인식 — 거래가격을 치르고 공정가치로 인식한다",
+            "subsequent": "후속 측정 — 전기말 공정가치에서 당기말 공정가치로 재측정해 차이를 당기손익에",
+            "fv": ("후속 측정 — 장부금액은 곧 이 공정가치다. 전기말 장부금액(공정가치)을 넣으면 "
+                   "평가손익 분개가 나온다")}[h["mode"]]
 
 
 def auto_conv(tm: Terms) -> bool:
@@ -3240,6 +3420,7 @@ def eir_or_none(tm: Terms, full, b0, b1, b2, ca):
     조서 두 개가 같은 판단을 하도록 한 자리에 모아 둔다.
     """
     if acc_mode(tm) == "fv_only": return None      # 공정가치 전용 — 상각표를 만들지 않는다
+    if holder_on(tm): return None                  # 투자자 — 전체를 공정가치로 잰다
     host = acc_host(tm, full, b0, b1, b2, ca)
     return None if host is None else eir_table(tm, host, eir_expect(tm))
 
@@ -3414,6 +3595,17 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
                 "지분+부채 = TF, V = GS. V ≠ 지분+부채 는 결함이 아니다"))
     out.append(("위험중립가중치 q", f"[{full['qmin']:.4f}, {full['qmax']:.4f}]", "적합" if not full["qbad"] else "확인 필요",
                 "전 구간 (0, 1) 안" if not full["qbad"] else f"벗어난 구간 {len(full['qbad'])}개 — 화면은 계산을 멈춘다"))
+    if holder_on(tm):
+        # 투자자 관점 — 순포지션과 분개 대차가 맞는지. 배분표 검산은 발행자 대조용으로 남는다.
+        _h = holder_rows(tm, full, b0, b1, b2, ca)
+        _pos = _h["pos"][0][1]
+        out.append(("투자자 순포지션 = 전체 − 매도청구권", f"{_pos:,.4f} = {b2:,.4f} − {ca:,.4f}",
+                    "적합" if abs(_pos - (b2 - ca)) < 1e-9 else "확인 필요", "제1109호 문단 4.3.2 · 화면 B3"))
+        _dr = sum(v for sd, _, v in _h["journal"] if sd == "차변")
+        _cr = sum(v for sd, _, v in _h["journal"] if sd == "대변")
+        out.append(("투자자 분개 대차", f"차변 {_dr:,.4f} · 대변 {_cr:,.4f}",
+                    "적합" if abs(_dr - _cr) < 1e-9 else "확인 필요",
+                    holder_mode_text(_h)))
     cad = full.get("ca_debt", ca) if is_rcps(tm) else ca
     forced_conv = auto_conv(tm) or (is_rcps(tm) and int(tm.ipo_on) and int(tm.ipo_conv))
     bdt = put_bdt_on(tm)
@@ -3466,6 +3658,7 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None):
         out.append(("거래원가 배분 합 = 원가", f"{sm:.6f} = {cost:.6f}", "적합" if abs(sm - cost) <= 1e-9 else "확인 필요", "1032 문단 38 비례 배분"))
     if eir is None:
         out.append(("상각표 기말 = 상환금액", "상각표 없음", "해당 없음",
+                    "투자자 관점 — 복합계약 전체를 공정가치로 측정" if holder_on(tm) else
                     "복합계약 전체 FVPL 지정" if fvpl_on(tm) else
                     "후속평가 · 공정가치 산출 전용 (전기말 장부금액 없음)" if acc_mode(tm) == "fv_only" else
                     "잔여 주계약 ≤ 0 (Day-1 차이)"))
@@ -4266,6 +4459,10 @@ def validate(tm: Terms, px_last: float = None):
             w.append(f"만기상환금액을 직접 넣으셨습니다 ({tm.mat_amt:,.4f}%). "
                      f"보장수익률 산식으로는 {_f:,.4f}% 입니다 — 계약서와 대조하십시오.")
     w += basis_check(tm, px_last)
+    if holder_on(tm) and (tm.prev_deriv >= 0 or tm.prev_host >= 0) and float(tm.prev_hold) < 0:
+        w.append("투자자 관점인데 발행자의 전기말 장부금액(파생상품부채·주계약)이 들어 있습니다. "
+                 "투자자 분개에는 쓰이지 않습니다 — 「전기말 장부금액(공정가치)」 칸에 전기말 "
+                 "순포지션 공정가치를 넣으십시오.")
     if tm.base_shares > 0 and tm.dil_shares/tm.base_shares > DIL_WARN:
         w.append(dil_msg(tm).replace("**", ""))
     if tm.floor > tm.K0: w.append("최저 조정가액이 최초 전환가액보다 큽니다.")
@@ -5659,7 +5856,8 @@ def stamp_rows(tm: Terms, kind: str = "") -> list:
             ("신용위험 처리 · 조정일 처리 · 리픽싱 · 행사금액 경과기간",
              f"{m['model']} · {m['carry']} · {m['rfx_mode']} · "
              f"{'계약 개월÷12' if m['acc_basis'] else 'Actual/365'}"),
-            ("매도청구권 평가방법", K_METHODS[int(m["k_method"])])]
+            ("매도청구권 평가방법", K_METHODS[int(m["k_method"])]),
+            ("평가 관점", view_text(tm))]
 
 
 def inst_text(tm: Terms, text: str) -> str:
@@ -5954,7 +6152,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
     blocks = [("0. 재현 기록", [(_l, _v, None) for _l, _v in _SRW]),
       ("1. 모형", [("신용위험 처리", tm.model, None),
         ("조정일 아닌 시점", ["상태확장(정확)", "경로가중치", "확률가중평균", "특정노드선택"][tm.carry], None),
-        ("전환권 회계 분류", "파생상품부채" if tm.conv_class == "liability" else "자본", None)]),
+        ("전환권 회계 분류", "파생상품부채" if tm.conv_class == "liability" else "자본", None),
+        ("평가 관점", view_text(tm), None)]),
       ("2. 계약조건", [("발행일", tm.d_issue, None), ("평가기준일", tm.d_base, None),
         ("만기일", tm.d_mat, None), ("경과기간 (개월)", tm.elapsed_m, N2),
         ("평가기준일 주가", tm.S0, N2), ("현재 전환가액", tm.K0, N2),
@@ -6613,7 +6812,11 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
 
     # ── 해설 ──
-    if acc_mode(tm) == "fv_only":
+    if holder_on(tm):
+        # 투자자 관점 — 배분·상각표 대신 공정가치 측정과 투자자 분개. 화면과 같은 함수.
+        write_holder_sheet(wb, tm, holder_rows(tm, full, b0, b1, b2, ca),
+                           put, sec, title, N4, N0, LIGHT, RED, GREY)
+    elif acc_mode(tm) == "fv_only":
         # 최초 인식 배분·분개·거래원가 표를 지우고 공정가치만 남긴다 — 세 경로(화면·값·수식)가
         # acc_mode 하나로 같은 판단을 한다. 결산 분개에 최초 인식 숫자가 옮겨 가는 것을 막는다.
         _ei = wb.sheetnames.index("회계처리"); wb.remove(wb["회계처리"])
@@ -6800,6 +7003,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         ("주가 출처", "s0src", (tm.s0_src or "직접 입력"), None, True),
         ("위험 곡선 출처", "crsrc", (tm.cr_src or "직접 입력") + (f" · 평가대상 {tm.rt_tgt}" if tm.rate_mode != "direct" and tm.rt_tgt else ""), None, True),
         ("BDT σ 출처", "rvhow", ((tm.rvol_how or "직접 입력") if put_bdt_on(tm) else "해당 없음 (BDT 미적용)"), None, True),
+        ("평가 관점 (앱에서 고른 값)", "view", view_text(tm), None, False),
         ("현재 전환가액", "K0", tm.K0, N2, True),
         ("잔존기간 T (년)", "T", tm.T, N4, True),
         # 할인은 Actual/365(T), 행사금액 산정은 계약 개월수다. 두 잣대를 따로 둔다.
@@ -8546,7 +8750,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
 
     # ── 해설 ──
-    if acc_mode(tm) == "fv_only":
+    if holder_on(tm):
+        # 투자자 관점 — 배분·상각표 대신 공정가치 측정과 투자자 분개. 화면과 같은 함수.
+        write_holder_sheet(wb, tm, holder_rows(tm, full, b0, b1, b2, ca),
+                           put, sec, title, N4, N0, LIGHT, RED, GREY)
+    elif acc_mode(tm) == "fv_only":
         # 최초 인식 배분·분개·거래원가 표를 지우고 공정가치만 남긴다 — 세 경로(화면·값·수식)가
         # acc_mode 하나로 같은 판단을 한다. 결산 분개에 최초 인식 숫자가 옮겨 가는 것을 막는다.
         _ei = wb.sheetnames.index("회계처리"); wb.remove(wb["회계처리"])
@@ -9178,6 +9386,37 @@ if "peers" not in st.session_state: st.session_state.peers = []
 if "rate_series" not in st.session_state: st.session_state.rate_series = []
 
 
+def holder_ui(t, full, b0, b1, b2, ca):
+    """회계처리 탭 — 투자자 관점. 조서의 write_holder_sheet 와 같은 holder_rows 를 쓴다."""
+    h = holder_rows(t, full, b0, b1, b2, ca)
+    _F = t.face_total/100
+    st.info(HOLDER_NOTE)
+    st.markdown(f"**분류 — {h['title']}**")
+    st.caption(h["basis"])
+    st.markdown("### 평가기준일 공정가치")
+    st.dataframe(pd.DataFrame([[k, v, v*_F] for k, v in h["pos"]],
+                              columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
+        {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
+        use_container_width=True, hide_index=True)
+    st.markdown("### 참고 — 구성요소 분해")
+    st.dataframe(pd.DataFrame([[k, v, v*_F] for k, v in h["parts"]],
+                              columns=["구성요소", "100 기준", "전액 기준 (원)"]).style.format(
+        {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
+        use_container_width=True, hide_index=True)
+    st.caption("평가보고서에 주계약·전환권으로 나눠 싣는 표입니다. 투자자 회계에서는 나누지 않고 "
+               "위 한 줄(복합계약 전체)로 측정합니다.")
+    st.markdown(f"### 분개 — {holder_mode_text(h)}")
+    if h["journal"]:
+        st.dataframe(pd.DataFrame(
+            [[acct, (v if side == "차변" else None), (v if side == "대변" else None), v*_F]
+             for side, acct, v in h["journal"]],
+            columns=["계정", "차변 (100)", "대변 (100)", "금액 (원)"]).style.format(
+            {"차변 (100)": "{:,.4f}", "대변 (100)": "{:,.4f}", "금액 (원)": "{:,.0f}"}, na_rep=""),
+            use_container_width=True, hide_index=True)
+    if h["mode"] == "initial": st.caption(HOLDER_DAY1)
+    st.caption(HOLDER_GROUP)
+
+
 def vol_basis_opt():
     """변동성 산출내역 조서에 적을 설정 — 피어로 산출했으면 피어 칸, 아니면 대상회사 칸."""
     if st.session_state.get("peers"):
@@ -9337,6 +9576,23 @@ with st.sidebar:
                                         t, "자본 · 전환권대가를 잔여로") if x == "equity"
                                     else "파생상품부채 · 주계약을 잔여로")
           st.caption("분류에 따라 무엇을 공정가치로 재고 무엇을 잔여로 두는지가 뒤바뀝니다.")
+          # 평가 관점 — 공정가치는 같고 회계 단위가 갈린다. 기본은 발행자(종전 동작).
+          t.view = st.radio(
+              "평가 관점", ["issuer", "holder"], index=(1 if t.view == "holder" else 0),
+              horizontal=True, key="view",
+              format_func=lambda x: "발행자" if x == "issuer" else "투자자",
+              help="**발행자** — 부채·자본을 가르고 주계약·파생상품·전환권대가로 배분합니다 "
+                   "(제1032호 · 제1109호 문단 4.3.3). 상각표와 발행자 분개가 나옵니다.\n\n"
+                   "**투자자** — 보유한 금융자산을 잽니다. 주계약이 금융자산이라 내재파생을 "
+                   "떼지 않고 복합계약 전체를 당기손익-공정가치로 측정합니다(문단 4.3.2). "
+                   "매도청구권은 투자자가 써 준 권리라 차감되거나 파생상품부채가 됩니다.\n\n"
+                   "**공정가치 자체는 같습니다** — 누가 들고 있든 시장참여자 사이의 "
+                   "교환가격이기 때문입니다(제1113호). 갈리는 것은 회계처리입니다.")
+          if t.view == "holder":
+              st.caption("투자자 관점 — 회계처리 탭과 조서의 「회계처리」 시트가 투자자 분개로 "
+                         "바뀌고 상각표는 만들지 않습니다. 평가값은 그대로입니다. 위 "
+                         "「전환권 회계 분류」는 발행자의 분류라 투자자 분개에는 쓰이지 않지만 "
+                         "평가방법(TF·GS 할인)은 그대로 따릅니다.")
         # 평가에서 뺀 권리를 적는 자리. 매도청구권 상자 안의 「평가기법 선택 근거」는
         # 매도청구권이 없는 계약에서는 열리지도 않아, 조건부 풋·청산우선권 같은 판단이
         # 조서 어디에도 남지 않았다. 상품과 무관하게 늘 보인다. 계산에는 쓰지 않는다.
@@ -10342,30 +10598,46 @@ with st.sidebar:
         with st.expander("기말 재평가 · 전기 장부금액"):
             st.caption("평가기준일이 발행일보다 뒤인 **결산 평가**라면 전기말 장부금액을 넣으십시오. "
                        "회계처리 탭에 당기 평가손익과 분개가 나옵니다. 발행 시점 평가면 비워 두십시오.")
-            _has_prev = st.checkbox("전기말 장부금액이 있다", value=(t.prev_deriv >= 0))
-            if _has_prev:
-                t.prev_deriv = st.number_input("전기말 파생상품부채 장부금액 (100 기준)",
-                                               value=max(0.0, float(t.prev_deriv)), step=0.01,
-                                               format="%.4f",
-                                               help="전환권이 부채면 복합내재파생상품, 자본이면 "
-                                                    "분리한 상환청구권(·발행자 상환권) 파생상품부채.")
-                t.prev_host = st.number_input("전기말 주계약(부채) 장부금액 (100 기준)",
-                                              value=max(0.0, float(t.prev_host)), step=0.01,
-                                              format="%.4f",
-                                              help="상각후원가 장부금액. 당기 상각표의 기초와 대조합니다.")
-                _e = st.number_input("발행일 유효이자율 (%)",
-                                     value=(t.eir_issue*100 if t.eir_issue >= 0 else 0.0),
-                                     step=0.1, min_value=0.0, format="%.4f",
-                                     help="**발행 시점 조서**의 상각표에서 역산한 값입니다. "
-                                          "이 앱의 상각표는 평가기준일 배분액에서 출발해 최초 "
-                                          "인식에만 맞으므로, 결산 평가에서는 이 값을 넣어야 "
-                                          "당기 이자비용이 나옵니다.")
-                t.eir_issue = _e/100 if _e > 0 else -1.0
-                t.cur_periods = int(st.number_input(
-                    "당기 이자 회차 수", value=int(t.cur_periods), step=1, min_value=0,
-                    help=f"0 이면 1년치({max(1, int(round(12/max(1e-6, t.ipay))))}회)로 봅니다."))
+            if holder_on(t):
+                # 투자자는 전체를 공정가치로 잰다 — 장부금액이 곧 전기말 공정가치다
+                _hp = st.checkbox("전기말 장부금액(공정가치)이 있다",
+                                  value=(float(t.prev_hold) >= 0), key="hprev")
+                if _hp:
+                    t.prev_hold = st.number_input(
+                        "전기말 장부금액 — 순포지션 공정가치 (100 기준)",
+                        value=max(0.0, float(t.prev_hold)), step=0.01, format="%.4f",
+                        key="prev_hold",
+                        help="전기 조서의 「투자자 순포지션」입니다. 당기말 공정가치와의 차이가 "
+                             "금융자산평가손익(당기손익)입니다.")
+                else:
+                    t.prev_hold = -1.0
+                st.caption("투자자 관점 — 발행자의 파생상품부채·주계약 장부금액과 유효이자율 칸은 "
+                           "쓰지 않습니다.")
             else:
-                t.prev_deriv = -1.0; t.prev_host = -1.0; t.eir_issue = -1.0
+                _has_prev = st.checkbox("전기말 장부금액이 있다", value=(t.prev_deriv >= 0))
+                if _has_prev:
+                    t.prev_deriv = st.number_input("전기말 파생상품부채 장부금액 (100 기준)",
+                                                   value=max(0.0, float(t.prev_deriv)), step=0.01,
+                                                   format="%.4f",
+                                                   help="전환권이 부채면 복합내재파생상품, 자본이면 "
+                                                        "분리한 상환청구권(·발행자 상환권) 파생상품부채.")
+                    t.prev_host = st.number_input("전기말 주계약(부채) 장부금액 (100 기준)",
+                                                  value=max(0.0, float(t.prev_host)), step=0.01,
+                                                  format="%.4f",
+                                                  help="상각후원가 장부금액. 당기 상각표의 기초와 대조합니다.")
+                    _e = st.number_input("발행일 유효이자율 (%)",
+                                         value=(t.eir_issue*100 if t.eir_issue >= 0 else 0.0),
+                                         step=0.1, min_value=0.0, format="%.4f",
+                                         help="**발행 시점 조서**의 상각표에서 역산한 값입니다. "
+                                              "이 앱의 상각표는 평가기준일 배분액에서 출발해 최초 "
+                                              "인식에만 맞으므로, 결산 평가에서는 이 값을 넣어야 "
+                                              "당기 이자비용이 나옵니다.")
+                    t.eir_issue = _e/100 if _e > 0 else -1.0
+                    t.cur_periods = int(st.number_input(
+                        "당기 이자 회차 수", value=int(t.cur_periods), step=1, min_value=0,
+                        help=f"0 이면 1년치({max(1, int(round(12/max(1e-6, t.ipay))))}회)로 봅니다."))
+                else:
+                    t.prev_deriv = -1.0; t.prev_host = -1.0; t.eir_issue = -1.0
             _sa = st.number_input(
                 "상환·재매입 지급대가 (100 기준)",
                 value=(t.settle_amt if t.settle_amt >= 0 else 0.0), step=1.0, min_value=0.0,
@@ -11259,7 +11531,9 @@ with tabs[0]:
                              "전환확률이 한쪽으로 몰려 두 모형이 사실상 같은 값을 냅니다."))
 
 with tabs[1]:
-    if acc_mode(t) == "fv_only":
+    if holder_on(t):
+        holder_ui(t, full, b0, b1, b2, ca)
+    elif acc_mode(t) == "fv_only":
         st.warning(FV_ONLY_NOTE)
         _fvr = fv_only_rows(t, full, b0, b1, b2, ca)
         st.dataframe(pd.DataFrame([[k, v, v/100*t.face_total] for k, v in _fvr],
@@ -11464,6 +11738,10 @@ with tabs[1]:
                            "그날 곡선을 넣으셔야 맞습니다.")
 
 with tabs[2]:
+    if holder_on(t):
+        st.info("**투자자 관점입니다.** 이 탭의 판단은 **발행자**의 분리 판단입니다 — 투자자는 "
+                "주계약이 금융자산이라 내재파생상품을 분리하지 않습니다(제1109호 문단 4.3.2). "
+                "발행자와의 대조용으로 남겨 둡니다.")
     if is_bw(t):
         st.write("**신주인수권**이 별도의 금융상품인지 복합금융상품의 자본요소인지, "
                  "그리고 조기상환청구권·매도청구권을 주계약과 분리해야 하는지를 "
@@ -11949,7 +12227,12 @@ with tabs[5]:
 
 with tabs[6]:
   _ah6 = acc_host(t, full, b0, b1, b2, ca)
-  if acc_mode(t) == "fv_only":
+  if holder_on(t):
+    st.info("**투자자 관점이라 상각표를 만들지 않습니다.** 복합계약 전체를 당기손익-공정가치로 "
+            "측정하므로 유효이자율로 상각할 대상이 없습니다(제1109호 문단 4.3.2 · 4.1.4). "
+            "분리형 BW 의 사채를 상각후원가로 분류했다면 그 상각표는 발행 조건으로 따로 "
+            "만드십시오.")
+  elif acc_mode(t) == "fv_only":
     st.warning(FV_ONLY_NOTE)
   elif _ah6 is None and not fvpl_on(t):
     st.warning(HOST_NONPOS_NOTE)

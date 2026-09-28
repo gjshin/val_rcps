@@ -1340,7 +1340,8 @@ def test_call_split_text():
     for _k in ("생성시각", "평가체계 버전", "계산 지문 (derive·되돌린 설정 반영 후)",
                "시나리오 지문 (불러온 원본 JSON)", "주가 출처", "위험 곡선 출처"):
         chk_bool(f"조서 재현 기록에 «{_k}»", _k in _rows)
-    chk_bool("조서 재현 기록은 13줄", len(_sr(_t1)) == 13)
+    # 13줄 + 「평가 관점」 (발행자 · 투자자). 회차 표시는 적었을 때만 한 줄 더한다
+    chk_bool("조서 재현 기록은 14줄", len(_sr(_t1)) == 14)
     # 두 지문은 다른 것을 가리킨다. 원본 시나리오 지문은 계산에 쓰이지 않으므로 계산
     # 지문에 섞이지 않아야 한다 — 섞이면 같은 계약이 파일에서 열렸는지에 따라 갈린다.
     _t1b = Terms(**{**G["asdict"](_t1), "scen_md5": "deadbeef"})
@@ -1668,6 +1669,66 @@ def test_display_only_fields():
             chk_bool(f"{kind} 조서 표지 — {'적음' if tt is t1 else '비움'}", has == (tt is t1))
 
 
+def test_holder_view():
+    """평가 관점 — 투자자. 공정가치는 같고 회계 단위만 다르다 (1113 · 1109 문단 4.3.2)."""
+    print("\n[32] 평가 관점 — 발행자 / 투자자")
+    import io, openpyxl
+    RF = [(1, .030), (3, .031), (5, .032)]; CR = [(1, .14), (3, .17), (5, .19)]
+    cases = (("CB", {}), ("RCPS 제3자 콜", dict(inst="RCPS", issuer_call=2)),
+             ("RCPS 발행자 상환권", dict(inst="RCPS", issuer_call=1)),
+             ("BW 분리형 현금", dict(inst="BW", bw_pay=0, bw_detach=1)), ("콜 없음", dict(k_w=0.)))
+    for nm, over in cases:
+        ti = Terms(rf_curve=RF, cr_curve=CR, **over); derive(ti)
+        th = Terms(rf_curve=RF, cr_curve=CR, view="holder", **over); derive(th)
+        ri, rh = G["decompose"](ti), G["decompose"](th)
+        for k, lab in ((1, "주계약"), (2, "부채요소"), (3, "전체"), (4, "매도청구권")):
+            chk(f"{nm} · 관점이 바뀌어도 {lab} 값은 같다", rh[k], ri[k], 1e-12)
+        full, b0, b1, b2, ca, _ = rh
+        h = G["holder_rows"](th, full, b0, b1, b2, ca)
+        chk(f"{nm} · 순포지션 = 전체 − 매도청구권", h["pos"][0][1], b2 - ca, 1e-12)
+        # 순포지션을 이루는 줄들의 합 (자산 − 부채)
+        _liab = sum(v for k, v in h["pos"][1:] if "파생상품부채" in k)
+        _ast = sum(v for k, v in h["pos"][1:] if "파생상품부채" not in k)
+        chk(f"{nm} · 자산 − 부채 = 순포지션", _ast - _liab, h["net"], 1e-12)
+        chk(f"{nm} · 참고 분해 합 = 순포지션", sum(v for k, v in h["parts"][:-1]), h["net"], 1e-12)
+        dr = sum(v for sd, _, v in h["journal"] if sd == "차변")
+        cr = sum(v for sd, _, v in h["journal"] if sd == "대변")
+        chk(f"{nm} · 최초 인식 분개 대차", dr, cr, 1e-12)
+        chk_bool(f"{nm} · 상각표를 만들지 않는다", G["eir_or_none"](th, full, b0, b1, b2, ca) is None)
+    # 콜이 따로 떨어진 파생상품부채인가 — 거래상대방이 발행회사면 계약에 녹는다
+    t1 = Terms(rf_curve=RF, cr_curve=CR, view="holder", inst="RCPS", issuer_call=1); derive(t1)
+    f1 = G["decompose"](t1)
+    chk_bool("발행자 상환권은 계약의 일부 — 파생상품부채 줄이 없다",
+             not G["holder_rows"](t1, *f1[:5])["sep"])
+    t2 = Terms(rf_curve=RF, cr_curve=CR, view="holder"); derive(t2)
+    f2 = G["decompose"](t2)
+    chk_bool("제3자 지정 콜은 별도 — 파생상품부채 줄이 있다", G["holder_rows"](t2, *f2[:5])["sep"])
+    # 최초 인식 차이 = 순포지션 − 거래가격 100
+    h2 = G["holder_rows"](t2, *f2[:5])
+    _d = [v if sd == "대변" else -v for sd, a, v in h2["journal"] if "최초 인식 차이" in a]
+    chk("최초 인식 차이 = 순포지션 − 100", _d[0], h2["net"] - 100.0, 1e-12)
+    # 후속 — 평가손익 = 당기말 − 전기말
+    t3 = Terms(rf_curve=RF, cr_curve=CR, view="holder", d_base="2025-12-31", prev_hold=110.0); derive(t3)
+    f3 = G["decompose"](t3); h3 = G["holder_rows"](t3, *f3[:5])
+    _pl = [v if "이익" in a else -v for sd, a, v in h3["journal"] if "평가" in a]
+    chk("후속 · 평가손익 = 순포지션 − 전기말 공정가치", _pl[0], h3["net"] - 110.0, 1e-12)
+    t4 = Terms(rf_curve=RF, cr_curve=CR, view="holder", d_base="2025-12-31"); derive(t4)
+    chk_bool("후속 · 전기말이 없으면 분개가 없다 (장부금액 = 공정가치)",
+             G["holder_rows"](t4, *G["decompose"](t4)[:5])["journal"] == [])
+    # 주주간계약은 자기 화면에 세 관점이 있다 — 스위치가 먹지 않는다
+    ts = Terms(inst="SHA", view="holder"); derive(ts)
+    chk_bool("주주간계약은 관점 스위치를 발행자로 되돌린다", ts.view == "issuer")
+    # 두 조서의 회계처리 시트 — 첫 줄이 순포지션, 가정에 관점이 적힌다
+    full, b0, b1, b2, ca, conv = f2
+    for kind, fn in (("값", "build_xlsx"), ("수식", "build_xlsx_formula")):
+        wb = openpyxl.load_workbook(io.BytesIO(G[fn](t2, full, b0, b1, b2, ca, conv, None)))
+        E = wb["회계처리"]
+        chk(f"{kind} 조서 · 회계처리 C10 = 순포지션", float(E["C10"].value), b2 - ca, 1e-9)
+        chk_bool(f"{kind} 조서 · 투자자 관점 제목", "투자자 관점" in str(E["B2"].value))
+        txt = " ".join(str(c.value) for row in wb["가정"].iter_rows() for c in row if isinstance(c.value, str))
+        chk_bool(f"{kind} 조서 · 가정에 평가 관점", "투자자 — 보유 금융자산" in txt)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -1701,6 +1762,7 @@ def main():
     test_div_basis()
     test_rfx_anytime()
     test_display_only_fields()
+    test_holder_view()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

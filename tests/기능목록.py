@@ -108,6 +108,8 @@ MANIFEST = {
     # ── 회계 ──
     "fvpl_whole":  ("복합계약 전체 FVPL 지정", {0: "지정하지 않음", 1: "지정"}, P_BOND),
     "bs_net":      ("역산 목표", {0: "본체 B2", 1: "매도청구권 차감 순액"}, P_BOND),
+    "view":        ("평가 관점", {"issuer": "발행자 — 부채·자본 분류와 요소별 배분",
+                               "holder": "투자자 — 복합계약 전체 공정가치 (1109 4.3.2)"}, P_BOND),
     # ── 주주간계약 ──
     "sha_writer":  ("풋 의무자", {0: "최대주주", 1: "발행회사", 2: "연대"}, ("SHA",)),
     "sha_disc":    ("풋 할인", {0: "무위험", 1: "위험 곡선", 2: "무위험 + 스프레드"}, ("SHA",)),
@@ -136,7 +138,7 @@ def selectable(G, product, field, value):
     # 상품 필드는 그 상품 값 하나만 「선택」이다 — CB 행에 RCPS 값이 있을 수 없다
     if field == "inst": return value == product
     if product == "SHA":
-        forced = dict(mat_mode=1, issuer_call=0, div_mode=0, div_basis=0, rfx_mode=0, k_method=0,
+        forced = dict(mat_mode=1, issuer_call=0, div_mode=0, div_basis=0, view="issuer", rfx_mode=0, k_method=0,
                       p_sep=1, k_sep=1, put_bdt=0, ipo_conv=0, carry=1)
         if field in forced: return forced[field] == value
     if product == "BW":
@@ -359,6 +361,10 @@ def collect_coverage(G):
         "test_rfx_anytime": [("CB", "rfx_mode", 2), ("CB", "carry", 0), ("CB", "carry", 1), ("CB", "carry", 2)],
         # 표시 전용 칸(회차·반영하지 않은 권리·희석 주식수)이 값을 바꾸지 않고 조서에만 실린다
         "test_display_only_fields": [("CB", "carry", 1)],
+        # 평가 관점 — 값은 같고 회계 단위만 갈린다. 세 상품 · 두 관점
+        "test_holder_view": [("CB", "view", "issuer"), ("CB", "view", "holder"), ("RCPS", "view", "issuer"),
+                             ("RCPS", "view", "holder"), ("BW", "view", "issuer"), ("BW", "view", "holder"),
+                             ("RCPS", "issuer_call", 1), ("BW", "bw_detach", 1), ("CB", "mid", True)],
         "test_bdt_review_gates": [("CB", "conv_class", "equity"), ("CB", "conv_class", "liability"),
                                   ("CB", "put_bdt", 1), ("CB", "put_bdt", 0), ("CB", "put", True), ("CB", "put", False)],
     }
