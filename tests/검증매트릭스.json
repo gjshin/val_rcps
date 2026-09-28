@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-28T05:15:49",
- "head": "140e5e2",
+ "generated": "2026-09-28T06:00:35",
+ "head": "e8e75d2",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -131,8 +131,8 @@
    "meaning": "상품",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::기본",
     "tests/주주간계약대조.py::콜 없음",
@@ -147,7 +147,7 @@
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 16
+   "n_tests": 17
   },
   {
    "case_id": "CB-model-TF",
@@ -506,10 +506,11 @@
     "tests/손계산대조.py::test_refix_weighted_average_on_reset_date",
     "tests/손계산대조.py::test_rfx_anytime",
     "tests/손계산대조.py::test_display_only_fields",
+    "tests/손계산대조.py::test_excel_limits_and_curves",
     "tests/오라클.py::test_refix",
     "tests/분기전수.py::carry=1"
    ],
-   "n_tests": 6
+   "n_tests": 7
   },
   {
    "case_id": "CB-carry-2",
