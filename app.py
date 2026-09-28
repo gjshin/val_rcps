@@ -5205,6 +5205,12 @@ EXAMPLE_RF = [(0.25, .024), (0.5, .0238), (1.0, .0225), (2.0, .0233), (3.0, .023
 EXAMPLE_CR = [(1.0, .051), (2.0, .057), (3.0, .062), (4.0, .0665), (5.0, .0705)]
 
 
+# 첫 실행에 비워 두는 칸 — 예시 회사의 숫자(주가·전환가 853원, 2025-03-31, σ 41.30% …)다.
+# 지급주기·복리 횟수 같은 관행값은 넣지 않는다. 시나리오를 불러오면 모두 채워진다.
+BLANK_FIELDS = ("d_issue", "d_mat", "d_base", "S0", "K0", "cpn", "ytm", "face_total",
+                "cv_s", "cv_e", "rfx_cyc", "floor", "par", "p_s", "p_e", "p_rate", "p_yield",
+                "k_s", "k_e", "k_prem", "k_w", "sig")
+
 CURVE_TOL = 0.05        # 년 — 곡선 끝과 잔존기간이 이만큼(약 18일) 안이면 보외로 보지 않는다
 
 
@@ -9448,6 +9454,43 @@ _HEAD = st.empty()
 # 옛 시나리오 JSON 은 저장된 대로 열린다.
 if "tm" not in st.session_state:
     st.session_state.tm = Terms(k_method=2, k_split=1)
+    # 첫 실행 — 예시 회사의 숫자가 남은 채 조서가 나가지 않게 아래 칸을 비워 둔다.
+    st.session_state.blank = set(BLANK_FIELDS)
+if "blank" not in st.session_state: st.session_state.blank = set()
+# 이번 실행에서 화면에 그렸는데 비어 있는 칸의 이름. 계산 직전에 이 목록을 보고 멈춘다.
+_MISS: list = []
+
+
+def is_blank(f: str) -> bool:
+    return f in st.session_state.blank
+
+
+def any_blank(*fs) -> bool:
+    return any(f in st.session_state.blank for f in fs)
+
+
+def bval(f: str, v):
+    """위젯에 줄 기본값 — 빈칸이면 None (칸이 비어 보인다)."""
+    return None if f in st.session_state.blank else v
+
+
+def bget(f: str, v, cur, label: str, scale: float = 1.0, need: bool = True):
+    """위젯이 돌려준 값. None 이면 빈칸 — 내부값 cur 를 두고 빠진 칸으로 적는다.
+
+    need=False 는 칸이 잠겨 쓰이지 않는 경우다(행사금액표가 산식을 이길 때 등). 비어 있어도
+    계산을 막지 않는다. 값이 들어오면 빈칸 목록에서 지운다.
+    """
+    if v is None:
+        st.session_state.blank.add(f)
+        if need: _MISS.append(label)
+        return cur
+    st.session_state.blank.discard(f)
+    return v if scale == 1 else v / scale
+
+
+def bfill(*fs):
+    """버튼(종가 불러오기·변동성 적용·역산)이 칸을 채웠다."""
+    for f in fs: st.session_state.blank.discard(f)
 if "prices" not in st.session_state: st.session_state.prices = []
 if "peers" not in st.session_state: st.session_state.peers = []
 if "rate_series" not in st.session_state: st.session_state.rate_series = []
@@ -9508,7 +9551,8 @@ def vol_attach():
 # 위젯이 아니라 앱이 직접 관리하는 상태 — 시나리오를 불러와도 남긴다
 _KEEP_STATE = {"tm", "prices", "peers", "scen", "scen_id", "rf_txt", "cr_txt", "ca_txt", "cb_txt",
                "kis_rows", "kis_src", "peer_txt", "px_src", "rate_how", "rate_opt", "rate_series",
-               "report", "rvmode", "vol_opt", "peer_opt", "sched_mode", "sched_mode_prev", "scen_old"}
+               "report", "rvmode", "vol_opt", "peer_opt", "sched_mode", "sched_mode_prev", "scen_old",
+               "blank", "_miss_prev"}
 # 행사 시점 칸의 key — 날짜/개월 모드를 바꾸면 다른 모드의 저장값이 되살아나지 않게 비운다
 _SCHED_KEYS = ["cvs", "cve", "ps", "pe", "ks", "ke", "klock", "ipom", "qipom",
                "shaps", "shape", "shacs", "shace"]
@@ -9535,6 +9579,7 @@ with st.sidebar:
             o = json.load(up)
             st.session_state.tm = Terms(**{k: v for k, v in o.items()
                                            if k in Terms.__dataclass_fields__})
+            st.session_state.blank = set()
             # 이자율 곡선은 아래 텍스트 칸이 실행마다 t.rf_curve·t.cr_curve 를
             # 통째로 덮어쓴다. 시나리오의 곡선을 그 칸에 직접 써 넣지 않으면
             # 화면 기본값(국고채·회사채 예시)으로 계산되어 버린다.
@@ -9690,25 +9735,32 @@ with st.sidebar:
 
     with st.expander("날짜 · 기간", expanded=True):
         c1, c2 = st.columns(2)
-        t.d_issue = c1.date_input("발행일", value=dt.date.fromisoformat(t.d_issue)).isoformat()
-        t.d_mat = c2.date_input("만기일", value=dt.date.fromisoformat(t.d_mat)).isoformat()
+        _v = c1.date_input("발행일", value=bval("d_issue", dt.date.fromisoformat(t.d_issue)))
+        t.d_issue = bget("d_issue", _v and _v.isoformat(), t.d_issue, "발행일")
+        _v = c2.date_input("만기일", value=bval("d_mat", dt.date.fromisoformat(t.d_mat)))
+        t.d_mat = bget("d_mat", _v and _v.isoformat(), t.d_mat, "만기일")
         t.tranche = st.text_input(
             "회차 표시 (선택)", value=t.tranche, key="tranche",
             placeholder="1차 납입분 84,189주",
             help="분할납입이면 **회차마다 따로 평가해 합산하십시오** — 존속기간·행사 개시일이 "
                  "각 납입일부터 세어지기 때문입니다. 이 칸은 어느 회차인지 **표시만** "
                  "합니다(계산에 쓰지 않음). 조서 표지·재현 기록·파일 이름에 들어갑니다.")
-        t.d_base = st.date_input("평가기준일", value=dt.date.fromisoformat(t.d_base),
-                                 help="발행일과 같으면 최초 인식, 뒤면 후속 측정입니다.").isoformat()
+        _v = st.date_input("평가기준일", value=bval("d_base", dt.date.fromisoformat(t.d_base)),
+                           help="발행일과 같으면 최초 인식, 뒤면 후속 측정입니다.")
+        t.d_base = bget("d_base", _v and _v.isoformat(), t.d_base, "평가기준일")
         gaps = {"월": 1.0, "2주": 12/26, "주": 12/52}
         gname = min(gaps, key=lambda k: abs(gaps[k]-t.gap_m))
         gname = st.selectbox("노드 간격", list(gaps), index=list(gaps).index(gname))
         t.gap_m = gaps[gname]
         derive(t)
-        c3, c4, c5 = st.columns(3)
-        c3.metric("경과", f"{t.elapsed_m:.1f}개월")
-        c4.metric("잔존", f"{t.T:.2f}년")
-        c5.metric("노드", f"{t.n}")
+        _DATE_BLANK = any_blank("d_issue", "d_mat", "d_base")
+        if _DATE_BLANK:
+            st.caption("세 날짜를 넣으면 경과·잔존기간과 노드 수가 나옵니다.")
+        else:
+            c3, c4, c5 = st.columns(3)
+            c3.metric("경과", f"{t.elapsed_m:.1f}개월")
+            c4.metric("잔존", f"{t.T:.2f}년")
+            c5.metric("노드", f"{t.n}")
         st.session_state.sched_mode = st.radio(
             "행사 시점 입력 방식", ["날짜", "발행일 기준 개월"], horizontal=True,
             index=0 if st.session_state.get("sched_mode", "날짜") == "날짜" else 1,
@@ -9728,7 +9780,7 @@ with st.sidebar:
         reset_widgets(_SCHED_KEYS); st.session_state.sched_mode_prev = st.session_state.sched_mode; st.rerun()
     st.session_state.sched_mode_prev = st.session_state.sched_mode
 
-    def exercise_mode_ui(s_, e_, f_, key, gap_m):
+    def exercise_mode_ui(s_, e_, f_, key, gap_m, hide=False):
         """행사 방식 — 특정일 1회 / 정기 / 기간 중 언제든지. ``(종료, 주기)`` 를 돌려준다.
 
         조기상환에만 있던 것을 매도청구도 함께 쓴다. 「기간 중 언제든지」는 주기를 노드
@@ -9740,7 +9792,7 @@ with st.sidebar:
                              (2 if f_ <= gap_m + 1e-9 else 1)),
                       horizontal=True, key=key, help="계약이 정한 행사 방식입니다.\n\n**특정일 1회** — 시작일 하나에만 행사할 수 있습니다(종료일을 시작일로 맞춥니다).\n\n**정기** — 「6개월이 되는 날 및 이후 매 3개월」처럼 주기가 있습니다. 아래 주기 칸을 씁니다.\n\n**기간 중 언제든지** — 주기 없이 행사기간 내내 행사할 수 있습니다. 주기를 노드 간격으로 맞춰 모든 노드에서 행사 가능하게 합니다 — 노드가 촘촘할수록 정확합니다.")
         if _m == "특정일 1회":
-            st.caption(f"발행일 기준 {s_:,.0f}개월 하루만 행사할 수 있습니다.")
+            if not hide: st.caption(f"발행일 기준 {s_:,.0f}개월 하루만 행사할 수 있습니다.")
             return s_, max(1.0, float(f_))
         if _m == "기간 중 언제든지":
             st.caption(f"주기를 노드 간격({gap_m:g}개월)으로 맞췄습니다 — 행사기간의 "
@@ -9749,7 +9801,7 @@ with st.sidebar:
         return e_, st.number_input("주기 (개월)", value=float(f_), step=1.0,
                                    key=key + "_f")
 
-    def ded_ui(which, g, m, first_mo, key, has_tbl=False, when="첫 행사일"):
+    def ded_ui(which, g, m, first_mo, key, has_tbl=False, when="첫 행사일", hide=False):
         """이미 지급한 이자·배당을 행사금액에서 어떻게 빼는가 — 1 / 2 / 0 을 돌려준다.
 
         세 방식의 금액을 한 줄로 나란히 보여 계약서의 예시 금액과 바로 대조하게 한다.
@@ -9767,7 +9819,7 @@ with st.sidebar:
         if has_tbl:
             st.caption("행사금액표가 금액을 정합니다 — 이 선택은 표가 암시하는 보장수익률을 "
                        "역산할 때만 씁니다.")
-        elif first_mo > 0 and g > 0:
+        elif first_mo > 0 and g > 0 and not hide:
             _yr = yr_of_month(t, first_mo)
             _a = [(d, 100*(1 + ded_prem(_yr, g, _c, m, d, first_mo, t.ipay))) for d in (1, 2, 0)]
             st.caption(f"{when}({months_to_date(t.d_issue, first_mo)}) 기준 — "
@@ -9779,28 +9831,64 @@ with st.sidebar:
         """한 시점. 날짜 모드면 date_input, 아니면 number_input. 개월을 돌려준다."""
         if not _DATE_MODE:
             return col.number_input(lab_m, value=float(m), step=1.0, key=key, **kw)
+        if is_blank("d_issue"):
+            # 자리만 보여 준다 — 진짜 칸과 key 를 달리 두어야 발행일을 넣은 뒤 빈 저장값이 남지 않는다
+            col.date_input(lab_d, value=None, key=key + "_dwait", disabled=True)
+            col.caption("발행일을 먼저 넣으십시오.")
+            return m
         kw.pop("min_value", None)
         d = col.date_input(lab_d, value=months_to_date(t.d_issue, m), key=key + "_d",
                            help=kw.get("help"), disabled=kw.get("disabled", False))
+        if d is None: return m
         mm = date_to_months(t.d_issue, d)
         col.caption(f"발행일 기준 {mm:,.1f}개월")
         return mm
 
-    def _sched_pair(cs, ce, m_s, m_e, key, none_lab=None, lab=("시작", "종료")):
-        """시작·종료 한 쌍. none_lab 이 있으면 「권리 없음」 체크박스로 시작>종료 관례를 대신한다."""
+    def _sched_pair(cs, ce, m_s, m_e, key, none_lab=None, lab=("시작", "종료"), fields=None):
+        """시작·종료 한 쌍. none_lab 이 있으면 「권리 없음」 체크박스로 시작>종료 관례를 대신한다.
+
+        fields=(시작, 종료) 의 Terms 이름을 주면 첫 실행 빈칸을 따른다 — 비어 있으면 계산을 막는다.
+        """
+        fs, fe = fields or (None, None)
+        _ls, _le = (f"{lab[0]} ({'개월' if not _DATE_MODE else '일'})",
+                    f"{lab[1]} ({'개월' if not _DATE_MODE else '일'})")
+        def _nm(x):         # 빠진 칸 목록에 적을 이름 — 어느 권리의 시작·종료인지까지
+            return f"{none_lab and key_lab.get(key, '') or ''}{x}"
         if not _DATE_MODE:
-            a = cs.number_input(f"{lab[0]} (개월)", value=float(m_s), step=1.0, key=key + "s")
-            b = ce.number_input(f"{lab[1]} (개월)", value=float(m_e), step=1.0, key=key + "e")
+            a = cs.number_input(f"{lab[0]} (개월)", value=(bval(fs, float(m_s)) if fs else float(m_s)),
+                                step=1.0, key=key + "s")
+            b = ce.number_input(f"{lab[1]} (개월)", value=(bval(fe, float(m_e)) if fe else float(m_e)),
+                                step=1.0, key=key + "e")
+            if fs:
+                a = bget(fs, a, m_s, _nm(lab[0])); b = bget(fe, b, m_e, _nm(lab[1]))
             return a, b
         if none_lab:
-            if st.checkbox(none_lab, value=bool(m_s > m_e), key=key + "_none"):
+            if st.checkbox(none_lab, value=bool(m_s > m_e) and not (fs and is_blank(fs)),
+                           key=key + "_none"):
+                if fs: bfill(fs, fe)
                 return (99.0 if m_s <= m_e else m_s), (0.0 if m_s <= m_e else m_e)
             if m_s > m_e: m_s, m_e = 12.0, max(12.0, t.T*12 + t.elapsed_m - 1)
-        ds = cs.date_input(f"{lab[0]}일", value=months_to_date(t.d_issue, m_s), key=key + "s_d")
-        de = ce.date_input(f"{lab[1]}일", value=months_to_date(t.d_issue, m_e), key=key + "e_d")
-        a, b = date_to_months(t.d_issue, ds), date_to_months(t.d_issue, de)
-        st.caption(f"발행일 기준 {a:,.1f} ~ {b:,.1f}개월")
+        if is_blank("d_issue"):
+            cs.date_input(f"{lab[0]}일", value=None, key=key + "s_dwait", disabled=True)
+            ce.date_input(f"{lab[1]}일", value=None, key=key + "e_dwait", disabled=True)
+            st.caption("발행일을 먼저 넣으십시오 — 행사 시점은 발행일부터 센 개월로 저장합니다.")
+            if fs:
+                for f, x in ((fs, lab[0]), (fe, lab[1])):
+                    if is_blank(f): _MISS.append(_nm(x))
+            return m_s, m_e
+        ds = cs.date_input(f"{lab[0]}일", value=(bval(fs, months_to_date(t.d_issue, m_s)) if fs
+                                                 else months_to_date(t.d_issue, m_s)), key=key + "s_d")
+        de = ce.date_input(f"{lab[1]}일", value=(bval(fe, months_to_date(t.d_issue, m_e)) if fe
+                                                 else months_to_date(t.d_issue, m_e)), key=key + "e_d")
+        a = date_to_months(t.d_issue, ds) if ds is not None else None
+        b = date_to_months(t.d_issue, de) if de is not None else None
+        if fs:
+            a = bget(fs, a, m_s, _nm(lab[0])); b = bget(fe, b, m_e, _nm(lab[1]))
+        if ds is not None and de is not None:
+            st.caption(f"발행일 기준 {a:,.1f} ~ {b:,.1f}개월")
         return a, b
+
+    key_lab = {"p": "조기상환 ", "k": "매도청구 "}
 
     with st.expander("기본", expanded=True):
         _SHA = is_sha(t)
@@ -9813,11 +9901,12 @@ with st.sidebar:
                              format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x],
                              key="s0_mkt")
         if tk3.button("평가기준일 종가 불러오기", use_container_width=True,
-                      disabled=not t.ticker, key="btn_s0"):
+                      disabled=(not t.ticker or is_blank("d_base")), key="btn_s0",
+                      help=("평가기준일을 먼저 넣으십시오." if is_blank("d_base") else None)):
             with st.spinner("받는 중"):
                 try:
                     _dd, _px, _sym, _adj = fetch_close(t.ticker, _mkt, t.d_base)
-                    t.S0 = float(_px)
+                    t.S0 = float(_px); bfill("S0")
                     t.s0_src = f"야후 {_sym} {_dd} 종가"
                     t.s0_date, t.s0_raw = _dd, float(_px)
                     t.s0_adj = float(_adj) if _adj is not None else -1.0
@@ -9830,13 +9919,14 @@ with st.sidebar:
                 except Exception as ex:
                     st.warning(f"받지 못했습니다 — {ex}. 주가를 직접 넣으십시오.")
         _s0_before = float(t.S0)
-        t.S0 = st.number_input("평가기준일 주가 (원)", value=float(t.S0), step=1.0,
+        _v = st.number_input("평가기준일 주가 (원)", value=bval("S0", float(t.S0)), step=1.0,
                                help=("비상장이면 지분가치 평가액 ÷ 주식수를 넣거나, 아래에서 "
                                      "투자원금으로 역산하십시오." if _SHA else
                                      "비상장이면 별도 지분평가액 ÷ 주식수를 넣거나, 아래에서 "
                                      "발행가로 역산하십시오. 이자부부채에서 이 증권을 빼고 "
                                      "보통주식수로 나눈 값은 **희석 전** 입니다 — 이 도구는 "
                                      "전환 희석을 스스로 반영하지 않습니다."))
+        t.S0 = bget("S0", _v, t.S0, "평가기준일 주가")
         if abs(t.S0 - _s0_before) > 1e-9:
             # 손으로 고쳤다 — 출처도 조회 기록도 더 이상 이 값의 근거가 아니다
             t.s0_src = t.s0_date = t.s0_splits = ""
@@ -9890,8 +9980,9 @@ with st.sidebar:
                      "후 순액이기 때문입니다. 매도청구권에 별도 대가가 오갔거나 "
                      "최초인식 차이를 따로 보고 있다면 「본체」 입니다. 매도청구권이 "
                      "클수록 두 답이 벌어집니다."))
+        _bs_block = [x for x in st.session_state.get("_miss_prev", []) if x != "평가기준일 주가"]
         if bc2.button(("투자원금으로 지분 역산" if _SHA else "발행가로 주가 역산"),
-                      use_container_width=True,
+                      use_container_width=True, disabled=bool(_bs_block),
                       help=("«지분가치 + 풋 − 콜» 이 목표와 같아지는 주가를 이분법으로 "
                             "찾아 위 칸에 넣습니다." if _SHA else
                             "전체 가치(B2, 발행자 상환권이 있으면 B3)가 목표와 같아지는 "
@@ -9908,7 +9999,7 @@ with st.sidebar:
                 st.error(f"격자가 목표에 닿지 않습니다 (주가 {_S:,.0f}원에서 {_v:,.2f}). "
                          "전환가액·변동성·상환 조건을 확인하십시오.")
             else:
-                t.S0 = float(_S)
+                t.S0 = float(_S); bfill("S0")
                 # 격자 값은 주가에 대해 연속이 아니다. 어느 노드의 결정이
                 # 뒤집히는 자리에서 계단처럼 튀므로 이분법이 목표를 정확히
                 # 맞히지 못할 수 있다. 얼마나 못 맞혔는지는 말해 주어야 한다.
@@ -9926,29 +10017,34 @@ with st.sidebar:
                     f"발행가 역산 (목표 {t.bs_target:,.2f})" if _SHA else
                     f"발행가 역산 (목표 {t.bs_target:,.2f} · {_tg} 기준)")
                 st.rerun()
-        if (st.session_state.get("px_src") or "").startswith("발행가 역산"):
+        if _bs_block:
+            st.caption("역산은 주가를 뺀 칸을 모두 채운 뒤에 쓸 수 있습니다.")
+        if (st.session_state.get("px_src") or "").startswith("발행가 역산") and not is_blank("S0"):
             st.success(f"주가 {t.S0:,.2f}원 — {st.session_state.px_src}. 조서에 "
                        "그대로 적힙니다. 기말 재평가에는 쓰지 마십시오 — 그때는 "
                        "발행가가 기준이 아닙니다.")
-        t.K0 = st.number_input(
-            ("주당 인수가액 (원)" if _SHA else inst_text(t, "현재 전환가액 (원)")),
-            value=float(t.K0), step=1.0,
+        _lk0 = ("주당 인수가액 (원)" if _SHA else inst_text(t, "현재 전환가액 (원)"))
+        _v = st.number_input(
+            _lk0, value=bval("K0", float(t.K0)), step=1.0,
             help=("투자자가 1주에 낸 금액입니다. 지분가치 = 100 × 주가 ÷ 이 값 이라, "
                   "평가기준일 주가가 이 값과 같으면 지분가치가 100 입니다." if _SHA else
                   "리픽싱이 이미 일어났으면 조정된 값을 넣으십시오."))
+        t.K0 = bget("K0", _v, t.K0, _lk0.replace(" (원)", ""))
         if _SHA:
-            t.face_total = st.number_input(
-                "투자원금 총액 (원)", value=float(t.face_total), step=1e8,
+            _v = st.number_input(
+                "투자원금 총액 (원)", value=bval("face_total", float(t.face_total)), step=1e8,
                 format="%.0f", help="화면과 조서의 전액 기준 금액을 계산합니다.")
+            t.face_total = bget("face_total", _v, t.face_total, "투자원금 총액")
             st.caption("주주간계약에는 사채가 없어 표면이자·만기상환금액·거래원가 칸이 "
                        "없습니다. 아래 「주주간계약」 칸에서 풋과 콜을 넣으십시오.")
         # 주주간계약에는 사채가 없다. 표면이자·만기상환·거래원가 칸을 뺀다.
         if not _SHA:
-            t.cpn = st.number_input(f"{L['cpn']} (%)", value=t.cpn*100, step=0.5,
-                                    help=("확정 배당률을 표면이자처럼 현금흐름으로 봅니다. "
-                                          "배당가능이익이 없어 지급 가능성이 없다고 보시면 0. "
-                                          "계약서 숫자를 그대로 넣고 아래에서 기준을 고르십시오."
-                                          if is_rcps(t) else None))/100
+            _v = st.number_input(f"{L['cpn']} (%)", value=bval("cpn", t.cpn*100), step=0.5,
+                                 help=("확정 배당률을 표면이자처럼 현금흐름으로 봅니다. "
+                                       "배당가능이익이 없어 지급 가능성이 없다고 보시면 0. "
+                                       "계약서 숫자를 그대로 넣고 아래에서 기준을 고르십시오."
+                                       if is_rcps(t) else "없으면 0 을 넣으십시오."))
+            t.cpn = bget("cpn", _v, t.cpn, L["cpn"], scale=100)
             if is_rcps(t):
                 # 격자는 1주 발행가를 100 으로 잰다. 계약이 액면가 기준이면 옮겨야 한다.
                 t.div_basis = int(st.radio(
@@ -9960,14 +10056,18 @@ with st.sidebar:
                          "「× 액면가 ÷ 발행가」 로 옮겨 씁니다. 그대로 넣으면 배당이 "
                          "발행가 ÷ 액면가 배로 부풀고 상환금액까지 내려갑니다."))
                 # 액면가 칸은 아래 「전환가액 조정」에 있다 — 칸을 둘로 만들지 않고 그 값을 읽는다.
-                _par_now = float(st.session_state.get("par_in", t.par))
+                _par_now = st.session_state.get("par_in", None if is_blank("par") else t.par)
+                _par_now = float(_par_now) if _par_now is not None else 0.0
                 _ipx = st.number_input(
-                    "1주당 발행가 (원)", value=float(t.issue_px if t.issue_px > 0 else t.K0),
+                    "1주당 발행가 (원)",
+                    value=(float(t.issue_px) if t.issue_px > 0 else bval("K0", float(t.K0))),
                     step=100.0, min_value=0.0, key="ipx", disabled=(t.div_basis == 0),
                     help="보통 1주당 인수금액입니다. 발행가 기준이면 쓰지 않습니다.")
                 if t.div_basis == 1:
-                    t.issue_px = float(_ipx)
-                    if t.issue_px > 0 and _par_now > 0:
+                    t.issue_px = float(_ipx or 0.0)
+                    if is_blank("cpn"):
+                        pass
+                    elif t.issue_px > 0 and _par_now > 0:
                         st.caption(f"→ 액면 {_par_now:,.0f}원 기준 연 {t.cpn:.2%} = "
                                    f"**발행가 {t.issue_px:,.0f}원 기준 연 "
                                    f"{t.cpn*_par_now/t.issue_px:.4%}** ← 계산에 쓰는 값.  "
@@ -9988,7 +10088,7 @@ with st.sidebar:
                          "전체가 부채이고 배당은 이자비용입니다 (보장수익률 − 배당률 산식이 이 "
                          "경우). 배당이 발행자 재량이고 상환가액과 무관하면 배당은 자본요소의 "
                          "이익분배라 부채 계산에서 뺍니다.")
-                if t.div_mode == 1 and t.cpn > 0:
+                if t.div_mode == 1 and t.cpn > 0 and not is_blank("cpn"):
                     st.caption(f"배당률 {t.cpn:.2%} 는 조서에 계약 조건으로 남고, 격자와 상환가액 "
                                "산식에는 **0** 으로 들어갑니다. 회계처리에서 배당은 이익잉여금의 "
                                "처분입니다.")
@@ -10005,14 +10105,17 @@ with st.sidebar:
             # 만기금액을 계약서 숫자로 직접 넣으면 아래 보장수익률 산식은 쓰이지 않는다.
             # 칸을 그리기 «전» 에 직전 실행의 체크 상태를 읽어 잠근다.
             _mlk = bool(st.session_state.get("matfix", float(t.mat_amt) > 0))
-            t.ytm = st.number_input(f"{L['ytm']} (%)", value=t.ytm*100, step=0.1,
-                                    format="%.4f", disabled=_mlk)/100
+            _v = st.number_input(f"{L['ytm']} (%)", value=bval("ytm", t.ytm*100), step=0.1,
+                                 format="%.4f", disabled=_mlk,
+                                 help="없으면 0 을 넣으십시오.")
+            t.ytm = bget("ytm", _v, t.ytm, L["ytm"], scale=100, need=not _mlk)
             t.ytm_cmp = int(st.number_input("보장 복리 횟수 (연)", value=int(t.ytm_cmp),
                                             step=1, min_value=0, max_value=12,
                                             help="공시 상환율이 분기복리면 4, 반기면 2. " + HLP_CMP,
                                             disabled=_mlk))
             t.m_less_cpn = ded_ui("m", t.ytm, t.ytm_cmp, t.elapsed_m + t.rem_m, "mless_ui",
-                                  has_tbl=_mlk, when="만기일")
+                                  has_tbl=_mlk, when="만기일",
+                                  hide=any_blank("ytm", "cpn", "d_issue", "d_mat", "d_base"))
             _mfix = st.checkbox("만기상환금액을 계약서 숫자로 직접 넣는다",
                                 value=(float(t.mat_amt) > 0), key="matfix",
                                 help="공시 「원금상환방법」에 「만기에 106.4302% 를 일시 상환한다」처럼 "
@@ -10031,15 +10134,17 @@ with st.sidebar:
                 # 몇 %를 뜻하는지 역산해 함께 적는다.
                 st.caption("**만기상환금액을 계약서 숫자로 씁니다** — 위 보장수익률 칸은 "
                            "계산에 쓰지 않습니다. 체크를 끄면 다시 열립니다.")
-                _my = mat_implied(t, float(t.mat_amt))
+                _my = (None if any_blank("cpn", "d_issue", "d_mat", "d_base")
+                       else mat_implied(t, float(t.mat_amt)))
                 st.caption(f"{L['red']} = **{float(t.mat_amt):,.4f}**"
                            + (f"   ·   이 금액이 암시하는 보장수익률 **연 {_my*100:,.2f}%**"
                               if _my is not None else
                               "   ·   할증금이 없어 보장수익률을 역산할 수 없습니다"))
-            t.face_total = st.number_input(
-                ("발행총액 (원)" if is_rcps(t) else "전자등록총액 (원)"),
-                value=float(t.face_total), step=1e8, format="%.0f",
+            _lft = ("발행총액 (원)" if is_rcps(t) else "전자등록총액 (원)")
+            _v = st.number_input(
+                _lft, value=bval("face_total", float(t.face_total)), step=1e8, format="%.0f",
                 help="회계처리 탭의 전액 기준 금액을 계산합니다.")
+            t.face_total = bget("face_total", _v, t.face_total, _lft.replace(" (원)", ""))
             t.issue_cost = st.number_input(
                 "발행 거래원가 (원)", value=float(t.issue_cost), step=1e6, min_value=0.0,
                 format="%.0f",
@@ -10047,7 +10152,8 @@ with st.sidebar:
                      "배분된 발행금액에 비례하여 요소별로 나눕니다. 부채요소 몫은 "
                      "부채에서 차감해 유효이자율에 녹이고, 파생상품부채 몫은 당기손익-"
                      "공정가치라 즉시 비용, 자본요소 몫은 자본에서 직접 뺍니다.")
-            if not (_mlk and float(t.mat_amt) > 0):
+            if not (_mlk and float(t.mat_amt) > 0) and not any_blank(
+                    "ytm", "cpn", "d_issue", "d_mat", "d_base"):
                 st.caption(f"{L['red']} = {mat_red_formula(t):,.4f}   "
                            + ("계약서의 상환가액 산식과 대조하십시오." if is_rcps(t)
                               else "공시 만기상환율과 대조하십시오."))
@@ -10060,7 +10166,8 @@ with st.sidebar:
                 st.caption("모두 **발행일 기준 개월**입니다. 계약서 그대로 넣으십시오.")
             _c1, _c2 = st.columns(2)
             t.cv_s, t.cv_e = _sched_pair(_c1, _c2, t.cv_s, t.cv_e, "cv",
-                                         lab=(inst_text(t, "전환 시작"), inst_text(t, "전환 종료")))
+                                         lab=(inst_text(t, "전환 시작"), inst_text(t, "전환 종료")),
+                                         fields=("cv_s", "cv_e"))
             t.rfx_mode = st.selectbox("조정 방식", [2, 1, 0], index=[2, 1, 0].index(t.rfx_mode),
                                       format_func=lambda i: ["조정 없음", "하향만", "하향 + 상향"][i])
             # 「언제든지」는 주기를 노드 간격으로 맞추면 된다 — 매 노드에서 조정한다.
@@ -10075,18 +10182,20 @@ with st.sidebar:
                      "주가 격자로 표현할 수 없습니다. 여기서 고르지 말고 「평가에 반영하지 않은 "
                      "권리」에 적으십시오.")
             if _rany == "언제든지":
-                t.rfx_cyc = float(t.gap_m)
+                t.rfx_cyc = float(t.gap_m); bfill("rfx_cyc")
                 if t.rfx_mode > 0:
                     st.caption(f"조정 주기를 노드 간격({t.gap_m:g}개월)으로 맞췄습니다 — 모든 "
                                "노드에서 전환가액을 조정합니다. 조정 시점마다 전환가액이 그 노드의 "
                                "주가로 정해지므로 「조정일 아닌 시점」 처리방식에 따른 차이가 "
                                "거의 사라집니다.")
             else:
-                t.rfx_cyc = st.number_input(
+                _v = st.number_input(
                     "조정 주기 (개월)",
-                    value=float(t.rfx_cyc if not rfx_any(t) else max(3.0, t.gap_m*2)),
+                    value=bval("rfx_cyc", float(t.rfx_cyc if not rfx_any(t) else max(3.0, t.gap_m*2))),
                     step=1.0, disabled=(t.rfx_mode == 0))
-            t.floor = st.number_input("최저 조정가액 (원)", value=float(t.floor), step=1.0)
+                t.rfx_cyc = bget("rfx_cyc", _v, t.rfx_cyc, "리픽싱 조정 주기", need=(t.rfx_mode > 0))
+            _v = st.number_input("최저 조정가액 (원)", value=bval("floor", float(t.floor)), step=1.0)
+            t.floor = bget("floor", _v, t.floor, "최저 조정가액", need=(t.rfx_mode > 0))
             # 상향 재조정의 상한은 계약상 **최초** 전환가액이다. 현재 전환가액으로
             # 상한을 겸하면 이미 하향된 상품이 계약상 회복 한도까지 못 올라간다.
             _cap_on = st.checkbox(
@@ -10104,10 +10213,12 @@ with st.sidebar:
                                "확인하십시오.")
             else:
                 t.K_cap = -1.0
-                st.caption(f"상향 조정 상한을 현재 전환가액 {t.K0:,.0f}원으로 둡니다.")
-            t.par = st.number_input(("액면가 (원)" if not is_rcps(t)
-                                     else "액면가 (원) — 조정 하한 · 액면 기준 배당률 환산"),
-                                    value=float(t.par), step=100.0, key="par_in")
+                if not is_blank("K0"):
+                    st.caption(f"상향 조정 상한을 현재 전환가액 {t.K0:,.0f}원으로 둡니다.")
+            _v = st.number_input(("액면가 (원)" if not is_rcps(t)
+                                  else "액면가 (원) — 조정 하한 · 액면 기준 배당률 환산"),
+                                 value=bval("par", float(t.par)), step=100.0, key="par_in")
+            t.par = bget("par", _v, t.par, "액면가")
             if is_rcps(t):
                 st.divider()
                 st.markdown("**IPO 조항**")
@@ -10133,18 +10244,20 @@ with st.sidebar:
                                                  help="상장 요건상 우선주를 남겨 둘 수 없어 대부분 "
                                                       "강제전환입니다. 그 자리에서 주식으로 끝나므로 "
                                                       "상환청구권도 발행자 상환권도 함께 사라집니다."))
-                    if t.ipo_px > 0:
+                    if t.ipo_px > 0 and not is_blank("K0"):
                         st.caption(f"조정후 전환가격 = {t.ipo_px:,.0f} × {t.ipo_mult:.0%} = "
                                    f"**{t.ipo_px*t.ipo_mult:,.0f}원** (지금 전환가액 {t.K0:,.0f}원보다 "
                                    + ("낮아 조정됩니다" if t.ipo_px*t.ipo_mult < t.K0 else "높아 조정되지 않습니다")
                                    + "). 최저 조정가액·액면가 하한이 그대로 걸립니다.")
-                    else:
+                    elif t.ipo_px <= 0:
                         st.warning("공모가액이 0 이라 IPO 조항이 작동하지 않습니다.")
 
         with st.expander(L["put"]):
             _p1, _p2 = st.columns(2)
-            t.p_s, t.p_e = _sched_pair(_p1, _p2, t.p_s, t.p_e, "p", none_lab="이 권리 없음")
-            t.p_e, t.p_f = exercise_mode_ui(t.p_s, t.p_e, t.p_f, "pmode_ui", t.gap_m)
+            t.p_s, t.p_e = _sched_pair(_p1, _p2, t.p_s, t.p_e, "p", none_lab="이 권리 없음",
+                                       fields=("p_s", "p_e"))
+            t.p_e, t.p_f = exercise_mode_ui(t.p_s, t.p_e, t.p_f, "pmode_ui", t.gap_m,
+                                            hide=is_blank("p_s"))
             # 표가 있으면 아래 산식 칸은 계산에 쓰이지 않는다. 칸을 그리기 «전» 에
             # 직전 실행의 텍스트를 읽어 잠근다 — 위젯 순서를 바꾸지 않아도 된다.
             _pl = sched_rows(st.session_state.get("p_sched", t.p_sched), t)
@@ -10153,19 +10266,22 @@ with st.sidebar:
                                     format_func=lambda x: "고정률" if x == "fixed" else "보장수익률 복리",
                                     disabled=bool(_pl))
             if t.p_mode == "fixed":
-                t.p_rate = st.number_input("행사금액 (%)", value=float(t.p_rate), step=1.0,
-                                           disabled=bool(_pl))
+                _v = st.number_input("행사금액 (%)", value=bval("p_rate", float(t.p_rate)), step=1.0,
+                                     disabled=bool(_pl))
+                t.p_rate = bget("p_rate", _v, t.p_rate, f"{L['put']} 행사금액", need=not _pl)
             else:
-                t.p_yield = st.number_input(f"{'상환' if is_rcps(t) else '조기상환'} 보장수익률 (%)",
-                                            value=t.p_yield*100, step=0.5,
-                                            disabled=bool(_pl))/100
+                _lpy = f"{'상환' if is_rcps(t) else '조기상환'} 보장수익률"
+                _v = st.number_input(f"{_lpy} (%)", value=bval("p_yield", t.p_yield*100), step=0.5,
+                                     disabled=bool(_pl))
+                t.p_yield = bget("p_yield", _v, t.p_yield, _lpy, scale=100, need=not _pl)
                 t.p_cmp = int(st.number_input("복리 횟수 (연)", value=int(t.p_cmp), step=1,
                                               min_value=0, help=HLP_CMP,
                                               disabled=bool(_pl)))
                 if not _pl:
                     st.caption("행사금액 = 100 × (1 + 실효수익률)^경과연수")
                 t.p_less_cpn = ded_ui("p", t.p_yield, t.p_cmp, t.p_s, "pless_ui",
-                                      has_tbl=bool(_pl))
+                                      has_tbl=bool(_pl),
+                                      hide=any_blank("p_yield", "p_s", "cpn", "d_issue"))
             if _pl:
                 for _c in sched_lock_note(_pl, eff_cpn(t), t.p_cmp, ded_of(t, "p"), t.ipay): st.caption(_c)
             t.p_cpn_add = 1 if st.checkbox(
@@ -10453,18 +10569,23 @@ with st.sidebar:
             st.session_state["_ic_prev"] = int(t.issuer_call)
             if t.issuer_call == 1:
                 _k1, _k2 = st.columns(2)
-                t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
-                t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m)
+                t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음",
+                                           fields=("k_s", "k_e"))
+                t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m,
+                                                hide=is_blank("k_s"))
                 _kl = sched_rows(t.k_sched, t)     # 이 갈래에는 표 칸이 없다 — Terms 값을 본다
-                t.k_prem = st.number_input("상환 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
-                                           help="발행자 상환가액 = 100 × (1 + 보장수익률 복리)^경과연수 "
-                                                "− 기지급배당. 상환청구권과 같은 산식입니다.",
-                                           disabled=bool(_kl))/100
+                _v = st.number_input("상환 보장수익률 (연 %)", value=bval("k_prem", t.k_prem*100), step=0.5,
+                                     help="발행자 상환가액 = 100 × (1 + 보장수익률 복리)^경과연수 "
+                                          "− 기지급배당. 상환청구권과 같은 산식입니다.",
+                                     disabled=bool(_kl))
+                t.k_prem = bget("k_prem", _v, t.k_prem, "발행자 상환 보장수익률", scale=100,
+                                need=not _kl)
                 t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
                                               help=HLP_CMP, disabled=bool(_kl)))
                 # 매도청구 행사금액은 계약마다 갈린다 — 차바이오텍 RCPS 는 순수 분기복리
                 # (1년 101.5084%) 라 「공제하지 않음」이다. 옛 체크박스(1/0)와 뜻이 같다.
-                t.k_less_cpn = ded_ui("k", t.k_prem, t.k_cmp, t.k_s, "kless_ui", has_tbl=bool(_kl))
+                t.k_less_cpn = ded_ui("k", t.k_prem, t.k_cmp, t.k_s, "kless_ui", has_tbl=bool(_kl),
+                                  hide=any_blank("k_prem", "k_s", "cpn", "d_issue"))
                 t.k_cpn_add = 1 if st.checkbox(
                     "행사일이 이자지급일이면 그 날 이자를 «따로» 받는다",
                     value=bool(getattr(t, "k_cpn_add", 0)), key="kcadd1",
@@ -10476,20 +10597,25 @@ with st.sidebar:
                            "「우선주 + 상환청구권 − 발행자 상환권」입니다.")
             elif t.issuer_call == 2:
                 _k1, _k2 = st.columns(2)
-                t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
-                t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m)
+                t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음",
+                                           fields=("k_s", "k_e"))
+                t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m,
+                                                hide=is_blank("k_s"))
                 _kl = sched_rows(st.session_state.get("ksched_rcps", t.k_sched), t)
-                t.k_prem = st.number_input(
-                    "매수대금 보장수익률 (연 %)", value=t.k_prem*100, step=0.5,
+                _v = st.number_input(
+                    "매수대금 보장수익률 (연 %)", value=bval("k_prem", t.k_prem*100), step=0.5,
                     help="매매대금 = 인수대금 × (1 + 보장수익률 복리)^경과연수. "
                          "계약서의 회차별 매도청구권 행사금액(%) 표와 대조하십시오.",
-                    disabled=bool(_kl))/100
+                    disabled=bool(_kl))
+                t.k_prem = bget("k_prem", _v, t.k_prem, "매도청구 보장수익률", scale=100,
+                                need=not _kl)
                 t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
                                               help="공시 행사금액표가 분기복리면 4. " + HLP_CMP,
                                               disabled=bool(_kl)))
                 # 매도청구 행사금액은 계약마다 갈린다 — 차바이오텍 RCPS 는 순수 분기복리
                 # (1년 101.5084%) 라 「공제하지 않음」이다. 옛 체크박스(1/0)와 뜻이 같다.
-                t.k_less_cpn = ded_ui("k", t.k_prem, t.k_cmp, t.k_s, "kless_ui", has_tbl=bool(_kl))
+                t.k_less_cpn = ded_ui("k", t.k_prem, t.k_cmp, t.k_s, "kless_ui", has_tbl=bool(_kl),
+                                  hide=any_blank("k_prem", "k_s", "cpn", "d_issue"))
                 t.k_cpn_add = 1 if st.checkbox(
                     "행사일이 이자지급일이면 그 날 이자를 «따로» 받는다",
                     value=bool(getattr(t, "k_cpn_add", 0)), key="kcadd2",
@@ -10497,12 +10623,13 @@ with st.sidebar:
                 # 콜 갈래를 바꾸면 derive 가 k_w 를 0(없음)이나 1(발행자 상환권)로
                 # 눌러 놓는다. 그 값을 그대로 보이면 한도가 0% 로 뜨므로, 처음
                 # 열릴 때는 실무에서 흔한 20% 를 채워 둔다. 계약서 값으로 고치면 된다.
-                t.k_w = st.number_input(
-                    "행사 한도 (%)", value=(t.k_w*100 if 0 < t.k_w < 1 else 20.0),
+                _v = st.number_input(
+                    "행사 한도 (%)", value=bval("k_w", (t.k_w*100 if 0 < t.k_w < 1 else 20.0)),
                     step=5.0,
                     help="콜옵션 대상주식이 총 발행금액에서 차지하는 비율입니다. "
                          "실무 계약은 10~20% 가 흔합니다. 계약서의 「콜옵션 대상주식」 "
-                         "조항을 그대로 넣으십시오.")/100
+                         "조항을 그대로 넣으십시오.")
+                t.k_w = bget("k_w", _v, t.k_w, "매도청구 행사 한도", scale=100)
 
                 with st.expander("매도청구 행사금액표 직접 입력 (선택)"):
                     t.k_sched = st.text_area(
@@ -10565,18 +10692,22 @@ with st.sidebar:
                 st.caption("상환권은 투자자만 가집니다.")
           else:
               _k1, _k2 = st.columns(2)
-              t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음")
-              t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m)
+              t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음",
+                                         fields=("k_s", "k_e"))
+              t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m,
+                                              hide=is_blank("k_s"))
               _kl = sched_rows(st.session_state.get("ksched_cb", t.k_sched), t)
-              t.k_prem = st.number_input("프리미엄 (연 %)", value=t.k_prem*100, step=0.5,
-                                         disabled=bool(_kl))/100
+              _v = st.number_input("프리미엄 (연 %)", value=bval("k_prem", t.k_prem*100), step=0.5,
+                                   disabled=bool(_kl))
+              t.k_prem = bget("k_prem", _v, t.k_prem, "매도청구 프리미엄", scale=100, need=not _kl)
               t.k_cmp = int(st.number_input("복리 횟수 (연)", 0, 12, int(t.k_cmp), 1,
                                             help="분기복리 4 · 반기 2 · 연 1. " + HLP_CMP
                                                  + " 계약서의 매수대금 표와 맞는지 확인하십시오.",
                                             disabled=bool(_kl)))
               # 매도청구 행사금액은 계약마다 갈린다 — 차바이오텍 RCPS 는 순수 분기복리
               # (1년 101.5084%) 라 「공제하지 않음」이다. 옛 체크박스(1/0)와 뜻이 같다.
-              t.k_less_cpn = ded_ui("k", t.k_prem, t.k_cmp, t.k_s, "kless_ui", has_tbl=bool(_kl))
+              t.k_less_cpn = ded_ui("k", t.k_prem, t.k_cmp, t.k_s, "kless_ui", has_tbl=bool(_kl),
+                                  hide=any_blank("k_prem", "k_s", "cpn", "d_issue"))
               t.k_cpn_add = 1 if st.checkbox(
                   "행사일이 이자지급일이면 그 날 이자를 «따로» 받는다",
                   value=bool(getattr(t, "k_cpn_add", 0)), key="kcadd3",
@@ -10596,7 +10727,8 @@ with st.sidebar:
                       st.warning("읽지 못한 줄 — " + ", ".join(str(x) for x in _kb[:8]) + "번째.")
               if _kl:
                   for _c in sched_lock_note(_kl, eff_cpn(t), t.k_cmp, ded_of(t, "k"), t.ipay): st.caption(_c)
-              t.k_w = st.number_input("행사 한도 (%)", value=t.k_w*100, step=5.0)/100
+              _v = st.number_input("행사 한도 (%)", value=bval("k_w", t.k_w*100), step=5.0)
+              t.k_w = bget("k_w", _v, t.k_w, "매도청구 행사 한도", scale=100)
               # 있는가 → 언제까지 → 무엇을 막는가. 껐는데 개월 칸이 열려 있으면
               # 그 값이 쓰이는 줄 안다.
               t.k_hold = 1 if st.checkbox(
@@ -10861,7 +10993,7 @@ with st.sidebar:
                        f"{(tdays/250)**0.5:.3f} 배로 나옵니다.")
         st.caption("야후 파이낸스 수정주가를 씁니다. 유상증자·액면분할·배당이 반영된 종가입니다.")
         # 평가기준일까지의 주가로 변동성을 잰다. 기준일 뒤의 값이 섞이면 결산일 평가가 아니다.
-        asof = st.date_input("조회 종료일", value=dt.date.fromisoformat(t.d_base), disabled=_tg,
+        asof = st.date_input("조회 종료일", value=(dt.date.today() if is_blank("d_base") else dt.date.fromisoformat(t.d_base)), disabled=_tg,
                              help="기본은 평가기준일입니다. 기준일 뒤 주가로 변동성을 재면 안 됩니다.")
         drop = st.checkbox("이상치 제거 (중앙값 절대편차 2.5배)", value=True, disabled=_tg,
                            help="MAD × 1.4826 × 2.5 밖의 일간수익률을 뺍니다. "
@@ -10901,12 +11033,12 @@ with st.sidebar:
                            + (f" · 이상치 {v['removed']}개 제거 "
                               f"(정상범위 {v['lo']*100:.2f}% ~ {v['hi']*100:.2f}%)"
                               if v['removed'] else ""))
-                if abs(v["annual"] - t.sig) > 5e-5:
-                    st.warning(f"아직 **적용하지 않았습니다**. 지금 조서에 들어가는 "
-                               f"값은 **{t.sig*100:.2f}%** 입니다. 아래 단추를 "
-                               "누르셔야 산출한 값이 계산에 들어갑니다.")
+                if abs(v["annual"] - t.sig) > 5e-5 or is_blank("sig"):
+                    st.warning(f"아직 **적용하지 않았습니다**. 지금 변동성 칸은 "
+                               + ("**비어 있습니다**" if is_blank("sig") else f"**{t.sig*100:.2f}%** 입니다")
+                               + ". 아래 단추를 누르셔야 산출한 값이 계산에 들어갑니다.")
                 if st.button("이 변동성 적용", use_container_width=True, type="primary"):
-                    t.sig = v["annual"]
+                    t.sig = v["annual"]; bfill("sig")
                     st.rerun()
 
         st.divider()
@@ -10940,7 +11072,8 @@ with st.sidebar:
                        "거래하나」이지 「몇 일치를 받아왔나」가 아닙니다 — 그건 **조회 일수** "
                        f"칸입니다. 지금 값이면 σ 가 √({p_tdays}÷250) = "
                        f"{(p_tdays/250)**0.5:.3f} 배로 나옵니다.")
-        p_asof = st.date_input("조회 종료일", value=dt.date.fromisoformat(t.d_base),
+        p_asof = st.date_input("조회 종료일", value=(dt.date.today() if is_blank("d_base")
+                                                    else dt.date.fromisoformat(t.d_base)),
                                key="p_asof", disabled=_pg,
                                help="기본은 평가기준일입니다. 기준일 뒤 주가로 변동성을 "
                                     "재면 안 됩니다.")
@@ -11005,18 +11138,19 @@ with st.sidebar:
                           {"median": "중앙값", "mean": "단순평균",
                            "max": "최댓값", "min": "최솟값"}[vpick])
                 st.session_state.peer_agg = agg
-                if abs(agg - t.sig) > 5e-5:
-                    st.warning(f"아직 **적용하지 않았습니다**. 지금 조서에 들어가는 값은 "
-                               f"**{t.sig*100:.2f}%** 입니다. 아래 단추를 누르셔야 피어 종합값이 "
-                               "계산에 들어갑니다.")
+                if abs(agg - t.sig) > 5e-5 or is_blank("sig"):
+                    st.warning(f"아직 **적용하지 않았습니다**. 지금 변동성 칸은 "
+                               + ("**비어 있습니다**" if is_blank("sig") else f"**{t.sig*100:.2f}%** 입니다")
+                               + ". 아래 단추를 누르셔야 피어 종합값이 계산에 들어갑니다.")
                 if st.button("피어 종합 적용", use_container_width=True, type="primary"):
-                    t.sig = agg
+                    t.sig = agg; bfill("sig")
         st.session_state.vol_opt = dict(tdays=tdays, drop=drop, pick=vpick,
                                         asof=asof.isoformat(), days=pdays)
         # 비상장이면 산출내역 조서도 피어의 설정으로 적는다 (vol_attach).
         st.session_state.peer_opt = dict(tdays=p_tdays, drop=p_drop, pick=vpick,
                                          asof=p_asof.isoformat(), days=p_pdays)
-        t.sig = st.number_input("변동성 (%)", value=t.sig*100, step=0.5)/100
+        _v = st.number_input("변동성 (%)", value=bval("sig", t.sig*100), step=0.5)
+        t.sig = bget("sig", _v, t.sig, "변동성", scale=100)
         # 배당수익률은 위험중립 드리프트에서 빠진다. 배당은 주주에게 가고
         # 전환 전 투자자는 받지 못하므로 전환권·신주인수권이 그만큼 싸진다.
         # 비상장 성장기업은 0 이 보통이지만 상장 배당기업이면 넣어야 한다.
@@ -11188,6 +11322,8 @@ with st.sidebar:
         elif len(t.rf_curve) < 2 or len(cc) < 2:
             st.error(f"읽힌 줄 — 무위험 {len(t.rf_curve)}개, 위험 {len(cc)}개. "
                      "만기가 다른 값이 각각 두 개 이상 필요합니다.")
+        elif any_blank("d_issue", "d_mat", "d_base"):
+            st.success("곡선을 읽었습니다. 날짜를 넣으면 잔존기간의 금리를 보여 줍니다.")
         else:
             RFq, CRq = curves(t)
             st.success(f"부트스트래핑 완료 · {t.T:.2f}년 무위험 {math.exp(RFq(t.T))-1:.2%} "
@@ -11196,6 +11332,15 @@ with st.sidebar:
             # 예시 곡선이 남았거나 곡선이 잔존기간에 못 미치면 여기서 바로 알린다
             for _cn in curve_notes(t): st.warning(_cn)
 
+    if _MISS:
+        st.caption("빈칸이 남아 있어 시나리오를 저장할 수 없습니다 — 예시 숫자가 섞여 저장되지 "
+                   "않게 하기 위해서입니다.")
+    if st.session_state.get("_miss_prev") != _MISS:
+        _was = st.session_state.get("_miss_prev")
+        st.session_state._miss_prev = list(_MISS)
+        # 역산 버튼은 위에 있어 직전 실행의 목록을 본다. 마지막 칸을 채운 순간 한 번 더 그린다.
+        if _was is not None and not [x for x in _MISS if x != "평가기준일 주가"]:
+            st.rerun()
     st.download_button("시나리오 저장",
                        json.dumps({**asdict(t), "_schema": SCHEMA_VER,
                                    "_meta": {**run_stamp(t),
@@ -11203,7 +11348,7 @@ with st.sidebar:
                                   ensure_ascii=False, indent=2).encode(),
                        f"{lbl(t)['short']}평가_시나리오_{dt.date.today()}.json",
                        "application/json",
-                       use_container_width=True)
+                       use_container_width=True, disabled=bool(_MISS))
 
 # ── 계산 ──
 t = st.session_state.tm
@@ -11216,11 +11361,20 @@ try:
             if (st.session_state.get("prices") and vol_listed()) else None)
 except Exception:
     _pxl = None
-if len(t.rf_curve) < 2 or len(credit_curve(t)) < 2:
-    st.info("**이자율 곡선을 넣으십시오.** 사이드바 「이자율」 칸에 무위험 곡선과 위험 곡선을 "
-            "각각 두 만기 이상 넣어야 계산을 시작합니다 — 평가기준일의 고시 곡선을 쓰십시오. "
-            "KIS-Net 기준수익률 표를 올리고 「이 곡선 적용」을 누르면 고시된 모든 만기가 "
-            "들어갑니다. 시나리오 파일을 불러오면 저장된 곡선이 채워집니다.")
+_need = list(dict.fromkeys(_MISS))
+_nocurve = len(t.rf_curve) < 2 or len(credit_curve(t)) < 2
+if _need or _nocurve:
+    _msg = ["**계산을 시작하려면 아래를 채우십시오.** 첫 실행에는 예시 숫자 대신 빈칸으로 "
+            "시작합니다 — 예시 값이 조서에 섞여 나가지 않게 하기 위해서입니다. 전기 평가의 "
+            "시나리오 파일을 불러오면 저장된 값이 모두 채워집니다."]
+    if _need:
+        _msg.append("- **아직 넣지 않은 칸** — " + ", ".join(_need)
+                    + ". 이자·배당이 없으면 0 을 넣으십시오.")
+    if _nocurve:
+        _msg.append("- **이자율 곡선** — 사이드바 「이자율」 칸에 무위험 곡선과 위험 곡선을 각각 "
+                    "두 만기 이상 넣으십시오. KIS-Net 기준수익률 표를 올리고 「이 곡선 적용」을 "
+                    "누르면 고시된 모든 만기가 들어갑니다.")
+    st.info("\n\n".join(_msg))
     st.stop()
 warn = validate(t, _pxl)
 if warn:
