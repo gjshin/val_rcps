@@ -13,13 +13,11 @@ import streamlit as st
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-_src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read().split("st.set_page_config")[0]
-import sys, types
-_m = sys.modules.get("cbapp_vol") or types.ModuleType("cbapp_vol")
-sys.modules["cbapp_vol"] = _m                                    # dataclass 가 모듈을 찾는다
-exec(compile(_src, "app.py", "exec"), _m.__dict__)
-A = _m.__dict__
-fetch_prices, vol_from = A["fetch_prices"], A["vol_from"]
+from valuation import legacy
+A = vars(legacy)
+
+fetch_prices = st.cache_data(show_spinner=False, ttl=3600)(legacy.fetch_prices)
+vol_from = legacy.vol_from
 parse_prices_multi, read_upload = A["parse_prices_multi"], A["read_upload"]
 build_xlsx_vol = A["build_xlsx_vol"]
 
@@ -36,10 +34,10 @@ def agg(vals, pick):
     return a[len(a)//2] if len(a) % 2 else (a[len(a)//2-1]+a[len(a)//2])/2
 
 
-st.set_page_config(page_title="주가 변동성", layout="centered")
+if not st.session_state.get("_app_embedded"):
+    st.set_page_config(page_title="주가 변동성", layout="centered")
 st.title("주가 변동성")
-st.caption("받은 결과를 **변동성 패키지(JSON)** 로 내려받아 평가 담당(Claude)에게 주십시오. "
-           "평가 도구가 σ 와 산출내역 시트를 조서에 그대로 넣습니다.")
+st.caption("산출 결과를 현재 평가에 적용하거나, 산출 근거가 포함된 파일로 저장할 수 있습니다.")
 
 listed = st.radio("대상회사", ["비상장사 — 피어로 산출", "상장사 — 대상회사 주가"], horizontal=True) \
     .startswith("상장")
@@ -105,6 +103,14 @@ if series:
                     made_at=dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
                     series=[[nm, [[d, float(p)] for d, p in px]] for nm, _, px in vs],
                     per_company=[[nm, v["annual"], v["n"], v["removed"]] for nm, v, _ in vs])
+        if st.session_state.get('_app_embedded') and st.session_state.get('case'):
+            if st.button('이 변동성을 현재 평가에 적용'):
+                from valuation.bridge import apply_volatility
+                from workspace_app import save_case
+                try:
+                    save_case(apply_volatility(st.session_state.case, pack))
+                except ValueError as exc:
+                    st.error(str(exc))
         d1, d2 = st.columns(2)
         d1.download_button("변동성 패키지 (JSON) 내려받기",
                            json.dumps(pack, ensure_ascii=False).encode(),

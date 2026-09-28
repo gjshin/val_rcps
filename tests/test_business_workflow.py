@@ -1,0 +1,209 @@
+"""Business scenarios: evidence reuse, stale outputs, units and optional work."""
+import copy
+import datetime as dt
+import io
+import json
+import zipfile
+from dataclasses import asdict
+
+import pytest
+from openpyxl import load_workbook
+from streamlit.testing.v1 import AppTest
+
+from test_v2_workflow import synthetic, ROOT
+from valuation import legacy
+from valuation.case import Case, FIELDS, import_legacy, inspect_case
+from valuation.presentation import LABELS, event_months
+from valuation.service import calculate, refresh_run, calculation_key, export_bundle, CaseError
+from valuation.analysis import sensitivity
+
+
+def forbidden(*args, **kwargs):
+    raise AssertionError('Unexpected extra pricing/legacy judgement call')
+
+
+def button(app, text):
+    return next(b for b in app.button if b.label == text)
+
+
+def test_metadata_edit_updates_evidence_without_pricing(monkeypatch):
+    case = synthetic()
+    run = calculate(case)
+    for name in ['engine', 'decompose', 'sha_engine', 'validate', 'sha_validate', 'eir_or_none']:
+        monkeypatch.setattr(legacy, name, forbidden)
+    edited = copy.deepcopy(case)
+    edited.name = 'Reviewed case'
+    edited.sources['S0'] = 'Reviewer evidence, page 17'
+    edited.notes = 'Updated after review'
+    edited.assumptions = [dict(field='S0', value=case.market['S0'], rationale='Same input, documented reason')]
+    updated = refresh_run(run, edited)
+    assert updated.raw is run.raw
+    assert updated.summary['amounts_total'] == run.summary['amounts_total']
+    assert updated.summary['case_sha256'] != run.summary['case_sha256']
+    assert updated.summary['calculated_at'] == run.summary['calculated_at']
+    assert run.case.sources.get('S0') != edited.sources['S0']
+    with zipfile.ZipFile(io.BytesIO(export_bundle(updated))) as z:
+        assert json.loads(z.read('case.json'))['notes'] == edited.notes
+        wb = load_workbook(io.BytesIO(z.read('value_review.xlsx')))
+        assert any(c.value == edited.sources['S0'] for row in wb['출처기록'] for c in row)
+
+
+@pytest.mark.parametrize('section,key,value', [
+    ('market', 'S0', 60.), ('market', 'sig', .3), ('contract', 'issue_px', 120.),
+    ('contract', 'face_total', 1000.), ('method', 'gap_m', 1.),
+    ('method', 'd_base', '2025-03-31'), ('contract', 'p_s', 0.),
+])
+def test_changed_calculation_inputs_reject_reuse(section, key, value):
+    case = synthetic(); run = calculate(case)
+    getattr(case, section)[key] = value
+    assert calculation_key(case) != run.summary['calculation_key']
+    with pytest.raises(ValueError, match='다시 평가'):
+        refresh_run(run, case)
+
+
+def test_all_numerical_input_fields_participate_in_reuse_key():
+    case = synthetic(); initial = calculation_key(case)
+    for key, value in case.facts().items():
+        if isinstance(value, (float, int)):
+            changed = copy.deepcopy(case)
+            from valuation.case import section_for
+            getattr(changed, section_for(key))[key] = value + 1
+            assert calculation_key(changed) != initial, key
+
+
+@pytest.mark.parametrize('offset', [0., 1., 12., 12.123456, 59.9999])
+def test_date_display_preserves_original_fractional_months(offset):
+    issue = '2024-02-29'
+    visible = legacy.months_to_date(issue, offset)
+    assert event_months(issue, visible, offset, issue) == offset
+    later = visible + dt.timedelta(days=1)
+    assert legacy.months_to_date(issue, event_months(issue, later, offset, issue)) == later
+
+
+def test_all_inputs_have_human_labels():
+    assert not FIELDS - set(LABELS)
+
+
+def test_no_legacy_auto_judgements_in_basic_evaluation(monkeypatch):
+    monkeypatch.setattr(legacy, 'validate', forbidden)
+    monkeypatch.setattr(legacy, 'sha_validate', forbidden)
+    run = calculate(synthetic())
+    assert not any(i.code == 'engine_review' for i in run.issues)
+    assert any(i.code == 'judgement_scope' for i in run.issues)
+
+
+def test_basic_workpaper_ties_to_result_without_extra_calculation(monkeypatch):
+    run = calculate(synthetic())
+    monkeypatch.setattr(legacy, 'engine', forbidden)
+    monkeypatch.setattr(legacy, 'eir_or_none', forbidden)
+    monkeypatch.setattr(legacy, 'build_xlsx', forbidden)
+    with zipfile.ZipFile(io.BytesIO(export_bundle(run))) as z:
+        wb = load_workbook(io.BytesIO(z.read('value_review.xlsx')))
+        row = next(row for row in wb['평가요약'].values if row[0] == '순포지션 가치')
+        assert row[1] == run.summary['amounts_total']['net']
+        assert row[2] == run.summary['amounts_per_share']['net']
+        assert row[3] == run.summary['amounts_100']['net']
+        assert not {'분리 판단', '회계처리', '99_모형검증'} & set(wb.sheetnames)
+        assert not any(c.data_type == 'f' for ws in wb for row in ws for c in row)
+
+
+def test_sensitivity_prices_only_two_requested_variants(monkeypatch):
+    run = calculate(synthetic())
+    calls = []
+    original = legacy.decompose
+    def spy(tm):
+        calls.append(tm.S0)
+        return original(tm)
+    monkeypatch.setattr(legacy, 'decompose', spy)
+    analysis = sensitivity(run, 'S0', 10.)
+    assert calls == [36., 44.]
+    assert [r['net'] for r in analysis['rows']] == pytest.approx([9e9, 1e10, 11e9])
+    assert run.terms.S0 == 40.
+
+
+def test_rollforward_retains_old_market_date_review():
+    case = synthetic(); case.sources['market_date'] = case.method['d_base']
+    case.method['d_base'] = '2025-03-31'
+    run = calculate(case)
+    assert any(i.code == 'market_date' and '2025-01-01' in i.message for i in run.issues)
+
+
+@pytest.mark.parametrize('schedule', ['invalid row', '2025-04-01 abc'])
+def test_malformed_payment_schedule_blocks_calculation(schedule):
+    case = synthetic(); case.contract['p_sched'] = schedule
+    with pytest.raises(CaseError):
+        calculate(case)
+
+
+@pytest.mark.parametrize('inst', ['CB', 'BW', 'RCPS', 'SHA'])
+def test_instrument_screens_preserve_values_and_only_render_relevant_rights(inst):
+    case = synthetic(); case.contract['inst'] = inst
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=30)
+    app.session_state['case'] = case
+    app.run()
+    assert not app.exception
+    assert [t.label for t in app.tabs] == ['입력', '평가 결과', '조서']
+    assert not any('JSON' in w.label for w in app.text_area)
+    assert not any(w.label == '상환청구 주기(개월)' for w in app.number_input)
+    assert app.session_state['case'].to_dict() == case.to_dict()
+    if inst == 'SHA':
+        assert not any(w.label == '전환·신주인수권 행사 가능' for w in app.checkbox)
+    # Read-only viewing must neither run the engine nor change the saved input.
+    assert 'run' not in app.session_state
+
+
+def test_ui_rerender_evidence_edit_and_basic_export_have_zero_extra_pricing(monkeypatch):
+    case = synthetic()
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=30)
+    app.session_state['case'] = case
+    app.run()
+    button(app, '현재 입력으로 평가').click().run()
+    assert not app.exception
+    old = app.session_state['run']
+    for name in ['engine', 'decompose', 'sha_engine', 'validate', 'eir_or_none']:
+        monkeypatch.setattr(legacy, name, forbidden)
+    app.run()
+    next(w for w in app.text_area if w.label == '검토메모').set_value('Reviewer update')
+    button(app, '출처·메모 저장').click().run()
+    assert not app.exception
+    assert app.session_state['run'].case.notes == 'Reviewer update'
+    assert app.session_state['run'].raw is old.raw
+    button(app, '현재 입력으로 평가').click().run()
+    button(app, '조서 생성').click().run()
+    assert not app.exception
+    assert 'bundle' in app.session_state
+
+
+def test_percent_edit_uses_percent_units_and_blocks_old_export():
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=30)
+    app.session_state['case'] = synthetic()
+    app.run(); button(app, '현재 입력으로 평가').click().run()
+    widget = next(w for w in app.number_input if w.label == '주가 변동성(연, %)')
+    assert widget.value == 25.
+    widget.set_value(30.).run()
+    assert button(app, '조서 생성').disabled
+    button(app, '입력 저장').click().run()
+    assert app.session_state['case'].market['sig'] == .3
+    assert button(app, '조서 생성').disabled
+    assert any('변경 전 입력' in w.value for w in app.warning)
+
+
+@pytest.mark.parametrize('inst', ['CB', 'BW', 'RCPS', 'SHA'])
+@pytest.mark.parametrize('formula', [False, True])
+def test_detailed_exports_retain_formula_dependencies_without_opinion_sheets(inst, formula):
+    case = synthetic(); case.contract['inst'] = inst
+    run = calculate(case)
+    with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, formula=formula))) as z:
+        wb = load_workbook(io.BytesIO(z.read('formula_review.xlsx' if formula else 'value_review.xlsx')))
+        assert not {'해설', '분리 판단', '검산요약', '99_모형검증', '회계처리', '상각표'} & set(wb.sheetnames)
+        assert '결과' in wb.sheetnames
+
+
+def test_reversed_exercise_dates_cannot_silently_remove_a_right():
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=30)
+    app.session_state['case'] = synthetic()
+    app.run()
+    next(w for w in app.date_input if w.label == '전환·신주인수권 행사 시작일').set_value(dt.date(2026, 6, 1)).run()
+    assert button(app, '입력 저장').disabled
+    assert button(app, '현재 입력으로 평가').disabled
+    assert any('시작일이 종료일보다' in w.value for w in app.error)

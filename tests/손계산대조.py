@@ -21,8 +21,8 @@ def load_app():
     stub = types.ModuleType("streamlit"); stub.cache_data = lambda **k: (lambda f: f)
     sys.modules["streamlit"] = stub
     m = types.ModuleType("cbapp"); sys.modules["cbapp"] = m
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    exec(compile(src.split("st.set_page_config")[0], "app.py", "exec"), m.__dict__)
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read()
+    exec(compile(src.split("st.set_page_config")[0], os.path.join(ROOT, "valuation", "legacy.py"), "exec"), m.__dict__)
     return m.__dict__
 
 
@@ -864,41 +864,20 @@ def test_pick_close():
 
 
 def test_bdt_review_gates():
-    """이자율모형 검토 네 관문 — 닫히는 자리와 열리는 자리를 손으로 만든 계약으로 확인한다."""
-    print("\n[23] 이자율모형(BDT) 검토 네 관문")
-    RF = [(1, .030), (3, .031), (5, .032)]
-    rev, sigf = G["bdt_review"], G["rate_signals"]
-    def run(**kw):
-        t = Terms(rf_curve=RF, **kw); derive(t)
-        full, b0, b1, b2, ca, _ = G["decompose"](t)
-        return rev(t, full, b0, b1, b2, ca, sigf(t)), t
-    # (가) 국내 사모 CB 전형 — 위험할인율이 보장수익률보다 훨씬 높다 → ③ 닫힘
-    r, _ = run(cr_curve=[(1, .14), (3, .17), (5, .19)], ytm=.0, S0=10000., K0=10000.)
-    g = {no: ok for no, _, _, ok, _ in r["관문"]}
-    chk_bool("전형 CB — ① 자본 열림", g[1]); chk_bool("전형 CB — ③ 격차 닫힘", not g[3])
-    chk_bool("전형 CB — 결론 «검토했으나 적용하지 않음»", r["결론"].startswith("검토했으나"))
-    chk_bool("전형 CB — 문안에 «결정론적» 이 있다", "결정론적" in r["문안"])
-    # (나) 전환권이 부채 → ① 닫힘
-    r, _ = run(cr_curve=[(1, .14), (3, .17), (5, .19)], conv_class="liability")
-    chk_bool("부채 분류 — ① 닫힘", not {no: ok for no, _, _, ok, _ in r["관문"]}[1])
-    # (다) 우량 발행사 — 자본·외가격·격차 작음: ①②③ 열림
-    r, t = run(cr_curve=[(1, .034), (3, .036), (5, .038)], ytm=.035, ytm_cmp=1, S0=7000., K0=10000., sig=.25)
-    g = {no: ok for no, _, _, ok, _ in r["관문"]}
-    chk_bool("우량 — ① 열림", g[1]); chk_bool("우량 — ② 외가격 열림", g[2]); chk_bool("우량 — ③ 격차 작음 열림", g[3])
-    chk("우량 — 격차 %p", r["지표"]["gap"]*100, (math.exp(G["curves"](t)[1](t.T)) - 1 - .035)*100, 1e-6)
-    chk_bool("우량 — 결론이 «적용 검토» 또는 ④ 닫힘 중 하나로 정해진다",
-             r["결론"].startswith("이자율모형 적용을") or (not g[4] and r["결론"].startswith("검토했으나")))
-    # (라) 조기상환권 없음 → 해당 없음
-    r, _ = run(cr_curve=[(1, .14), (3, .17), (5, .19)], p_s=99., p_e=0.)
-    chk_bool("풋 없음 — 해당 없음", r["결론"] == "해당 없음")
-    # (마) BDT 를 켰으면 왜곡 크기가 있고 문안이 «적용» 이다
-    r, t = run(cr_curve=[(1, .034), (3, .036), (5, .038)], ytm=.035, ytm_cmp=1, S0=7000., K0=10000., put_bdt=1, bdt_sig=.2)
-    chk_bool("BDT 적용 — 왜곡 크기가 있다", r["왜곡"] is not None)
-    chk_bool("BDT 적용 — 문안에 «과소평가» 가 있다", "과소평가" in r["문안"])
-    chk_bool("BDT 적용 — 왜곡 = BDT 부채요소 − TF 부채요소", r["왜곡"] is not None and abs(r["왜곡"]["diff"] - (r["왜곡"]["bdt"] - r["왜곡"]["tf"])) < 1e-9)
-    # (바) 주주간계약은 없음
-    ts = Terms(inst="SHA", rf_curve=RF, cr_curve=[(1, .14), (3, .17), (5, .19)]); derive(ts)
-    chk_bool("주주간계약 — None", rev(ts, {"dist": {}}, 0, 0, 0, 0) is None)
+    """Book 87 provides considerations, not numeric gates; retain the historical test id."""
+    print("\n[23] BDT 판단 경계와 수치 근거")
+    RF = [(1, .03), (3, .031), (5, .032)]
+    for credit, S, cls in [(.19, 10000., 'equity'), (.038, 7000., 'equity'), (.14, 12000., 'liability')]:
+        t = Terms(rf_curve=RF, cr_curve=[(1,credit),(5,credit)], S0=S, K0=10000., conv_class=cls, gap_m=6.)
+        derive(t); full,b0,b1,b2,ca,_=G['decompose'](t)
+        r=G['bdt_review'](t,full,b0,b1,b2,ca)
+        chk_bool('분류·내외가격·금리차로 미적용 확정 금지',r['결론']=='평가자 판단 필요')
+        chk_bool('정성 판단의 예/아니오 자동 기입 금지',all(x[3] is None for x in r['관문']))
+        rd=math.exp(G['curves'](t)[1](t.T))-1
+        m=t.ytm_cmp; gy=(1+t.ytm/m)**m-1 if m else t.ytm
+        chk('관측 금리차 유지',r['지표']['gap'],rd-gy,1e-10)
+    ts=Terms(inst='SHA');derive(ts)
+    chk_bool('주주간계약은 별도 범위',G['bdt_review'](ts,{'dist':{}},0,0,0,0) is None)
 
 
 def test_acc_mode_fv_only():

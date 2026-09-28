@@ -136,8 +136,8 @@ def load_app():
     stub = types.ModuleType("streamlit"); stub.cache_data = lambda **k: (lambda f: f)
     sys.modules["streamlit"] = stub
     m = types.ModuleType("cbapp"); sys.modules["cbapp"] = m
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    exec(compile(src.split("st.set_page_config")[0], "app.py", "exec"), m.__dict__)
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read()
+    exec(compile(src.split("st.set_page_config")[0], os.path.join(ROOT, "valuation", "legacy.py"), "exec"), m.__dict__)
     return m.__dict__
 
 

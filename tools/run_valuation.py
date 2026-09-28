@@ -33,12 +33,11 @@ XL_MAX = 8192                       # 엑셀 한 셀 수식 한도 — 넘으면
 
 
 def load_app():
-    stub = types.ModuleType("streamlit"); stub.cache_data = lambda **k: (lambda f: f)
-    sys.modules["streamlit"] = stub
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    m = types.ModuleType("cbapp"); sys.modules["cbapp"] = m       # dataclass 가 모듈을 찾는다
-    exec(compile(src.split("st.set_page_config")[0], "app.py", "exec"), m.__dict__)
-    return m.__dict__
+    if ROOT not in sys.path:
+        sys.path.insert(0, ROOT)
+    from valuation import legacy
+    return vars(legacy)
+
 
 
 def _num(v):

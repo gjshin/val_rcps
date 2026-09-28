@@ -1,0 +1,53 @@
+[
+  {
+    "name": "다이나믹솔루션_CB9_2026-06-05.json",
+    "intervals": 36,
+    "amounts_100": {
+      "whole_before_call": 136.543314175055,
+      "call_deduction": 33.820253366285236,
+      "net": 102.72306080876976,
+      "host_reference": 79.3715956788193,
+      "put_increment": 16.295652565279468,
+      "conversion_increment": 40.87606593095623
+    },
+    "max_difference_100": 0.0,
+    "basic_bundle_bytes": 41190,
+    "seconds": 0.25341089100038516,
+    "source": "기존 재현 시나리오. RCPS 발행가는 기존 사례 문서에서 보완. 공시·실제 계약 원본을 이번에 재검증한 것은 아님.",
+    "issues": 12
+  },
+  {
+    "name": "대신증권_RCPS_2025-11-29.json",
+    "intervals": 360,
+    "amounts_100": {
+      "whole_before_call": 114.43199727141416,
+      "call_deduction": 20.8527775241906,
+      "net": 93.57921974722356,
+      "host_reference": 105.32802372583382,
+      "put_increment": 0.0,
+      "conversion_increment": 9.103973545580345
+    },
+    "max_difference_100": 0.0,
+    "basic_bundle_bytes": 44387,
+    "seconds": 42.767038133000824,
+    "source": "기존 재현 시나리오. RCPS 발행가는 기존 사례 문서에서 보완. 공시·실제 계약 원본을 이번에 재검증한 것은 아님.",
+    "issues": 13
+  },
+  {
+    "name": "차바이오텍_RCPS_2024-05-16.json",
+    "intervals": 60,
+    "amounts_100": {
+      "whole_before_call": 104.35863247023234,
+      "call_deduction": 5.163016029872961,
+      "net": 99.19561644035937,
+      "host_reference": 53.58421950798575,
+      "put_increment": 24.29755389791508,
+      "conversion_increment": 26.476859064331506
+    },
+    "max_difference_100": 0.0,
+    "basic_bundle_bytes": 44505,
+    "seconds": 0.8346060579997356,
+    "source": "기존 재현 시나리오. RCPS 발행가는 기존 사례 문서에서 보완. 공시·실제 계약 원본을 이번에 재검증한 것은 아님.",
+    "issues": 15
+  }
+]

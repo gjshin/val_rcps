@@ -31,8 +31,8 @@ def load_app():
     stub = types.ModuleType("streamlit"); stub.cache_data = lambda **k: (lambda f: f)
     sys.modules["streamlit"] = stub
     m = types.ModuleType("cbapp"); sys.modules["cbapp"] = m
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
-    exec(compile(src.split("st.set_page_config")[0], "app.py", "exec"), m.__dict__)
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read() + "\nst.set_page_config" + open(os.path.join(ROOT, "legacy_app.py"), encoding="utf-8").read().split("st.set_page_config", 1)[1]
+    exec(compile(src.split("st.set_page_config")[0], os.path.join(ROOT, "valuation", "legacy.py"), "exec"), m.__dict__)
     return m.__dict__, src
 
 
@@ -185,7 +185,7 @@ def terms_enum_fields(G):
     """Terms 필드 중 열거형으로 보이는 것 — int/str 이면서 부동소수 입력이 아닌 것."""
     T = G["Terms"]
     out = {}
-    src = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
+    src = open(os.path.join(ROOT, "valuation", "legacy.py"), encoding="utf-8").read() + "\nst.set_page_config" + open(os.path.join(ROOT, "legacy_app.py"), encoding="utf-8").read().split("st.set_page_config", 1)[1]
     body = src.split("class Terms")[1].split("\ndef ")[0]
     for f, fld in T.__dataclass_fields__.items():
         ty = fld.type if isinstance(fld.type, str) else getattr(fld.type, "__name__", str(fld.type))
