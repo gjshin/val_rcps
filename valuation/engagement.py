@@ -58,7 +58,7 @@ def calculate_engagement(engagement, previous_runs=None):
                          별도풋_원=values['put'] if sha else None, 별도콜_원=values['call'] if sha else None,
                          검토필요=len(run.issues), 입력식별값=case.fingerprint()))
     totals = {key: sum(r[key] or 0 for r in rows) for key in ['본체_원','콜차감_원','순포지션_원','별도풋_원','별도콜_원']}
-    return dict(key=engagement.fingerprint(), runs=runs, rows=rows, totals=totals, currency='KRW',
+    return dict(key=engagement.fingerprint(), runs=runs, rows=rows, totals=totals, currency='KRW', status='draft_independent_aggregate',
                 scope='회차별 독립 평가의 산술 합계입니다. 회차 간 우선순위·상호 희석·교차 조건을 공동 평가하지 않습니다. 주주간계약 풋·콜은 별도 총액이며 순포지션에 합산하지 않습니다.')
 
 
@@ -68,7 +68,7 @@ def engagement_bundle(engagement, result):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     wb = Workbook(); ws = wb.active; ws.title = '회차별총괄'
-    ws.append([engagement.name, engagement.entity, 'KRW']); ws.append([result['scope']]); ws.append([])
+    ws.append([engagement.name, engagement.entity, 'KRW', '검토용 독립 회차 합계']); ws.append([result['scope']]); ws.append([])
     ws.append(list(result['rows'][0]))
     for row in result['rows']:
         ws.append(list(row.values()))

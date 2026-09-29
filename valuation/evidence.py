@@ -167,7 +167,7 @@ def source_version():
 
 
 def review_input_key(case):
-    payload = {k: getattr(case, k) for k in ['contract', 'market', 'method', 'sources', 'assumptions', 'additional_rights', 'contract_scenarios']}
+    payload = {k: getattr(case, k) for k in ['contract', 'market', 'method', 'sources', 'assumptions', 'additional_rights', 'contract_scenarios', 'cashflow_scenarios', 'market_evidence', 'imported_defaults']}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
 

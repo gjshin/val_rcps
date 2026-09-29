@@ -248,6 +248,8 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
         # generated judgement/report prose from this workflow's exports.
         from .report import calculation_sheets_only
         workbook = _evidence_workbook(calculation_sheets_only(workbook), run)
+    from .report import append_controls
+    workbook = append_controls(workbook, run)
     md = [f"# {run.case.name} — 검토용 평가", "",
           "계약조건·시장자료·평가가정·추가권리 반영 여부를 검토하는 산출물입니다.",
           "기존 계산부의 주계약·전환권 차액 및 회계처리는 독립적인 분류 판단을 대체하지 않습니다.", "",
@@ -264,11 +266,52 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
              "judgment_evidence.json": _json(run.summary['judgment_evidence']),
              "applied_inputs.json": _json(input_rows(run)), "review.md": "\n".join(md).encode(),
              ("formula_review.xlsx" if formula else "value_review.xlsx"): workbook}
+    from .controls import blockers, workflow_state
+    files['review_controls.json'] = _json(dict(state=workflow_state(run.case, run), export_status='draft',
+        blockers=blockers(run), records=run.case.review_controls))
+    files['market_evidence.json'] = _json(run.case.market_evidence)
     if previous:
         files["changes.json"] = _json(compare_cases(previous, run.case))
     files["manifest.json"] = _json({name: hashlib.sha256(data).hexdigest() for name, data in files.items()})
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        for name, data in files.items():
+            z.writestr(name, data)
+    return out.getvalue()
+
+
+def export_final_bundle(run: Run) -> bytes:
+    """Final values only; independent review cannot certify live Excel formulas."""
+    from .controls import is_final, blockers
+    if not is_final(run):
+        messages = [r['message'] for r in blockers(run)]
+        raise ValueError('최종 확정본을 만들 수 없습니다. ' + ' / '.join(messages or ['현재 결과를 최종 확정하십시오.']))
+    # A mutable Run must not carry edited figures/terms into the final package.
+    case, terms, issues, normalized = _prepare(run.case)
+    checked = _assemble(case, terms, run.raw, issues, normalized)
+    for key in ('amounts_100', 'amounts_total', 'amounts_per_share', 'applied_terms', 'checks', 'normalizations'):
+        if checked.summary[key] != run.summary[key]:
+            raise ValueError('저장된 결과와 계산 원본이 일치하지 않습니다. 다시 평가하십시오.')
+    if asdict(terms) != asdict(run.terms):
+        raise ValueError('저장된 적용입력이 변경되었습니다. 다시 평가하십시오.')
+    draft = export_bundle(run)
+    with zipfile.ZipFile(io.BytesIO(draft)) as z:
+        files = {name: z.read(name) for name in z.namelist() if name != 'manifest.json'}
+    from .report import append_controls
+    files['final_values.xlsx'] = append_controls(files.pop('value_review.xlsx'), run, final=True)
+    result = copy.deepcopy(run.summary)
+    result['status'] = 'reviewed_final_values'
+    result['finalization'] = copy.deepcopy(run.case.review_controls['final'])
+    files['result.json'] = _json(result)
+    files['review_controls.json'] = _json(dict(state='최종 확정', export_status='final_values', blockers=[], records=run.case.review_controls))
+    files['review.md'] = (f'# {run.case.name} — 최종 값 조서\n\n'
+        '작성자·검토자의 확인 기록에 따라 기본 모형 결과를 확정한 값 조서입니다. '
+        '조건부 분석값은 합산하지 않았습니다. 독립 검산 근거와 계약 반영표를 함께 확인하십시오. '
+        '본 파일은 Microsoft Excel 수식 재계산 검증을 뜻하지 않으며 전자서명도 아닙니다.\n\n' +
+        json.dumps(run.case.review_controls['review'], ensure_ascii=False, indent=2)).encode()
+    files['manifest.json'] = _json({name: hashlib.sha256(data).hexdigest() for name, data in files.items()})
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as z:
         for name, data in files.items():
             z.writestr(name, data)
     return out.getvalue()

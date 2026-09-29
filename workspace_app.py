@@ -214,8 +214,9 @@ def input_editor(case):
     candidate = Case.from_dict(case.to_dict())
     for group in ['contract', 'market', 'method']:
         setattr(candidate, group, {k: v for k, v in edited.items() if section_for(k) == group})
-    changed = {k for k in edited if edited[k] != case.facts().get(k)}
-    candidate.imported_defaults = [k for k in case.imported_defaults if k not in changed]
+    changed = {k for k in edited if k in case.facts() and edited[k] != case.facts()[k]}
+    supplied = {k for k in edited if k not in case.facts() and edited[k] == DEFAULTS.get(k)}
+    candidate.imported_defaults = sorted((set(case.imported_defaults) | supplied) - changed)
     pending = candidate.facts() != case.facts() or bool(draft_errors)
     for message in draft_errors:
         st.error(message)
@@ -323,6 +324,8 @@ def main():
     with entry:
         pending = input_editor(case)
         evidence_editor(case, pending)
+        from review_ui import input_review
+        input_review(case, pending)
     issues = inspect_case(case)
     errors = [i for i in issues if i.severity == 'error']
     with results:
@@ -389,7 +392,10 @@ def main():
                 st.dataframe(pd.DataFrame([{'항목': label(r['field']), '전기': str(r['previous']), '당기': str(r['current'])}
                                           for r in compare_cases(previous, case)]), hide_index=True)
     with workpaper:
+        from review_ui import result_review
+        result_review(case, run, current, pending)
         st.download_button('평가 입력파일 저장', json.dumps(case.to_dict(), ensure_ascii=False, indent=2), '평가입력.json', 'application/json')
+        st.subheader('검토용 조서')
         st.write('기본 조서: 결과 요약, 계약조건, 시장자료, 평가가정, 산술 검산, 확인사항 및 출처 기록')
         st.caption('기본 조서는 저장된 결과로 생성합니다. 추가 평가·회계분개·자동 결론 문안은 포함하지 않습니다.')
         option = st.radio('조서 구성', ['기본 값 조서', '상세 계산 값 조서', '상세 계산 수식 조서'])

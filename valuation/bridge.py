@@ -41,11 +41,13 @@ def apply_changes(case, changes, *, validate=True):
 
 
 def apply_volatility(case, pack):
-    import math
-    if pack.get('kind') != 'vol_pack' or not isinstance(pack.get('sigma'), (int, float)) or not math.isfinite(pack['sigma']) or pack['sigma'] <= 0:
-        raise ValueError('유효한 변동성 산출값이 필요합니다.')
+    import copy
+    from .market_data import validate_pack
     if pack.get('opt', {}).get('asof') != case.effective().get('d_base'):
         raise ValueError('변동성 산출 기준일과 평가기준일이 다릅니다. 기준일을 맞춘 후 적용하십시오.')
-    candidate = apply_changes(case, {'sig': pack['sigma']})
+    validate_pack(pack, asof=case.effective().get('d_base'))
+    # Other required fields may still be blank during input preparation.
+    candidate = apply_changes(case, {'sig': pack['sigma']}, validate=False)
+    candidate.market_evidence['sig'] = copy.deepcopy(pack)
     candidate.sources['sig'] = f"변동성 도구 · {pack.get('source', '')} · {pack['opt']} · 종목별 {pack.get('per_company', [])}"
     return candidate

@@ -15,6 +15,11 @@ def main():
     case = st.session_state.get('case')
     if case is None:
         st.info('평가 작업에서 평가파일을 먼저 열어 주십시오.'); return
+    mode = st.radio('분석 범위', ['부분상환·지급시차·누적배당', '기존 전액상환 일정 분석'], horizontal=True)
+    if mode == '부분상환·지급시차·누적배당':
+        from cashflow_ui import main as partial_main
+        partial_main(case)
+        return
     st.info(SCOPE)
     st.write('전체 배당·상환 일정을 입력하고, 미지급배당의 이자·연장 종료일·사건별 전환가액을 지정합니다. 금액은 원금 100당이며 가용재원은 이 회차에 배분되는 금액입니다.')
     st.caption('기존 배당·상환 일정은 아래 표로 대체합니다. 현재 평가의 전환 행사기간은 유지합니다. 연장 기간의 전환권은 별도 확인하십시오. 상환청구일과 지급일이 다르면 이 분석으로 두 날짜 사이의 권리 소멸을 표현할 수 없습니다.')
