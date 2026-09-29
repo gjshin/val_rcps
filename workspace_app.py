@@ -131,7 +131,11 @@ def right_period(title, start, end, edited, case, extra, errors):
         if not original_on:
             edited.pop(start, None); edited.pop(end, None)
         fields([start, end] + extra, edited, case)
-        if start in edited and end in edited and edited[start] > edited[end]:
+        if not edited.get('d_issue'):
+            errors.append(f'{title}: 실제 발행일을 먼저 입력하십시오.')
+        elif start not in edited or end not in edited:
+            errors.append(f'{title}: 행사 시작일과 종료일을 입력하십시오.')
+        elif edited[start] > edited[end]:
             errors.append(f'{title}: 행사 시작일이 종료일보다 늦습니다.')
     elif original_on or start not in edited:
         edited[start], edited[end] = 99., 0.
