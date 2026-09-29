@@ -104,6 +104,20 @@ def parse_price_table(text, *, allow_missing=False, return_exclusions=False):
     return (out, exclusions) if return_exclusions else out
 
 
+
+def select_price_window(series, exclusions, days, asof):
+    """Select raw observation dates before dropping gaps, just like Yahoo input."""
+    dates = sorted({day for _, rows in series for day, _ in rows} |
+                   {row['date'] for row in exclusions if row['date']})
+    if not dates:
+        raise ValueError('종가 파일에 날짜별 자료가 없습니다.')
+    if dates[-1] > asof:
+        raise ValueError('기준일 이후 자료가 있습니다. 빈 가격의 날짜도 포함하여 원본 기간을 수정하십시오.')
+    first = dates[-days] if len(dates) > days else dates[0]
+    selected = [[name, [[day, price] for day, price in rows if day >= first]] for name, rows in series]
+    return selected, [row for row in exclusions if row['date'] >= first]
+
+
 def _statistics(series, query, options):
     validate_query(query)
     if not isinstance(options, dict) or set(options) != {'tdays', 'drop', 'pick', 'asof', 'days'}:
