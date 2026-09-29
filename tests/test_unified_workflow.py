@@ -3,8 +3,8 @@ import copy
 import datetime as dt
 import hashlib
 import io
-import zipfile
 import math
+import zipfile
 from dataclasses import asdict
 import pytest
 from openpyxl import load_workbook
@@ -211,6 +211,7 @@ def test_shared_detail_basic_views_reuse_run_without_transfer(monkeypatch):
     assert app.session_state.case.to_dict() == case
     assert not any('가져오기' in b.label or '상세 입력으로 계산' == b.label for b in app.button)
 
+
 def test_bdt_detail_does_not_decide_model_from_exercise_ratio_alone():
     case = synthetic()
     case.contract.update(p_s=0., p_e=12.)
@@ -248,7 +249,6 @@ def test_large_detail_workpaper_explains_limit_and_keeps_exact_basic_export(monk
     assert app.session_state.run.summary['calculation_key'] == original_key
     with zipfile.ZipFile(io.BytesIO(app.session_state.bundle)) as z:
         assert 'value_review.xlsx' in z.namelist()
-
 
 
 def test_contract_review_screen_has_no_document_uploader_or_ai_endpoint():
