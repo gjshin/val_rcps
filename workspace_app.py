@@ -13,10 +13,10 @@ from valuation.legacy import Terms, months_to_date
 from valuation.presentation import CHOICES, PERCENT, EVENT_DATES, label, display_value, event_months, issue_rows
 from valuation.service import AMOUNT_LABELS, calculate, calculation_key, refresh_run, export_bundle
 from valuation.analysis import sensitivity
+
 # Historical detailed workbooks materialise multiple full node lattices in memory.
 # The basic value workpaper exports the exact saved run without rebuilding lattices.
 MAX_INTERACTIVE_DETAIL_STEPS = 120
-
 
 TYPES = get_type_hints(Terms)
 DEFAULTS = asdict(Terms())
@@ -530,8 +530,8 @@ def main():
                          '상세 계산 값 조서로 저장하거나 계산 간격을 늘리고 재평가하십시오.')
         bundle_key = (case.fingerprint(), option, previous.fingerprint() if previous else None) if current else None
         if current and not pending and st.session_state.get('bundle_key') == bundle_key and 'bundle' in st.session_state:
-            st.success(f'조서 생성 완료 · {len(data) / 1024 / 1024:.1f} MB. 아래에서 Excel 파일이나 전체 묶음을 저장하십시오.')
             data = st.session_state.bundle
+            st.success(f'조서 생성 완료 · {len(data) / 1024 / 1024:.1f} MB. 아래에서 Excel 파일이나 전체 묶음을 저장하십시오.')
             st.download_button('평가 조서 묶음 저장', data, '평가조서.zip', 'application/zip')
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 name = next(n for n in z.namelist() if n.endswith('.xlsx'))
