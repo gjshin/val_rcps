@@ -141,7 +141,8 @@ def _assemble(case, terms, raw, issues, normalized):
         "amounts_per_share": {k: v * terms.issue_px / 100 for k, v in amounts.items()}
                              if legacy.is_rcps(terms) else None,
         "grid": {"intervals": terms.n, "average_days": terms.T*365/terms.n,
-                 "requested_months": terms.gap_m, "type": "legacy_equal_time"},
+                 "requested_months": terms.gap_m, "requested_days": terms.grid_days,
+                 "type": "day_target_equal_time" if terms.grid_days else "legacy_equal_time"},
         "normalizations": normalized,
         "applied_terms": asdict(terms),
         "engine_defaults": sorted(FIELDS - set(case.effective())),
@@ -226,49 +227,45 @@ def _evidence_workbook(data: bytes, run: Run) -> bytes:
 
 
 def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = None,
-                  detail: bool = False) -> bytes:
+                  detail: bool = False, accounting: bool = False) -> bytes:
     """Export the exact run snapshot; refuse implicit approximate formula conversion."""
     terms = copy.deepcopy(run.terms)
     if formula and terms.carry == 0 and terms.rfx_mode > 0:
         raise ValueError("상태확장 리픽싱은 동일한 수식 조서로 내보낼 수 없습니다. 값 조서를 사용하십시오.")
+    from .report import basic_workbook, append_basic_accounting, finish_calculation_workbook
     if not formula and not detail:
-        from .report import basic_workbook
-        workbook = basic_workbook(run, previous=previous)
-    elif legacy.is_sha(terms):
-        workbook = legacy.build_xlsx_sha(terms, run.raw, formula=formula)
+        wb = basic_workbook(run, previous=previous, as_workbook=True)
+        if accounting:
+            append_basic_accounting(wb, run)
     else:
-        r = run.raw
-        # Amortised-cost accounting is outside this calculation-only export.
-        # Omitting EIR avoids both an unrelated backsolve and formula links to
-        # an amortisation sheet that this workflow intentionally excludes.
-        args = (terms, r["full"], r["b0"], r["b1"], r["b2"], r["ca"], r["conv"], None)
-        workbook = (legacy.build_xlsx_formula if formula else legacy.build_xlsx)(*args)
-    if formula or detail:
-        # Historical calculation sheets are optional. Remove automatically
-        # generated judgement/report prose from this workflow's exports.
-        from .report import calculation_sheets_only
-        workbook = _evidence_workbook(calculation_sheets_only(workbook), run)
-    from .report import append_controls
-    workbook = append_controls(workbook, run)
-    md = [f"# {run.case.name} — 검토용 평가", "",
-          "계약조건·시장자료·평가가정·추가권리 반영 여부를 검토하는 산출물입니다.",
-          "기존 계산부의 주계약·전환권 차액 및 회계처리는 독립적인 분류 판단을 대체하지 않습니다.", "",
+        pack = run.case.market_evidence.get('sig')
+        attach = dict(px=(pack['series'], pack['opt']) if pack else None, ir=True)
+        if legacy.is_sha(terms):
+            wb = legacy.build_xlsx_sha(terms, run.raw, formula=formula, attach=attach, as_workbook=True)
+        else:
+            r = run.raw
+            args = (terms, r["full"], r["b0"], r["b1"], r["b2"], r["ca"])
+            eir = legacy.eir_or_none(*args) if accounting else None
+            wb = (legacy.build_xlsx_formula if formula else legacy.build_xlsx)(
+                *args, r['conv'], eir, attach=attach, as_workbook=True, include_review=False)
+    workbook = finish_calculation_workbook(wb, run, formula=formula, accounting=accounting)
+    md = [f"# {run.case.name} — 계산 결과", "",
           f"- 입력 SHA256: {run.summary['case_sha256']}",
           f"- 코드 SHA256: {run.summary['code_sha256']}",
           f"- 구간 수: {terms.n}; 평균 일수: {run.summary['grid']['average_days']:.6f}", "",
           "| 결과 | 100 기준 | 총액 |", "|---|---:|---:|"]
     for key, value in run.summary["amounts_100"].items():
         md.append(f"| {AMOUNT_LABELS[key]} | {value:,.6f} | {run.summary['amounts_total'][key]:,.0f} |")
-    md += ["", "검토사항", ""] + [f"- [{i.severity}] {i.field}: {i.message}" for i in run.issues]
+    numeric_issues = [i for i in run.issues if i.code not in {'source', 'legacy_defaults', 'engine_defaults', 'judgement_scope', 'market_date'}]
+    md += ["", "확인할 사항", ""] + [f"- {i.field}: {i.message}" for i in numeric_issues]
     md += ["", "수식 조서는 선택한 계산방법을 유지합니다. 이 실행에서 Excel 전체 재계산은 수행하지 않았습니다."
            if formula else "값 조서는 이 실행의 결과 스냅샷입니다."]
-    files = {"case.json": _json(run.case.to_dict()), "result.json": _json(run.summary),
-             "judgment_evidence.json": _json(run.summary['judgment_evidence']),
+    output_summary = {k:v for k,v in run.summary.items() if k != 'judgment_evidence'}
+    output_summary['status'] = 'calculation'
+    output_summary['issues'] = [asdict(i) for i in numeric_issues]
+    files = {"case.json": _json(run.case.to_dict()), "result.json": _json(output_summary),
              "applied_inputs.json": _json(input_rows(run)), "review.md": "\n".join(md).encode(),
              ("formula_review.xlsx" if formula else "value_review.xlsx"): workbook}
-    from .controls import blockers, workflow_state
-    files['review_controls.json'] = _json(dict(state=workflow_state(run.case, run), export_status='draft',
-        blockers=blockers(run), records=run.case.review_controls))
     files['market_evidence.json'] = _json(run.case.market_evidence)
     if previous:
         files["changes.json"] = _json(compare_cases(previous, run.case))
