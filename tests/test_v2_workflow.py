@@ -138,8 +138,9 @@ def test_export_keeps_input_evidence_and_manifest(formula):
         assert "changes.json" in z.namelist()
         name = "formula_review.xlsx" if formula else "value_review.xlsx"
         wb = load_workbook(io.BytesIO(z.read(name)), data_only=False)
-        assert wb.sheetnames[:3] == (["V2_검토기록", "V2_계약과가정", "V2_추가권리"] if formula else ["평가요약", "계약조건", "시장자료"])
-        sheet = wb['V2_계약과가정'] if formula else wb['시장자료']
+        assert not {"V2_검토기록", "V2_계약과가정", "V2_추가권리"} & set(wb.sheetnames)
+        assert "계산정보" in wb and "확인사항" in wb
+        sheet = wb['출처기록'] if formula else wb['시장자료']
         cells = [cell for row in sheet for cell in row if cell.value == case.sources["S0"]]
         assert cells and all(cell.data_type == "s" for cell in cells)
 
