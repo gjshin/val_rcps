@@ -5,7 +5,7 @@ import json
 import pandas as pd
 import streamlit as st
 from valuation import legacy
-from valuation.market_data import query_spec, digest, make_pack, validate_pack, aggregate, parse_price_table
+from valuation.market_data import query_spec, digest, make_pack, validate_pack, aggregate, parse_price_table, select_price_window
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_prices(*args, **kwargs):
@@ -76,11 +76,7 @@ def main():
                     source = '야후 파이낸스 · 수정주가 · ' + ' / '.join(sources)
                 else:
                     parsed, exclusions = parse_price_table(legacy.read_upload(upload.name, upload.getvalue()), allow_missing=allow_missing, return_exclusions=True)
-                    # Only a trailing window may be selected; future observations are never quietly trimmed.
-                    for name, rows in parsed:
-                        if any(str(d) > asof.isoformat() for d, _ in rows):
-                            raise ValueError(f'{name}: 기준일 이후 자료가 있습니다. 원본 파일의 기간을 수정하십시오.')
-                        got.append([name, [[str(d), float(p)] for d, p in rows[-days:]]])
+                    got, exclusions = select_price_window(parsed, exclusions, days, asof.isoformat())
                     source = '사용자 종가 파일: ' + upload.name
                 retrieved_at = dt.datetime.now(dt.timezone.utc).isoformat()
                 make_pack(got, query, tdays=tdays, drop=drop, pick=pick, source=source, retrieved_at=retrieved_at, exclusions=exclusions)
