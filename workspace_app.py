@@ -14,10 +14,6 @@ from valuation.presentation import CHOICES, PERCENT, EVENT_DATES, label, display
 from valuation.service import AMOUNT_LABELS, calculate, calculation_key, refresh_run, export_bundle
 from valuation.analysis import sensitivity
 
-# Historical detailed workbooks materialise multiple full node lattices in memory.
-# The basic value workpaper exports the exact saved run without rebuilding lattices.
-MAX_INTERACTIVE_DETAIL_STEPS = 120
-
 TYPES = get_type_hints(Terms)
 DEFAULTS = asdict(Terms())
 COUNTS = {'sha_put_cmp', 'sha_call_cmp', 'cur_periods', 'ytm_cmp', 'k_cmp', 'cmp_rf', 'cmp_cr', 'p_cmp'}
@@ -244,8 +240,20 @@ def input_editor(case, autosave=False):
             field('sha_qipo_kill' if inst == 'SHA' else 'ipo_conv', edited, case)
         fields(['unmod_note', 'base_shares', 'dil_shares'], edited, case)
     st.subheader('시장자료 및 계산방법')
-    fields(['S0', 'sig', 'div_y', 'model', 'gap_m', 'y_type', 'cmp_rf', 'cmp_cr'], edited, case)
-    st.caption('비율은 % 단위입니다. 계산 간격은 월 환산값이며 실제 격자는 동일 시간 간격입니다. 정확한 7일 격자는 지원하지 않습니다.')
+    fields(['S0', 'sig', 'div_y', 'model'], edited, case)
+    grid_choices = {0: '월', 14: '2주(14일 기준)', 7: '주(7일 기준)'}
+    grid = st.selectbox('계산 간격 단위', list(grid_choices),
+                        index=list(grid_choices).index(int(edited.get('grid_days', 0))),
+                        format_func=grid_choices.get, key=f'grid_unit_{st.session_state.get("revision", 0)}')
+    if grid or 'grid_days' in edited:
+        edited['grid_days'] = float(grid)
+    st.session_state._rendered_fields.add('grid_days')
+    if grid == 0:
+        field('gap_m', edited, case)
+    else:
+        st.caption('평가기준일과 만기일 사이를 선택한 일수에 가장 가까운 동일 간격으로 나눕니다. 실제 평균 일수는 평가 결과에 표시합니다.')
+    fields(['y_type', 'cmp_rf', 'cmp_cr'], edited, case)
+    st.caption('비율은 % 단위입니다. 주·2주 간격은 월 간격보다 평가와 조서 생성에 시간이 더 걸립니다.')
     curve_editor('rf_curve', edited); curve_editor('cr_curve', edited)
     with st.expander('금리곡선·BDT 상세 설정'):
         field('rate_mode', edited, case)
@@ -319,28 +327,13 @@ def evidence_editor(case, pending=False):
                 candidate = Case.from_dict(case.to_dict())
                 candidate.assumptions = [r for r in candidate.assumptions if r['field'] != key]
                 candidate.assumptions.append(dict(field=key, value=proposed[key], rationale=reason)); save_case(candidate)
-    with st.expander('별도 검토가 필요한 계약조건'):
-        st.caption('아래 권리는 등록해도 직접 계산되지 않습니다. 미해결·제외·가정에 따른 근사 중 처리방식을 남기십시오.')
-        for idx, row in enumerate(case.additional_rights):
-            st.write(f"{RIGHT_KINDS[row['kind']]} · {row['clause']} · {row['rationale']}")
-            if st.button('이 계약조건 삭제', key=f'del_right_{idx}_{rev}', disabled=pending):
-                candidate = Case.from_dict(case.to_dict()); candidate.additional_rights.pop(idx); save_case(candidate)
-        kind = st.selectbox('권리 유형', list(RIGHT_KINDS), format_func=RIGHT_KINDS.get, key=f'kind_{rev}')
-        clause = st.text_input('계약 조항·원문', key=f'clause_{rev}')
-        choices = {'unresolved': '미해결', 'excluded': '평가에서 제외', 'scenario': '별도 가정으로 근사'}
-        treatment = st.selectbox('처리방식', list(choices), format_func=choices.get, key=f'treatment_{rev}')
-        reason = st.text_input('처리 근거·남은 확인사항', key=f'right_reason_{rev}')
-        links = st.multiselect('연결할 평가가정', [r['field'] for r in case.assumptions], format_func=label, key=f'links_{rev}') if treatment == 'scenario' else []
-        if st.button('계약조건 기록', disabled=pending or not clause.strip() or (treatment != 'unresolved' and not reason.strip()) or (treatment == 'scenario' and not links)):
-            candidate = Case.from_dict(case.to_dict())
-            candidate.additional_rights.append(dict(kind=kind, clause=clause, treatment=treatment, rationale=reason, assumption_fields=links)); save_case(candidate)
 
 
 def main():
     if not st.session_state.get('_app_embedded'):
         st.set_page_config(page_title='복합금융상품 평가', layout='wide')
     st.title('복합금융상품 평가')
-    st.caption('계약 검토 → 입력·시장자료 → 평가·분석 → 검토조서 → 조서 출력')
+    st.caption('입력·시장자료 → 평가·분석 → 조서 출력')
     with st.sidebar:
         st.subheader('평가파일')
         with st.expander('새 평가 만들기'):
@@ -383,17 +376,15 @@ def main():
     case = st.session_state.case
     st.subheader(f'{case.name} · {case.contract.get("inst", "")}')
     # One active step only: hidden analyses never execute on input changes.
-    stage = st.radio('평가 진행', ['계약 검토', '입력·시장자료', '평가·분석', '검토조서', '조서 출력'],
-                     index=1, horizontal=True, key='_workflow_stage')
+    if st.session_state.get('_workflow_stage') not in (None, '입력·시장자료', '평가·분석', '조서 출력'):
+        st.session_state['_workflow_stage'] = '입력·시장자료'
+    stage = st.radio('평가 진행', ['입력·시장자료', '평가·분석', '조서 출력'],
+                     index=0, horizontal=True, key='_workflow_stage')
     st.sidebar.download_button('평가파일 저장', json.dumps(case.to_dict(), ensure_ascii=False, indent=2), '평가입력.json', 'application/json')
     st.sidebar.caption('입력은 현재 세션에 반영됩니다. 종료 전 평가파일을 저장하십시오.')
     pending = st.session_state.get('_input_pending', False)
     if pending and stage != '입력·시장자료':
         st.warning('입력화면에 저장되지 않은 오류가 있습니다. 입력·시장자료에서 확인하십시오.')
-    if stage == '계약 검토':
-        from contract_ui import main as contract_review
-        contract_review(case)
-        return
     if stage == '입력·시장자료':
         area = st.radio('입력 항목', ['계약·평가 입력', '주가·변동성·금리 자료', '출처·평가가정'], horizontal=True, key='_input_area')
         if area == '계약·평가 입력':
@@ -403,20 +394,6 @@ def main():
             market_tools(case)
         else:
             evidence_editor(case)
-        return
-    if stage == '검토조서':
-        review_kind = st.radio('검토 항목', ['계약·회계 판단', '입력 적정성', '독립 검산·승인'], horizontal=True)
-        if review_kind == '계약·회계 판단':
-            import evidence_ui
-            evidence_ui.main()
-        elif review_kind == '입력 적정성':
-            from review_ui import input_review
-            input_review(case)
-        else:
-            from review_ui import result_review
-            saved = st.session_state.get('run')
-            valid = saved is not None and not any(i.severity == 'error' for i in inspect_case(case)) and saved.summary['calculation_key'] == calculation_key(case)
-            result_review(case, saved, valid, pending)
         return
     issues = inspect_case(case)
     errors = [i for i in issues if i.severity == 'error']
@@ -457,12 +434,9 @@ def main():
             st.subheader('산술 검산')
             st.dataframe(pd.DataFrame([{'검사': r['name'], '결과': '통과' if r['passed'] else '차이 발생', '범위': r['detail']}
                                       for r in run.summary['checks']]), hide_index=True)
-            st.subheader('평가자가 확인할 사항')
-            from valuation.evidence import evidence_cards
-            cards = evidence_cards(case)
-            incomplete = sum(c['status'] not in {'검토 완료', '해당 없음'} for c in cards)
-            st.caption(f'관련 판단 주제 {len(cards)}개 · 미완료·재검토 {incomplete}개. 「검토조서 → 계약·회계 판단」에서 기준서 발췌와 실무사례를 확인하고 검토기록을 남길 수 있습니다.')
-            st.dataframe(pd.DataFrame(issue_rows(run.issues)), hide_index=True)
+            st.subheader('확인할 사항')
+            numerical_issues = [i for i in run.issues if i.code not in {'source', 'legacy_defaults', 'engine_defaults', 'judgement_scope', 'market_date'}]
+            st.dataframe(pd.DataFrame(issue_rows(numerical_issues)), hide_index=True)
             with st.expander('추가 분석 — 선택한 변수만 계산'):
                 variable = st.selectbox('민감도 변수', ['S0', 'sig', 'rf_curve', 'cr_curve'], format_func=label)
                 magnitude = st.number_input('변화폭(주당가치는 %, 변동성·금리는 %p)', min_value=.01, max_value=50. if variable == 'S0' else 10., value=10. if variable == 'S0' else 1.)
@@ -494,41 +468,32 @@ def main():
     if stage == '조서 출력':
         run = st.session_state.get('run')
         current = run is not None and not errors and run.summary['calculation_key'] == calculation_key(case)
-        from review_ui import result_review
-        result_review(case, run, current, pending)
         st.download_button('평가 입력파일 저장', json.dumps(case.to_dict(), ensure_ascii=False, indent=2), '평가입력.json', 'application/json')
-        st.subheader('검토용 조서')
-        st.write('기본 조서: 결과 요약, 계약조건, 시장자료, 평가가정, 산술 검산, 확인사항 및 출처 기록')
-        st.caption('기본 조서는 저장된 결과로 생성합니다. 추가 평가·회계분개·자동 결론 문안은 포함하지 않습니다.')
+        st.subheader('계산 조서')
+        st.write('기본 조서: 평가 결과, 적용 입력, 금리·변동성 자료, 산술 검산 및 확인할 사항')
         option = st.radio('조서 구성', ['기본 값 조서', '상세 계산 값 조서', '상세 계산 수식 조서'])
+        accounting = st.checkbox('회계처리·분개·상각표 포함 (초안)', value=False)
         if option != '기본 값 조서':
-            st.info('상세 조서는 추가 계산과 대형 격자 생성에 시간이 걸릴 수 있습니다. 자동 회계판단·분개 시트는 제외합니다. 수식 조서의 Excel 재계산은 이 화면에서 수행하지 않습니다.')
+            st.info('상세 조서는 모든 계산 노드를 포함합니다. 주 간격의 장기 평가에서는 생성에 시간이 걸릴 수 있습니다.')
         if not current:
             st.warning('현재 입력으로 평가·분석 단계에서 먼저 평가를 실행하십시오. 입력을 바꾼 뒤에는 재평가해야 조서를 만들 수 있습니다.')
         elif pending:
             st.warning('입력·시장자료 단계에서 저장되지 않은 입력을 확인하십시오.')
-        too_large = (current and option != '기본 값 조서'
-                     and run.terms.n > MAX_INTERACTIVE_DETAIL_STEPS)
-        if too_large:
-            st.warning(f'현재 {run.terms.n:,}구간의 상세 노드 조서는 앱 서버에서 생성하지 않습니다. '
-                       f'이 화면의 상세 조서는 최대 {MAX_INTERACTIVE_DETAIL_STEPS:,}구간까지 지원합니다. '
-                       '동일한 평가결과의 요약·입력·검산 내역은 ‘기본 값 조서’로 저장할 수 있습니다. '
-                       '상세 노드나 수식 재계산이 꼭 필요하면 입력·시장자료에서 계산 간격을 늘리고, '
-                       '평가·분석에서 다시 평가한 뒤 상세 조서를 생성하십시오. '
-                       '간격을 바꾸면 평가결과가 달라질 수 있으므로 두 결과를 비교해야 합니다.')
-        if st.button('조서 생성', disabled=not current or pending or too_large):
+        if current:
+            st.caption(f'현재 평가: {run.terms.n:,}구간 · 평균 {run.summary["grid"]["average_days"]:.4f}일. 조서도 같은 격자를 사용합니다.')
+        if st.button('조서 생성', disabled=not current or pending):
             st.session_state.pop('bundle', None)
             st.session_state.pop('bundle_key', None)
             try:
                 with st.spinner('조서를 생성하고 입력·결과 기록을 묶는 중입니다.'):
-                    st.session_state.bundle = export_bundle(run, formula=option == '상세 계산 수식 조서', detail=option != '기본 값 조서', previous=previous)
-                    st.session_state.bundle_key = (run.case.fingerprint(), option, previous.fingerprint() if previous else None)
+                    st.session_state.bundle = export_bundle(run, formula=option == '상세 계산 수식 조서', detail=option != '기본 값 조서', previous=previous, accounting=accounting)
+                    st.session_state.bundle_key = (run.case.fingerprint(), option, accounting, previous.fingerprint() if previous else None)
             except (ValueError, ArithmeticError) as exc:
                 st.error(f'조서를 생성하지 못했습니다: {exc}')
             except (MemoryError, OSError, RuntimeError, OverflowError) as exc:
                 st.error(f'조서 생성 중 서버 자원 또는 파일 처리 오류가 발생했습니다 ({type(exc).__name__}). '
                          '상세 계산 값 조서로 저장하거나 계산 간격을 늘리고 재평가하십시오.')
-        bundle_key = (case.fingerprint(), option, previous.fingerprint() if previous else None) if current else None
+        bundle_key = (case.fingerprint(), option, accounting, previous.fingerprint() if previous else None) if current else None
         if current and not pending and st.session_state.get('bundle_key') == bundle_key and 'bundle' in st.session_state:
             data = st.session_state.bundle
             st.success(f'조서 생성 완료 · {len(data) / 1024 / 1024:.1f} MB. 아래에서 Excel 파일이나 전체 묶음을 저장하십시오.')
