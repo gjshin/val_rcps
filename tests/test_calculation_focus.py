@@ -183,3 +183,13 @@ def test_explicit_failed_peer_exception_in_ui(monkeypatch):
     assert len(app.session_state.vol_snapshot['series'])==1
     next(b for b in app.button if b.label=='산출내역 엑셀 생성').click().run()
     assert not app.exception and app.session_state.vol_xlsx
+
+
+def test_invalid_saved_grid_is_reported_without_silent_coercion():
+    case=synthetic();case.method['grid_days']=7.1
+    app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=60)
+    app.session_state.case=case;app.run()
+    assert not app.exception and app.error
+    assert app.session_state.case.method['grid_days']==7.1
+    next(w for w in app.selectbox if w.label=='계산 간격 단위').set_value(7).run()
+    assert not app.exception and app.session_state.case.method['grid_days']==7.
