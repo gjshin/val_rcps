@@ -73,6 +73,9 @@ class Case:
     additional_rights: list = field(default_factory=list)
     judgments: dict = field(default_factory=dict)
     contract_scenarios: list = field(default_factory=list)
+    cashflow_scenarios: list = field(default_factory=list)
+    market_evidence: dict = field(default_factory=dict)
+    review_controls: dict = field(default_factory=dict)
     imported_defaults: list = field(default_factory=list)
     notes: str = ""
 
@@ -86,16 +89,30 @@ class Case:
         case = cls(**copy.deepcopy(obj))
         if not isinstance(case.name, str) or not case.name.strip():
             raise ValueError("평가 건명을 입력하십시오.")
-        for key in ("contract", "market", "method", "sources", "judgments"):
+        for key in ("contract", "market", "method", "sources", "judgments", "market_evidence", "review_controls"):
             if not isinstance(getattr(case, key), dict):
                 raise ValueError(f"{key}: 객체 형식이 필요합니다.")
-        for key in ("assumptions", "additional_rights", "imported_defaults", "contract_scenarios"):
+        for key in ("assumptions", "additional_rights", "imported_defaults", "contract_scenarios", "cashflow_scenarios"):
             if not isinstance(getattr(case, key), list):
                 raise ValueError(f"{key}: 목록 형식이 필요합니다.")
         if not all(isinstance(k, str) and k in FIELDS for k in case.imported_defaults):
             raise ValueError("기본값 보충 목록에는 유효한 항목명만 기록할 수 있습니다.")
         if not isinstance(case.notes, str):
             raise ValueError("notes에는 문자열이 필요합니다.")
+        from .cashflows import validate_shape
+        names = set()
+        for scenario in case.cashflow_scenarios:
+            validate_shape(scenario)
+            if scenario['name'] in names:
+                raise ValueError('현금흐름 분석 이름이 중복됩니다.')
+            names.add(scenario['name'])
+        from .controls import validate_controls
+        validate_controls(case.review_controls)
+        if set(case.market_evidence) - {'sig'}:
+            raise ValueError('지원하지 않는 시장자료 증빙 항목입니다.')
+        if 'sig' in case.market_evidence:
+            from .market_data import validate_pack
+            validate_pack(case.market_evidence['sig'])
         from .contract_analysis import FIELDS as SCENARIO_FIELDS, ROW_FIELDS
         names = set()
         for row in case.contract_scenarios:

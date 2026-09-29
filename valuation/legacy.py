@@ -4610,9 +4610,12 @@ def fetch_prices(code: str, days: int, market: str, end: str = None):
                 errs.append(f"{sym} 자료 없음"); continue
             if hasattr(df.columns, "nlevels") and df.columns.nlevels > 1:
                 df = df.droplevel(1, axis=1)
-            col = "Close" if "Close" in df.columns else df.columns[0]
-            sr = df[col].dropna()
-            rows = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in sr.items() if v > 0]
+            if "Close" not in df.columns:
+                raise ValueError('수정종가 Close 열이 없습니다.')
+            sr = df['Close'].tail(days)
+            if any(not math.isfinite(float(v)) or float(v) <= 0 for v in sr):
+                raise ValueError('조회 기간에 누락·0·음수 주가가 있습니다. 원자료를 확인하십시오.')
+            rows = [(i.strftime("%Y-%m-%d"), float(v)) for i, v in sr.items()]
             if len(rows) >= 10:
                 return rows[-days:], f"야후 {sym} · 수정주가"
             errs.append(f"{sym} {len(rows)}개")

@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from valuation.case import Case, import_legacy, inspect_case
-from valuation.service import CaseError, calculate, export_bundle
+from valuation.service import CaseError, calculate, export_bundle, export_final_bundle
 
 
 def main(argv=None):
@@ -20,7 +20,10 @@ def main(argv=None):
     parser.add_argument("--previous", type=Path)
     parser.add_argument("--formula", action="store_true")
     parser.add_argument("--detail", action="store_true", help="상세 계산 시트 포함(기본은 간단한 값 조서)")
+    parser.add_argument('--final', action='store_true', help='검토·확정 기록이 유효한 경우에만 최종 값 조서 생성')
     args = parser.parse_args(argv)
+    if args.final and (args.formula or args.detail or args.import_legacy or args.inspect):
+        parser.error('--final은 현재 평가의 기본 값 조서에만 사용할 수 있습니다.')
     if not args.inspect and args.out is None:
         parser.error("--out 출력 파일이 필요합니다.")
     try:
@@ -35,7 +38,7 @@ def main(argv=None):
         else:
             previous = Case.from_dict(json.loads(args.previous.read_text(encoding="utf-8"))) if args.previous else None
             run = calculate(case)
-            data = export_bundle(run, formula=args.formula, detail=args.detail, previous=previous)
+            data = export_final_bundle(run) if args.final else export_bundle(run, formula=args.formula, detail=args.detail, previous=previous)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_bytes(data)
         print(f"저장: {args.out}")

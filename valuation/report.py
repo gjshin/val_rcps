@@ -32,6 +32,8 @@ def basic_workbook(run, previous=None):
         return ws
 
     tm, summary = run.terms, run.summary
+    from .controls import input_key
+    defaults_checked = run.case.review_controls.get('defaults', {}).get('input_key') == input_key(run.case)
     result_rows = [['평가 결과', '총액(원)', '1주당 가치(원, RCPS)', '원금 100 기준'],
                    ['건명', run.case.name], ['평가기준일', tm.d_base], ['상품·회차', tm.inst, tm.tranche],
                    ['평가대상 발행금액·투자원금(원)', tm.face_total],
@@ -59,7 +61,7 @@ def basic_workbook(run, previous=None):
                 continue
             rows.append([label(key), display_value(key, run.case.facts().get(key), tm.d_issue),
                          display_value(key, value, tm.d_issue), assumptions.get(key, {}).get('rationale', ''),
-                         run.case.sources.get(key, ''), '보충값 확인 필요' if key in run.case.imported_defaults or key in summary['engine_defaults'] else ''])
+                         run.case.sources.get(key, ''), ('보충값 확인 완료' if defaults_checked else '보충값 확인 필요') if key in run.case.imported_defaults or key in summary['engine_defaults'] else ''])
         sheet(name, rows)
     curves = [['금리곡선', '만기(년)', '원본 연이율(%)', '가정 적용 연이율(%)', '출처']]
     for key in ['rf_curve', 'cr_curve', 'cr_curve_b']:
@@ -113,3 +115,67 @@ def calculation_sheets_only(data):
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def append_controls(data, run, *, final=False):
+    from .controls import coverage_rows, blockers, verification_rows, workflow_state, default_fields, input_key
+    from .market_data import digest
+    wb = load_workbook(io.BytesIO(data))
+    records = run.case.review_controls
+    first = wb['평가요약'] if '평가요약' in wb.sheetnames else wb.worksheets[0]
+    status_row = next((row for row in first if row[0].value == '산출물 구분'), None)
+    if status_row:
+        status_row[1].value = '최종 값 조서' if final else '검토용 조서'
+    else:
+        first.append(['산출물 구분', '최종 값 조서' if final else '검토용 조서'])
+    tables = {
+        '확정상태': [['산출물 구분', '최종 값 조서' if final else '검토용 조서'],
+            ['검토 진행상태', workflow_state(run.case, run)], ['범위', '기본 모형 결과. 조건부 분석값은 합산하지 않음.'],
+            ['서명 구분', '사용자가 기록한 이름. 본인인증·전자서명 아님.'],
+            ['작성자', records.get('review', {}).get('preparer', '')], ['검토자', records.get('review', {}).get('reviewer', '')],
+            ['검토결론', records.get('review', {}).get('rationale', '')],
+            ['확정시각', records.get('final', {}).get('confirmed_at', '') if final else ''],
+            ['최종 확정 식별값', records.get('final', {}).get('key', '') if final else ''],
+            ['남은 확인사항', '\n'.join(r['message'] for r in blockers(run))]],
+        '계약반영표': [['항목', '저장 입력', '계산 적용값', '상태', '조항', '반영방식', '근거', '확인자']] +
+            [[r['title'], r['inputs'], r['applied_inputs'], r['status'], r['record'].get('clause', r['clause']), r['record'].get('mode', ''),
+              r['record'].get('rationale', ''), r['record'].get('reviewer', '')] for r in coverage_rows(run.case, run.summary['applied_terms'])],
+        '독립검산대사': [['항목', '앱 결과(100당)', '독립 검산값(100당)', '차이', '허용차이', '일치 여부']] +
+            [[r['item'], r['calculated'], r['reference'], r['difference'], r['tolerance'], r['passed']] for r in verification_rows(run)] +
+            [['계산서·허용차이 근거', records.get('verification', {}).get('reference', '')], ['확인자', records.get('verification', {}).get('reviewer', '')]],
+        '시장자료확인': [['항목', '기준일', '확인자', '검토근거', '입력 식별값']] +
+            [[label(k), r['date'], r['reviewer'], r['rationale'], r['input_key']] for k,r in records.get('market', {}).items()],
+        '기본값확인': [['검토 상태', '확인 완료' if records.get('defaults', {}).get('input_key') == input_key(run.case) else '확인 필요' if default_fields(run.case) else '보충값 없음'],
+            ['확인자', records.get('defaults', {}).get('reviewer', '')], ['확인시각', records.get('defaults', {}).get('reviewed_at', '')],
+            ['확인 근거', records.get('defaults', {}).get('rationale', '')], ['항목', '적용값']] +
+            [[label(k), display_value(k, run.summary['applied_terms'][k], run.terms.d_issue)] for k in default_fields(run.case)],
+    }
+    if run.case.market_evidence.get('sig'):
+        pack = run.case.market_evidence['sig']
+        tables['변동성원자료'] = ([['원본 데이터 식별값', pack['data_sha256']], ['조회 조건', str(pack['query'])],
+            ['원본 파일 식별값', pack['query'].get('file_sha256', '')], ['자료 취득시각', pack['retrieved_at']],
+            ['계산 옵션', str(pack['opt'])], ['적용 변동성', pack['sigma']], ['회사', '날짜', '수정종가']] +
+            [[name, date, price] for name, prices in pack['series'] for date, price in prices])
+    if run.case.cashflow_scenarios:
+        from .cashflows import SCOPE
+        tables['부분상환분석입력'] = ([['분석명', '근거', '입력 전체', '입력 식별값', '범위']] +
+            [[s['name'], s['rationale'], str(s), digest(s), SCOPE] for s in run.case.cashflow_scenarios])
+    for name, rows in tables.items():
+        if name in wb.sheetnames:
+            del wb[name]
+        ws = wb.create_sheet(name, 0 if final and name == '확정상태' else len(wb.sheetnames))
+        for row in rows:
+            ws.append(row)
+        ws.freeze_panes = 'A2'
+        for cell in ws[1]:
+            cell.font = Font(color='FFFFFF', bold=True)
+            cell.fill = PatternFill('solid', fgColor='17365D')
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = 38
+        for row in ws:
+            for cell in row:
+                cell.alignment = Alignment(vertical='top', wrap_text=True)
+                if isinstance(cell.value, str):
+                    cell.data_type = 's'
+    out = io.BytesIO(); wb.save(out)
+    return out.getvalue()

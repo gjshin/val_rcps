@@ -151,6 +151,17 @@ def main():
         if pack.get("kind") != "vol_pack": raise SystemExit("변동성 패키지가 아닙니다.")
         over.setdefault("sig", pack["sigma"])
     t = make_terms(G, scen, over)
+    if pack:
+        if pack.get('opt', {}).get('asof') != t.d_base:
+            raise SystemExit('변동성 산출 기준일과 평가기준일이 다릅니다.')
+        if pack.get('version') == 2:
+            from valuation.market_data import validate_pack
+            try:
+                validate_pack(pack, asof=t.d_base)
+            except (ValueError, TypeError, KeyError) as exc:
+                raise SystemExit(str(exc)) from exc
+        else:
+            print('주의: 이전 변동성 패키지는 취득조건·전체 피어의 성공 여부를 검증할 수 없습니다. 새 변동성 화면에서 다시 산출하십시오.', file=sys.stderr)
     if G["is_sha"](t): raise SystemExit("주주간계약은 아직 이 도구에서 돌리지 않습니다 — 앱을 쓰십시오.")
     if len(t.rf_curve) < 2 or len(G["credit_curve"](t)) < 2: raise SystemExit("이자율 곡선이 없습니다.")
     if not a.no_formula and t.carry == 0 and t.rfx_mode > 0:

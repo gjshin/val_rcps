@@ -20,8 +20,9 @@ python -m streamlit run app.py
    권리가 있을 때 해당 조건이 열립니다. 출처, 계약과 다른 가정, 미지원 권리를 따로 기록합니다.
 3. **평가 결과**에서 평가를 실행합니다. 총액·RCPS 주당가치를 먼저 표시하고 구성요소는 펼쳐 봅니다.
    산술 검산과 평가자 확인사항을 구분합니다. 민감도는 선택한 변수만 별도로 실행합니다.
-4. **조서**에서 기본 값 조서를 만듭니다. Excel 또는 입력·결과·변경내역을 포함한 ZIP을 저장합니다.
-   상세 값·수식 조서는 필요할 때 선택합니다.
+4. **입력**의 계약 반영표·기본값·시장자료 확인과 **판단 근거**의 검토기록을 작성합니다.
+5. **조서**에서 독립 검산값을 대사하고 작성자와 다른 검토자가 확인한 뒤 최종 값 조서를 확정합니다.
+   미완료 상태에서도 검토용 값·상세 수식 조서는 저장할 수 있습니다. 입력·출처·코드·검토기록이 바뀌면 재확인이 필요합니다.
 
 입력 변경을 저장하기 전에는 평가·조서 생성을 막습니다. 저장된 계산 입력이 바뀌면
 기존 결과를 ‘변경 전 입력’으로 표시하고 조서 생성을 막습니다. 출처·검토메모·가정 근거만
@@ -41,7 +42,12 @@ python -m streamlit run app.py
   기본/상세 조서에도 근거를 포함합니다. 업로드한 실무사례집 전체는 배포하지 않습니다.
 - **계약조건 분석**: RCPS·TF에서 명시적인 배당 발생·지급, 미지급 누적·가산이자, 연장 종료일,
   상환재원 제약, 날짜별 전환가액을 조건부 일정으로 분석합니다. 결과를 기본 평가값에 자동 합산하지 않습니다.
-  콜·정기 리픽싱·IPO·BDT 결합, 부분상환, 확률적 이익/현금과 주가 공동모형, 청산배분은 미지원입니다.
+  새 **부분상환·지급시차·누적배당** 분석은 예정 상환비율, 기지급배당 차감, 청구 후 전환물량 제외,
+  실제 지급일 할인, 명시적인 연장 권리·지연 가산을 지원합니다. 기존 전액상환 분석도 유지합니다.
+  최적 부분상환비율, 콜·정기 리픽싱·IPO·BDT 결합, 확률적 이익/현금과 주가 공동모형, 청산배분은 미지원입니다.
+- **변동성**: Yahoo 수정주가 또는 파일의 원자료·조회조건·취득시각을 보관합니다. 조건 변경 후 재조회,
+  피어 전체 수신, 누락·중복·미래 날짜·오래된 최종 주가 및 원자료 재산출값을 확인한 뒤 적용합니다.
+  Excel 산출내역 생성은 별도 버튼으로 실행합니다.
 - **여러 회차**: 같은 기준일·관점의 독립 회차를 합산하고 총괄표와 회차별 조서를 묶습니다.
   상호 희석·청산순위의 공동 평가는 하지 않습니다. 주주간계약 풋·콜은 별도로 표시합니다.
 - **변동 분석**: 기준일→계약→주가→변동성→금리·시장→방법 순서로 전기·당기 차이를 대사합니다.
@@ -57,12 +63,16 @@ python tools/run_case.py /outside-repo/case.json --inspect
 python tools/run_case.py /outside-repo/case.json --out /outside-repo/review.zip
 python tools/run_case.py /outside-repo/case.json --out /outside-repo/detail.zip --detail
 python tools/run_case.py /outside-repo/case.json --out /outside-repo/formula.zip --formula
+python tools/run_case.py /outside-repo/reviewed-case.json --out /outside-repo/final.zip --final
 python tools/run_engagement.py /outside-repo/engagement.json --out /outside-repo/engagement.zip
 python tools/run_engagement.py /outside-repo/case.json --scenario "상환 지연" --out /outside-repo/schedule.json
+python tools/run_engagement.py /outside-repo/case.json --cashflow "부분상환" --out /outside-repo/cashflows.json
 ```
 
 ## 검증·개편 기록
 
+- [시장자료·부분상환·최종 확정의 사용법과 한계](docs/실무통제_부분상환_사용안내.md)
+- [이번 변경의 검증기록 — 148건 및 검증한 소스 식별값](docs/실무통제_검증기록.json)
 - [근거 연결·용역 기능의 변경 및 검증 범위](docs/근거연결_업무개편.md)
 - [앞선 업무 화면 개편](docs/업무용_개편결과.md)
 - [업무용 개편 기준](docs/업무용_개편기준.md)
@@ -72,7 +82,7 @@ python tools/run_engagement.py /outside-repo/case.json --scenario "상환 지연
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/test_v2_workflow.py tests/test_business_workflow.py tests/test_engagement_evidence.py -q
+python -m pytest tests/test_v2_workflow.py tests/test_business_workflow.py tests/test_engagement_evidence.py tests/test_practical_controls.py -q
 python tests/benchmark_workflow.py --out /outside-repo/benchmark.json
 python tests/run_all.py --quick
 python tests/run_long_checks.py --jobs 4 --out /outside-repo/long-checks
