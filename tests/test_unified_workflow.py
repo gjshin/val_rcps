@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import io
 import math
+import zipfile
 from dataclasses import asdict
 import pytest
 from openpyxl import load_workbook
@@ -209,6 +210,45 @@ def test_shared_detail_basic_views_reuse_run_without_transfer(monkeypatch):
         assert not app.exception
     assert app.session_state.case.to_dict() == case
     assert not any('가져오기' in b.label or '상세 입력으로 계산' == b.label for b in app.button)
+
+
+def test_bdt_detail_does_not_decide_model_from_exercise_ratio_alone():
+    case = synthetic()
+    case.contract.update(p_s=0., p_e=12.)
+    app = app_with_case(case)
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
+    next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
+    next(w for w in app.selectbox if w.label=='분석 도구').set_value('상세 계산·회계 참고표').run()
+    next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('분리 판단').run()
+    assert not app.exception
+    captions = [str(w.value) for w in app.get('caption')]
+    assert any('이 비율만으로 금리 변동에 따른 시간가치나 BDT 적용 여부를 확정할 수 없습니다.' in s
+               for s in captions)
+    messages = ' '.join(str(w.value) for kind in ('caption','info','warning','success','error')
+                        for w in app.get(kind))
+    assert '확정 격자로 충분' not in messages
+    assert 'BDT 를 켜십시오' not in messages
+
+
+def test_large_detail_workpaper_explains_limit_and_keeps_exact_basic_export(monkeypatch):
+    import workspace_app
+    monkeypatch.setattr(workspace_app, 'MAX_INTERACTIVE_DETAIL_STEPS', 3)
+    app = app_with_case()
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
+    next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
+    original_key = app.session_state.run.summary['calculation_key']
+    app.radio(key='_workflow_stage').set_value('조서 출력').run()
+    for option in ['상세 계산 수식 조서', '상세 계산 값 조서']:
+        next(w for w in app.radio if w.label=='조서 구성').set_value(option).run()
+        assert next(b for b in app.button if b.label=='조서 생성').disabled
+        assert any('동일한 평가결과의 요약·입력·검산 내역' in w.value for w in app.warning)
+    next(w for w in app.radio if w.label=='조서 구성').set_value('기본 값 조서').run()
+    next(b for b in app.button if b.label=='조서 생성').click().run()
+    assert not app.exception
+    assert any('조서 생성 완료' in w.value for w in app.success)
+    assert app.session_state.run.summary['calculation_key'] == original_key
+    with zipfile.ZipFile(io.BytesIO(app.session_state.bundle)) as z:
+        assert 'value_review.xlsx' in z.namelist()
 
 
 def test_contract_review_screen_has_no_document_uploader_or_ai_endpoint():
