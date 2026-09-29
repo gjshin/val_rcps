@@ -301,7 +301,7 @@ def test_modified_result_cannot_be_final_exported():
         export_final_bundle(run)
 
 
-def test_ui_preserves_default_provenance_and_blocks_final():
+def test_ui_preserves_default_provenance_without_approval_gate():
     case=synthetic();case.contract.pop('ipay');case.imported_defaults=['p_cmp']
     app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=30)
     app.session_state.case=case;app.run()
@@ -312,7 +312,10 @@ def test_ui_preserves_default_provenance_and_blocks_final():
     next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
     app.radio(key='_workflow_stage').set_value('조서 출력').run()
     assert not app.exception
-    assert next(b for b in app.button if b.label=='현재 결과 최종 확정').disabled
+    assert not any(b.label=='현재 결과 최종 확정' for b in app.button)
+    next(b for b in app.button if b.label=='조서 생성').click().run()
+    assert not app.exception
+    assert app.session_state.bundle
 
 
 def test_volatility_ui_query_change_invalidates_apply(monkeypatch):
@@ -331,12 +334,14 @@ def test_volatility_ui_query_change_invalidates_apply(monkeypatch):
     assert any('바뀌' in w.value for w in app.warning)
 
 
-def test_final_cli_refuses_draft_without_writing(tmp_path):
+def test_final_cli_alias_exports_calculation_without_approval(tmp_path):
     path=tmp_path/'draft.json';output=tmp_path/'final.zip'
     path.write_text(json.dumps(synthetic().to_dict()))
     done=subprocess.run([sys.executable,str(ROOT/'tools/run_case.py'),str(path),'--final','--out',str(output)],capture_output=True,text=True)
-    assert done.returncode==2
-    assert not output.exists()
+    assert done.returncode==0,done.stderr
+    with zipfile.ZipFile(output) as z:
+        wb=load_workbook(io.BytesIO(z.read('value_review.xlsx')))
+        assert '확정상태' not in wb
 
 
 def test_yahoo_ingestion_rejects_invalid_close_without_silently_filtering(monkeypatch):
@@ -369,7 +374,8 @@ def test_final_case_roundtrip_and_cli_positive(tmp_path):
     done=subprocess.run([sys.executable,str(ROOT/'tools/run_case.py'),str(path),'--final','--out',str(output)],capture_output=True,text=True)
     assert done.returncode==0,done.stderr
     with zipfile.ZipFile(output) as z:
-        assert json.loads(z.read('result.json'))['status']=='reviewed_final_values'
+        assert json.loads(z.read('result.json'))['amounts_100']==reloaded.summary['amounts_100']
+        assert 'value_review.xlsx' in z.namelist()
 
 
 def test_cashflow_cli_matches_independent_pv(tmp_path):
