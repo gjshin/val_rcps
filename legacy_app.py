@@ -1990,7 +1990,7 @@ if _shared_run is None:
         st.session_state._legacy_warn = validate(t, _pxl)
         st.session_state._legacy_warn_key = _detail_key
     warn = st.session_state._legacy_warn
-    st.caption("기존 회계 참고표·판단 문안은 입력 가정에 따른 초안입니다. 기준서와 계약에 대한 결론은 ‘판단 근거’ 화면에서 별도로 기록하십시오. 검산의 ‘적합’ 표시는 해당 검사 범위에 한정됩니다.")
+    st.caption("기존 회계 참고표·판단 문안은 입력 가정에 따른 초안입니다. 기준서와 계약에 대한 결론은 대화에서 별도로 검토하십시오. 검산의 ‘적합’ 표시는 해당 검사 범위에 한정됩니다.")
     if warn:
         st.warning("확인이 필요합니다\n\n" + "\n".join(f"- {w}" for w in warn))
 
@@ -2006,10 +2006,18 @@ else:
     st.session_state.tm = t
     st.session_state.prices = []
     st.session_state.peers = []
+    st.session_state.vol_listed = '상장사' if t.ticker else '비상장사'
     _pack = _shared_run.case.market_evidence.get('sig')
     if _pack:
-        st.session_state.peers = _pack['series']
+        st.session_state.vol_listed = '상장사' if _pack['listed'] else '비상장사'
+        if _pack['listed']:
+            st.session_state.prices = _pack['series'][0][1]
+            st.session_state.px_src = _pack['source']
+            st.session_state.vol_opt = _pack['opt']
+        else:
+            st.session_state.peers = _pack['series']
         st.session_state.peer_opt = _pack['opt']
+        st.session_state.peer_agg = _pack['sigma']
     _detail_key = json.dumps(asdict(t), sort_keys=True, default=str)
     st.session_state._legacy_price = (_shared_run.raw if is_sha(t) else
         tuple(_shared_run.raw[k] for k in ('full', 'b0', 'b1', 'b2', 'ca', 'conv')))
@@ -2370,7 +2378,9 @@ if _shared_run is None:
 
 _detail_sections = ["구성요소", "회계처리", "분리 판단", "이자율곡선", "주가·변동성",
                 "의사결정", "상각표", "민감도", "검산", "조서"]
-_detail_section = st.selectbox("상세 분석 항목", _detail_sections, key="_legacy_section")
+if _shared_run is not None:
+    _detail_sections[2] = "권리·금리 분석"
+_detail_section = st.selectbox("상세 분석 항목", _detail_sections[:-1] if _shared_run is not None else _detail_sections, key="_legacy_section")
 
 if _detail_section == _detail_sections[0]:
     df = pd.DataFrame([
@@ -2652,7 +2662,11 @@ if _detail_section == _detail_sections[1]:
                            f"부채요소 **{b1:,.4f}** 를 씁니다. 평가기준일을 상환일로 맞추고 "
                            "그날 곡선을 넣으셔야 맞습니다.")
 
-if _detail_section == _detail_sections[2]:
+if _detail_section == _detail_sections[2] and _shared_run is not None:
+    from numeric_analysis_ui import main as numerical_rights
+    numerical_rights(_shared_run)
+
+if _detail_section == _detail_sections[2] and _shared_run is None:
     if holder_on(t):
         st.info("**투자자 관점입니다.** 이 탭의 판단은 **발행자**의 분리 판단입니다 — 투자자는 "
                 "주계약이 금융자산이라 내재파생상품을 분리하지 않습니다(제1109호 문단 4.3.2). "
@@ -3016,7 +3030,7 @@ if _detail_section == _detail_sections[4]:
     _pe = st.session_state.get("peers") or []
     _po = st.session_state.get("peer_opt") or {}
     if not _pe:
-        st.info("비상장사로 두셨습니다. 왼쪽 변동성 칸의 **피어** 칸에서 피어 주가를 수집하거나 "
+        st.info("비상장사로 두셨습니다. 「입력·시장자료 → 주가·변동성·금리 자료 → 변동성 산출」에서 피어 주가를 받거나 "
                 "여러 종목 종가 파일을 넣으십시오.")
     else:
         _pvv = [(nm, vol_from(px, _po.get("tdays", 250), _po.get("drop", True)), px) for nm, px in _pe]
@@ -3032,8 +3046,8 @@ if _detail_section == _detail_sections[4]:
                    + f" · 적용 σ {t.sig*100:.2f}%")
   else:
     if not st.session_state.prices:
-        st.info("왼쪽 변동성 칸에서 주가를 수집하거나 파일을 넣으십시오. "
-                "국내 6자리 종목은 한국거래소를, 실패하면 야후 파이낸스를 씁니다.")
+        st.info("「입력·시장자료 → 주가·변동성·금리 자료 → 변동성 산출」에서 주가를 받거나 파일을 넣으십시오. "
+                "야후 파이낸스의 수정종가를 사용합니다.")
     else:
         px = st.session_state.prices
         pxdf = pd.DataFrame(px, columns=["날짜", "종가"])
@@ -3044,7 +3058,8 @@ if _detail_section == _detail_sections[4]:
         st.caption("출처 " + st.session_state.get("px_src", ""))
         if pxdf["날짜"].iloc[0]:
             st.line_chart(pxdf.set_index("날짜")["종가"])
-        v = vol_from(px, 250, True); v0 = vol_from(px, 250, False)
+        _vo = st.session_state.get('vol_opt') or {}
+        v = vol_from(px, _vo.get('tdays', 250), True); v0 = vol_from(px, _vo.get('tdays', 250), False)
         st.dataframe(pd.DataFrame([
             ["이상치 제거", v["annual"], v["daily"], v["n"]-v["removed"], v["removed"]],
             ["이상치 포함", v0["annual"], v0["daily"], v0["n"], 0]],
@@ -3052,7 +3067,7 @@ if _detail_section == _detail_sections[4]:
             {"연 변동성": "{:.2%}", "일 변동성": "{:.2%}"}),
             use_container_width=True, hide_index=True)
         st.caption(f"정상범위 {v['lo']*100:.2f}% ~ {v['hi']*100:.2f}% — "
-                   "일별 로그수익률의 중앙값에서 중앙값 절대편차의 3배를 벗어난 값을 뺍니다.")
+                   "일별 로그수익률의 중앙값에서 중앙값 절대편차의 2.5배를 벗어난 값을 뺍니다.")
         st.markdown("**최근 10일**")
         st.dataframe(pxdf.tail(10).iloc[::-1].style.format({"종가": "{:,.0f}"}),
                      use_container_width=True, hide_index=True)
@@ -3191,7 +3206,7 @@ if _detail_section == _detail_sections[6]:
                  use_container_width=True, hide_index=True, height=320)
     st.caption("기말 장부금액이 만기에 상환금액과 일치해야 합니다.")
 
-if _detail_section == _detail_sections[7]:
+if _detail_section == _detail_sections[7] and st.button("상세 민감도 계산"):
     rows = []
     for dvv in (-0.15, -0.075, 0.0, 0.075, 0.15):
         tt = Terms(**asdict(t)); tt.sig = max(0.01, t.sig+dvv)
@@ -3319,20 +3334,16 @@ if _detail_section == _detail_sections[8]:
                      use_container_width=True, hide_index=True)
         if _ovd:
             st.warning("세 번째 줄이 **확인 필요**입니다. 계약서의 통지기간과 "
-                       "우선순위 조항을 보시고, 「분리 판단」 탭의 비교표에서 두 "
+                       "우선순위 조항을 보시고, 「권리·금리 분석」의 비교표에서 두 "
                        "갈래의 값 차이를 확인하십시오.")
         st.caption('이 표는 구현된 격자의 내부 일관성을 점검한 결과입니다. 계약상 행사조건·우선순위, 자료의 적정성과 회계분류는 원문 및 독립 검산자료로 별도 검토하십시오.')
-        st.markdown("**검산 표 — 조서 「검산요약」 시트와 같은 표**")
-        _mc = model_checks(t, full, b0, b1, b2, ca, eir_or_none(t, full, b0, b1, b2, ca))
-        st.dataframe(pd.DataFrame(_mc, columns=["항목", "값", "판정", "설명"]),
-                     use_container_width=True, hide_index=True)
-        _mcbad = [nm for nm, _, vd, _ in _mc if vd == "확인 필요"]
-        if _mcbad: st.error("확인 필요: " + ", ".join(_mcbad))
-        if unmod_text(t):
-            st.info(unmod_text(t))
-        with st.expander("모형의 알려진 한계 — 조서 「99_모형검증」 시트와 같은 표"):
-            st.dataframe(pd.DataFrame([(a, b) for a, b, _ in MODEL_LIMITS], columns=["한계", "설명"]),
+        if st.button('추가 수치 검산', key='btn_model_checks'):
+            _mc = model_checks(t, full, b0, b1, b2, ca, eir_or_none(t, full, b0, b1, b2, ca))
+            st.dataframe(pd.DataFrame(_mc, columns=['항목', '값', '결과', '설명']),
                          use_container_width=True, hide_index=True)
+            _mcbad = [nm for nm, _, vd, _ in _mc if vd == '확인 필요']
+            if _mcbad:
+                st.warning('확인할 사항: ' + ', '.join(_mcbad))
 
         # ── 극단 시험 — 격자를 두 번 더 돌리므로 눌렀을 때만 ──
         st.markdown("**극단에서 값이 붙는가**")
