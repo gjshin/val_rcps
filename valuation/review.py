@@ -8,8 +8,6 @@ def review_issues(case, tm, raw):
     out = []
     def add(code, field, fact, impact, action):
         out.append(Issue('review', code, field, fact, impact, action))
-    add('judgement_scope', 'model', '계약 해석·회계분류·모형 적합성은 자동 검증하지 않습니다.',
-        '산술 검산 통과가 평가 결론의 적정성을 의미하지 않습니다.', '계약조건 및 선택한 모형의 적용 근거를 별도로 검토하십시오.')
     market_date = case.sources.get('market_date')
     if not market_date or market_date != tm.d_base:
         add('market_date', 'market_date', f"시장자료 기준일: {market_date or '미기록'} / 평가기준일: {tm.d_base}",
@@ -18,6 +16,10 @@ def review_issues(case, tm, raw):
         add('price_date', 's0_date', f'사용 주가 거래일은 {tm.s0_date}입니다.', '평가기준일과 다릅니다.', '휴장 등 직전 거래일 사용 사유를 확인하십시오.')
     for field in ['rf_curve', 'cr_curve']:
         curve = getattr(tm, field)
+        example = legacy.EXAMPLE_RF if field == 'rf_curve' else legacy.EXAMPLE_CR
+        if legacy.curve_is_example(curve, example):
+            add('example_curve', field, '입력 금리가 앱의 예시 곡선과 같습니다.',
+                '예시값이 적용됐을 수 있습니다.', '평가기준일 금리자료와 대조하십시오.')
         if curve and tm.T > curve[-1][0]:
             add('curve_coverage', field, f'입력 곡선 최장만기 {curve[-1][0]:g}년보다 잔존기간 {tm.T:.3f}년이 깁니다.',
                 '입력 자료 바깥 구간의 금리를 연장 적용합니다.', '장기 금리자료를 확보하거나 곡선 연장 적용의 근거를 기록하십시오.')
@@ -34,8 +36,20 @@ def review_issues(case, tm, raw):
     if tm.unmod_note:
         add('unmodeled', 'unmod_note', tm.unmod_note, '기재된 권리가 계산에 반영되지 않았을 수 있습니다.', '별도 계약조건에서 처리방식·영향·근거를 기록하십시오.')
     if tm.dil_shares > 0:
-        add('dilution', 'dil_shares', f'전환 증가 주식수 {tm.dil_shares:,.0f}주가 기록되어 있습니다.',
+        ratio = f' / 기존 보통주 {tm.base_shares:,.0f}주 = {tm.dil_shares/tm.base_shares:.2%} 증가' if tm.base_shares > 0 else ''
+        add('dilution', 'dil_shares', f'전환 증가 주식수 {tm.dil_shares:,.0f}주{ratio}.',
             '이 주식수만으로 전환에 따른 자본구조·희석을 재계산하지 않습니다.', '기초자산 가치와 전환가액에 반영된 희석 범위를 대사하십시오.')
+    pack = case.market_evidence.get('sig')
+    if pack and pack.get('listed') and pack['series']:
+        name, prices = pack['series'][0]
+        last = prices[-1][1]
+        ratio = tm.S0/last
+        if abs(ratio-1) > .05:
+            add('price_basis', 'S0', f'입력 주가 {tm.S0:,.2f}원 / {name} 변동성 자료의 마지막 주가 {last:,.2f}원 = {ratio:.4f}배.',
+                '주가와 수정주가의 기준이 다를 수 있습니다.', '거래일, 분할·병합·배당 조정 및 전환가액의 기준을 대조하십시오.')
+    if tm.rfx_mode and tm.S0 < tm.K0*.8:
+        add('low_price_refixing', 'rfx_mode', f'주가가 전환가액의 {tm.S0/tm.K0:.2%}이며 리픽싱이 켜져 있습니다.',
+            '첫 조정일부터 전환가액이 하락할 수 있습니다.', '현재 전환가액과 다음 조정일, 조정 하한을 확인하십시오.')
     if legacy.is_sha(tm):
         return out
     full = raw['full']
