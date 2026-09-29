@@ -193,3 +193,20 @@ def test_invalid_saved_grid_is_reported_without_silent_coercion():
     assert app.session_state.case.method['grid_days']==7.1
     next(w for w in app.selectbox if w.label=='계산 간격 단위').set_value(7).run()
     assert not app.exception and app.session_state.case.method['grid_days']==7.
+
+
+def test_file_missing_prices_do_not_backfill_outside_requested_window():
+    from valuation.market_data import select_price_window
+    data = 'date,A\n'+'\n'.join(f'2025-01-{i:02d},{100+i if i not in (2,14) else ""}' for i in range(1,16))
+    series, omitted = parse_price_table(data, allow_missing=True, return_exclusions=True)
+    selected, notes = select_price_window(series, omitted, 12, '2025-01-15')
+    assert len(selected[0][1]) == 11
+    assert selected[0][1][0][0] == '2025-01-04'
+    assert [r['date'] for r in notes] == ['2025-01-14']
+
+
+def test_future_date_with_all_prices_missing_is_still_rejected():
+    from valuation.market_data import select_price_window
+    series, notes = parse_price_table('date,A\n2025-01-01,100\n2025-01-02,\n', allow_missing=True, return_exclusions=True)
+    with pytest.raises(ValueError, match='기준일 이후'):
+        select_price_window(series, notes, 10, '2025-01-01')
