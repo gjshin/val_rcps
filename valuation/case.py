@@ -23,7 +23,7 @@ MARKET = frozenset({
     "rvol_rating", "rvol_tenor", "rvol_how", "sha_spread",
 })
 METHOD = frozenset({
-    "d_base", "model", "gap_m", "carry", "view", "conv_class", "p_sep", "k_sep",
+    "d_base", "model", "gap_m", "grid_days", "carry", "view", "conv_class", "p_sep", "k_sep",
     "k_method", "k_split", "put_bdt", "fvpl_whole", "bs_target", "bs_net",
     "prev_hold", "prev_host", "prev_deriv", "eir_issue", "cur_periods", "settle_amt",
 })
@@ -296,8 +296,10 @@ def inspect_case(case: Case) -> list[Issue]:
             ok = all(curve[i][0] < curve[i+1][0] for i in range(len(curve)-1))
         if not ok:
             add("error", "curve", key, "만기·금리 쌍을 2개 이상, 만기 오름차순·중복 없이 입력하십시오.")
-    if values.get("gap_m", 1) < .25:
-        add("error", "legacy_week_grid", "gap_m", "기존 엔진의 최소 간격은 0.25개월입니다. 7일 격자는 아직 지원하지 않습니다.")
+    if values.get('grid_days', 0) not in (0, 7, 14):
+        add('error', 'grid_days', 'grid_days', '일수 기준 간격은 주(7일) 또는 2주(14일)를 선택하십시오.')
+    if values.get('grid_days', 0) == 0 and values.get("gap_m", 1) < .25:
+        add("error", "legacy_week_grid", "gap_m", "월 기준의 최소 간격은 0.25개월입니다. 주 간격은 계산 간격에서 주(7일 기준)를 선택하십시오.")
     if case.imported_defaults:
         add("review", "legacy_defaults", "imported_defaults", f"기존 기본값 {len(case.imported_defaults)}개가 명시적으로 보충되었습니다.")
     missing_optional = FIELDS - set(values)
