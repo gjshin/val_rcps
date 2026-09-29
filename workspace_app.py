@@ -13,6 +13,10 @@ from valuation.legacy import Terms, months_to_date
 from valuation.presentation import CHOICES, PERCENT, EVENT_DATES, label, display_value, event_months, issue_rows
 from valuation.service import AMOUNT_LABELS, calculate, calculation_key, refresh_run, export_bundle
 from valuation.analysis import sensitivity
+# Historical detailed workbooks materialise multiple full node lattices in memory.
+# The basic value workpaper exports the exact saved run without rebuilding lattices.
+MAX_INTERACTIVE_DETAIL_STEPS = 120
+
 
 TYPES = get_type_hints(Terms)
 DEFAULTS = asdict(Terms())
@@ -499,15 +503,34 @@ def main():
         option = st.radio('조서 구성', ['기본 값 조서', '상세 계산 값 조서', '상세 계산 수식 조서'])
         if option != '기본 값 조서':
             st.info('상세 조서는 추가 계산과 대형 격자 생성에 시간이 걸릴 수 있습니다. 자동 회계판단·분개 시트는 제외합니다. 수식 조서의 Excel 재계산은 이 화면에서 수행하지 않습니다.')
-        if st.button('조서 생성', disabled=not current or pending):
+        if not current:
+            st.warning('현재 입력으로 평가·분석 단계에서 먼저 평가를 실행하십시오. 입력을 바꾼 뒤에는 재평가해야 조서를 만들 수 있습니다.')
+        elif pending:
+            st.warning('입력·시장자료 단계에서 저장되지 않은 입력을 확인하십시오.')
+        too_large = (current and option != '기본 값 조서'
+                     and run.terms.n > MAX_INTERACTIVE_DETAIL_STEPS)
+        if too_large:
+            st.warning(f'현재 {run.terms.n:,}구간의 상세 노드 조서는 앱 서버에서 생성하지 않습니다. '
+                       f'이 화면의 상세 조서는 최대 {MAX_INTERACTIVE_DETAIL_STEPS:,}구간까지 지원합니다. '
+                       '동일한 평가결과의 요약·입력·검산 내역은 ‘기본 값 조서’로 저장할 수 있습니다. '
+                       '상세 노드나 수식 재계산이 꼭 필요하면 입력·시장자료에서 계산 간격을 늘리고, '
+                       '평가·분석에서 다시 평가한 뒤 상세 조서를 생성하십시오. '
+                       '간격을 바꾸면 평가결과가 달라질 수 있으므로 두 결과를 비교해야 합니다.')
+        if st.button('조서 생성', disabled=not current or pending or too_large):
+            st.session_state.pop('bundle', None)
+            st.session_state.pop('bundle_key', None)
             try:
                 with st.spinner('조서를 생성하고 입력·결과 기록을 묶는 중입니다.'):
                     st.session_state.bundle = export_bundle(run, formula=option == '상세 계산 수식 조서', detail=option != '기본 값 조서', previous=previous)
                     st.session_state.bundle_key = (run.case.fingerprint(), option, previous.fingerprint() if previous else None)
             except (ValueError, ArithmeticError) as exc:
-                st.error(str(exc))
+                st.error(f'조서를 생성하지 못했습니다: {exc}')
+            except (MemoryError, OSError, RuntimeError, OverflowError) as exc:
+                st.error(f'조서 생성 중 서버 자원 또는 파일 처리 오류가 발생했습니다 ({type(exc).__name__}). '
+                         '상세 계산 값 조서로 저장하거나 계산 간격을 늘리고 재평가하십시오.')
         bundle_key = (case.fingerprint(), option, previous.fingerprint() if previous else None) if current else None
         if current and not pending and st.session_state.get('bundle_key') == bundle_key and 'bundle' in st.session_state:
+            st.success(f'조서 생성 완료 · {len(data) / 1024 / 1024:.1f} MB. 아래에서 Excel 파일이나 전체 묶음을 저장하십시오.')
             data = st.session_state.bundle
             st.download_button('평가 조서 묶음 저장', data, '평가조서.zip', 'application/zip')
             with zipfile.ZipFile(io.BytesIO(data)) as z:
