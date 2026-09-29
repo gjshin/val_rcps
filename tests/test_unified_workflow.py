@@ -3,6 +3,7 @@ import copy
 import datetime as dt
 import hashlib
 import io
+import json
 import math
 import zipfile
 from dataclasses import asdict
@@ -126,7 +127,7 @@ def test_all_steps_and_market_tools_open_without_pricing_or_network(monkeypatch)
         monkeypatch.setattr(legacy, name, forbidden)
     app = app_with_case()
     original = copy.deepcopy(app.session_state.case.to_dict())
-    for step in ['계약 검토','검토조서','조서 출력','평가·분석','입력·시장자료']:
+    for step in ['조서 출력','평가·분석','입력·시장자료']:
         app.radio(key='_workflow_stage').set_value(step).run()
         assert not app.exception
     app.radio(key='_input_area').set_value('주가·변동성·금리 자료').run()
@@ -219,10 +220,10 @@ def test_bdt_detail_does_not_decide_model_from_exercise_ratio_alone():
     app.radio(key='_workflow_stage').set_value('평가·분석').run()
     next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
     next(w for w in app.selectbox if w.label=='분석 도구').set_value('상세 계산·회계 참고표').run()
-    next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('분리 판단').run()
+    next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('권리·금리 분석').run()
     assert not app.exception
     captions = [str(w.value) for w in app.get('caption')]
-    assert any('이 비율만으로 금리 변동에 따른 시간가치나 BDT 적용 여부를 확정할 수 없습니다.' in s
+    assert any('표시한 비율로 분리 여부나 모형을 자동 결정하지 않습니다.' in s
                for s in captions)
     messages = ' '.join(str(w.value) for kind in ('caption','info','warning','success','error')
                         for w in app.get(kind))
@@ -230,9 +231,7 @@ def test_bdt_detail_does_not_decide_model_from_exercise_ratio_alone():
     assert 'BDT 를 켜십시오' not in messages
 
 
-def test_large_detail_workpaper_explains_limit_and_keeps_exact_basic_export(monkeypatch):
-    import workspace_app
-    monkeypatch.setattr(workspace_app, 'MAX_INTERACTIVE_DETAIL_STEPS', 3)
+def test_detailed_exports_are_available_without_changing_grid():
     app = app_with_case()
     app.radio(key='_workflow_stage').set_value('평가·분석').run()
     next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
@@ -240,8 +239,10 @@ def test_large_detail_workpaper_explains_limit_and_keeps_exact_basic_export(monk
     app.radio(key='_workflow_stage').set_value('조서 출력').run()
     for option in ['상세 계산 수식 조서', '상세 계산 값 조서']:
         next(w for w in app.radio if w.label=='조서 구성').set_value(option).run()
-        assert next(b for b in app.button if b.label=='조서 생성').disabled
-        assert any('동일한 평가결과의 요약·입력·검산 내역' in w.value for w in app.warning)
+        assert not next(b for b in app.button if b.label=='조서 생성').disabled
+        next(b for b in app.button if b.label=='조서 생성').click().run()
+        assert not app.exception
+        assert app.session_state.run.summary['calculation_key'] == original_key
     next(w for w in app.radio if w.label=='조서 구성').set_value('기본 값 조서').run()
     next(b for b in app.button if b.label=='조서 생성').click().run()
     assert not app.exception
@@ -253,7 +254,7 @@ def test_large_detail_workpaper_explains_limit_and_keeps_exact_basic_export(monk
 
 def test_contract_review_screen_has_no_document_uploader_or_ai_endpoint():
     app = app_with_case()
-    app.radio(key='_workflow_stage').set_value('계약 검토').run()
+    assert app.radio(key='_workflow_stage').options == ['입력·시장자료','평가·분석','조서 출력']
     assert not app.exception
     labels = [u.label for u in app.get('file_uploader')]
     assert labels == ['평가파일 불러오기', '전기 평가파일(선택)']
@@ -280,7 +281,7 @@ def test_anytime_refixing_uses_every_step_and_keeps_label():
 
 
 @pytest.mark.parametrize('formula', [False,True])
-def test_detailed_workpapers_keep_contract_review_and_exercise_mode(formula):
+def test_detailed_workpapers_omit_contract_review_keep_exercise_mode(formula):
     import zipfile
     from valuation.service import export_bundle
     case = synthetic(); case.exercise_styles = {'p_f':'any'}; case.contract_review = draft_review()
@@ -288,5 +289,6 @@ def test_detailed_workpapers_keep_contract_review_and_exercise_mode(formula):
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         name = 'formula_review.xlsx' if formula else 'value_review.xlsx'
         wb = load_workbook(io.BytesIO(z.read(name)))
-        assert wb['계약검토안'].cell(2,3).value == 'Principal is 100.'
+        assert '계약검토안' not in wb
+        assert json.loads(z.read('case.json'))['contract_review'] == case.contract_review
         assert wb['행사방식'].cell(2,2).value == '기간 중 언제든지'
