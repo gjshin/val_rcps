@@ -1,5 +1,6 @@
 """Exercise semantics, one-case UI, privacy and contract-review regressions."""
 import copy
+import datetime as dt
 import hashlib
 import io
 import math
@@ -168,6 +169,30 @@ def test_anytime_ui_persists_after_grid_change():
     terms = app.session_state.run.terms
     assert terms.p_f == pytest.approx(12*terms.T/terms.n)
     assert terms.k_f == terms.p_f
+
+
+def test_new_rcps_rights_stay_checked_until_both_date_ranges_are_entered():
+    case = Case(name='New RCPS', contract=dict(inst='RCPS', d_issue='2025-03-07',
+        d_mat='2035-03-06', rfx_mode=0, cpn=0., cv_s=99., cv_e=0.,
+        p_s=99., p_e=0., k_w=0.),
+        method=dict(d_base='2026-06-30', model='TF', view='holder', gap_m=1.))
+    app = app_with_case(case)
+    for title, detail in [('전환·신주인수권 행사 가능', '전환·신주인수권 행사 시작일'),
+                          ('투자자 상환청구권 있음', '투자자 상환청구 시작일')]:
+        next(w for w in app.checkbox if w.label == title).check().run()
+        assert not app.exception
+        assert next(w for w in app.checkbox if w.label == title).value
+        assert any(w.label == detail for w in app.get('date_input'))
+    for title, day in [('전환·신주인수권 행사 시작일', dt.date(2025, 3, 8)),
+                       ('전환·신주인수권 행사 종료일', dt.date(2035, 3, 6)),
+                       ('투자자 상환청구 시작일', dt.date(2028, 3, 8)),
+                       ('투자자 상환청구 종료일', dt.date(2035, 3, 5))]:
+        next(w for w in app.get('date_input') if w.label == title).set_value(day).run()
+    assert not app.exception
+    assert all(next(w for w in app.checkbox if w.label == title).value for title in
+               ('전환·신주인수권 행사 가능', '투자자 상환청구권 있음'))
+    assert app.session_state.case.contract['cv_s'] < app.session_state.case.contract['cv_e']
+    assert app.session_state.case.contract['p_s'] < app.session_state.case.contract['p_e']
 
 
 def test_shared_detail_basic_views_reuse_run_without_transfer(monkeypatch):
