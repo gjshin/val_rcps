@@ -5,12 +5,12 @@ import streamlit as st
 
 ROOT = Path(__file__).parent
 PAGES = ['평가 작업', '여러 회차·변동 분석']
-APP_VERSION = '2026.09.29-unified.1'
+APP_VERSION = '2026.09.29-calculation.2'
 
 
 def detailed(run):
     st.subheader('상세 계산 및 회계 참고표')
-    st.caption('회계 참고표는 입력한 분류·측정 가정에 따른 계산입니다. 「검토조서」에 계약별 결론과 근거를 기록하십시오. 민감도·검산 등은 선택 시 추가 계산이 발생합니다.')
+    st.caption('회계 참고표는 입력한 가정에 따른 초안입니다. 민감도·추가 검산은 실행 버튼을 눌렀을 때 계산합니다.')
     runpy.run_path(str(ROOT / 'legacy_app.py'), run_name='__main__', init_globals={'_WORKSPACE_RUN': run})
 
 
