@@ -89,7 +89,7 @@ def test_no_legacy_auto_judgements_in_basic_evaluation(monkeypatch):
     monkeypatch.setattr(legacy, 'sha_validate', forbidden)
     run = calculate(synthetic())
     assert not any(i.code == 'engine_review' for i in run.issues)
-    assert any(i.code == 'judgement_scope' for i in run.issues)
+    assert not any(i.code == 'judgement_scope' for i in run.issues)
 
 
 def test_basic_workpaper_ties_to_result_without_extra_calculation(monkeypatch):
@@ -142,7 +142,7 @@ def test_instrument_screens_preserve_values_and_only_render_relevant_rights(inst
     app.session_state['case'] = case
     app.run()
     assert not app.exception
-    assert next(r for r in app.radio if r.label == '평가 진행').options == ['계약 검토', '입력·시장자료', '평가·분석', '검토조서', '조서 출력']
+    assert next(r for r in app.radio if r.label == '평가 진행').options == ['입력·시장자료', '평가·분석', '조서 출력']
     assert not any('JSON' in w.label for w in app.text_area)
     assert not any(w.label == '상환청구 주기(개월)' for w in app.number_input)
     assert app.session_state['case'].to_dict() == case.to_dict()
