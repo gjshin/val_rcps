@@ -34,7 +34,7 @@ def review_issues(case, tm, raw):
         add('ipo_assumption', 'ipo_m', '입력한 IPO 시점·가격을 시나리오로 적용했습니다.',
             '상장 발생확률을 직접 추정하는 모형은 아닙니다.', '시점·가격 가정의 근거 및 미상장 시나리오를 검토하십시오.')
     if tm.unmod_note:
-        add('unmodeled', 'unmod_note', tm.unmod_note, '기재된 권리가 계산에 반영되지 않았을 수 있습니다.', '별도 계약조건에서 처리방식·영향·근거를 기록하십시오.')
+        add('unmodeled', 'unmod_note', tm.unmod_note, '기재된 권리가 계산에 반영되지 않았을 수 있습니다.', '기본 계산 결과를 출력한 뒤 해당 조건의 영향을 별도로 검토하십시오.')
     if tm.dil_shares > 0:
         ratio = f' / 기존 보통주 {tm.base_shares:,.0f}주 = {tm.dil_shares/tm.base_shares:.2%} 증가' if tm.base_shares > 0 else ''
         add('dilution', 'dil_shares', f'전환 증가 주식수 {tm.dil_shares:,.0f}주{ratio}.',
