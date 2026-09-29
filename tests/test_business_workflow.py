@@ -62,9 +62,10 @@ def test_changed_calculation_inputs_reject_reuse(section, key, value):
 
 
 def test_all_numerical_input_fields_participate_in_reuse_key():
+    from valuation.service import ACCOUNTING_ONLY
     case = synthetic(); initial = calculation_key(case)
     for key, value in case.facts().items():
-        if isinstance(value, (float, int)):
+        if isinstance(value, (float, int)) and key not in ACCOUNTING_ONLY:
             changed = copy.deepcopy(case)
             from valuation.case import section_for
             getattr(changed, section_for(key))[key] = value + 1
@@ -84,12 +85,15 @@ def test_all_inputs_have_human_labels():
     assert not FIELDS - set(LABELS)
 
 
-def test_no_legacy_auto_judgements_in_basic_evaluation(monkeypatch):
-    monkeypatch.setattr(legacy, 'validate', forbidden)
-    monkeypatch.setattr(legacy, 'sha_validate', forbidden)
+def test_input_warnings_are_short_and_computed_once(monkeypatch):
     run = calculate(synthetic())
     assert not any(i.code == 'engine_review' for i in run.issues)
     assert not any(i.code == 'judgement_scope' for i in run.issues)
+    # 옛 입력 경고는 첫 문장만 '확인 내용'으로 싣고, 증빙 갱신 때는 다시 만들지 않는다.
+    assert all('**' not in i.message and len(i.message) < 240 for i in run.issues if i.code == 'input_check')
+    monkeypatch.setattr(legacy, 'validate', forbidden)
+    again = refresh_run(run, copy.deepcopy(run.case))
+    assert [i for i in again.issues if i.code == 'input_check'] == [i for i in run.issues if i.code == 'input_check']
 
 
 def test_basic_workpaper_ties_to_result_without_extra_calculation(monkeypatch):
@@ -196,13 +200,19 @@ def test_percent_edit_uses_percent_units_and_blocks_old_export():
 
 @pytest.mark.parametrize('inst', ['CB', 'BW', 'RCPS', 'SHA'])
 @pytest.mark.parametrize('formula', [False, True])
-def test_detailed_exports_retain_formula_dependencies_without_opinion_sheets(inst, formula):
+def test_detailed_exports_judgment_sheets_are_optional(inst, formula):
     case = synthetic(); case.contract['inst'] = inst
     run = calculate(case)
-    with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, formula=formula))) as z:
-        wb = load_workbook(io.BytesIO(z.read('formula_review.xlsx' if formula else 'value_review.xlsx')))
-        assert not {'해설', '분리 판단', '검산요약', '99_모형검증', '회계처리', '상각표'} & set(wb.sheetnames)
+    name = 'formula_review.xlsx' if formula else 'value_review.xlsx'
+    with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, formula=formula, judgment=False))) as z:
+        wb = load_workbook(io.BytesIO(z.read(name)))
+        assert not {'해설', '분리 판단', '검산요약', '99_모형검증', '판단·근거', '회계처리', '상각표'} & set(wb.sheetnames)
         assert '결과' in wb.sheetnames
+    with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, formula=formula))) as z:
+        wb = load_workbook(io.BytesIO(z.read(name)))
+        assert '판단·근거' in wb.sheetnames
+        if inst != 'SHA':
+            assert {'분리 판단', '검산요약', '99_모형검증'} <= set(wb.sheetnames)
 
 
 def test_reversed_exercise_dates_cannot_silently_remove_a_right():

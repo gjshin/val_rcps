@@ -197,7 +197,9 @@ def terms_enum_fields(G):
                  # 조회 기록 — 계산 갈래가 아니라 「무엇을 받았는가」의 기록이다
                  "s0_date", "s0_splits", "scen_md5",
                  # 표시·기록 전용 — 회차 표시와 「평가에 반영하지 않은 권리」 문안
-                 "tranche", "unmod_note"): continue
+                 "tranche", "unmod_note",
+                 # 최초 인식 차이의 분개 표기 전용 — 값에 영향 없음 (tests/test_judgment_sources.py 가 시험)
+                 "d1_pl", "d1_reason"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty

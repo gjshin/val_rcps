@@ -105,16 +105,21 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
     return output.getvalue()
 
 
-def calculation_sheets_only(data, *, accounting=False):
-    """Exclude historical auto-opinions from optional detailed calculation exports.
+JUDGMENT_SHEETS = {'해설', '분리 판단', '검산요약', '99_모형검증'}
+
+
+def calculation_sheets_only(data, *, accounting=False, judgment=False):
+    """Drop GPT-era sign-off sheets; keep judgment·check sheets when asked.
 
     Fail closed if a retained formula depends on an omitted sheet.
     """
     is_workbook = isinstance(data, Workbook)
     wb = data if is_workbook else load_workbook(io.BytesIO(data))
-    unwanted = {'해설', '분리 판단', '검산요약', '99_모형검증', 'V2_검토기록', 'V2_계약과가정',
+    unwanted = {'V2_검토기록', 'V2_계약과가정',
                 'V2_추가권리', '판단근거', '확정상태', '계약반영표', '독립검산대사', '시장자료확인',
                 '기본값확인', '계약검토안', '추가확인자료', '별도계약조건', '평가자확인'}
+    if not judgment:
+        unwanted |= JUDGMENT_SHEETS
     if not accounting:
         unwanted |= {'회계처리', '상각표'}
     removed = unwanted & set(wb.sheetnames)
@@ -265,9 +270,82 @@ def append_basic_accounting(wb, run):
     calculation_table(wb, '상각표', rows)
 
 
-def finish_calculation_workbook(wb, run, *, formula=False, accounting=False):
-    """Keep reproducible inputs and numerical checks; omit workflow sign-offs."""
-    calculation_sheets_only(wb, accounting=accounting)
+def judgment_rows(run):
+    """판단·근거 시트 — 앱 판정(초안) · 핵심 수치 · 평가자 판단 · 근거 문단, 그리고 원문 발췌."""
+    from . import legacy, sources
+    from .evidence import TOPICS, applicable
+    t, r = run.terms, run.raw
+    memos = run.case.memos
+    head = [['구분', '항목', '앱 판정(초안)', '핵심 수치', '평가자 판단', '평가자 근거', '근거 문단']]
+    rows, used = [], []
+
+    def add(kind, item, verdict, nums, memo_key, topic):
+        m = memos.get(memo_key, {})
+        rows.append([kind, item, verdict, nums, m.get('decision', '미답'), m.get('reason', ''), sources.cite(topic)])
+        used.append(topic)
+
+    if not legacy.is_sha(t):
+        args = (t, r['full'], r['b0'], r['b1'], r['b2'], r['ca'])
+        ah = legacy.acc_host(*args)
+        sp = legacy.split_test(*args, [] if ah is None else legacy.eir_table(t, ah)[1])
+        for key, nm, topic in [('warrant', '신주인수권', 'embedded'), ('put', '조기상환청구권', 'split_put'),
+                               ('call', '매도청구권', 'third_party_call' if t.k_third else 'split_call')]:
+            d = sp.get(key)
+            if not d or not d['있음']:
+                continue
+            ind = d['지표']
+            nums = (f"행사금액 {ind['첫 조기상환일 행사금액']:,.4f} / 상각후원가 {ind['같은 시점 상각후원가']:,.4f} / 차이 {ind['차이']:.2%} (기준 {legacy.SPLIT_TOL:.0%})"
+                    if '첫 조기상환일 행사금액' in ind else '')
+            add('분리 판정', nm, legacy.inst_text(t, d['결론'] + ' — ' + ' '.join(d['이유'])), nums, f'split_{key}', topic)
+        if t.k_w > 0:
+            method = {0: '유무가치비교법', 1: '옵션차익 혼합할인율', 2: '옵션차익 지분·부채 분리할인'}[int(t.k_method)]
+            add('평가방법', '매도청구권 평가방법', f'적용: {method}', f"콜 {r['ca']:,.4f}", 'call_method', 'call_method')
+            if legacy.pc_overlap(t):
+                add('평가방법', '풋·콜 우선순위', ['투자자 조기상환 우선', '발행자 매도청구 우선'][int(t.pc_order)], '', 'priority', 'priority')
+        add('평가방법', '이자율모형(BDT)', '적용' if legacy.put_bdt_on(t) else '확정금리 격자', '', 'bdt', 'bdt')
+    values = run.case.effective()
+    for tp in TOPICS:
+        if tp['id'] in {'embedded', 'third_party_call', 'bdt'} or not applicable(tp, values):
+            continue
+        add('추가 검토', tp['title'], ' / '.join(tp.get('questions', [])[:3]), '', tp['id'], tp['id'])
+    day1 = run.summary.get('day1')
+    if day1:
+        add('최초 인식', '최초 인식 차이 처리', day1['verdict'], day1['nums'], 'day1_mode', 'day1')
+        rows[-1][4], rows[-1][5] = day1['mode'], (t.d1_reason or ('기본 — 관측할 수 없는 투입변수 사용' if day1['mode'] == '이연' else ''))
+        if abs(day1['diff']) >= 0.005:
+            for key, label_ in DAY1_TOPICS:
+                add('최초 인식 · 원인 점검', label_, '', '', key, 'day1')
+    seen, quotes = set(), [[], ['근거 원문 발췌', '', '', '', '', '', ''], ['근거', '제목', '위치', '본문', '출처', '', '']]
+    for topic in used:
+        for key in sources.refs(topic):
+            if key in seen:
+                continue
+            seen.add(key)
+            for row in sources.lookup(key):
+                quotes.append([sources.label(key), row['title'], row['location'], row['text'], row['url'] or row['source'], '', ''])
+    return head + rows + quotes
+
+
+DAY1_TOPICS = [('day1_rights', '모형이 빠뜨린 권리가 있나요?'), ('day1_inputs', '입력값이 거래 당시와 맞나요?'),
+               ('day1_price', '거래가격이 공정가치가 아닐 수 있나요? (1113 B4)')]
+
+
+def finish_calculation_workbook(wb, run, *, formula=False, accounting=False, judgment=False):
+    """Keep reproducible inputs and numerical checks; judgment sheets on request."""
+    calculation_sheets_only(wb, accounting=accounting, judgment=judgment)
+    cal = run.case.calibration
+    if cal:
+        calculation_table(wb, '보정기록', [['항목', '내용'], ['보정일', cal['date']],
+            ['보정 대상', '주가(S0)' if cal['target'] == 'S0' else '위험이자율 가산'],
+            ['보정 전', cal['before']], ['보정 후', cal['after']], ['보정일 지분평가 주당가치', cal['equity_ps']],
+            ['근거', cal['reason']], ['이번 평가 적용',
+             f"주가 {run.terms.S0:,.4f} (출처: {run.terms.s0_src or '직접 입력'})"],
+            ['이어 적용 식', '새 주가 = 보정 주가 × (이번 지분평가 주당가치 ÷ 보정일 지분평가 주당가치)'],
+            ['근거 문단', 'K-IFRS 1113 문단 64 · 한공회 실무사례 3.4.2.4 보정(calibration)']])
+    if judgment:
+        ws = calculation_table(wb, '판단·근거', judgment_rows(run))
+        ws.column_dimensions['D'].width = 40
+        ws.column_dimensions['C'].width = 60
     s, t = run.summary, run.terms
     calculation_table(wb, '계산정보', [['항목', '내용'], ['건명', run.case.name],
         ['평가기준일', t.d_base], ['평가모형', t.model], ['구간 수', t.n],

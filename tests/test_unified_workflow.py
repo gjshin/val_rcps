@@ -220,15 +220,12 @@ def test_bdt_detail_does_not_decide_model_from_exercise_ratio_alone():
     app.radio(key='_workflow_stage').set_value('평가·분석').run()
     next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
     next(w for w in app.selectbox if w.label=='분석 도구').set_value('상세 계산·회계 참고표').run()
-    next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('권리·금리 분석').run()
+    next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('판단·근거').run()
     assert not app.exception
-    captions = [str(w.value) for w in app.get('caption')]
-    assert any('표시한 비율로 분리 여부나 모형을 자동 결정하지 않습니다.' in s
-               for s in captions)
-    messages = ' '.join(str(w.value) for kind in ('caption','info','warning','success','error')
-                        for w in app.get(kind))
-    assert '확정 격자로 충분' not in messages
-    assert 'BDT 를 켜십시오' not in messages
+    messages = [str(w.value) for kind in ('info','warning','success') for w in app.get(kind)]
+    # 행사 진단은 앱 판정(초안)으로만 표시하고 BDT 를 켜라고 지시하지 않는다.
+    assert any('행사금액 ÷ 계속보유가치' in m and '앱 판정(초안)' in m for m in messages)
+    assert 'BDT 를 켜십시오' not in ' '.join(messages)
 
 
 def test_detailed_exports_are_available_without_changing_grid():

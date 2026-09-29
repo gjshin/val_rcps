@@ -5,7 +5,7 @@ import streamlit as st
 
 ROOT = Path(__file__).parent
 PAGES = ['평가 작업', '여러 회차·변동 분석']
-APP_VERSION = '2026.09.29-calculation.2'
+APP_VERSION = '2026.09.29-judgment.1'
 
 
 def detailed(run):

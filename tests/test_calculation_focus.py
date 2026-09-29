@@ -116,7 +116,7 @@ def test_screen_to_excel_without_review_or_final_gate(days):
     actual=app.session_state.run
     assert actual.summary['amounts_100']==calculate(app.session_state.case).summary['amounts_100']
     next(w for w in app.selectbox if w.label=='분석 도구').set_value('상세 계산·회계 참고표').run()
-    for section in ['권리·금리 분석','이자율곡선','주가·변동성','검산']:
+    for section in ['판단·근거','이자율곡선','주가·변동성','검산']:
         selector=next(w for w in app.selectbox if w.label=='상세 분석 항목')
         if section in selector.options:
             selector.set_value(section).run()
@@ -154,13 +154,16 @@ def test_numeric_comparison_buttons_run_on_request():
     app.radio(key='_workflow_stage').set_value('평가·분석').run()
     next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
     next(w for w in app.selectbox if w.label=='분석 도구').set_value('상세 계산·회계 참고표').run()
-    next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('권리·금리 분석').run()
-    assert 'numeric_put' not in app.session_state
-    for title in ['상환금액·상각후원가 비교','TF·BDT 부채요소 비교','제3자 콜 평가방법 비교']:
+    next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('판단·근거').run()
+    assert not app.exception
+    # 격자를 다시 도는 비교는 누르기 전에는 계산하지 않는다.
+    assert all(k not in app.session_state for k in ('jd_call', 'jd_pc', 'jd_bdt'))
+    assert any('분리 판정' in m.value for m in app.markdown)
+    for title in ['콜 평가방법 비교','우선순위 비교','BDT 적용 검토']:
         next(b for b in app.button if b.label==title).click().run()
         assert not app.exception, app.exception
-    assert app.session_state.numeric_put[1]
-    assert len(app.session_state.numeric_call[1])==3
+    assert len(app.session_state.jd_call[1][0]) >= 3
+    assert app.session_state.jd_bdt[1][1]['관문']
 
 
 def test_explicit_failed_peer_exception_in_ui(monkeypatch):

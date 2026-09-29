@@ -1,4 +1,5 @@
 """Bounded arithmetic and contract-review prompts; no automatic accounting opinion."""
+import copy
 import math
 from . import legacy
 from .case import Issue
@@ -99,3 +100,29 @@ def arithmetic_checks(tm, raw, amounts):
         checks.append(dict(name='구성요소 합계 대사', passed=abs(delta) < 1e-8,
                            detail=f'차이 {delta:.10f} (원금 100 기준). 동일 실행 결과의 산술 대사이며 독립 모형 검증은 아님.'))
     return checks
+
+
+# 옛 상세 앱의 입력 경고(legacy.validate) 가운데 위 검사와 겹치는 것은 뺀다.
+_DUPLICATE = ('함께 열리고', '신용스프레드가 음수', '주기가 노드 간격보다', '표면이자율', '최저 조정가액이 최초',
+              '희석', '위험 곡선이 무위험 곡선보다')
+
+
+def _split_sentence(text):
+    """첫 문장만 '확인 내용'으로, 나머지는 '영향' 칸으로 — 표를 짧게 유지한다."""
+    text = ' '.join(text.replace('**', '').split())
+    for mark in ('다. ', '. '):
+        cut = text.find(mark)
+        if 0 < cut < len(text) - len(mark):
+            return text[:cut + len(mark) - 1], text[cut + len(mark):]
+    return text, ''
+
+
+def input_warnings(tm, px_last=None):
+    """옛 입력 경고를 확인할 사항으로 — 계산을 다시 돌지 않는 검사만(BDT 비교는 BDT 를 켰을 때만)."""
+    out = []
+    for msg in legacy.validate(copy.deepcopy(tm), px_last):
+        if any(k in msg for k in _DUPLICATE):
+            continue
+        head, rest = _split_sentence(msg)
+        out.append(Issue('review', 'input_check', 'input', head, rest, '계약서·입력값을 대조하고 필요하면 근거를 적으십시오.'))
+    return out
