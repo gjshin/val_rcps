@@ -11,7 +11,7 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
 
-def query_spec(listed, lines, days, asof, file_sha256=''):
+def query_spec(listed, lines, days, asof, file_sha256='', *, allow_failed=False, allow_missing=False):
     peers = []
     for line in lines:
         parts = [s.strip() for s in line.replace('\t', ',').split(',')]
@@ -19,13 +19,17 @@ def query_spec(listed, lines, days, asof, file_sha256=''):
             peers.append({'code': parts[0], 'name': parts[1] if len(parts) > 1 and parts[1] else parts[0]})
     result = dict(listed=bool(listed), peers=peers, days=days, asof=asof,
                   origin='file' if file_sha256 else 'yahoo', file_sha256=file_sha256)
+    if allow_failed or allow_missing:
+        result['policy'] = dict(allow_failed=bool(allow_failed), allow_missing=bool(allow_missing))
     validate_query(result)
     return result
 
 
 def validate_query(query):
-    if not isinstance(query, dict) or set(query) != {'listed', 'peers', 'days', 'asof', 'origin', 'file_sha256'}:
+    if not isinstance(query, dict) or set(query)-{'policy'} != {'listed', 'peers', 'days', 'asof', 'origin', 'file_sha256'}:
         raise ValueError('조회 조건 기록을 확인하십시오.')
+    if 'policy' in query and (not isinstance(query['policy'], dict) or set(query['policy']) != {'allow_failed','allow_missing'} or any(type(v) is not bool for v in query['policy'].values())):
+        raise ValueError('자료 제외 옵션을 확인하십시오.')
     if type(query['listed']) is not bool or type(query['days']) is not int or query['days'] < 10:
         raise ValueError('조회 일수는 10 이상의 정수여야 합니다.')
     dt.date.fromisoformat(query['asof'])
@@ -57,7 +61,7 @@ def aggregate(values, pick):
     return values[n//2] if n % 2 else (values[n//2-1] + values[n//2]) / 2
 
 
-def parse_price_table(text):
+def parse_price_table(text, *, allow_missing=False, return_exclusions=False):
     """Accept one or more price columns, but never silently remove bad cells."""
     import csv
     import io
@@ -71,20 +75,25 @@ def parse_price_table(text):
     if len(headers) < 2 or any(not s for s in headers[1:]) or len(set(headers[1:])) != len(headers)-1:
         raise ValueError('날짜 열과 중복 없는 종목별 머리글이 필요합니다.')
     out = [[name, []] for name in headers[1:]]
+    exclusions, all_dates = [], []
     for index, cells in enumerate(table[1:], start=2):
         if len(cells) != len(headers):
             raise ValueError(f'{index}행: 열 수가 머리글과 다릅니다.')
         try:
             parts = re.split(r'[-./]', cells[0].strip())
             day = dt.date(*map(int, parts)).isoformat()
+            all_dates.append(day)
             for target, cell in zip(out, cells[1:]):
+                if allow_missing and cell.strip().lower() in ('', 'nan', 'na', 'n/a'):
+                    exclusions.append(dict(name=target[0], date=day, reason='주가 누락'))
+                    continue
                 price = float(cell.replace(',', '').replace('원', '').strip())
                 if not math.isfinite(price) or price <= 0:
                     raise ValueError('invalid price')
                 target[1].append([day, price])
         except (ValueError, TypeError, OverflowError) as exc:
             raise ValueError(f'{index}행: 날짜 또는 주가가 누락되었거나 잘못되었습니다. 해당 행을 고쳐 다시 읽으십시오.') from exc
-    dates = [d for d, _ in out[0][1]]
+    dates = all_dates
     if len(set(dates)) != len(dates):
         raise ValueError('종가 파일에 중복 날짜가 있습니다.')
     if dates == sorted(dates, reverse=True):
@@ -92,7 +101,21 @@ def parse_price_table(text):
             prices.reverse()
     elif dates != sorted(dates):
         raise ValueError('종가 파일의 날짜가 오름차순 또는 내림차순이어야 합니다.')
-    return out
+    return (out, exclusions) if return_exclusions else out
+
+
+
+def select_price_window(series, exclusions, days, asof):
+    """Select raw observation dates before dropping gaps, just like Yahoo input."""
+    dates = sorted({day for _, rows in series for day, _ in rows} |
+                   {row['date'] for row in exclusions if row['date']})
+    if not dates:
+        raise ValueError('종가 파일에 날짜별 자료가 없습니다.')
+    if dates[-1] > asof:
+        raise ValueError('기준일 이후 자료가 있습니다. 빈 가격의 날짜도 포함하여 원본 기간을 수정하십시오.')
+    first = dates[-days] if len(dates) > days else dates[0]
+    selected = [[name, [[day, price] for day, price in rows if day >= first]] for name, rows in series]
+    return selected, [row for row in exclusions if row['date'] >= first]
 
 
 def _statistics(series, query, options):
@@ -106,6 +129,7 @@ def _statistics(series, query, options):
     if not isinstance(series, list) or not series:
         raise ValueError('수신한 주가가 없습니다.')
     names, stats, warnings = [], [], []
+    policy = query.get('policy', {})
     end = dt.date.fromisoformat(query['asof'])
     for item in series:
         if not isinstance(item, (list, tuple)) or len(item) != 2 or not isinstance(item[0], str) or not item[0].strip():
@@ -114,9 +138,11 @@ def _statistics(series, query, options):
         if name in names:
             raise ValueError('주가 자료의 회사명이 중복됩니다.')
         names.append(name)
-        if not isinstance(prices, (list, tuple)) or len(prices) < query['days']:
+        if not isinstance(prices, (list, tuple)) or len(prices) < 10:
+            raise ValueError(f'{name}: 변동성 산출에는 유효 주가가 10개 이상 필요합니다.')
+        if len(prices) < query['days'] and not policy.get('allow_missing'):
             raise ValueError(f'{name}: 요청한 {query["days"]}개 관측치보다 자료가 적습니다. 기간 또는 피어 선정 근거를 검토하고 다시 받으십시오.')
-        if len(prices) != query['days']:
+        if len(prices) > query['days']:
             raise ValueError(f'{name}: 조회 일수와 관측치 수가 다릅니다. 사용할 기간을 명시하여 자료를 다시 준비하십시오.')
         prev = None
         for row in prices:
@@ -129,29 +155,45 @@ def _statistics(series, query, options):
             if isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
                 raise ValueError(f'{name}: 주가는 유한한 양수여야 합니다.')
             prev = day
-        if (end - prev).days > 7:
+        if len(prices) < query['days']:
+            warnings.append(f'{name}: 요청 {query["days"]}개 중 유효 주가 {len(prices)}개 사용. 부족한 관측치 허용을 선택했습니다.')
+        if (end - prev).days > 7 and not policy.get('allow_missing'):
             raise ValueError(f'{name}: 마지막 주가가 기준일보다 7일 넘게 오래되었습니다. 거래정지·자료 누락 여부를 확인하십시오.')
+        if (end - prev).days > 7:
+            warnings.append(f'{name}: 마지막 관측일 {prev.isoformat()} / 기준일 {end.isoformat()}. 누락 허용 옵션으로 계산했습니다.')
         result = vol_from(prices, options['tdays'], options['drop'])
         if not result or result['n'] - result['removed'] < 2 or not math.isfinite(result['annual']) or result['annual'] <= 0:
             raise ValueError(f'{name}: 남은 수익률 수 또는 변동성을 확인하십시오.')
         if result['removed']:
             warnings.append(f'{name}: 수익률 {result["n"]}개 중 {result["removed"]}개 제외. 실제 변동을 제거했는지 검토하십시오.')
         stats.append([name, result['annual'], result['n'], result['removed']])
-    if query['origin'] == 'yahoo' and names != [p['name'] for p in query['peers']]:
-        raise ValueError('요청한 피어와 수신 자료가 다릅니다. 일부 종목의 실패를 제외한 채 적용할 수 없습니다.')
+    if query['origin'] == 'yahoo':
+        requested = [p['name'] for p in query['peers']]
+        if names != requested:
+            if not policy.get('allow_failed') or names != [name for name in requested if name in names]:
+                raise ValueError('요청한 피어와 수신 자료가 다릅니다. 일부 종목의 실패를 제외한 채 적용할 수 없습니다.')
+            warnings += [f'{name}: 조회 실패로 산출에서 제외.' for name in requested if name not in names]
     if query['listed'] and len(names) != 1:
         raise ValueError('상장사 자체 주가 산출에는 한 종목만 사용할 수 있습니다.')
     return stats, aggregate([s[1] for s in stats], options['pick']), warnings
 
 
-def make_pack(series, query, *, tdays, drop, pick, source, retrieved_at=None):
+def make_pack(series, query, *, tdays, drop, pick, source, retrieved_at=None, exclusions=None):
     options = dict(tdays=tdays, drop=drop, pick=pick, asof=query['asof'], days=query['days'])
     stats, sigma, warnings = _statistics(series, query, options)
-    return dict(kind='vol_pack', version=2, listed=query['listed'], sigma=sigma, opt=options,
+    result = dict(kind='vol_pack', version=2, listed=query['listed'], sigma=sigma, opt=options,
                 query=copy.deepcopy(query), query_sha256=digest(query), source=source,
                 made_at=dt.datetime.now(dt.timezone.utc).isoformat(),
                 retrieved_at=retrieved_at or dt.datetime.now(dt.timezone.utc).isoformat(),
                 series=copy.deepcopy(series), data_sha256=digest(series), per_company=stats, warnings=warnings)
+    if exclusions:
+        if not any(query.get('policy', {}).values()):
+            raise ValueError('자료 제외 옵션을 먼저 선택하십시오.')
+        if not isinstance(exclusions, list) or any(not isinstance(x,dict) or set(x) != {'name','date','reason'} or any(not isinstance(v,str) for v in x.values()) for x in exclusions):
+            raise ValueError('제외 종목·날짜·사유 기록을 확인하십시오.')
+        result['exclusions'] = copy.deepcopy(exclusions)
+        result['warnings'] += [f"{x['name']} {x['date']}: {x['reason']}" for x in exclusions]
+    return result
 
 
 def validate_pack(pack, *, asof=None, current_query=None):
@@ -159,11 +201,15 @@ def validate_pack(pack, *, asof=None, current_query=None):
         raise ValueError('조회 조건·원본 주가를 포함한 새 변동성 패키지가 필요합니다. 이전 패키지는 다시 산출하십시오.')
     required = {'kind', 'version', 'listed', 'sigma', 'opt', 'query', 'query_sha256', 'source',
                 'made_at', 'retrieved_at', 'series', 'data_sha256', 'per_company', 'warnings'}
-    if set(pack) != required:
+    if set(pack)-{'exclusions'} != required:
         raise ValueError('변동성 패키지의 필수 기록을 확인하십시오.')
     if any(not isinstance(pack[k], str) or not pack[k].strip() for k in ('source', 'made_at', 'retrieved_at')):
         raise ValueError('자료 출처·취득시각을 기록하십시오.')
     stats, sigma, warnings = _statistics(pack['series'], pack['query'], pack['opt'])
+    if pack.get('exclusions'):
+        checked = make_pack(pack['series'], pack['query'], tdays=pack['opt']['tdays'], drop=pack['opt']['drop'],
+                            pick=pack['opt']['pick'], source=pack['source'], exclusions=pack['exclusions'])
+        warnings = checked['warnings']
     if pack['data_sha256'] != digest(pack['series']) or pack['query_sha256'] != digest(pack['query']):
         raise ValueError('주가 또는 조회 조건의 식별값이 일치하지 않습니다.')
     if isinstance(pack['sigma'], bool) or not isinstance(pack['sigma'], (int, float)) or not math.isfinite(pack['sigma']) or not math.isclose(sigma, pack['sigma'], rel_tol=1e-12, abs_tol=1e-14) or stats != pack['per_company'] or warnings != pack['warnings'] or pack['listed'] != pack['query']['listed']:
@@ -173,3 +219,20 @@ def validate_pack(pack, *, asof=None, current_query=None):
     if current_query is not None and digest(current_query) != pack['query_sha256']:
         raise ValueError('조회 조건이 바뀌었습니다. 자료를 다시 받으십시오.')
     return True
+
+
+def export_volatility_workbook(pack):
+    """Same raw prices/options as valuation; retain explicit omissions in output."""
+    import io
+    import openpyxl
+    from .legacy import build_xlsx_vol
+    from .report import calculation_table
+    validate_pack(pack)
+    opt = pack['opt']
+    data = build_xlsx_vol(pack['series'], tdays=opt['tdays'], drop=opt['drop'],
+                         pick=opt['pick'], applied=pack['sigma'], asof=dt.date.fromisoformat(opt['asof']), kind='stock')
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    calculation_table(wb, '조회·제외내역', [['항목', '내용'], ['조회 조건', pack['query']],
+        ['산출 옵션', opt], ['취득시각', pack['retrieved_at']]] + [['제외·확인사항', x] for x in pack['warnings']])
+    out = io.BytesIO(); wb.save(out)
+    return out.getvalue()

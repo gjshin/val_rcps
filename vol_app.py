@@ -5,11 +5,11 @@ import json
 import pandas as pd
 import streamlit as st
 from valuation import legacy
-from valuation.market_data import query_spec, digest, make_pack, validate_pack, aggregate, parse_price_table
+from valuation.market_data import query_spec, digest, make_pack, validate_pack, aggregate, parse_price_table, select_price_window
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_prices(*args):
-    return legacy.fetch_prices(*args)
+def fetch_prices(*args, **kwargs):
+    return legacy.fetch_prices(*args, **kwargs)
 agg = aggregate
 PICK = {'median': '중앙값', 'mean': '단순평균', 'max': '최댓값', 'min': '최솟값'}
 
@@ -38,12 +38,17 @@ def main():
     pick = c4.selectbox('종합 방법', list(PICK), format_func=PICK.get, disabled=listed)
     if listed:
         pick = 'median'
+    with st.expander('자료 누락 처리'):
+        allow_failed = st.checkbox('못 받은 종목 빼고 계산', value=False, disabled=listed)
+        allow_missing = st.checkbox('빈 날짜 빼고 계산', value=False)
+        st.caption('누락을 허용하면 실제 수신한 주가만 사용합니다. 부족한 관측치, 제외 종목·날짜·사유를 산출내역에 기록합니다. 0·음수 주가와 중복·미래 날짜는 허용하지 않습니다.')
+    policy = dict(allow_failed=allow_failed and not listed, allow_missing=allow_missing)
     query = None
     try:
         if mode == '야후 파이낸스' and lines:
-            query = query_spec(listed, lines, days, asof.isoformat())
+            query = query_spec(listed, lines, days, asof.isoformat(), **policy)
         elif upload is not None:
-            query = query_spec(listed, [], days, asof.isoformat(), hashlib.sha256(upload.getvalue()).hexdigest())
+            query = query_spec(listed, [], days, asof.isoformat(), hashlib.sha256(upload.getvalue()).hexdigest(), **policy)
     except (ValueError, TypeError) as exc:
         st.error(str(exc))
     if st.button('주가 받기' if mode == '야후 파이낸스' else '파일을 현재 조건으로 읽기', type='primary', disabled=query is None):
@@ -51,30 +56,31 @@ def main():
         st.session_state.pop('vol_snapshot', None)
         try:
             with st.spinner('주가 자료를 읽고 있습니다.'):
-                got, failures = [], []
+                got, failures, exclusions = [], [], []
                 if mode == '야후 파이낸스':
                     sources = []
                     for peer in query['peers']:
                         try:
-                            rows, source = fetch_prices(peer['code'], days, '', asof.isoformat())
+                            if allow_missing:
+                                rows, source, removed = fetch_prices(peer['code'], days, '', asof.isoformat(), allow_missing=True, return_exclusions=True)
+                                exclusions += [dict(x, name=peer['name']) for x in removed]
+                            else:
+                                rows, source = fetch_prices(peer['code'], days, '', asof.isoformat())
                             got.append([peer['name'], [[str(d), float(p)] for d, p in rows]])
                             sources.append(f"{peer['code']}: {source}")
                         except Exception as exc:
                             failures.append(f"{peer['name']}: {exc}")
-                    if failures:
+                            exclusions.append(dict(name=peer['name'], date='', reason='조회 실패: ' + str(exc)))
+                    if failures and not policy['allow_failed']:
                         raise ValueError('일부 종목을 받지 못했습니다. 피어 전체를 확인한 뒤 다시 받으십시오. ' + ' / '.join(failures))
                     source = '야후 파이낸스 · 수정주가 · ' + ' / '.join(sources)
                 else:
-                    parsed = parse_price_table(legacy.read_upload(upload.name, upload.getvalue()))
-                    # Only a trailing window may be selected; future observations are never quietly trimmed.
-                    for name, rows in parsed:
-                        if any(str(d) > asof.isoformat() for d, _ in rows):
-                            raise ValueError(f'{name}: 기준일 이후 자료가 있습니다. 원본 파일의 기간을 수정하십시오.')
-                        got.append([name, [[str(d), float(p)] for d, p in rows[-days:]]])
+                    parsed, exclusions = parse_price_table(legacy.read_upload(upload.name, upload.getvalue()), allow_missing=allow_missing, return_exclusions=True)
+                    got, exclusions = select_price_window(parsed, exclusions, days, asof.isoformat())
                     source = '사용자 종가 파일: ' + upload.name
                 retrieved_at = dt.datetime.now(dt.timezone.utc).isoformat()
-                make_pack(got, query, tdays=tdays, drop=drop, pick=pick, source=source, retrieved_at=retrieved_at)
-                st.session_state.vol_snapshot = dict(series=got, query=query, source=source, retrieved_at=retrieved_at)
+                make_pack(got, query, tdays=tdays, drop=drop, pick=pick, source=source, retrieved_at=retrieved_at, exclusions=exclusions)
+                st.session_state.vol_snapshot = dict(series=got, query=query, source=source, retrieved_at=retrieved_at, exclusions=exclusions)
         except (ValueError, TypeError, ArithmeticError) as exc:
             st.error(str(exc))
     snapshot = st.session_state.get('vol_snapshot')
@@ -100,9 +106,10 @@ def main():
                 st.download_button('변동성 패키지 (JSON) 내려받기', json.dumps(pack, ensure_ascii=False, indent=2), f'변동성패키지_{asof.isoformat()}.json', 'application/json')
                 # Excel generation is explicit; changing a display option does not rebuild it.
                 if st.button('산출내역 엑셀 생성'):
-                    st.session_state.vol_xlsx = legacy.build_xlsx_vol(pack['series'], tdays=tdays, drop=drop, pick=pick, applied=pack['sigma'], asof=asof, kind='stock')
-                    st.session_state.vol_xlsx_key = digest([pack['data_sha256'], pack['opt']])
-                if st.session_state.get('vol_xlsx_key') == digest([pack['data_sha256'], pack['opt']]):
+                    from valuation.market_data import export_volatility_workbook
+                    st.session_state.vol_xlsx = export_volatility_workbook(pack)
+                    st.session_state.vol_xlsx_key = digest([pack['data_sha256'], pack['opt'], pack['query_sha256'], pack['warnings']])
+                if st.session_state.get('vol_xlsx_key') == digest([pack['data_sha256'], pack['opt'], pack['query_sha256'], pack['warnings']]):
                     st.download_button('산출내역 엑셀 저장', st.session_state.vol_xlsx, f'변동성산출내역_{asof.isoformat()}.xlsx')
             except (ValueError, TypeError, ArithmeticError) as exc:
                 st.error(str(exc))

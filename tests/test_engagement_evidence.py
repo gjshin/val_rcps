@@ -128,10 +128,10 @@ def test_judgment_stale_after_input_change_and_refresh_without_pricing(monkeypat
     monkeypatch.setattr(legacy,'decompose',lambda *_: (_ for _ in ()).throw(AssertionError('Unexpected pricing')))
     updated=refresh_run(run,case)
     with zipfile.ZipFile(io.BytesIO(export_bundle(updated))) as z:
-        assert 'judgment_evidence.json' in z.namelist()
+        assert 'judgment_evidence.json' not in z.namelist()
         wb=load_workbook(io.BytesIO(z.read('value_review.xlsx')))
-        assert '판단근거' in wb.sheetnames
-        assert any(c.value=='Updated review' for row in wb['판단근거'] for c in row)
+        assert '판단근거' not in wb.sheetnames
+        assert json.loads(z.read('case.json'))['judgments'] == updated.case.judgments
 
 
 def test_source_cards_have_verifiable_locations_and_small_quotes():

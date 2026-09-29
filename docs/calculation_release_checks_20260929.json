@@ -1,0 +1,251 @@
+{
+  "date": "2026-09-29",
+  "scope": "계산 중심 화면, Excel 출력, 월·2주·주 간격, 시장자료 예외 처리",
+  "pytest": {
+    "passed": 201,
+    "seconds": 86.01
+  },
+  "quick_suites": [
+    {
+      "suite": "손계산대조",
+      "passed": true
+    },
+    {
+      "suite": "오라클",
+      "passed": true
+    },
+    {
+      "suite": "분기전수",
+      "passed": true
+    },
+    {
+      "suite": "기능목록",
+      "passed": true
+    },
+    {
+      "suite": "조합시험",
+      "passed": true
+    },
+    {
+      "suite": "검산수식대조",
+      "passed": true
+    },
+    {
+      "suite": "배선대조",
+      "passed": true
+    },
+    {
+      "suite": "리포트대조",
+      "passed": true
+    }
+  ],
+  "baseline": {
+    "주계약": 37.5208,
+    "부채요소": 73.1837,
+    "전체": 114.8781,
+    "매도청구권": 13.0762
+  },
+  "baseline_unchanged": true,
+  "long_suites": [
+    {
+      "suite": "조서대조",
+      "cases": 96,
+      "passed": true
+    },
+    {
+      "suite": "설정전수대조",
+      "cases": 62,
+      "passed": true
+    }
+  ],
+  "long_suite_execution": "기존 두 스크립트의 개별 사례를 별도 프로세스로 실행하고, 원래 순서의 설정별 결과 변화 검증까지 수행. 계산 입력과 검증 조건은 변경하지 않음.",
+  "ui_acceptance": [
+    {
+      "days": 0,
+      "intervals": 117,
+      "amounts": {
+        "whole_before_call": 70.91990629155772,
+        "call_deduction": 0.0,
+        "net": 70.91990629155772,
+        "host_reference": 65.44264940393585,
+        "put_increment": 4.927406259797166,
+        "conversion_increment": 0.5498506278247106
+      },
+      "checks": [
+        {
+          "errors": [],
+          "max_formula_length": 118
+        },
+        {
+          "errors": [],
+          "max_formula_length": 1205
+        }
+      ],
+      "seconds": 20.783882775001985
+    },
+    {
+      "days": 7,
+      "intervals": 510,
+      "amounts": {
+        "whole_before_call": 70.93050857785914,
+        "call_deduction": 0.0,
+        "net": 70.93050857785914,
+        "host_reference": 65.44582545968863,
+        "put_increment": 4.896235915818295,
+        "conversion_increment": 0.5884472023522136
+      },
+      "checks": [
+        {
+          "errors": [],
+          "max_formula_length": 118
+        },
+        {
+          "errors": [],
+          "max_formula_length": 1205
+        }
+      ],
+      "seconds": 329.78522192100354
+    }
+  ],
+  "formula_recalculation": [
+    {
+      "errors": [],
+      "max_formula_length": 1205,
+      "comparison": [
+        [
+          "주계약",
+          65.4426494039359,
+          65.4426494038144,
+          -1.21417542686686e-10,
+          "일치"
+        ],
+        [
+          "부채요소",
+          70.370055663733,
+          70.3700556637329,
+          0,
+          "일치"
+        ],
+        [
+          "전체 가치",
+          70.9199062915577,
+          70.9199062914611,
+          -9.66764446275192e-11,
+          "일치"
+        ],
+        [
+          "콜옵션",
+          0,
+          0,
+          0,
+          "일치"
+        ],
+        [
+          "순포지션",
+          70.9199062915577,
+          70.9199062914611,
+          -9.66764446275192e-11,
+          "일치"
+        ]
+      ],
+      "engine": "LibreOffice",
+      "same_grid": true
+    },
+    {
+      "errors": [],
+      "max_formula_length": 1205,
+      "comparison": [
+        [
+          "주계약",
+          65.4458254596886,
+          65.4458254596485,
+          -4.01740862798761e-11,
+          "일치"
+        ],
+        [
+          "부채요소",
+          70.3420613755069,
+          70.3420613755069,
+          0,
+          "일치"
+        ],
+        [
+          "전체 가치",
+          70.9305085778591,
+          70.9305085778273,
+          -3.18749471261981e-11,
+          "일치"
+        ],
+        [
+          "콜옵션",
+          0,
+          0,
+          0,
+          "일치"
+        ],
+        [
+          "순포지션",
+          70.9305085778591,
+          70.9305085778273,
+          -3.18749471261981e-11,
+          "일치"
+        ]
+      ],
+      "engine": "LibreOffice",
+      "same_grid": true
+    }
+  ],
+  "limitations": [
+    "시험용 RCPS는 사용자가 제시한 가상 입력임. 실제 고객 자료가 아님.",
+    "화면 시험은 새 평가 → 입력·시장자료 → 평가 및 수치 비교 → Excel 생성. 제거한 검토기록·최종 승인 화면은 대상에서 제외.",
+    "수식은 노드 수를 줄이지 않고 LibreOffice로 재계산. 기계 연산에 따른 최대 약 1.22e-10 차이(액면 100 기준)는 비교 허용오차 내.",
+    "Excel 파일 ZIP·XML·참조·수식 길이 검사 완료. Microsoft Excel에서 직접 열어 복구 메시지 여부를 확인하지는 못함.",
+    "운영 앱 주소 및 배포 연결 미확인. 저장소 메인 반영과 운영 화면 반영은 별도임.",
+    "주·2주 간격은 만기까지 동일 간격으로 나누되 평균 간격이 7·14일에 가장 가깝도록 구간 수를 정함. 실제 평균 일수는 화면에 표시.",
+    "기존 검증 매트릭스의 기능 한계 및 차단 조건은 유지됨."
+  ],
+  "sha256": {
+    "app.py": "ba6c5079ada2da69f8cd0e56c4fec041ad062acd9dd0ab0cd8a3e6b49d671c4c",
+    "application.py": "34a426f4af100a927d3d4c5f9eec2e0b797e680715708ece5ca88b29b3b22d8a",
+    "cashflow_ui.py": "336c4eacd90ab12853a0d97aadc1aaa94a1c9272949c34d9cbe95856f4063041",
+    "contract_ui.py": "65e3602cc38bb7b2605babe349d4b824bb1339a657d3554bacd2fe7dce12c362",
+    "engagement_ui.py": "79d68ddf874f740f2fc7e9977ebedb0b18a56426fd334422db440267bf74da44",
+    "evidence_ui.py": "860e21243ff1d74ed7053de4e2b44594c6ecaef0e4835be89d9097bb646869c3",
+    "legacy_app.py": "0225fbfa56d6a966231c40922f23c715a01c5752279e5b4ca40d7e8eb3a8d2e6",
+    "market_tools_ui.py": "48d4e82d69231b8722355afdf1d640ab10776425a484ade2aed75bbefd790ab9",
+    "numeric_analysis_ui.py": "fe943a0e6caa70a4489b31118b1e62a26e040ada5dd8a6b7bf32b9e15445aff0",
+    "review_ui.py": "50177fac90920ceb89d10103c202885b8e9ab421e161b7bfc8f4557a2277bdd9",
+    "scenario_ui.py": "53569d4fe1b8f7f7194ae71cbd6cd24264b4bc703aedfd7a37628fea95ef3461",
+    "tests/test_business_workflow.py": "2c3bfb18106f37ef33e36f6cd98bf11ca345b8cd375d96a7771ae86b2b32630b",
+    "tests/test_calculation_focus.py": "af9a1c0b381867ab24a04e4c04104dd57c5ef91428a677f14c91288188806429",
+    "tests/test_engagement_evidence.py": "9a93ee411aa282432d9f8ce05ca588b56048ab3b6de66544b42b8ea37d45c19b",
+    "tests/test_practical_controls.py": "e9ddb14343aee58a9d7ca0c171e0b688dd0b3a8e40f92922bbd3c520561747f6",
+    "tests/test_unified_workflow.py": "080fb7a23fca6ac1a59cb3c0c2f5ca2a58cc1769bae78a34a94b04f2f160c5ab",
+    "tests/test_v2_workflow.py": "cf1ae339805e1c33752020b3c1677231cdbefb7c28404c739f754e80e48c1919",
+    "tools/run_case.py": "8ec4a6c10b5a4a09c3c6dfbd40b4bd817953daccce54c98baedf9cca47429a21",
+    "tools/run_engagement.py": "e822e04cfad86ef7e0b22f6e11b54beec066b6f60088e21ee64a79a545e66008",
+    "tools/run_valuation.py": "fbce5aea9af62bff401e3d69e3163a443820d85bc4816d3ffa3ca8534adc6752",
+    "tools/valuation_cli_support.py": "852e10e571dbe89747b5569cf22aa2bfdb642655617d98b015ad740379f21a74",
+    "valuation/__init__.py": "3e3d08b020bd509df17171aac12c087621bf9a0b1d10320b675fd04188bd1283",
+    "valuation/analysis.py": "7d4c949b423a3aca44e2bda418af1585a3a5e7b1da4df46bbdbc82513a837189",
+    "valuation/bridge.py": "55e3408ecbcf0a50b68043b65e2911b4208d3b9cb108565dc6395ce2ffb524ec",
+    "valuation/case.py": "906630816e7c075e4380f4e80cf880df43df577e1d636ddd2d755d77be8b4f3e",
+    "valuation/cashflows.py": "8c1c82e6e268270d74cfb313d6f7c0ae3573c98d3407bb966ecd3b06cbef4b4d",
+    "valuation/contract_analysis.py": "b0ce1bdca8879a88107179ca859caf5592979fc518c95bc936a021a6fd77ae9a",
+    "valuation/contract_intake.py": "781a1d0e1ca1e92f7ff2125ca6f5ac947db627d206439c560f4cae2f5108a4f0",
+    "valuation/controls.py": "43ba23448d9554afec893fae901af7f843f11adf910553cf735a5862717c03cb",
+    "valuation/engagement.py": "5b61ac4c09a44e09364be33a16586dfaf7fe028f05185388cee079fe0a53a0a3",
+    "valuation/evidence.py": "d5230ac4876257b3545f214516397ec76816ae14a4e92923e1d20bf339918145",
+    "valuation/exercise.py": "da2ba01b4ed0e54019cac11c7a6e3da57881c0d0ac42fb4c90da5e28bca23889",
+    "valuation/legacy.py": "76da2bc959da94758ae3309243e2ea88ec0ec6491e15b6ff15d05773b81fe453",
+    "valuation/market_data.py": "bf29e6c49904268ce30d3ccf32146c0dfe7b3c8afdd9ba7af772bbfa57a5e3bb",
+    "valuation/presentation.py": "9113858b64f9d283b572bc51bc318cfd3da162956cfefd61a8acf1143047f8e3",
+    "valuation/report.py": "711e90b3a5d924afbb37d4e116f4ec88d27c9b6072a426fad6810b329c7a1908",
+    "valuation/review.py": "2728e75570e1c2f93b8a6849c86f2391d1da59556306bbcd15e573d8788dbb60",
+    "valuation/review_guides.py": "abc865410fa05e88b2d73bf0c71e30d279206a21e9ee53df3ac7e42a2a6a3cdb",
+    "valuation/service.py": "0e60bc78304a972b8bf79d4736db78debaf6f0b4d020ac720831d39804bf02c8",
+    "valuation/xlsx_validation.py": "d30039389164e27045beeee9816323ca31a1c3ec04d5335d380625a644997785",
+    "vol_app.py": "2570aa5935d6c63ef413e4d0b70d459dc0dbec905ae46ea1f1d5e4aba8082020",
+    "workspace_app.py": "bdda5d738c4ac69866b442b17def927b150a4afee68490cbba6148e7aa442b4c"
+  }
+}

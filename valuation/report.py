@@ -6,7 +6,7 @@ from .case import FIELDS, compare_cases, RIGHT_KINDS
 from .presentation import label, display_value, issue_rows
 
 
-def basic_workbook(run, previous=None):
+def basic_workbook(run, previous=None, *, as_workbook=False):
     from .service import AMOUNT_LABELS
     wb = Workbook()
     wb.remove(wb.active)
@@ -32,12 +32,10 @@ def basic_workbook(run, previous=None):
         return ws
 
     tm, summary = run.terms, run.summary
-    from .controls import input_key
-    defaults_checked = run.case.review_controls.get('defaults', {}).get('input_key') == input_key(run.case)
     result_rows = [['평가 결과', '총액(원)', '1주당 가치(원, RCPS)', '원금 100 기준'],
                    ['건명', run.case.name], ['평가기준일', tm.d_base], ['상품·회차', tm.inst, tm.tranche],
                    ['평가대상 발행금액·투자원금(원)', tm.face_total],
-                   ['평가모형', tm.model], ['산출물 범위', '계산 결과 및 검토기록. 계약·회계 판단은 평가자가 별도로 수행.']]
+                   ['평가모형', tm.model], ['산출물 범위', '입력 조건에 따른 계산 결과']]
     for key, value in summary['amounts_100'].items():
         result_rows.append([AMOUNT_LABELS[key], summary['amounts_total'][key],
                             (summary['amounts_per_share'] or {}).get(key), value])
@@ -61,7 +59,7 @@ def basic_workbook(run, previous=None):
                 continue
             rows.append([label(key), display_value(key, run.case.facts().get(key), tm.d_issue),
                          display_value(key, value, tm.d_issue), assumptions.get(key, {}).get('rationale', ''),
-                         run.case.sources.get(key, ''), ('보충값 확인 완료' if defaults_checked else '보충값 확인 필요') if key in run.case.imported_defaults or key in summary['engine_defaults'] else ''])
+                         run.case.sources.get(key, ''), '기본값 적용' if key in run.case.imported_defaults or key in summary['engine_defaults'] else ''])
         sheet(name, rows)
     sheet('행사방식', [['권리·조정 항목', '계약상 방식', '계산 반영']] +
           [[label(k) if k != 'cv' else '전환·신주인수권', {'any':'기간 중 언제든지', 'periodic':'정기 행사·조정', 'single':'특정일에만 행사'}[v],
@@ -100,25 +98,39 @@ def basic_workbook(run, previous=None):
         sheet('전기입력비교', [['항목', '전기', '당기']] +
               [[label(r['field']), display_value(r['field'], r['previous']), display_value(r['field'], r['current'])]
                for r in compare_cases(previous, run.case)])
+    if as_workbook:
+        return wb
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
 
 
-def calculation_sheets_only(data):
+def calculation_sheets_only(data, *, accounting=False):
     """Exclude historical auto-opinions from optional detailed calculation exports.
 
     Fail closed if a retained formula depends on an omitted sheet.
     """
-    wb = load_workbook(io.BytesIO(data))
-    removed = {'해설', '분리 판단', '검산요약', '99_모형검증', '회계처리', '상각표'} & set(wb.sheetnames)
+    is_workbook = isinstance(data, Workbook)
+    wb = data if is_workbook else load_workbook(io.BytesIO(data))
+    unwanted = {'해설', '분리 판단', '검산요약', '99_모형검증', 'V2_검토기록', 'V2_계약과가정',
+                'V2_추가권리', '판단근거', '확정상태', '계약반영표', '독립검산대사', '시장자료확인',
+                '기본값확인', '계약검토안', '추가확인자료', '별도계약조건', '평가자확인'}
+    if not accounting:
+        unwanted |= {'회계처리', '상각표'}
+    removed = unwanted & set(wb.sheetnames)
     for name in removed:
         del wb[name]
     for ws in wb:
-        for row in ws:
-            for cell in row:
-                if cell.data_type == 'f' and any(f"'{name}'!" in cell.value or f'{name}!' in cell.value for name in removed):
-                    raise ValueError('상세 조서 수식이 제외된 회계·판단 시트를 참조합니다. 기본 값 조서를 사용하십시오.')
+        for cell in ws._cells.values():
+            if cell.data_type == 'f' and any(f"'{name}'!" in cell.value or f'{name}!' in cell.value for name in removed):
+                raise ValueError('상세 조서 수식이 제외된 시트를 참조합니다: ' + ws.title + '!' + cell.coordinate)
+    if accounting:
+        for name in ('회계처리', '상각표'):
+            if name in wb:
+                wb[name]['B1'] = '입력 가정에 따른 초안입니다. 계약별 회계처리는 별도로 검토하십시오.'
+                wb[name]['B1'].font = Font(bold=True, color='9C0006')
+    if is_workbook:
+        return wb
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
@@ -192,4 +204,113 @@ def append_controls(data, run, *, final=False):
                 if isinstance(cell.value, str):
                     cell.data_type = 's'
     out = io.BytesIO(); wb.save(out)
+    return out.getvalue()
+
+
+DRAFT_NOTE = '입력 가정에 따른 초안입니다. 계약별 회계처리는 별도로 검토하십시오.'
+
+
+def calculation_table(wb, name, rows):
+    if name in wb:
+        del wb[name]
+    ws = wb.create_sheet(name)
+    for row in rows:
+        ws.append([str(v) if isinstance(v, (dict, list, tuple)) else v for v in row])
+    ws.freeze_panes = 'A2'
+    ws.sheet_view.showGridLines = False
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='17365D')
+    for cell in ws._cells.values():
+        cell.alignment = Alignment(vertical='top', wrap_text=True)
+        if isinstance(cell.value, str):
+            cell.data_type = 's'
+        elif isinstance(cell.value, (int, float)):
+            cell.number_format = '#,##0.000000'
+    for column in ws.columns:
+        ws.column_dimensions[column[0].column_letter].width = 28
+    return ws
+
+
+def append_basic_accounting(wb, run):
+    """Optional numeric accounting draft, without rebuilding stock lattices."""
+    from . import legacy
+    t, r = run.terms, run.raw
+    if legacy.is_sha(t):
+        calculation_table(wb, '회계처리', [[DRAFT_NOTE], ['주주간계약', '권리·의무자별 회계처리는 별도 검토']])
+        return
+    args = [t] + [r[k] for k in ('full', 'b0', 'b1', 'b2', 'ca')]
+    if legacy.holder_on(t):
+        h = legacy.holder_rows(*args)
+        rows = [[DRAFT_NOTE], ['계정', '100 기준', '총액(원)']]
+        rows += [[k, v, v*t.face_total/100] for k,v in h['pos']]
+        rows += [[], ['구분', '계정', '100 기준', '총액(원)']]
+        rows += [[side, name, v, v*t.face_total/100] for side,name,v in h['journal']]
+        if not h['journal']:
+            rows.append(['분개 미산출', '후속평가 분개에는 투자자 전기 장부금액이 필요합니다.'])
+    else:
+        al = legacy.allocate(*args)[0]
+        rows = [[DRAFT_NOTE], ['배분 항목', '100 기준', '총액(원)']]
+        rows += [[k,v,v*t.face_total/100] for k,v in al]
+        rows += [[], ['계정', '차변(100)', '대변(100)'], ['현금', 100., 0.]]
+        rows += [[k, -v if v<0 else 0., v if v>=0 else 0.] for k,v in al[:-1]]
+    calculation_table(wb, '회계처리', rows)
+    eir = legacy.eir_or_none(*args)
+    if eir is None:
+        rows = [[DRAFT_NOTE], ['상각표', '현재 측정·분류 가정에서는 주계약 상각표를 산출하지 않습니다.']]
+    else:
+        rate, amort, redemption, periods = eir
+        rows = [[DRAFT_NOTE], ['유효이자율', rate], ['상환금액(100)', redemption],
+                ['회차', '기간(년)', '기초', '이자', '지급', '기말']] + list(amort)
+    calculation_table(wb, '상각표', rows)
+
+
+def finish_calculation_workbook(wb, run, *, formula=False, accounting=False):
+    """Keep reproducible inputs and numerical checks; omit workflow sign-offs."""
+    calculation_sheets_only(wb, accounting=accounting)
+    s, t = run.summary, run.terms
+    calculation_table(wb, '계산정보', [['항목', '내용'], ['건명', run.case.name],
+        ['평가기준일', t.d_base], ['평가모형', t.model], ['구간 수', t.n],
+        ['간격 설정', f'{t.grid_days:g}일 기준' if t.grid_days else f'{t.gap_m:g}개월'],
+        ['평균 간격(일)', s['grid']['average_days']], ['입력 식별값', s['case_sha256']],
+        ['계산 코드 식별값', s['code_sha256']]])
+    skip = {'source', 'legacy_defaults', 'engine_defaults', 'judgement_scope', 'market_date'}
+    warnings = [i for i in run.issues if i.code not in skip]
+    calculation_table(wb, '확인사항', [['항목', '확인할 사항', '수치 영향', '확인 방법']] +
+        [[label(i.field), i.message, i.impact, i.action] for i in warnings])
+    if '산술검산' not in wb:
+        calculation_table(wb, '산술검산', [['검사 항목', '결과', '계산 내역']] +
+            [[x['name'], '통과' if x['passed'] else '차이 발생', x['detail']] for x in s['checks']])
+    if run.case.sources and '출처기록' not in wb:
+        calculation_table(wb, '출처기록', [['입력항목', '출처']] + [[label(k),v] for k,v in run.case.sources.items()])
+    pack = run.case.market_evidence.get('sig')
+    if pack:
+        calculation_table(wb, '변동성원자료', [['대상', '날짜', '수정종가']] +
+            [[name,day,price] for name, prices in pack['series'] for day,price in prices])
+        calculation_table(wb, '변동성조회조건', [['항목', '내용'], ['조회 조건', pack['query']],
+            ['산출 옵션', pack['opt']], ['적용 변동성', pack['sigma']], ['자료 출처', pack['source']],
+            ['취득시각', pack['retrieved_at']]] + [['제외·확인사항', x] for x in pack['warnings']])
+    if '행사방식' not in wb:
+        calculation_table(wb, '행사방식', [['항목', '방식']] +
+            [[label(k) if k != 'cv' else '전환·신주인수권', {'any':'기간 중 언제든지','single':'특정일','periodic':'정기 행사'}[v]]
+             for k,v in run.case.exercise_styles.items()])
+    if formula and '결과' in wb and t.inst != 'SHA':
+        refs = [('주계약', '결과!C16', run.raw['b0']), ('부채요소', '결과!C17', run.raw['b1']),
+                ('전체 가치', '결과!C10', run.raw['b2']), ('콜옵션', '결과!C22', run.raw['ca']),
+                ('순포지션', '결과!C10-결과!C22', run.raw['b2']-run.raw['ca'])]
+        ws = calculation_table(wb, '수식대사', [['항목', '앱 계산값(100)', '수식 계산값(100)', '차이', '일치 여부']] +
+            [[name,value,None,None,None] for name,ref,value in refs])
+        for i, (_,ref,_) in enumerate(refs, 2):
+            ws.cell(i,3,'='+ref)
+            ws.cell(i,4,f'=C{i}-B{i}')
+            ws.cell(i,5,f'=IF(ABS(D{i})<=MAX(0.00000001,ABS(B{i})*0.0000000001),"일치","차이 발생")')
+    # Excel rejects overlong formulas. Stop with the exact cell before download.
+    for ws in wb:
+        for cell in ws._cells.values():
+            if cell.data_type == 'f' and len(cell.value)-1 > 8192:
+                raise ValueError(f'Excel 수식 길이 한도 초과: {ws.title}!{cell.coordinate} ({len(cell.value)-1:,}자)')
+    from openpyxl.workbook.properties import CalcProperties
+    wb.calculation = CalcProperties(calcMode='auto', fullCalcOnLoad=True)
+    out = io.BytesIO()
+    wb.save(out)
     return out.getvalue()

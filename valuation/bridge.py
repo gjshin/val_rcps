@@ -10,7 +10,7 @@ def legacy_term_values(payload):
         raise ValueError('계약 입력이 담긴 JSON 객체가 필요합니다.')
     if 'schema' in payload or any(k in payload for k in ('contract', 'market', 'method', 'cases')):
         raise ValueError('새 평가·여러 회차 파일은 평가 작업 또는 여러 회차·변동 분석에서 여십시오. '
-                         '상세 기능은 현재 평가를 가져오기를 사용하십시오. 명령행에서는 tools/run_case.py 또는 tools/run_engagement.py를 사용하십시오.')
+                         '상세 계산은 평가·분석에서 현재 결과를 공유합니다. 명령행에서는 tools/run_case.py 또는 tools/run_engagement.py를 사용하십시오.')
     values = {k: v for k, v in payload.items() if k in Terms.__dataclass_fields__}
     if not values:
         raise ValueError('기존 시나리오의 계약 입력을 찾지 못했습니다.')

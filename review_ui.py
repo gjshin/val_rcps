@@ -10,7 +10,7 @@ from dataclasses import asdict
 MODES = {'base': '기본 모형 입력', 'excluded': '해당 없음·평가 제외', 'assumption': '입력 가정으로 근사', 'conditional': '조건부 분석만 수행'}
 
 
-def input_review(case, pending):
+def input_review(case, pending=False):
     from workspace_app import save_case
     rev = st.session_state.get('revision', 0)
     with st.expander('계약 반영표 — 조항과 적용값 확인'):
