@@ -118,5 +118,3 @@ def self_check(G, t) -> list:
 
 def fmt(x, d=4):
     return "—" if x is None else f"{x:,.{d}f}"
-
-
