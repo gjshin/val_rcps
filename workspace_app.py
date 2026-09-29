@@ -242,10 +242,13 @@ def input_editor(case, autosave=False):
     st.subheader('시장자료 및 계산방법')
     fields(['S0', 'sig', 'div_y', 'model'], edited, case)
     grid_choices = {0: '월', 14: '2주(14일 기준)', 7: '주(7일 기준)'}
+    requested_grid = edited.get('grid_days', 0)
+    if requested_grid not in grid_choices:
+        st.error('저장된 계산 간격이 지원 범위를 벗어났습니다. 월·2주·주 중에서 선택하십시오.')
     grid = st.selectbox('계산 간격 단위', list(grid_choices),
-                        index=list(grid_choices).index(int(edited.get('grid_days', 0))),
+                        index=list(grid_choices).index(requested_grid) if requested_grid in grid_choices else None,
                         format_func=grid_choices.get, key=f'grid_unit_{st.session_state.get("revision", 0)}')
-    if grid or 'grid_days' in edited:
+    if grid is not None and (grid or 'grid_days' in edited):
         edited['grid_days'] = float(grid)
     st.session_state._rendered_fields.add('grid_days')
     if grid == 0:
