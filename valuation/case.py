@@ -72,6 +72,8 @@ class Case:
     assumptions: list = field(default_factory=list)
     additional_rights: list = field(default_factory=list)
     judgments: dict = field(default_factory=dict)
+    exercise_styles: dict = field(default_factory=dict)
+    contract_review: dict = field(default_factory=dict)
     contract_scenarios: list = field(default_factory=list)
     cashflow_scenarios: list = field(default_factory=list)
     market_evidence: dict = field(default_factory=dict)
@@ -89,7 +91,7 @@ class Case:
         case = cls(**copy.deepcopy(obj))
         if not isinstance(case.name, str) or not case.name.strip():
             raise ValueError("평가 건명을 입력하십시오.")
-        for key in ("contract", "market", "method", "sources", "judgments", "market_evidence", "review_controls"):
+        for key in ("contract", "market", "method", "sources", "judgments", "market_evidence", "review_controls", "exercise_styles", "contract_review"):
             if not isinstance(getattr(case, key), dict):
                 raise ValueError(f"{key}: 객체 형식이 필요합니다.")
         for key in ("assumptions", "additional_rights", "imported_defaults", "contract_scenarios", "cashflow_scenarios"):
@@ -99,6 +101,10 @@ class Case:
             raise ValueError("기본값 보충 목록에는 유효한 항목명만 기록할 수 있습니다.")
         if not isinstance(case.notes, str):
             raise ValueError("notes에는 문자열이 필요합니다.")
+        from .exercise import validate_styles
+        validate_styles(case.exercise_styles)
+        from .contract_intake import validate_review
+        validate_review(case.contract_review)
         from .cashflows import validate_shape
         names = set()
         for scenario in case.cashflow_scenarios:
@@ -158,7 +164,8 @@ class Case:
         result = copy.deepcopy(self.facts())
         for row in self.assumptions:
             result[row["field"]] = copy.deepcopy(row["value"])
-        return result
+        from .exercise import apply_styles
+        return apply_styles(result, self.exercise_styles)
 
 
 def import_legacy(obj: dict, name: str = "가져온 평가") -> Case:
@@ -212,6 +219,12 @@ def inspect_case(case: Case) -> list[Issue]:
     if any(i.severity == "error" for i in issues):
         return issues
     values = case.effective()
+    for row in case.assumptions:
+        if case.exercise_styles.get(row['field']) == 'any':
+            add('error', 'exercise_assumption', row['field'], '상시 행사와 행사주기 가정이 충돌합니다. 행사방식 또는 별도 가정을 수정하십시오.')
+    for freq, sched in [('p_f', 'p_sched'), ('k_f', 'k_sched')]:
+        if case.exercise_styles.get(freq) == 'any' and isinstance(values.get(sched), str) and values[sched].strip():
+            add('error', 'exercise_conflict', freq, '상시 행사와 회차별 행사일·금액표가 함께 설정되어 있습니다. 계약상 행사일을 확인하여 하나의 방식으로 입력하십시오.')
     required = REQUIRED | (RCPS_REQUIRED if values.get("inst") == "RCPS" else set())
     if values.get('k_w', 0) or values.get('issuer_call', 0):
         required = required | {'k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp'}

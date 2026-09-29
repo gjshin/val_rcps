@@ -63,6 +63,13 @@ def basic_workbook(run, previous=None):
                          display_value(key, value, tm.d_issue), assumptions.get(key, {}).get('rationale', ''),
                          run.case.sources.get(key, ''), ('보충값 확인 완료' if defaults_checked else '보충값 확인 필요') if key in run.case.imported_defaults or key in summary['engine_defaults'] else ''])
         sheet(name, rows)
+    sheet('행사방식', [['권리·조정 항목', '계약상 방식', '계산 반영']] +
+          [[label(k) if k != 'cv' else '전환·신주인수권', {'any':'기간 중 언제든지', 'periodic':'정기 행사·조정', 'single':'특정일에만 행사'}[v],
+            '행사기간 내 모든 계산시점에 적용' if v == 'any' else '계약상 주기 또는 특정일 적용'] for k,v in run.case.exercise_styles.items()])
+    sheet('계약검토안', [['문서', '조항·쪽수', '원문 발췌', '해석 초안', '후속 작업', '연결 입력']] +
+          [[r['document'], r['clause'], r['quote'], r['interpretation'], r['action'], ', '.join(label(k) for k in r['fields'])] for r in run.case.contract_review.get('findings', [])])
+    if run.case.contract_review.get('open_items'):
+        sheet('추가확인자료', [['미확인 사항']] + [[x] for x in run.case.contract_review['open_items']])
     curves = [['금리곡선', '만기(년)', '원본 연이율(%)', '가정 적용 연이율(%)', '출처']]
     for key in ['rf_curve', 'cr_curve', 'cr_curve_b']:
         original = dict(run.case.facts().get(key, []))
@@ -150,6 +157,13 @@ def append_controls(data, run, *, final=False):
             ['확인 근거', records.get('defaults', {}).get('rationale', '')], ['항목', '적용값']] +
             [[label(k), display_value(k, run.summary['applied_terms'][k], run.terms.d_issue)] for k in default_fields(run.case)],
     }
+    tables['행사방식'] = [['권리·조정 항목', '계약상 방식', '계산 적용 주기(개월)']] + [
+        [label(k) if k != 'cv' else '전환·신주인수권', {'any':'기간 중 언제든지', 'periodic':'정기 행사·조정', 'single':'특정일에만 행사'}[v],
+         run.summary['applied_terms'].get(k, '행사기간 적용')] for k,v in run.case.exercise_styles.items()]
+    tables['계약검토안'] = [['문서', '조항·쪽수', '원문 발췌', '해석 초안', '후속 작업', '연결 입력']] + [
+        [r['document'],r['clause'],r['quote'],r['interpretation'],r['action'], ', '.join(label(k) for k in r['fields'])] for r in run.case.contract_review.get('findings', [])]
+    if run.case.contract_review.get('open_items'):
+        tables['추가확인자료'] = [['미확인 사항']] + [[x] for x in run.case.contract_review['open_items']]
     if run.case.market_evidence.get('sig'):
         pack = run.case.market_evidence['sig']
         tables['변동성원자료'] = ([['원본 데이터 식별값', pack['data_sha256']], ['조회 조건', str(pack['query'])],

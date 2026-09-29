@@ -30,7 +30,7 @@ def apply_changes(case, changes, *, validate=True):
             raise ValueError('계산된 내부값은 계약 입력으로 반영할 수 없습니다.')
         if key in assumptions:
             assumptions[key]['value'] = value
-            assumptions[key]['rationale'] += '\n상세 기능에서 적용값 수정 — 기존 판단근거 재확인 필요.'
+            assumptions[key]['rationale'] += '\n평가 입력 도구에서 적용값 수정 — 기존 판단근거 재확인 필요.'
         else:
             getattr(result, section_for(key))[key] = value
     result.imported_defaults = [k for k in result.imported_defaults if k not in changes]
@@ -43,7 +43,7 @@ def apply_changes(case, changes, *, validate=True):
 def apply_volatility(case, pack):
     import copy
     from .market_data import validate_pack
-    if pack.get('opt', {}).get('asof') != case.effective().get('d_base'):
+    if case.effective().get('d_base') and pack.get('opt', {}).get('asof') != case.effective().get('d_base'):
         raise ValueError('변동성 산출 기준일과 평가기준일이 다릅니다. 기준일을 맞춘 후 적용하십시오.')
     validate_pack(pack, asof=case.effective().get('d_base'))
     # Other required fields may still be blank during input preparation.

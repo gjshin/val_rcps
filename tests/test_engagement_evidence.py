@@ -239,7 +239,7 @@ def test_value_bridge_reconciles_independently_linear_common_stock_case():
     assert abs(bridge['reconciliation_difference'])<1e-6
 
 
-@pytest.mark.parametrize('page',['평가 작업','판단 근거','계약조건 분석','여러 회차·변동 분석','상세 기능','변동성 산출'])
+@pytest.mark.parametrize('page',['평가 작업','여러 회차·변동 분석'])
 def test_all_routes_open_without_implicit_valuation(page,monkeypatch):
     def forbidden(*args,**kwargs):raise AssertionError('Rendering invoked pricing')
     monkeypatch.setattr(legacy,'decompose',forbidden)
@@ -253,16 +253,14 @@ def test_all_routes_open_without_implicit_valuation(page,monkeypatch):
 def test_detailed_tool_all_sections_and_return_preserve_current_case():
     app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=40)
     original=synthetic();app.session_state.case=original
-    app.run();app.sidebar.radio[0].set_value('상세 기능').run()
-    next(b for b in app.button if b.label=='현재 평가를 상세 기능에 가져오기').click().run()
-    assert not app.exception
-    assert app.session_state.tm.gap_m==original.method['gap_m']
-    next(b for b in app.button if b.label=='상세 입력으로 계산').click().run()
+    app.run();app.radio(key='_workflow_stage').set_value('평가·분석').run()
+    next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
+    next(w for w in app.selectbox if w.label=='분석 도구').set_value('상세 계산·회계 참고표').run()
     assert not app.exception
     section=next(s for s in app.selectbox if s.label=='상세 분석 항목')
     for name in section.options:
         next(s for s in app.selectbox if s.label=='상세 분석 항목').set_value(name).run()
         assert not app.exception, name
-    app.sidebar.radio[0].set_value('평가 작업').run()
+    app.radio(key='_workflow_stage').set_value('입력·시장자료').run()
     assert not app.exception
     assert app.session_state.case.to_dict()==original.to_dict()
