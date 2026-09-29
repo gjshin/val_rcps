@@ -142,7 +142,7 @@ def test_instrument_screens_preserve_values_and_only_render_relevant_rights(inst
     app.session_state['case'] = case
     app.run()
     assert not app.exception
-    assert [t.label for t in app.tabs] == ['입력', '평가 결과', '조서']
+    assert next(r for r in app.radio if r.label == '평가 진행').options == ['계약 검토', '입력·시장자료', '평가·분석', '검토조서', '조서 출력']
     assert not any('JSON' in w.label for w in app.text_area)
     assert not any(w.label == '상환청구 주기(개월)' for w in app.number_input)
     assert app.session_state['case'].to_dict() == case.to_dict()
@@ -157,18 +157,23 @@ def test_ui_rerender_evidence_edit_and_basic_export_have_zero_extra_pricing(monk
     app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=30)
     app.session_state['case'] = case
     app.run()
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
     button(app, '현재 입력으로 평가').click().run()
     assert not app.exception
     old = app.session_state['run']
     for name in ['engine', 'decompose', 'sha_engine', 'validate', 'eir_or_none']:
         monkeypatch.setattr(legacy, name, forbidden)
     app.run()
+    app.radio(key='_workflow_stage').set_value('입력·시장자료').run()
+    app.radio(key='_input_area').set_value('출처·평가가정').run()
     next(w for w in app.text_area if w.label == '검토메모').set_value('Reviewer update')
     button(app, '출처·메모 저장').click().run()
     assert not app.exception
     assert app.session_state['run'].case.notes == 'Reviewer update'
     assert app.session_state['run'].raw is old.raw
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
     button(app, '현재 입력으로 평가').click().run()
+    app.radio(key='_workflow_stage').set_value('조서 출력').run()
     button(app, '조서 생성').click().run()
     assert not app.exception
     assert 'bundle' in app.session_state
@@ -177,14 +182,15 @@ def test_ui_rerender_evidence_edit_and_basic_export_have_zero_extra_pricing(monk
 def test_percent_edit_uses_percent_units_and_blocks_old_export():
     app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=30)
     app.session_state['case'] = synthetic()
-    app.run(); button(app, '현재 입력으로 평가').click().run()
+    app.run(); app.radio(key='_workflow_stage').set_value('평가·분석').run(); button(app, '현재 입력으로 평가').click().run()
+    app.radio(key='_workflow_stage').set_value('입력·시장자료').run()
     widget = next(w for w in app.number_input if w.label == '주가 변동성(연, %)')
     assert widget.value == 25.
     widget.set_value(30.).run()
-    assert button(app, '조서 생성').disabled
-    button(app, '입력 저장').click().run()
     assert app.session_state['case'].market['sig'] == .3
+    app.radio(key='_workflow_stage').set_value('조서 출력').run()
     assert button(app, '조서 생성').disabled
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
     assert any('변경 전 입력' in w.value for w in app.warning)
 
 
@@ -204,6 +210,6 @@ def test_reversed_exercise_dates_cannot_silently_remove_a_right():
     app.session_state['case'] = synthetic()
     app.run()
     next(w for w in app.date_input if w.label == '전환·신주인수권 행사 시작일').set_value(dt.date(2026, 6, 1)).run()
-    assert button(app, '입력 저장').disabled
-    assert button(app, '현재 입력으로 평가').disabled
     assert any('시작일이 종료일보다' in w.value for w in app.error)
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
+    assert button(app, '현재 입력으로 평가').disabled

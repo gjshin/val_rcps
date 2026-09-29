@@ -305,10 +305,12 @@ def test_ui_preserves_default_provenance_and_blocks_final():
     case=synthetic();case.contract.pop('ipay');case.imported_defaults=['p_cmp']
     app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=30)
     app.session_state.case=case;app.run()
-    next(b for b in app.button if b.label=='입력 저장').click().run()
+    app.run()
     assert 'ipay' in app.session_state.case.imported_defaults
     assert 'p_cmp' in app.session_state.case.imported_defaults
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
     next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
+    app.radio(key='_workflow_stage').set_value('조서 출력').run()
     assert not app.exception
     assert next(b for b in app.button if b.label=='현재 결과 최종 확정').disabled
 

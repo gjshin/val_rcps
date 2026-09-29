@@ -181,6 +181,8 @@ def blockers(run, *, require_review=True):
     for field in ('contract', 'S0', 'sig', 'rf_curve', 'cr_curve'):
         if not case.sources.get(field, '').strip():
             add('source:' + field, f'{field}: 원자료 위치와 산출근거를 기록하십시오.')
+    if case.contract_review.get('open_items'):
+        add('contract_open_items', '계약 검토안의 추가 확인사항을 해결하고 처리 근거를 기록하십시오.')
     current = input_key(case)
     for field in ('S0', 'sig', 'rf_curve', 'cr_curve'):
         record = case.review_controls.get('market', {}).get(field, {})

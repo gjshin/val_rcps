@@ -203,17 +203,20 @@ def test_workspace_loads_and_runs_shared_service():
     app.session_state["case"] = synthetic()
     app.run()
     assert not app.exception
+    app.radio(key="_workflow_stage").set_value("평가·분석").run()
     button = next(b for b in app.button if b.label == "현재 입력으로 평가")
     button.click().run()
     assert not app.exception
     assert app.session_state["run"].summary["amounts_100"]["net"] == pytest.approx(40.)
     # A saved edit retains the previous snapshot, clearly marked stale, and blocks export.
+    app.radio(key="_workflow_stage").set_value("입력·시장자료").run()
     field = next(w for w in app.number_input if w.label == "현재 전환가액(원)")
-    field.set_value(120.)
-    next(b for b in app.button if b.label == "입력 저장").click().run()
+    field.set_value(120.).run()
+    app.radio(key="_workflow_stage").set_value("평가·분석").run()
     assert not app.exception
     assert app.session_state['run'].case.contract['K0'] == 100.
     assert any('변경 전 입력' in w.value for w in app.warning)
+    app.radio(key='_workflow_stage').set_value('조서 출력').run()
     assert next(b for b in app.button if b.label == '조서 생성').disabled
 
 
@@ -225,4 +228,5 @@ def test_new_case_keeps_market_inputs_blank():
     assert not app.exception
     assert "S0" not in app.session_state["case"].market
     assert "rf_curve" not in app.session_state["case"].market
+    app.radio(key="_workflow_stage").set_value("평가·분석").run()
     assert next(b for b in app.button if b.label == "현재 입력으로 평가").disabled

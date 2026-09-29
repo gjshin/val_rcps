@@ -32,7 +32,7 @@ def read_case(raw, name):
 def install_case(case):
     st.session_state.case = case
     st.session_state.revision = st.session_state.get('revision', 0) + 1
-    for key in ['run', 'bundle', 'analysis', 'bundle_key']:
+    for key in ['run', 'bundle', 'analysis', 'bundle_key', '_input_pending']:
         st.session_state.pop(key, None)
 
 
@@ -50,10 +50,24 @@ def save_case(case):
 
 
 def field(key, edited, case, prefix='input'):
+    st.session_state.setdefault('_rendered_fields', set()).add(key)
     rev = st.session_state.get('revision', 0)
     required = REQUIRED | (RCPS_REQUIRED if edited.get('inst') == 'RCPS' else set())
     value = edited.get(key, None if key in required or key in EVENT_DATES else DEFAULTS.get(key))
     widget_key, title = f'{prefix}_{key}_{rev}', label(key)
+    override = next((r for r in case.assumptions if r['field'] == key), None)
+    if override and prefix == 'input':
+        st.caption(f"{title}: 계산에는 별도 가정 {display_value(key, override['value'], case.contract.get('d_issue'))}을 적용합니다. ‘출처·평가가정’에서 변경하십시오.")
+    styles = st.session_state.get('_editing_styles')
+    if styles is not None and key in {'p_f', 'k_f', 'sha_put_f', 'sha_call_f', 'rfx_cyc'} and prefix == 'input':
+        selected = st.selectbox(title.replace('주기(개월)', '방식'), ['periodic', 'any'],
+            index=1 if styles.get(key) == 'any' else 0,
+            format_func=lambda x: '기간 중 언제든지' if x == 'any' else '정기 행사·조정', key=widget_key + '_style')
+        if selected != styles.get(key, 'periodic'):
+            styles[key] = selected
+        if selected == 'any':
+            st.caption('행사기간 내 모든 계산시점에서 행사합니다. 계산 간격 변경 시에도 유지됩니다.')
+            return
     if key in CHOICES:
         options = CHOICES[key]
         keys = list(options)
@@ -125,6 +139,7 @@ def right_period(title, start, end, edited, case, extra, errors):
 
 
 def curve_editor(key, edited):
+    st.session_state.setdefault('_rendered_fields', set()).add(key)
     current = edited.get(key, [])
     initial = pd.DataFrame([[x, y * 100] for x, y in current], columns=['만기(년)', '연이율(%)'], dtype=float)
     st.write(label(key))
@@ -135,7 +150,10 @@ def curve_editor(key, edited):
         edited[key] = [[float(x), float(y) / 100] for x, y in table.values.tolist()]
 
 
-def input_editor(case):
+def input_editor(case, autosave=False):
+    st.session_state._rendered_fields = set()
+    styles = dict(case.exercise_styles)
+    st.session_state._editing_styles = styles
     edited = case.facts().copy()
     draft_errors = []
     inst = edited['inst']
@@ -158,7 +176,17 @@ def input_editor(case):
         fields(['cpn', 'ipay'], edited, case)
         if inst != 'RCPS' or edited.get('mat_mode') == 1:
             fields(['ytm', 'ytm_cmp', 'mat_amt', 'm_less_cpn'], edited, case)
-        right_period('전환·신주인수권 행사 가능', 'cv_s', 'cv_e', edited, case, [], draft_errors)
+        if right_period('전환·신주인수권 행사 가능', 'cv_s', 'cv_e', edited, case, [], draft_errors):
+            cv_style = st.selectbox('전환·신주인수권 행사방식', ['any', 'single'],
+                index=1 if styles.get('cv') == 'single' else 0,
+                format_func=lambda x: '기간 중 언제든지' if x == 'any' else '특정일에만 행사', key=f'cv_style_{st.session_state.get("revision",0)}')
+            if cv_style != styles.get('cv', 'any'):
+                styles['cv'] = cv_style
+            if cv_style == 'single':
+                edited['cv_e'] = edited.get('cv_s')
+                st.caption('특정일 행사는 위 행사 시작일을 적용합니다. 종료일은 시작일과 같습니다.')
+            else:
+                st.caption('전환권은 행사기간 내 모든 계산시점에 행사할 수 있습니다.')
         put = right_period('투자자 상환청구권 있음', 'p_s', 'p_e', edited, case, ['p_f', 'p_mode'], draft_errors)
         if put:
             fields(['p_rate'] if edited.get('p_mode') == 'fixed' else ['p_yield', 'p_cmp'], edited, case)
@@ -170,6 +198,17 @@ def input_editor(case):
         else:
             call_on = st.checkbox('콜 권리 있음', value=edited.get('k_w', 0) > 0, key=f'call_{st.session_state.get("revision", 0)}')
         if call_on:
+            old_call = bool(case.facts().get('k_w', 0) or case.facts().get('issuer_call', 0))
+            changed_type = inst == 'RCPS' and edited.get('issuer_call') != case.contract.get('issuer_call', 0)
+            if not old_call or changed_type:
+                third_party = edited.get('issuer_call') == 2 if inst == 'RCPS' else edited.get('k_third', DEFAULTS['k_third'])
+                initial_method = 2 if third_party and edited.get('model', 'TF') == 'TF' else 0
+                edited['k_method'], edited['k_split'] = initial_method, 1
+                for key in ['k_method', 'k_split']:
+                    widget_key = f'input_{key}_{st.session_state.get("revision", 0)}'
+                    if widget_key in st.session_state:
+                        st.session_state[widget_key] = edited[key]
+            st.caption('발행자 상환권은 콜 유무 가치 비교, 제3자 콜은 TF 옵션차익 지분·부채 분리할인을 초기 설정으로 사용합니다. 기존 평가파일의 선택은 유지하며, 다른 방법을 선택한 경우 근거를 기록하십시오.')
             fields(['k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp'], edited, case)
             if inst == 'RCPS' and edited.get('issuer_call') == 1:
                 edited['k_w'] = 1.
@@ -210,19 +249,34 @@ def input_editor(case):
                 fields(['bdt_sig', 'bdt_base', 'rvol_rating', 'rvol_tenor', 'rvol_how'], edited, case)
     with st.expander('분해방법·기간 기준'):
         st.caption('회계분류는 사용자의 가정입니다. 구성요소 차액은 회계상 인식액과 구분하십시오.')
-        fields(['acc_basis', 'conv_class', 'p_sep', 'k_sep'], edited, case)
+        fields(['acc_basis', 'conv_class', 'p_sep', 'k_sep', 'p_lost_int', 'fvpl_whole'], edited, case)
+    with st.expander('후속평가·역산·기타 상세 입력'):
+        st.caption('기존 모형의 전체 입력항목을 같은 평가파일에서 관리합니다. 여기서 변경한 값도 평가·분석에 직접 적용됩니다.')
+        remaining = sorted(FIELDS - st.session_state._rendered_fields - {'inst'})
+        selected = st.multiselect('추가로 표시할 입력항목', remaining, format_func=label, key='additional_input_fields')
+        for key in selected:
+            if TYPES[key] is list:
+                curve_editor(key, edited)
+            else:
+                field(key, edited, case)
+    st.session_state.pop('_editing_styles', None)
     candidate = Case.from_dict(case.to_dict())
     for group in ['contract', 'market', 'method']:
         setattr(candidate, group, {k: v for k, v in edited.items() if section_for(k) == group})
+    candidate.exercise_styles = styles
     changed = {k for k in edited if k in case.facts() and edited[k] != case.facts()[k]}
     supplied = {k for k in edited if k not in case.facts() and edited[k] == DEFAULTS.get(k)}
     candidate.imported_defaults = sorted((set(case.imported_defaults) | supplied) - changed)
-    pending = candidate.facts() != case.facts() or bool(draft_errors)
+    pending = candidate.facts() != case.facts() or styles != case.exercise_styles or bool(draft_errors)
     for message in draft_errors:
         st.error(message)
-    if pending:
+    if autosave:
+        st.session_state._input_pending = bool(draft_errors)
+    if autosave and pending and not draft_errors:
+        save_case(candidate)
+    if pending and not autosave:
         st.info('입력 변경사항이 아직 저장되지 않았습니다. 저장 후 평가·조서를 진행하십시오.')
-    if st.button('입력 저장', type='primary', disabled=bool(draft_errors)):
+    if not autosave and st.button('입력 저장', type='primary', disabled=bool(draft_errors)):
         save_case(candidate)
     return pending
 
@@ -278,7 +332,7 @@ def main():
     if not st.session_state.get('_app_embedded'):
         st.set_page_config(page_title='복합금융상품 평가', layout='wide')
     st.title('복합금융상품 평가')
-    st.caption('계약·시장자료 입력 → 평가 실행 → 검토 및 조서 저장')
+    st.caption('계약 검토 → 입력·시장자료 → 평가·분석 → 검토조서 → 조서 출력')
     with st.sidebar:
         st.subheader('평가파일')
         with st.expander('새 평가 만들기'):
@@ -292,7 +346,7 @@ def main():
                         install_case(Case(name=name.strip(), contract=contract, method=dict(model='TF', view='holder', gap_m=1.)))
                     else:
                         st.error('평가 건명을 입력하십시오.')
-        upload = st.file_uploader('현재 평가 또는 기존 시나리오', type='json')
+        upload = st.file_uploader('평가파일 불러오기', type='json')
         previous_upload = st.file_uploader('전기 평가파일(선택)', type='json', key='previous_upload')
         st.caption('전기 자료를 복사한 경우 새 기준일의 주당가치·변동성·금리를 확인하십시오.')
     if upload:
@@ -320,15 +374,45 @@ def main():
         st.info('왼쪽에서 새 평가를 만들거나 기존 평가파일을 불러오십시오.'); st.stop()
     case = st.session_state.case
     st.subheader(f'{case.name} · {case.contract.get("inst", "")}')
-    entry, results, workpaper = st.tabs(['입력', '평가 결과', '조서'])
-    with entry:
-        pending = input_editor(case)
-        evidence_editor(case, pending)
-        from review_ui import input_review
-        input_review(case, pending)
+    # One active step only: hidden analyses never execute on input changes.
+    stage = st.radio('평가 진행', ['계약 검토', '입력·시장자료', '평가·분석', '검토조서', '조서 출력'],
+                     index=1, horizontal=True, key='_workflow_stage')
+    st.sidebar.download_button('평가파일 저장', json.dumps(case.to_dict(), ensure_ascii=False, indent=2), '평가입력.json', 'application/json')
+    st.sidebar.caption('입력은 현재 세션에 반영됩니다. 종료 전 평가파일을 저장하십시오.')
+    pending = st.session_state.get('_input_pending', False)
+    if pending and stage != '입력·시장자료':
+        st.warning('입력화면에 저장되지 않은 오류가 있습니다. 입력·시장자료에서 확인하십시오.')
+    if stage == '계약 검토':
+        from contract_ui import main as contract_review
+        contract_review(case)
+        return
+    if stage == '입력·시장자료':
+        area = st.radio('입력 항목', ['계약·평가 입력', '주가·변동성·금리 자료', '출처·평가가정'], horizontal=True, key='_input_area')
+        if area == '계약·평가 입력':
+            pending = input_editor(case, autosave=True)
+        elif area == '주가·변동성·금리 자료':
+            from market_tools_ui import main as market_tools
+            market_tools(case)
+        else:
+            evidence_editor(case)
+        return
+    if stage == '검토조서':
+        review_kind = st.radio('검토 항목', ['계약·회계 판단', '입력 적정성', '독립 검산·승인'], horizontal=True)
+        if review_kind == '계약·회계 판단':
+            import evidence_ui
+            evidence_ui.main()
+        elif review_kind == '입력 적정성':
+            from review_ui import input_review
+            input_review(case)
+        else:
+            from review_ui import result_review
+            saved = st.session_state.get('run')
+            valid = saved is not None and not any(i.severity == 'error' for i in inspect_case(case)) and saved.summary['calculation_key'] == calculation_key(case)
+            result_review(case, saved, valid, pending)
+        return
     issues = inspect_case(case)
     errors = [i for i in issues if i.severity == 'error']
-    with results:
+    if stage == '평가·분석':
         if errors:
             st.error(f'입력 오류 {len(errors)}건을 수정해야 평가할 수 있습니다.')
             st.dataframe(pd.DataFrame(issue_rows(errors)), hide_index=True)
@@ -369,7 +453,7 @@ def main():
             from valuation.evidence import evidence_cards
             cards = evidence_cards(case)
             incomplete = sum(c['status'] not in {'검토 완료', '해당 없음'} for c in cards)
-            st.caption(f'관련 판단 주제 {len(cards)}개 · 미완료·재검토 {incomplete}개. 왼쪽 「판단 근거」에서 기준서 발췌와 실무사례를 확인하고 검토기록을 남길 수 있습니다.')
+            st.caption(f'관련 판단 주제 {len(cards)}개 · 미완료·재검토 {incomplete}개. 「검토조서 → 계약·회계 판단」에서 기준서 발췌와 실무사례를 확인하고 검토기록을 남길 수 있습니다.')
             st.dataframe(pd.DataFrame(issue_rows(run.issues)), hide_index=True)
             with st.expander('추가 분석 — 선택한 변수만 계산'):
                 variable = st.selectbox('민감도 변수', ['S0', 'sig', 'rf_curve', 'cr_curve'], format_func=label)
@@ -387,11 +471,21 @@ def main():
                     table = pd.DataFrame(analysis['rows']).rename(columns=AMOUNT_LABELS)
                     st.dataframe(table, hide_index=True)
                     st.download_button('민감도 결과 저장', table.to_csv(index=False).encode('utf-8-sig'), '민감도.csv', 'text/csv')
+        if current:
+            analysis_mode = st.selectbox('분석 도구', ['결과 요약', '상세 계산·회계 참고표', '계약조건 시나리오'])
+            if analysis_mode == '상세 계산·회계 참고표':
+                from application import detailed
+                detailed(run)
+            elif analysis_mode == '계약조건 시나리오':
+                import scenario_ui
+                scenario_ui.main()
         if previous:
             with st.expander('전기 대비 입력 변경'):
                 st.dataframe(pd.DataFrame([{'항목': label(r['field']), '전기': str(r['previous']), '당기': str(r['current'])}
                                           for r in compare_cases(previous, case)]), hide_index=True)
-    with workpaper:
+    if stage == '조서 출력':
+        run = st.session_state.get('run')
+        current = run is not None and not errors and run.summary['calculation_key'] == calculation_key(case)
         from review_ui import result_review
         result_review(case, run, current, pending)
         st.download_button('평가 입력파일 저장', json.dumps(case.to_dict(), ensure_ascii=False, indent=2), '평가입력.json', 'application/json')

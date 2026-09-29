@@ -126,6 +126,11 @@ TOPICS = [
 ]
 
 
+from .review_guides import GUIDES
+for _topic in TOPICS:
+    _topic['title'], _topic['questions'], _topic['action'] = GUIDES[_topic['id']]
+
+
 def applicable(topic, values):
     trigger = topic['trigger']
     return {'all': True, 'rcps': values.get('inst') == 'RCPS',
@@ -167,7 +172,7 @@ def source_version():
 
 
 def review_input_key(case):
-    payload = {k: getattr(case, k) for k in ['contract', 'market', 'method', 'sources', 'assumptions', 'additional_rights', 'contract_scenarios', 'cashflow_scenarios', 'market_evidence', 'imported_defaults']}
+    payload = {k: getattr(case, k) for k in ['contract', 'market', 'method', 'sources', 'assumptions', 'additional_rights', 'contract_scenarios', 'cashflow_scenarios', 'market_evidence', 'imported_defaults', 'exercise_styles', 'contract_review']}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
 
