@@ -222,6 +222,14 @@ def input_editor(case, autosave=False):
                 if edited.get('k_hold'):
                     fields(['k_lock', 'k_lock_put'], edited, case)
                 fields(['k_method', 'k_split'], edited, case)
+                third_now = edited.get('issuer_call') == 2 if inst == 'RCPS' else bool(edited.get('k_third', DEFAULTS['k_third']))
+                policy = (2 if third_now and edited.get('model', 'TF') == 'TF' else 0, 1)
+                if (edited.get('k_method'), edited.get('k_split')) != policy:
+                    if st.button('현재 기본 평가방법으로 전환', key=f'call_policy_{st.session_state.get("revision", 0)}',
+                                 help='발행자 상환권 → 유무가치 비교, 제3자 콜(TF) → 옵션차익 지분·부채 분리할인 + 전환확률 분해. 값이 달라질 수 있습니다.'):
+                        edited['k_method'], edited['k_split'] = policy
+                        for key in ['k_method', 'k_split']:
+                            st.session_state.pop(f'input_{key}_{st.session_state.get("revision", 0)}', None)
             with st.expander('콜 권리의 상세 조건'):
                 fields(['k_kind', 'k_third', 'k_transfer', 'k_less_cpn', 'k_cpn_add', 'k_sched', 'k_basis', 'pc_order'], edited, case)
             if edited.get('k_w', 0) <= 0:
@@ -332,6 +340,37 @@ def evidence_editor(case, pending=False):
                 candidate.assumptions.append(dict(field=key, value=proposed[key], rationale=reason)); save_case(candidate)
 
 
+def day1_panel(run, case):
+    """투자자 최초 인식 — 모형값 / 거래가격 100 / 차이, 그리고 차이 처리 선택."""
+    day1 = run.summary.get('day1')
+    if not day1:
+        return
+    from sources_ui import show as source
+    c1, c2 = st.columns([5, 1])
+    if abs(day1['diff']) < 0.005:
+        c1.success(f"최초 인식 — {day1['nums']} · 보정되어 차이가 없습니다.")
+        with c2:
+            source('day1')
+        return
+    c1.warning(f"최초 인식 — {day1['nums']}. 주가 역산으로 보정하거나(1113 문단 64), 차이 처리를 고르십시오.")
+    with c2:
+        source('day1')
+    rev = st.session_state.get('revision', 0)
+    eff = case.effective()
+    d1, d2, d3 = st.columns([2, 4, 1])
+    mode = d1.selectbox('최초 인식 차이 처리', [0, 1], index=int(eff.get('d1_pl', 0)), key=f'd1_pl_{rev}',
+                        format_func=lambda x: '이연 (기본)' if x == 0 else '당기손익')
+    reason = d2.text_input('당기손익 근거 — 관측 가능한 시장자료만 사용했다는 근거 (1109 B5.1.2A(1))',
+                           value=eff.get('d1_reason', ''), key=f'd1_reason_{rev}', disabled=mode == 0)
+    if d3.button('저장', key=f'd1_save_{rev}', disabled=mode == 1 and not reason.strip()):
+        candidate = Case.from_dict(case.to_dict())
+        candidate.method['d1_pl'] = int(mode)
+        candidate.method['d1_reason'] = reason.strip() if mode == 1 else ''
+        save_case(candidate)
+    st.caption(f"현재 분개 표기 — {'금융자산평가이익(손실) — 최초 인식 차이' if day1['mode'] == '당기손익' else '최초 인식 차이 — 이연'}. "
+               '원인 점검 3항목은 상세 계산 → 판단·근거 탭에 있습니다.')
+
+
 def main():
     if not st.session_state.get('_app_embedded'):
         st.set_page_config(page_title='복합금융상품 평가', layout='wide')
@@ -430,6 +469,7 @@ def main():
                 col.metric(AMOUNT_LABELS[key] + ' (원)', f'{values[key]:,.0f}')
                 if run.summary['amounts_per_share']:
                     col.caption(f"1주당 {run.summary['amounts_per_share'][key]:,.2f}원")
+            day1_panel(run, case)
             with st.expander('구성요소·원금 100 기준 상세'):
                 st.caption('순차 차감에 따른 참고값입니다. 회계상 인식액을 확정한 표가 아닙니다.')
                 st.dataframe(pd.DataFrame([{'항목': AMOUNT_LABELS[k], '총액(원)': values[k], '원금 100 기준': v}
@@ -476,6 +516,7 @@ def main():
         st.write('기본 조서: 평가 결과, 적용 입력, 금리·변동성 자료, 산술 검산 및 확인할 사항')
         option = st.radio('조서 구성', ['기본 값 조서', '상세 계산 값 조서', '상세 계산 수식 조서'])
         accounting = st.checkbox('회계처리·분개·상각표 포함 (초안)', value=False)
+        judgment = st.checkbox('판단·근거 시트 포함 (분리 판정·평가자 판단·근거 원문, 상세 조서는 검산요약·모형검증 포함)', value=True)
         if option != '기본 값 조서':
             st.info('상세 조서는 모든 계산 노드를 포함합니다. 주 간격의 장기 평가에서는 생성에 시간이 걸릴 수 있습니다.')
         if not current:
@@ -489,14 +530,14 @@ def main():
             st.session_state.pop('bundle_key', None)
             try:
                 with st.spinner('조서를 생성하고 입력·결과 기록을 묶는 중입니다.'):
-                    st.session_state.bundle = export_bundle(run, formula=option == '상세 계산 수식 조서', detail=option != '기본 값 조서', previous=previous, accounting=accounting)
-                    st.session_state.bundle_key = (run.case.fingerprint(), option, accounting, previous.fingerprint() if previous else None)
+                    st.session_state.bundle = export_bundle(run, formula=option == '상세 계산 수식 조서', detail=option != '기본 값 조서', previous=previous, accounting=accounting, judgment=judgment)
+                    st.session_state.bundle_key = (run.case.fingerprint(), option, accounting, judgment, previous.fingerprint() if previous else None)
             except (ValueError, ArithmeticError) as exc:
                 st.error(f'조서를 생성하지 못했습니다: {exc}')
             except (MemoryError, OSError, RuntimeError, OverflowError) as exc:
                 st.error(f'조서 생성 중 서버 자원 또는 파일 처리 오류가 발생했습니다 ({type(exc).__name__}). '
                          '상세 계산 값 조서로 저장하거나 계산 간격을 늘리고 재평가하십시오.')
-        bundle_key = (case.fingerprint(), option, accounting, previous.fingerprint() if previous else None) if current else None
+        bundle_key = (case.fingerprint(), option, accounting, judgment, previous.fingerprint() if previous else None) if current else None
         if current and not pending and st.session_state.get('bundle_key') == bundle_key and 'bundle' in st.session_state:
             data = st.session_state.bundle
             st.success(f'조서 생성 완료 · {len(data) / 1024 / 1024:.1f} MB. 아래에서 Excel 파일이나 전체 묶음을 저장하십시오.')

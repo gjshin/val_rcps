@@ -102,7 +102,7 @@ def main():
         assert [run.raw[k] for k in ['b0','b1','b2','ca']]==list(expected[1:5])
         assert any('29.05%' in i.message for i in run.issues)
         widget(app,'selectbox','분석 도구').set_value('상세 계산·회계 참고표').run()
-        for section in ['권리·금리 분석','이자율곡선','주가·변동성']:
+        for section in ['판단·근거','이자율곡선','주가·변동성']:
             widget(app,'selectbox','상세 분석 항목').set_value(section).run()
             assert not app.exception
         app.radio(key='_workflow_stage').set_value('조서 출력').run()

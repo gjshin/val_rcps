@@ -917,7 +917,7 @@ if _shared_run is None:
                     disabled=not _psok,
                     help="행사금액이 상각후원가와 거의 같으면 주채무계약과 밀접하게 "
                          "관련되어 분리하지 않습니다 (기준서 1109 문단 B4.3.5(5)(가)). "
-                         "「분리 판단」 탭이 계약 조항으로 이 결론을 내 줍니다.") else 0
+                         "「판단·근거」 탭이 계약 조항으로 이 결론을 내 줍니다.") else 0
                 if not _psok:
                     st.caption(inst_text(t, COMPAT_PSEP))
                     t.p_sep = 1
@@ -2376,10 +2376,8 @@ if _shared_run is None:
     c2.metric("지분가치", f"{eq:,.2f}", help="주식으로 받게 될 부분")
     c3.metric("부채가치", f"{dv:,.2f}", help="현금으로 받게 될 부분")
 
-_detail_sections = ["구성요소", "회계처리", "분리 판단", "이자율곡선", "주가·변동성",
+_detail_sections = ["구성요소", "회계처리", "판단·근거", "이자율곡선", "주가·변동성",
                 "의사결정", "상각표", "민감도", "검산", "조서"]
-if _shared_run is not None:
-    _detail_sections[2] = "권리·금리 분석"
 _detail_section = st.selectbox("상세 분석 항목", _detail_sections[:-1] if _shared_run is not None else _detail_sections, key="_legacy_section")
 
 if _detail_section == _detail_sections[0]:
@@ -2662,45 +2660,7 @@ if _detail_section == _detail_sections[1]:
                            f"부채요소 **{b1:,.4f}** 를 씁니다. 평가기준일을 상환일로 맞추고 "
                            "그날 곡선을 넣으셔야 맞습니다.")
 
-if _detail_section == _detail_sections[2] and _shared_run is not None:
-    from numeric_analysis_ui import main as numerical_rights
-    numerical_rights(_shared_run)
-
-if _detail_section == _detail_sections[2] and _shared_run is None:
-    if holder_on(t):
-        st.info("**투자자 관점입니다.** 이 탭의 판단은 **발행자**의 분리 판단입니다 — 투자자는 "
-                "주계약이 금융자산이라 내재파생상품을 분리하지 않습니다(제1109호 문단 4.3.2). "
-                "발행자와의 대조용으로 남겨 둡니다.")
-    if is_bw(t):
-        st.write("**신주인수권**이 별도의 금융상품인지 복합금융상품의 자본요소인지, "
-                 "그리고 조기상환청구권·매도청구권을 주계약과 분리해야 하는지를 "
-                 "계약 조항에 근거해 판단합니다. 아래 문안을 그대로 조서에 "
-                 "옮기실 수 있습니다.")
-    else:
-        st.write(inst_text(t, f"{LB['put']}과 {LB['call']}을 **주계약과 분리해야 "
-                              "하는지**를 계약 조항에 근거해 판단하고, 분리한다면 어떤 "
-                              "방법으로 재는지까지 정리합니다. 아래 문안을 그대로 조서에 "
-                              "옮기실 수 있습니다."))
-    st.caption("판단 순서가 정해져 있습니다 — 문단 B4.3.5 말미가 "
-               "\"제1032호에 따라 전환채무상품의 자본요소를 분리하기 전에 "
-               "내재된 콜옵션이나 풋옵션이 주채무계약과 밀접하게 관련되어 "
-               "있는지를 판단한다\" 고 못박습니다.")
-
-    # 격자 로직의 설계도. 모델을 짜기 전에 이 표부터 채워야 노드 의사결정이
-    # 계약을 옮긴 것이 된다.
-    st.markdown("**계약상 권리** — 이 표가 격자 의사결정의 설계도입니다")
-    st.dataframe(pd.DataFrame(rights_table(t), columns=RIGHT_COLS),
-                 use_container_width=True, hide_index=True)
-    _ov = [x for x in pc_overlap(t) if x[2] > x[3] + 1e-9] if t.k_w > 0 else []
-    if _ov:
-        st.caption(f"조기상환청구권과 매도청구권이 **{len(_ov)}개 노드에서 함께 열리고** "
-                   f"그 자리의 조기상환금액이 더 큽니다 (첫 자리 "
-                   f"{_ov[0][1]:,.0f}개월 · {_ov[0][2]:,.4f} 대 {_ov[0][3]:,.4f}). "
-                   "**동일 시점의 권리행사 우선순위에 따라 평가값이 달라집니다.** 아래 비교표를 확인하십시오.")
-    elif t.k_w > 0 and pc_overlap(t):
-        st.caption("두 권리가 함께 열리는 노드가 있으나 매도청구금액이 늘 크거나 같아 "
-                   "**어느 우선순위를 고르셔도 같은 답**이 나옵니다.")
-    st.divider()
+if _detail_section == _detail_sections[2]:
     if _shared_run is None:
         st.markdown("**계약 조항 확인** — 입력화면에 없는 사실만 여기서 받습니다")
         f1, f2 = st.columns(2)
@@ -2736,257 +2696,8 @@ if _detail_section == _detail_sections[2] and _shared_run is None:
                  "지정할 수 없어(문단 4.2.2) 형태가 바뀌지 않고 경고만 뜹니다. "
                  "실무에서 드뭅니다.") else 0
 
-    else:
-        st.caption('계약 조항과 회계분류 가정은 「입력·시장자료 → 분해방법·기간 기준」에서 수정하십시오.')
-
-    # 상각표는 아래 탭에서 만들어지므로 여기서 따로 부른다. 판단이 쓰는 것은
-    # 실제로 인식한 배분액에서 상각한 장부금액이다.
-    # 전체 지정이면 인식한 주계약이 없어 상각표를 만들 수 없다. split_test 는
-    # 판정에 쓸 상각표를 어차피 **B0 기준으로 다시 만들므로**(순환을 끊은 자리)
-    # 빈 목록을 넘겨도 판정이 흔들리지 않는다.
-    _ah = acc_host(t, full, b0, b1, b2, ca)
-    _sp = split_test(t, full, b0, b1, b2, ca,
-                     [] if _ah is None else eir_table(t, _ah)[1])
-    st.divider()
-
-    _items = ([("warrant", "신주인수권")] if is_bw(t) else []) + \
-             [("put", LB["put"]), ("call", LB["call"])]
-    for _key, _nm in _items:
-        _d = _sp.get(_key)
-        if _d is None: continue
-        st.markdown(f"### {_nm}")
-        if not _d["있음"]:
-            st.info(inst_text(t, _d["이유"][0])); continue
-        _box = (st.success if _d["결론"] in ("분리", "별도의 금융상품", "묶어서 분리")
-                else st.warning)
-        _box(inst_text(t, f"**{_d['결론']}**　—　" + " ".join(_d["이유"])))
-        if _d["근거"]:
-            st.caption("근거 · " + " · ".join(_d["근거"]))
-        if _d["지표"]:
-            st.dataframe(pd.DataFrame(
-                [[k2, (f"{v2*100:.1f}%" if k2 == "차이" else
-                       "예" if v2 is True else "아니오" if v2 is False
-                       else v2 if isinstance(v2, str) else f"{v2:,.4f}")]
-                 for k2, v2 in _d["지표"].items()],
-                columns=["항목", "값"]), use_container_width=True, hide_index=True)
-        if _key == "put" and _d["결론"] == "묶어서 분리" and "차이" in _d["지표"]:
-            _gap = _d["지표"]["차이"]
-            st.caption(inst_text(t,
-                "전환권이 파생상품부채라 10% 검토(B4.3.5(5)(가))에 **들어가기 전에** 묶음으로 "
-                f"결정됐습니다. 위 차이 {_gap*100:.1f}% 는 지표로만 보여 줍니다 — 전환권이 자본이었다면 "
-                + ("이 차이만으로도 «분리» 입니다." if abs(_gap) > SPLIT_TOL
-                   else "«분리하지 않을 여지» 입니다.")))
-        st.markdown("**평가방법** — " + inst_text(t, _d["평가"]))
-
-    if not _sp["put"]["설정일치"]:
-        st.error(inst_text(t,
-                 "입력화면의 **조기상환청구권 → 회계 처리** 설정이 위 판정과 "
-                 f"어긋납니다. 판정은 **{_sp['put']['결론']}** 인데 설정은 "
-                 + ("분리 · 파생상품부채" if int(t.p_sep) else "분리하지 않음")
-                 + " 입니다. 배분표와 분개가 판정과 다르게 나오므로 입력화면에서 "
-                   "맞추십시오."))
-    elif (_sp["put"].get("스위치") and _sp["put"]["결론"] == "분리하지 않을 여지"):
-        st.info(inst_text(t,
-                "조기상환권은 **어느 쪽도 설명할 수 있는** 자리입니다. 지금 설정은 "
-                + ("**분리 · 파생상품부채**" if int(t.p_sep)
-                   else "**분리하지 않음 · 부채요소에 포함**")
-                + " 입니다. 입력화면 **조기상환청구권 → 회계 처리** 에서 바꿀 수 "
-                  "있고, 어느 쪽을 골랐는지와 그 이유를 조서에 적으십시오. "
-                  "전환권대가는 어느 쪽이든 같고, 갈리는 것은 부채 표시와 "
-                  "후속측정입니다 — 분리하면 파생상품부채를 매기 공정가치로 "
-                  "재평가하고, 분리하지 않으면 부채요소를 상각후원가로 굴립니다."))
-    if not _sp["call"]["설정일치"]:
-        st.error(inst_text(t,
-                 "입력화면의 **매도청구권 → 회계 처리** 설정이 위 판정과 "
-                 f"어긋납니다. 판정은 **{_sp['call']['결론']}** 인데 설정은 "
-                 + ("별도 금융상품" if t.k_sep else "복합내재파생에 포함")
-                 + " 입니다. 배분표와 분개가 판정과 다르게 나오므로 입력화면에서 "
-                   "맞추십시오."))
-
-    st.divider()
-    st.markdown("## 평가방법 — 어떻게 잴 것인가")
-
-    # ── 조기상환권 : 확정 계산으로 충분한가, 금리모형이 필요한가 ──
-    # 켤 수 없는 자리에서 「켜십시오」라고 권하지 않는다. 전환권이 파생상품부채면
-    # 조기상환권을 따로 재지 않으므로 이 절 자체가 해당 없음이다.
-    _bblk = put_bdt_block(t)
-    _bdt_na = (_bblk == "전환권이 파생상품부채다")
-    if _bdt_na:
-        st.markdown(inst_text(t, "### 조기상환청구권 — 금리모형은 해당 없음"))
-        st.info(inst_text(t,
-                "전환권이 파생상품부채라 전환권·조기상환청구권·매도청구권이 **하나의 "
-                "복합내재파생상품**입니다 (기준서 1109 문단 B4.3.4). 조기상환권을 따로 "
-                "재는 방식은 이 앱에서 지원하지 않습니다. 이는 앱의 지원 범위이며 금리위험이 중요하지 않다는 판단은 아닙니다."))
-    else:
-        st.markdown(inst_text(t, "### 조기상환청구권 — 금리모형(BDT)을 켤 것인가"))
-        st.caption(inst_text(t, "전환을 끄면 격자가 주가와 무관해져 스텝마다 값이 하나뿐입니다. "
-                   "확정 금리를 쓰는 이 분석에는 금리 변동에 따른 행사시점의 "
-                   "시간가치가 반영되지 않습니다. 아래 행사금액과 계속보유가치의 비교는 "
-                   "참고자료이며, 금리모형 채택 여부는 금리 변동성 자료와 평가 영향까지 "
-                   "검토해 결정하십시오."))
-    if (not _bdt_na) and t.p_s <= t.p_e and t.T > 0:
-        _r0 = engine(t, conv=False, put=False, call=False)
-        _dtx = t.T/int(t.n)
-        _lo2, _hi2 = step_mapper(t, int(t.n), _dtx)
-        _mp = int(t.n)/(t.T*12)
-        _pr = max(1, int(round(t.p_f*_mp)))
-        _s2, _e2 = _lo2(t.p_s), _hi2(t.p_e)
-        # 금액과 열림 판정을 엔진과 같은 곳에서 가져온다 — 행사금액표를 넣으면
-        # 표가 산식을 이기고 행사 가능 시점도 표가 정한다.
-        _EA2 = exercise_amounts(t, int(t.n), _dtx)
-        _open2 = (_EA2["p_on"] if _EA2["p_on"] else
-                  (lambda i: max(_s2, 0) <= i <= _e2 and (i - _s2) % _pr == 0))
-        _at2 = {}
-        for _k3, _v3 in _r0["memo"].items():
-            _at2.setdefault(_k3[0], _v3)
-        _rows2, _rat2 = [], []
-        for _i3 in range(max(_s2, 0), _e2+1):
-            if not _open2(_i3) or _i3 not in _at2: continue
-            _hold = _at2[_i3]["E"] + _at2[_i3]["B"]
-            _amt = _EA2["put"](_i3)
-            _rat2.append(_amt/max(_hold, 1e-9))
-            _rows2.append([_i3, round(_EA2["cmonth"](_i3)), _amt, _hold,
-                           _rat2[-1]])
-        if _rows2:
-            st.dataframe(pd.DataFrame(
-                _rows2, columns=["스텝", "발행 후 개월", "행사금액", "계속보유가치",
-                                 "행사금액 ÷ 계속보유"]).style.format(
-                {"행사금액": "{:,.2f}", "계속보유가치": "{:,.2f}",
-                 "행사금액 ÷ 계속보유": "{:.3f}"}),
-                use_container_width=True, hide_index=True, height=240)
-            st.caption("마지막 열이 1보다 크면 현재 입력한 확정금리 조건에서 그 날 "
-                       "상환청구가 계속보유보다 유리하다는 뜻입니다. 이 비율만으로 "
-                       "금리 변동에 따른 시간가치나 BDT 적용 여부를 확정할 수 없습니다.")
-            st.info(f"행사금액 ÷ 계속보유가치 범위: {min(_rat2):.3f} ~ {max(_rat2):.3f}. "
-                    + ("BDT를 적용할 수 있는 입력 조합입니다. 금리 변동성의 출처와 "
-                       "TF·BDT 부채요소 차이를 검토하십시오." if not _bblk else
-                       f"이 앱의 단독 BDT 계산은 지원되지 않습니다: {_bblk}. "
-                       "금리위험의 중요성은 별도로 검토하십시오."))
-        st.caption(inst_text(t, "현재 설정 — 조기상환권을 "
-                   + ("**BDT 금리격자**로 평가합니다." if put_bdt_on(t) else
-                      "**금리 고정 격자**로 평가합니다.")
-                   + ("" if put_bdt_on(t) else
-                      (f"  BDT 는 켤 수 없습니다 — {_bblk}." if _bblk else
-                       "  BDT 는 입력화면에서 켤 수 있습니다."))))
-    elif not _bdt_na:
-        st.info(inst_text(t, "조기상환청구권이 없어 판단할 것이 없습니다."))
-
-    # ── 매도청구권 : 세 방법을 나란히 ──
-    st.markdown(inst_text(t, "### 매도청구권 — 어느 방법으로 잴 것인가"))
-    if t.k_w > 0:
-        st.caption(inst_text(t, call_type_note(t)))
-        _cmp, _rec = call_compare(t, full, b2)
-        _base = next((v for nm, _, v, _ in _cmp if nm.startswith("유무가치비교법 (")), None)
-        _mv = [[nm, sp, v, (v - _base) if _base else 0.0,
-                ((v - _base)/_base if _base else 0.0), "◀ 적용" if on else ""]
-               for nm, sp, v, on in _cmp]
-        st.dataframe(pd.DataFrame(
-            _mv, columns=["방법", "지분·채권 구분 기준", "값", "유무가치 대비 차이", "차이율", "　"]
-            ).style.format({"값": "{:,.4f}", "유무가치 대비 차이": "{:,.4f}", "차이율": "{:,.1%}"}),
-            use_container_width=True, hide_index=True)
-        st.caption(inst_text(t,
-            "**두 방법의 결과를 억지로 같게 맞추지 않습니다.** 한공회 4.1.1 은 "
-            "「유무가치비교법과 옵션차익혼합할인법은 개념적으로 그 결과가 동일하여야 하나 "
-            "세부적인 구현방법에서 시장에서의 실무가 다양하게 진행되고 있어 그 차이가 종종 "
-            "발생한다」고 씁니다. 차이는 방법론 · 의무보유 반영 · 조기행사 판단 · 전환확률 "
-            "산출 · 할인방법에서 옵니다 — 아래에 두 조각으로 나눠 두었습니다."))
-        if _rec:
-            st.markdown(inst_text(t, "##### 유무가치비교법과의 차이 — 어디에서 오는가"))
-            _d = _rec["유무가치비교법 (적용 계약)"] - _rec["옵션차익법 (적용 산식·적용 설정)"]
-            st.dataframe(pd.DataFrame(
-                [[k, v] for k, v in _rec.items()] + [["차이 (유무가치 − 옵션차익)", _d]],
-                columns=["항목", "값"]).style.format({"값": "{:,.4f}"}),
-                use_container_width=True, hide_index=True)
-            st.caption(inst_text(t,
-                "①과 ②의 합이 차이와 정확히 같습니다. ①은 두 방법이 같은 계약(의무보유 없음)을 "
-                "잴 때 남는 순수한 구현 차이이고, ②는 유무가치비교법이 추가로 담는 부분입니다 — "
-                "콜을 넣고 뺀 차액이라 투자자가 전환·조기상환을 못 하게 된 효과까지 값에 "
-                "들어갑니다. 옵션차익법은 그 제한 자체를 별도의 가치요소로 콜에 더하지 않고, "
-                "제한으로 **콜 대상물량이 행사기간 동안 존속하여 행사 가능성이 유지되는 효과만** "
-                "담습니다 (참고 줄)."))
-        with st.expander(inst_text(t, "옵션차익혼합할인법은 어떻게 계산하나 — 여섯 단계")):
-            st.markdown(inst_text(t, CALL_HOWTO))
-        st.info(inst_text(t, "판정에 따른 권고 — " + _sp["call"]["평가"].replace("**", "")))
-
-        # 계약 우선순위가 값을 얼마나 바꾸는가. 겹치는 노드가 없거나 매도청구금액이
-        # 늘 크면 두 갈래가 같은 답을 내므로 표가 한 줄로 겹친다 — 그것도 정보다.
-        st.markdown(inst_text(t, "#### 조기상환청구권과 겹칠 때 — 누가 먼저인가"))
-        _pcc = pc_compare(t)
-        _pv2 = ([[_lb, _ca2, _cv2, "◀ 적용" if _on else ""] for _lb, _ca2, _cv2, _on in _pcc]
-                if _pcc else [["투자자 조기상환 우선", ca, conv, "◀ 적용" if int(t.pc_order) == 0 else ""],
-                              ["발행자 매도청구 우선", ca, conv, "◀ 적용" if int(t.pc_order) == 1 else ""]])
-        st.dataframe(pd.DataFrame(
-            _pv2, columns=["우선순위", inst_text(t, "매도청구권"),
-                           inst_text(t, "전환권대가"), "　"]).style.format(
-            {inst_text(t, "매도청구권"): "{:,.4f}",
-             inst_text(t, "전환권대가"): "{:,.4f}"}),
-            use_container_width=True, hide_index=True)
-        _d2 = abs(_pv2[0][1] - _pv2[1][1])
-        if _d2 > 1e-6:
-            st.warning(inst_text(t,
-                f"**우선순위에 따라 매도청구권이 {_d2:,.4f} 만큼 갈립니다.** "
-                "수식이 정하는 것이 아니라 **계약이 정하는 것**입니다 — 계약서의 "
-                "통지기간과 「이미 통지된 조기상환청구를 매도청구로 번복할 수 있는가」 "
-                "조항을 확인하시고, 고른 근거를 조서에 남기십시오. 입력화면 "
-                "매도청구권 칸에서 바꿉니다."))
-        else:
-            st.caption(inst_text(t,
-                "두 우선순위가 같은 답을 냅니다 — 행사기간이 겹치지 않거나, 겹치는 "
-                "자리에서 매도청구금액이 조기상환금액보다 크거나 같기 때문입니다. "
-                "그래도 계약서의 우선순위 조항은 조서에 적어 두십시오."))
-    else:
-        st.info(inst_text(t, "매도청구권이 없어 판단할 것이 없습니다."))
-
-    # ── 이자율모형 검토 — 네 관문 ──
-    if not is_sha(t):
-      with st.expander("이자율모형(BDT) 적용 검토 — 관측값과 판단 근거", expanded=False):
-        st.caption("책 87쪽의 정성적 고려사항입니다. 수치 경계로 적용 여부를 확정하지 않습니다. 아래 민감도는 추가 계산합니다.")
-        _sig = rate_signals(t)
-        _bd = bdt_review(t, full, b0, b1, b2, ca, _sig)
-        st.dataframe(pd.DataFrame(
-            [[f"{n_}", q_, v_, ("판단 필요" if ok_ is None else "예" if ok_ else "아니오"), w_] for n_, q_, v_, ok_, w_ in _bd["관문"]],
-            columns=["번호", "검토사항", "값", "상태", "설명"]), use_container_width=True, hide_index=True)
-        _box = (st.success if _bd["결론"].startswith("검토했으나") or _bd["결론"] == "해당 없음"
-                or _bd["결론"] == "이자율모형(BDT) 적용" else st.warning)
-        _box(f"**{_bd['결론']}** — {_bd['사유']}")
-        st.dataframe(pd.DataFrame([
-            ["금리 수준 ±1%p (두 곡선 평행)", f"{_sig['dl']:+,.4f}", f"{abs(_sig['dl'])/max(b2,1e-9)*100:.2f}%"],
-            ["신용스프레드 ±1%p (위험 곡선만)", f"{_sig['ds']:+,.4f}", f"{abs(_sig['ds'])/max(b2,1e-9)*100:.2f}%"],
-            ["변동성 ±10%p", f"{_sig['dv']:+,.4f}", f"{abs(_sig['dv'])/max(b2,1e-9)*100:.2f}%"],
-            ["금리 수준 ÷ 주가 민감도", f"{_sig['ratio']:.3f}", ""],
-            [f"{t.T:.2f}년 신용스프레드", f"{_sig['spr']*100:.2f}%p", f"할인율 중 {_sig['share']*100:.0f}%"],
-            ["정산 분포 — 전환 · 조기상환", f"{_bd['지표']['conv_share']*100:.1f}% · {_bd['지표']['put_share']*100:.1f}%", ""],
-            ["구성요소 — 조기상환권 · 전환권", f"{_bd['지표']['pv']:,.4f} · {_bd['지표']['cv']:,.4f}", ""]],
-            columns=["항목", "값", "비중"]), use_container_width=True, hide_index=True)
-        if _bd["왜곡"]:
-            st.warning(f"BDT 를 적용했습니다. BDT 부채요소 {_bd['왜곡']['bdt']:,.4f} − TF 부채요소 "
-                       f"{_bd['왜곡']['tf']:,.4f} = **{_bd['왜곡']['diff']:+,.4f}** 가 전환권에서 빠져나갑니다 "
-                       "(책 89쪽). 이 차이의 원인과 영향을 검토기록에 남기십시오.")
-        st.markdown("**조서 문안** — 「검산요약」 시트에 같은 문장이 실립니다")
-        st.code(_bd["문안"], language=None)
-        st.caption("두 곡선을 함께 흔드는 이유 — 부채 부분은 위험이자율로 할인되므로 무위험 곡선만 흔들면 "
-                   "스프레드 변화와 상쇄되어 노출이 최대 수십 배 과소하게 잡힙니다. "
-                   "«검토하지 않았다» 와 «검토했으나 적용하지 않았다» 는 다릅니다 — 흔적이 없으면 그 자체가 "
-                   "지적사항입니다.")
-
-    # ── 회계처리 ──
-    st.divider()
-    st.markdown("## 회계처리 — 판정대로 배분하면")
-    _rows_al, _note_al = allocate(t, full, b0, b1, b2, ca)
-    st.dataframe(pd.DataFrame(
-        [[k2, v2, fv2] for k2, v2, fv2 in allocate_full(t, _rows_al)],
-        columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
-        {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
-        use_container_width=True, hide_index=True)
-    st.caption(_note_al)
-    st.caption("분개는 **회계처리** 탭에 있습니다. 여기서는 판정이 배분에 어떻게 "
-               "닿는지만 보입니다.")
-
-    st.divider()
-    st.markdown("**조서에 옮길 문안**")
-    st.code(inst_text(t, split_memo(_sp)), language=None)
-    st.caption("판단 순서·근거 문단·지표가 함께 들어 있습니다. 결론만 적는 것과 "
-               "달리 감사인이 다시 물을 여지를 줄입니다.")
+    import judgment_ui
+    judgment_ui.render(t, full, b0, b1, b2, ca, conv, LB, _shared_run)
 
 if _detail_section == _detail_sections[3]:
     RF, CR = curves(t)
@@ -3231,7 +2942,7 @@ if _detail_section == _detail_sections[7] and st.button("상세 민감도 계산
 
 if _detail_section == _detail_sections[8]:
     st.write("**계산이 성립하는지**만 봅니다. 무엇을 분리하고 어떻게 잴지는 "
-             "「분리 판단」 탭으로 옮겼습니다.")
+             "「판단·근거」 탭으로 옮겼습니다.")
     imm = 100*t.S0/t.K0
     tot_al = allocate(t, full, b0, b1, b2, ca)[0][-1][1]
     checks = [("위험중립가중치 q · 첫 구간", f"{full['q']:.4f}", 0 < full["q"] < 1),
@@ -3334,7 +3045,7 @@ if _detail_section == _detail_sections[8]:
                      use_container_width=True, hide_index=True)
         if _ovd:
             st.warning("세 번째 줄이 **확인 필요**입니다. 계약서의 통지기간과 "
-                       "우선순위 조항을 보시고, 「권리·금리 분석」의 비교표에서 두 "
+                       "우선순위 조항을 보시고, 「판단·근거」의 우선순위 비교에서 두 "
                        "갈래의 값 차이를 확인하십시오.")
         st.caption('이 표는 구현된 격자의 내부 일관성을 점검한 결과입니다. 계약상 행사조건·우선순위, 자료의 적정성과 회계분류는 원문 및 독립 검산자료로 별도 검토하십시오.')
         if st.button('추가 수치 검산', key='btn_model_checks'):
@@ -3344,6 +3055,11 @@ if _detail_section == _detail_sections[8]:
             _mcbad = [nm for nm, _, vd, _ in _mc if vd == '확인 필요']
             if _mcbad:
                 st.warning('확인할 사항: ' + ', '.join(_mcbad))
+        if unmod_text(t):
+            st.info(unmod_text(t))
+        st.markdown("**모형의 알려진 한계** — 조서 「99_모형검증」 시트와 같은 표")
+        st.dataframe(pd.DataFrame([(a, b) for a, b, _ in MODEL_LIMITS], columns=["한계", "설명"]),
+                     use_container_width=True, hide_index=True)
 
         # ── 극단 시험 — 격자를 두 번 더 돌리므로 눌렀을 때만 ──
         st.markdown("**극단에서 값이 붙는가**")
@@ -3380,6 +3096,8 @@ if _detail_section == _detail_sections[8]:
                 f"현재 전체 {b2:,.2f}. 역산은 발행일 평가에서만 돌립니다.")
     elif len(t.cr_curve) < 2:
         st.info("위험 곡선을 두 점 이상 넣으셔야 역산할 수 있습니다.")
+    elif not st.button("발행가로 위험이자율 역산", key="btn_spread_bs"):
+        st.caption(f"현재 전체 {b2:,.2f}. 누르면 위험 곡선을 평행이동해 전체가 100 이 되는 위험이자율을 찾습니다 (격자 수십 회).")
     else:
         _lv = [y for _, y in t.cr_curve]
         _sh = lambda d: [(x, y+d) for x, y in t.cr_curve]
@@ -3430,7 +3148,10 @@ if _detail_section == _detail_sections[8]:
                 if abs(b2-100) < 1.0:
                     st.info('모형가치와 원금 100의 차이가 1 미만입니다. 금액의 일치만으로 거래가격이나 투입변수의 적정성을 확인할 수는 없습니다.')
                 else:
-                    st.warning(f'모형가치와 원금 100의 차이는 {b2-100:+,.2f}입니다. 최초 거래의 조건, 권리별 대가, 평가기준일 및 시장자료를 대조하십시오. 역산 금리만으로 입력 스프레드의 적정성을 판단하지 않습니다.')
+                    st.warning(f'모형가치 − 100 = {b2-100:+,.2f}. 전체가 100 이 되려면 위험이자율을 {_d*100:+.2f}%p 옮겨야 합니다 — '
+                               + ('스프레드를 낮게 잡았거나 투자자에게 유리한 발행일 수 있습니다.' if b2 > 100 else
+                                  '스프레드를 높게 잡았거나 리픽싱·조기상환 같은 조건이 빠졌을 수 있습니다.')
+                               + ' 원인은 거래 조건과 대조해 판단합니다 (1113 문단 64·B4).')
         except Exception as _ex:
             st.info(f"역산하지 못했습니다 — {_ex}")
         st.caption('역산 금리는 입력 가정과 목표가격 간 차이를 확인하는 참고값입니다. 관측 시장자료를 대체하려면 거래의 정상성 및 모형 보정 근거를 별도로 검토하십시오.')

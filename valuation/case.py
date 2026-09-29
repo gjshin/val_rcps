@@ -25,7 +25,7 @@ MARKET = frozenset({
 METHOD = frozenset({
     "d_base", "model", "gap_m", "grid_days", "carry", "view", "conv_class", "p_sep", "k_sep",
     "k_method", "k_split", "put_bdt", "fvpl_whole", "bs_target", "bs_net",
-    "prev_hold", "prev_host", "prev_deriv", "eir_issue", "cur_periods", "settle_amt",
+    "prev_hold", "d1_pl", "d1_reason", "prev_host", "prev_deriv", "eir_issue", "cur_periods", "settle_amt",
 })
 DERIVED = frozenset({"T", "n", "elapsed_m", "rem_m", "scen_md5"})
 FIELDS = frozenset(Terms.__dataclass_fields__) - DERIVED
@@ -80,6 +80,8 @@ class Case:
     review_controls: dict = field(default_factory=dict)
     imported_defaults: list = field(default_factory=list)
     notes: str = ""
+    memos: dict = field(default_factory=dict)
+    calibration: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, obj: dict) -> "Case":
@@ -91,7 +93,7 @@ class Case:
         case = cls(**copy.deepcopy(obj))
         if not isinstance(case.name, str) or not case.name.strip():
             raise ValueError("평가 건명을 입력하십시오.")
-        for key in ("contract", "market", "method", "sources", "judgments", "market_evidence", "review_controls", "exercise_styles", "contract_review"):
+        for key in ("contract", "market", "method", "sources", "judgments", "market_evidence", "review_controls", "exercise_styles", "contract_review", "memos", "calibration"):
             if not isinstance(getattr(case, key), dict):
                 raise ValueError(f"{key}: 객체 형식이 필요합니다.")
         for key in ("assumptions", "additional_rights", "imported_defaults", "contract_scenarios", "cashflow_scenarios"):
@@ -101,6 +103,10 @@ class Case:
             raise ValueError("기본값 보충 목록에는 유효한 항목명만 기록할 수 있습니다.")
         if not isinstance(case.notes, str):
             raise ValueError("notes에는 문자열이 필요합니다.")
+        for key, row in case.memos.items():
+            if not isinstance(key, str) or not isinstance(row, dict) or set(row) != {'decision', 'reason'} or not all(isinstance(v, str) for v in row.values()):
+                raise ValueError('평가자 판단 기록은 판단(decision)과 근거(reason) 문자열이 필요합니다.')
+        validate_calibration(case.calibration)
         from .exercise import validate_styles
         validate_styles(case.exercise_styles)
         from .contract_intake import validate_review
@@ -166,6 +172,24 @@ class Case:
             result[row["field"]] = copy.deepcopy(row["value"])
         from .exercise import apply_styles
         return apply_styles(result, self.exercise_styles)
+
+
+CALIBRATION_FIELDS = {'date', 'target', 'before', 'after', 'equity_ps', 'reason'}
+
+
+def validate_calibration(row):
+    """최초 인식 보정 기록 (제1113호 문단 64). 비어 있으면 기록 없음."""
+    if not row:
+        return
+    if set(row) != CALIBRATION_FIELDS:
+        raise ValueError('보정 기록에는 보정일·대상·보정 전후 값·당시 주당가치·근거가 필요합니다.')
+    if row['target'] not in {'S0', 'spread'}:
+        raise ValueError('보정 대상은 주가(S0) 또는 스프레드 가산(spread)입니다.')
+    dt.date.fromisoformat(row['date'])
+    if not all(_finite(row[k]) for k in ('before', 'after', 'equity_ps')) or row['equity_ps'] <= 0:
+        raise ValueError('보정 전후 값과 당시 주당가치에는 유한한 숫자가 필요합니다(주당가치 > 0).')
+    if not isinstance(row['reason'], str) or not row['reason'].strip():
+        raise ValueError('보정 근거를 입력하십시오.')
 
 
 def import_legacy(obj: dict, name: str = "가져온 평가") -> Case:
@@ -296,6 +320,8 @@ def inspect_case(case: Case) -> list[Issue]:
             ok = all(curve[i][0] < curve[i+1][0] for i in range(len(curve)-1))
         if not ok:
             add("error", "curve", key, "만기·금리 쌍을 2개 이상, 만기 오름차순·중복 없이 입력하십시오.")
+    if values.get('d1_pl', 0) == 1 and not str(values.get('d1_reason', '')).strip():
+        add('error', 'day1_reason', 'd1_reason', '최초 인식 차이를 당기손익으로 처리하려면 관측 가능한 시장자료만 사용했다는 근거를 적으십시오 (1109 B5.1.2A(1)).')
     if values.get('grid_days', 0) not in (0, 7, 14):
         add('error', 'grid_days', 'grid_days', '일수 기준 간격은 주(7일) 또는 2주(14일)를 선택하십시오.')
     if values.get('grid_days', 0) == 0 and values.get("gap_m", 1) < .25:

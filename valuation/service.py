@@ -46,13 +46,30 @@ def code_fingerprint() -> str:
     return h.hexdigest()
 
 
+# 분개 표기만 바꾸는 선택 — 평가값에 영향이 없어 재평가 없이 조서에 반영한다.
+ACCOUNTING_ONLY = frozenset({"d1_pl", "d1_reason"})
+
+
+def day1_summary(terms, raw):
+    """투자자 최초 인식(평가기준일 = 발행일)의 모형값 · 거래가격 100 · 차이."""
+    if legacy.is_sha(terms) or not legacy.holder_on(terms) or terms.elapsed_m > 0.01:
+        return None
+    net = float(raw["b2"] - raw["ca"])
+    diff = net - 100.0
+    mode = "당기손익" if int(terms.d1_pl) == 1 else "이연"
+    return {"model": net, "price": 100.0, "diff": diff, "mode": mode,
+            "nums": f"모형값 {net:,.4f} / 거래가격 100 / 차이 {diff:+,.4f}",
+            "verdict": ("차이 없음 (보정됨)" if abs(diff) < 0.005 else f"차이 {diff:+,.4f} — 처리: {mode}")}
+
+
 def calculation_key(case: Case) -> str:
     """Conservative, session-local reuse key. Only case metadata is excluded.
 
     Every Terms input, including unused settings, participates. Excluding fewer
     inputs is preferable to accidentally reusing a value from another contract.
     """
-    payload = {"code": code_fingerprint(), "inputs": case.effective()}
+    inputs = {k: v for k, v in case.effective().items() if k not in ACCOUNTING_ONLY}
+    payload = {"code": code_fingerprint(), "inputs": inputs}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False,
                                      allow_nan=False).encode()).hexdigest()
 
@@ -100,14 +117,16 @@ def refresh_run(run: Run, case: Case) -> Run:
     if calculation_key(case) != run.summary["calculation_key"]:
         raise ValueError("계산 입력이 바뀌었습니다. 현재 입력으로 다시 평가하십시오.")
     case, terms, issues, normalized = _prepare(case)
-    result = _assemble(case, terms, run.raw, issues, normalized)
+    result = _assemble(case, terms, run.raw, issues, normalized,
+                       warnings=[i for i in run.issues if i.code == 'input_check'])
     result.summary["calculation_seconds"] = run.summary["calculation_seconds"]
     result.summary["calculated_at"] = run.summary["calculated_at"]
     return result
 
 
-def _assemble(case, terms, raw, issues, normalized):
-    from .review import review_issues, arithmetic_checks
+def _assemble(case, terms, raw, issues, normalized, warnings=None):
+    # 입력 경고는 계산할 때 한 번 만든다. 증빙만 바꾼 갱신(refresh_run)은 다시 만들지 않는다.
+    from .review import review_issues, arithmetic_checks, input_warnings
     from .evidence import evidence_cards
     if legacy.is_sha(terms):
         amounts = {"put": float(raw["put"]), "call": float(raw["call"])}
@@ -127,6 +146,12 @@ def _assemble(case, terms, raw, issues, normalized):
     # Legacy validate() mixes assumptions, accounting conclusions and extra
     # valuations. Basic workflow uses bounded checks on the existing result.
     issues += review_issues(case, terms, raw)
+    issues += input_warnings(terms) if warnings is None else list(warnings)
+    day1 = day1_summary(terms, raw)
+    if day1 and abs(day1["diff"]) >= 0.005:
+        issues.append(Issue("review", "day1_gap", "S0", f"최초 인식 {day1['nums']}.",
+                            "보정하지 않으면 최초 인식 차이가 생깁니다 (1109 B5.1.2A).",
+                            "주가 역산으로 보정하거나(1113 문단 64) 판단·근거 탭의 원인 점검 3항목에 답하십시오."))
     checks = arithmetic_checks(terms, raw, amounts)
     if any(not row["passed"] for row in checks):
         raise CaseError(issues + [Issue("error", "arithmetic", "result", "산술 대사에 차이가 있습니다. 계산내역을 확인하십시오.")])
@@ -148,6 +173,7 @@ def _assemble(case, terms, raw, issues, normalized):
         "engine_defaults": sorted(FIELDS - set(case.effective())),
         "issues": [asdict(i) for i in issues],
         "judgment_evidence": evidence_cards(case),
+        "day1": day1,
     }
     return Run(case=case, terms=terms, raw=raw, summary=summary, issues=issues)
 
@@ -227,8 +253,11 @@ def _evidence_workbook(data: bytes, run: Run) -> bytes:
 
 
 def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = None,
-                  detail: bool = False, accounting: bool = False) -> bytes:
-    """Export the exact run snapshot; refuse implicit approximate formula conversion."""
+                  detail: bool = False, accounting: bool = False, judgment: bool = True) -> bytes:
+    """Export the exact run snapshot; refuse implicit approximate formula conversion.
+
+    judgment — 판단·근거 시트와 분리 판단·검산요약·모형검증 시트를 싣는다(기본).
+    """
     terms = copy.deepcopy(run.terms)
     if formula and terms.carry == 0 and terms.rfx_mode > 0:
         raise ValueError("상태확장 리픽싱은 동일한 수식 조서로 내보낼 수 없습니다. 값 조서를 사용하십시오.")
@@ -247,8 +276,8 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
             args = (terms, r["full"], r["b0"], r["b1"], r["b2"], r["ca"])
             eir = legacy.eir_or_none(*args) if accounting else None
             wb = (legacy.build_xlsx_formula if formula else legacy.build_xlsx)(
-                *args, r['conv'], eir, attach=attach, as_workbook=True, include_review=False)
-    workbook = finish_calculation_workbook(wb, run, formula=formula, accounting=accounting)
+                *args, r['conv'], eir, attach=attach, as_workbook=True, include_review=judgment)
+    workbook = finish_calculation_workbook(wb, run, formula=formula, accounting=accounting, judgment=judgment)
     md = [f"# {run.case.name} — 계산 결과", "",
           f"- 입력 SHA256: {run.summary['case_sha256']}",
           f"- 코드 SHA256: {run.summary['code_sha256']}",
@@ -285,7 +314,8 @@ def export_final_bundle(run: Run) -> bytes:
         raise ValueError('최종 확정본을 만들 수 없습니다. ' + ' / '.join(messages or ['현재 결과를 최종 확정하십시오.']))
     # A mutable Run must not carry edited figures/terms into the final package.
     case, terms, issues, normalized = _prepare(run.case)
-    checked = _assemble(case, terms, run.raw, issues, normalized)
+    checked = _assemble(case, terms, run.raw, issues, normalized,
+                        warnings=[i for i in run.issues if i.code == 'input_check'])
     for key in ('amounts_100', 'amounts_total', 'amounts_per_share', 'applied_terms', 'checks', 'normalizations'):
         if checked.summary[key] != run.summary[key]:
             raise ValueError('저장된 결과와 계산 원본이 일치하지 않습니다. 다시 평가하십시오.')

@@ -44,6 +44,7 @@ def main(argv=None, *, legacy_cli=False):
     p.add_argument('--formula', action='store_true')
     p.add_argument('--detail', action='store_true')
     p.add_argument('--accounting', action='store_true', help='회계처리·분개·상각표 초안 포함')
+    p.add_argument('--no-judgment', action='store_true', help='판단·근거·분리 판단·검산요약·모형검증 시트 제외')
     p.add_argument('--set', action='append', default=[], metavar='항목=값')
     p.add_argument('--sens', type=Path, help='[{"label":"이름","set":{"S0":100}}] 민감도 파일')
     p.add_argument('--vol', type=Path, help='원본 주가와 조회 조건을 포함한 변동성 패키지')
@@ -82,7 +83,7 @@ def main(argv=None, *, legacy_cli=False):
         run = calculate(case)
         previous = read_case(a.previous) if a.previous else None
         data = export_bundle(run, formula=formula, detail=a.detail or legacy_cli,
-                             accounting=a.accounting, previous=previous)
+                             accounting=a.accounting, previous=previous, judgment=not a.no_judgment)
         extras = {}
         if a.sens:
             rows = [['경우', '전체(100)', '콜(100)', '순포지션(100)', '순포지션(원)', '풋(100)']]
@@ -123,7 +124,7 @@ def main(argv=None, *, legacy_cli=False):
                 for name in bundle.namelist():
                     (a.out/(prefix+name)).write_bytes(bundle.read(name))
             if legacy_cli and formula:
-                with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, accounting=a.accounting))) as bundle:
+                with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, accounting=a.accounting, judgment=not a.no_judgment))) as bundle:
                     (a.out/(prefix+'value_review.xlsx')).write_bytes(bundle.read('value_review.xlsx'))
         if a.vol_out:
             a.vol_out.parent.mkdir(parents=True, exist_ok=True); a.vol_out.write_bytes(extras['변동성.xlsx'])
