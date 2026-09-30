@@ -1286,12 +1286,17 @@ def test_call_split_text():
     _l_off, _, _ = val(2, 1, k_hold=0)
     chk("의무보유 기간 0 = 의무보유 없음", _l_none, _l_off, 1e-12)
     # ── 콜 소멸은 계약 우선순위를 따른다 ──
-    # 「발행자 콜 우선」이면 투자자의 전환·조기상환이 매도청구에 밀려 콜이 소멸하지 않고
-    # 행사된다. 기초 격자가 이미 쓰는 pc_order 를 콜 계약층도 따라야 한다.
+    # 풋·콜 우선순위(pc_order)는 조기상환과 매도청구 사이만 정하고, 전환과 매도청구 사이는
+    # 매도청구 통지 뒤 전환 대응(k_conv_resp)이 정한다 — 우선순위 하나가 전환권까지 바꾸면 안 된다
+    # (2026-09-30 외부 검토). 예전 이 자리는 «콜 우선이면 전환도 콜에 밀린다» 를 기대했는데, 그것은
+    # 옵션차익법에서만 그랬고 유무가치 격자는 콜 우선이어도 전환 대응을 허용했다 — 두 방법이 다른
+    # 계약을 읽던 자리다. 이 계약은 조기상환금액이 매도청구금액보다 큰 겹침이 없어 우선순위가 값을 바꾸지 않는다.
     _o0, _, _ = val(2, 1, k_hold=0, pc_order=0)
     _o1, _, _ = val(2, 1, k_hold=0, pc_order=1)
-    chk_bool(f"발행자 콜 우선 → 의무보유 없어도 값이 높다 ({_o0:.4f} < {_o1:.4f})",
-             _o1 > _o0 + 1e-6)
+    chk(f"조기상환 > 매도청구 인 겹침이 없으면 우선순위와 무관 ({_o0:.4f} = {_o1:.4f})", _o1, _o0, 1e-12)
+    _c1, _, _ = val(2, 1, k_hold=0, k_conv_resp=1)
+    _c0, _, _ = val(2, 1, k_hold=0, k_conv_resp=0)
+    chk_bool(f"통지 뒤 전환 불가 → 의무보유 없어도 값이 높다 ({_c1:.4f} < {_c0:.4f})", _c0 > _c1 + 1e-6)
     # 자동전환·만기는 투자자의 «선택» 이 아니라 밀리지 않는다 — 의무보유가 있으면
     # 두 우선순위가 같은 값을 낸다 (소멸 조건 자체가 걸리지 않는다).
     _h_p0, _, _ = val(2, 1, k_hold=1, pc_order=0)
@@ -1515,7 +1520,9 @@ def test_call_split_text():
     _t_old = Terms(**{k: v for k, v in {"k_w": 0.3, "sig": 0.5}.items() if k in _fields})
     chk_bool("«_schema» 없는 옛 파일 → 유무가치비교법 기본", _t_old.k_method == 0)
     chk_bool("«_schema» 없는 옛 파일 → 행사가 분해 없음", _t_old.k_split == 0)
-    chk_bool("평가체계 버전 2", G["SCHEMA_VER"] == 2)
+    # 3 = 매도청구 통지 뒤 전환 대응(k_conv_resp)을 따로 받고 세 평가방법이 같은 사건 규칙을 쓴다
+    chk_bool("평가체계 버전 3", G["SCHEMA_VER"] == 3)
+    chk_bool("«k_conv_resp» 없는 옛 파일 → 통지 뒤 전환 가능 (종전 격자의 읽기)", _t_old.k_conv_resp == 1)
     # ── 계약서의 회차별 행사금액표 ──
     # 계약이 확정 숫자를 준 회차는 그 숫자가 산식보다 앞선다. 다이나믹솔루션 제9회
     # (2026-06-05 발행 · 2029-06-05 만기 · 표면 3% · 보장 5% 분기복리) 공시 표다.
@@ -1894,6 +1901,319 @@ def test_excel_limits_and_curves():
     chk("곡선 끝 뒤 보간 = 마지막 수익률", G["_lin"](RF, 9.0), 0.032, 1e-15)
 
 
+# ══════════════════════════════════════════════════════════
+# 콜옵션 점검 (2026-09-30) — 세 평가방법이 같은 계약을 읽는지, 계산 원리를 따로 센다.
+# 사례는 모두 공개 가능한 가상 조건이다 (검토 요청서의 재현 조건 포함). 고객 자료가 아니다.
+def _call_terms(**kw):
+    """검토 요청서의 재현 조건 — 발행·평가 2025-01-01, 만기 2027-01-01, 주가 150, 전환가 100,
+    σ 30%, 분기 격자, 리픽싱·풋 없음, 전환 0~24개월, 콜 12개월 1회(기본 매수대금 100), 대상 100%,
+    의무보유 24개월, 표면 8% 연 1회, 무위험 3% · 위험 8% (복리 횟수까지 고정)."""
+    base = dict(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2027-01-01", S0=150., K0=100., sig=0.30,
+                gap_m=3.0, rfx_mode=0, carry=1, p_s=99., p_e=0., cv_s=0., cv_e=24.,
+                k_s=12., k_e=12., k_f=3., k_w=1.0, k_lock=24., k_hold=1, k_lock_put=1,
+                k_prem=0.01, k_cmp=4, k_less_cpn=1, cpn=0.08, ipay=12., ytm=0.08, ytm_cmp=4,
+                rf_curve=[(1, .03), (2, .03), (3, .03)], cr_curve=[(1, .08), (2, .08), (3, .08)],
+                cmp_rf=2, cmp_cr=4, k_third=1, k_method=2, k_split=0)
+    base.update(kw)
+    t = Terms(**base); derive(t); return t
+
+
+def _three(t):
+    """세 방법의 콜 값 — 유무가치 · 혼합할인율 · 성분 분리할인 (지금 지분·채권 구분 기준 그대로)."""
+    full = engine(t, call=False)
+    b2 = G["pick"](full, t.model)
+    cs, ps = G["lock_delay"](t)
+    b3 = G["pick"](engine(t, conv=True, put=True, call=True, conv_start=cs, put_start=ps), t.model)
+    return (t.k_w*(b2 - b3), t.k_w*G["call_third_party"](t, full, 1), t.k_w*G["call_third_party"](t, full, 2))
+
+
+def test_call_response_combos():
+    """전환 대응(k_conv_resp)과 풋·콜 우선순위(pc_order)는 따로 정한다 — 네 조합의 닫힌 식.
+
+        풋 우선 · 전환 가능 :  MAX(전환, 풋, MIN(보유, 콜))
+        콜 우선 · 전환 가능 :  MAX(전환, MIN(MAX(보유, 풋), 콜))
+        풋 우선 · 전환 불가 :  MAX(풋, MIN(MAX(전환, 보유), 콜))
+        콜 우선 · 전환 불가 :  MIN(MAX(전환, 풋, 보유), 콜)
+
+    검토 요청서의 예 — 평가기준일에 전환이 유리하고 의무보유가 없는 노드에서 CB 가치 200, 매수대금 100,
+    대상비율 30% — 는 «전환 가능» 이면 세 방법 모두 0, «전환 불가» 면 세 방법 모두 (200 − 100) × 30% = 30 이다.
+    예전에는 콜 우선이면 옵션차익법만 30 이었다(우선순위 하나가 전환권까지 바꿨다).
+    """
+    print("\n[37] 전환 대응 · 우선순위 네 조합 — 닫힌 식과 검토 요청서의 예")
+    import random
+    nd = G["node_decide"]
+    val = lambda d, cv, pv, kv, h: {"conv": cv, "put": pv, "call": kv, "hold": h}[d]
+    closed = {(0, 1): lambda cv, pv, kv, h: max(cv, pv, min(h, kv)),
+              (1, 1): lambda cv, pv, kv, h: max(cv, min(max(h, pv), kv)),
+              (0, 0): lambda cv, pv, kv, h: max(pv, min(max(cv, h), kv)),
+              (1, 0): lambda cv, pv, kv, h: min(max(cv, pv, h), kv)}
+    rng = random.Random(20260930); bad = 0
+    grid = [80., 100., 105., 120., 140.]
+    samples = [(a, b, c, d) for a in grid for b in grid for c in grid + [math.inf] for d in grid]
+    samples += [tuple(rng.uniform(50, 200) for _ in range(4)) for _ in range(20000)]
+    for (kf, cr), f in closed.items():
+        for cv, pv, kv, h in samples:
+            if abs(val(nd(cv, pv, kv, h, bool(kf), bool(cr)), cv, pv, kv, h) - f(cv, pv, kv, h)) > 1e-9:
+                bad += 1
+    chk_bool(f"node_decide 네 조합 = 닫힌 식 ({4*len(samples):,}개 표본 · 동점 포함) — 어긋남 {bad}", bad == 0)
+    for kf in (0, 1):
+        base = dict(S0=200., cv_s=0., cv_e=0., k_s=0., k_e=0., k_f=1., k_prem=0.0, k_w=0.3, k_hold=0,
+                    k_lock=0., cpn=0.0, ytm=0.0, pc_order=kf)
+        for cr, want in ((1, 0.0), (0, 30.0)):
+            v = _three(_call_terms(k_conv_resp=cr, **base))
+            tag = f"{'콜' if kf else '풋'} 우선 · 전환 {'가능' if cr else '불가'}"
+            for nm, x in zip(("유무가치", "혼합할인율", "성분 분리할인"), v):
+                chk(f"  {tag} · {nm} (기대 {want:g})", x, want, 1e-9)
+
+
+def test_call_zero_and_scale():
+    """콜 없음 · 행사기간 경과 · 대상비율 0 이면 0, 같은 조건에서는 대상비율에 비례한다."""
+    print("\n[38] 콜 가치 0 · 대상비율 비례 — 세 방법")
+    for nm, kw in (("대상비율 0", dict(k_w=0.0)),
+                   ("행사기간이 평가기준일 전에 끝남", dict(d_base="2026-01-01", k_s=3., k_e=6.))):
+        t = _call_terms(**kw)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        chk(f"  {nm} · 적용 콜 값", ca, 0.0, 1e-12)
+        if t.k_w > 0:
+            v = _three(t)
+            chk_bool(f"  {nm} · 세 방법 모두 0 ({', '.join(f'{x:.2e}' for x in v)})",
+                     all(abs(x) < 1e-12 for x in v))
+    for km in (0, 1, 2):
+        for sp in (0, 1):
+            a = _three(_call_terms(k_w=0.2, k_method=km, k_split=sp))
+            b = _three(_call_terms(k_w=0.4, k_method=km, k_split=sp))
+            chk_bool(f"  대상비율 20% → 40% 에 정확히 두 배 · 방법 {km} · 기준 {sp}",
+                     all(abs(2*x - y) < 1e-9 for x, y in zip(a, b)))
+
+
+def test_call_coupon_add():
+    """행사일 이자 별도지급 — 옵션차익법의 매수대금에도 그날 이자가 들어간다.
+
+    독립 대조: «별도지급 켬» 은 «같은 날 매도청구금액이 이자만큼 큰 계약(행사금액표 108)» 과 같아야 한다.
+    이자 지급일과 행사일이 다르면 켜도 값이 같다. 검토 요청서가 잰 값(끔 64.420793 · 켬 56.722443)은
+    같은 입력의 회귀 기준으로만 둔다.
+    """
+    print("\n[39] 행사일 이자 별도지급 — 옵션차익법 매수대금")
+    for km in (1, 2):
+        for sp in (0, 1):
+            off = _call_terms(k_method=km, k_split=sp, k_cpn_add=0)
+            on = _call_terms(k_method=km, k_split=sp, k_cpn_add=1)
+            tab = _call_terms(k_method=km, k_split=sp, k_cpn_add=0, k_sched="12 108.0000")
+            f_off, f_on, f_tab = (engine(x, call=False) for x in (off, on, tab))
+            v_off = G["call_third_party"](off, f_off, km); v_on = G["call_third_party"](on, f_on, km)
+            v_tab = G["call_third_party"](tab, f_tab, km)
+            chk(f"  방법 {km} · 기준 {sp} · 켬 = 행사금액표 108", v_on, v_tab, 1e-9)
+            chk_bool(f"  방법 {km} · 기준 {sp} · 켬 < 끔 ({v_on:.6f} < {v_off:.6f})", v_on < v_off - 1e-6)
+            if km == 2 and sp == 0:
+                chk("  검토 요청서 재현 · 끔 (회귀 기준)", v_off, 64.420793, 5e-7)
+                chk("  검토 요청서 재현 · 켬 (회귀 기준)", v_on, 56.722443, 5e-7)
+    # 이자 지급일(12개월)과 다른 날(9개월)에 행사하면 켜도 같다
+    for km in (0, 1, 2):
+        a = _three(_call_terms(k_method=km, k_s=9., k_e=9., k_cpn_add=0))
+        b = _three(_call_terms(k_method=km, k_s=9., k_e=9., k_cpn_add=1))
+        chk_bool(f"  행사일(9개월) ≠ 지급일(12개월) · 방법 {km} · 켜도 같다",
+                 all(abs(x - y) < 1e-12 for x, y in zip(a, b)))
+
+
+def test_call_same_day_events():
+    """같은 날 겹치는 사건 — 상장 강제전환 · 만기 · 풋 · 의무보유.
+
+    만기일에는 만기상환·전환이 매도청구보다 먼저다 — 행사기간이 만기까지 열린 계약과 만기 전 노드에서
+    끝나는 계약은 세 방법 모두 같은 값이어야 한다. 상장 강제전환 노드에서 옵션차익법 콜은 0 이다.
+    """
+    print("\n[40] 같은 날 사건 — 만기 · 상장 · 풋 · 의무보유")
+    for km in (0, 1, 2):
+        for cr in (1, 0):
+            a = _three(_call_terms(k_method=km, k_s=12., k_e=24., k_f=3., k_hold=0, k_lock=0., k_conv_resp=cr))
+            b = _three(_call_terms(k_method=km, k_s=12., k_e=21., k_f=3., k_hold=0, k_lock=0., k_conv_resp=cr))
+            chk_bool(f"  만기일 매도청구 반영 안 함 · 방법 {km} · 전환 {'가능' if cr else '불가'} "
+                     f"({a[km]:.6f} = {b[km]:.6f})", all(abs(x - y) < 1e-12 for x, y in zip(a, b)))
+    # 존속기간 만료 시 자동전환(RCPS) — 만기일 자동전환이 매도청구보다 먼저다. 행사기간이 만기까지 열려도 같다.
+    # (이 조건의 유무가치 차액은 0 이다 — 통지 뒤 전환을 못 하니 투자자가 콜 기간 전에 바로 전환한다. 옵션차익법은
+    #  콜 없는 사채의 행사 방식을 그대로 두고 그 위에 콜을 재므로 값이 있다 — 두 방법이 재는 대상의 차이다.)
+    _rc = dict(inst="RCPS", issuer_call=2, mat_mode=0, d_issue="2025-01-01", d_base="2025-01-01", d_mat="2027-01-01",
+               S0=150., K0=100., sig=0.30, gap_m=3.0, rfx_mode=0, carry=1, p_s=99., p_e=0., cv_s=0., cv_e=24.,
+               k_f=3., k_w=0.3, k_hold=0, k_lock=0., k_prem=0.01, cpn=0.0, ytm=0.0, k_third=1, k_conv_resp=0,
+               rf_curve=[(1, .03), (2, .03), (3, .03)], cr_curve=[(1, .08), (2, .08), (3, .08)])
+    for km in (0, 1, 2):
+        ta = Terms(**_rc, k_method=km, k_s=12., k_e=24.); derive(ta)
+        tb = Terms(**_rc, k_method=km, k_s=12., k_e=21.); derive(tb)
+        va, vb = _three(ta)[km], _three(tb)[km]
+        chk_bool(f"  RCPS 만기 자동전환 · 방법 {km} · 만기일 매도청구 반영 안 함 ({va:.6f} = {vb:.6f})",
+                 G["auto_conv"](ta) and (km == 0 or va > 1e-6) and abs(va - vb) < 1e-12)
+    # 상장 강제전환 노드 — 옵션차익법 노드 값 0
+    t = Terms(inst="RCPS", issuer_call=2, ipo_on=1, ipo_conv=1, ipo_m=12., ipo_px=1200., ipo_min=0., gap_m=3.0,
+              k_third=1, k_s=6., k_e=24., k_f=3., k_w=0.3, k_hold=0, k_lock=0.,
+              rf_curve=[(1, .0226), (3, .0240), (5, .0252)], cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    derive(t); full = engine(t, call=False)
+    for km in (1, 2):
+        nodes = {}; G["call_third_party"](t, full, km, nodes=nodes)
+        ipo = [k for k, o in full["memo"].items() if o.get("kind") == "ipo"]
+        chk_bool(f"  상장 강제전환 노드 {len(ipo)}개 · 방법 {km} · 콜 값 모두 0",
+                 len(ipo) > 0 and all(abs(nodes[k][0]) < 1e-12 for k in ipo if k in nodes))
+    # 풋·콜 우선순위 — 조기상환금액이 매도청구금액보다 큰 겹치는 노드가 있을 때만 값이 갈린다
+    for km in (0, 1, 2):
+        same = _call_terms(k_method=km, p_s=12., p_e=12., p_f=12., p_rate=95.0, p_mode="fixed", k_hold=0, k_lock=0.)
+        big = _call_terms(k_method=km, p_s=12., p_e=12., p_f=12., p_rate=115.0, p_mode="fixed", k_hold=0, k_lock=0.)
+        vs = [_three(Terms(**{**G["asdict"](same), "pc_order": kf}))[km] for kf in (0, 1)]
+        vb = [_three(Terms(**{**G["asdict"](big), "pc_order": kf}))[km] for kf in (0, 1)]
+        chk_bool(f"  방법 {km} · 조기상환 95 < 매도청구 100 → 우선순위 무관 ({vs[0]:.4f} = {vs[1]:.4f})",
+                 abs(vs[0] - vs[1]) < 1e-12)
+        chk_bool(f"  방법 {km} · 조기상환 115 > 매도청구 → 콜 우선이 더 크다 ({vb[1]:.4f} > {vb[0]:.4f})",
+                 vb[1] > vb[0] + 1e-9)
+    # 의무보유 — 전환만 막는가, 조기상환도 막는가. 조기상환이 의무보유 안에 없으면 같다.
+    for km in (0, 1, 2):
+        a = _three(_call_terms(k_method=km, k_lock=24., k_lock_put=1))
+        b = _three(_call_terms(k_method=km, k_lock=24., k_lock_put=0))
+        chk_bool(f"  방법 {km} · 풋 없는 계약은 «조기상환도 막음» 여부와 무관", abs(a[km] - b[km]) < 1e-12)
+        a = _three(_call_terms(k_method=km, p_s=6., p_e=18., p_f=3., p_rate=112., p_mode="fixed", k_lock=24., k_lock_put=1))
+        b = _three(_call_terms(k_method=km, p_s=6., p_e=18., p_f=3., p_rate=112., p_mode="fixed", k_lock=24., k_lock_put=0))
+        chk_bool(f"  방법 {km} · 풋이 의무보유 안에 있으면 갈린다 ({a[km]:.4f} ≠ {b[km]:.4f})", abs(a[km] - b[km]) > 1e-6)
+
+
+def test_call_grid_styles():
+    """월 · 2주 · 주 격자 — «기간 중 언제든지» 는 기간 안 모든 노드, 정기는 그 주기, 특정일은 한 노드."""
+    print("\n[41] 격자 간격과 행사방식 — 열리는 노드 수")
+    if ROOT not in sys.path: sys.path.insert(0, ROOT)
+    from valuation.exercise import apply_styles
+    for days, nm in ((0.0, "월"), (14.0, "2주"), (7.0, "주")):
+        vals = dict(d_base="2025-03-31", d_mat="2026-03-31", gap_m=1.0, grid_days=days,
+                    k_s=3., k_e=9., k_f=3., p_f=3.)
+        any_ = apply_styles(vals, {"k_f": "any"})
+        t = Terms(d_issue="2025-03-31", d_base="2025-03-31", d_mat="2026-03-31", gap_m=1.0, grid_days=days,
+                  k_s=3., k_e=9., k_f=any_["k_f"], p_s=99., p_e=0., k_w=0.3)
+        derive(t); n = int(t.n)
+        ea = G["exercise_amounts"](t, n, t.T/n)
+        lo, hi = G["step_mapper"](t, n, t.T/n)
+        want = sum(1 for i in range(n+1) if lo(3.) <= i <= hi(9.))
+        chk_bool(f"  {nm} 격자 (n={n}) · 언제든지 → 기간 안 노드 {want}개 모두 열림 (실제 {len(ea['k_dates'])})",
+                 len(ea["k_dates"]) == want)
+        per = Terms(**{**G["asdict"](t), "k_f": 3.}); derive(per)
+        eap = G["exercise_amounts"](per, n, per.T/n)
+        chk_bool(f"  {nm} 격자 · 정기 3개월 → 3회 (실제 {len(eap['k_dates'])})", len(eap["k_dates"]) == 3)
+        one = Terms(**{**G["asdict"](t), "k_s": 6., "k_e": 6., "k_f": 3.}); derive(one)
+        ea1 = G["exercise_amounts"](one, n, one.T/n)
+        chk_bool(f"  {nm} 격자 · 특정일 6개월 → 1회 (실제 {len(ea1['k_dates'])})", len(ea1["k_dates"]) == 1)
+
+
+def test_call_discount_rules():
+    """혼합할인율 · 성분 분리할인의 할인 규칙 — 불변식과 수렴.
+
+    · 혼합할인율의 비중(전환확률 · 가치 구성비율)은 모든 노드에서 0~1 — 혼합금리가 무위험과 위험 사이
+    · 성분 분리할인 — 행사 노드의 두 성분 합 = 즉시행사가치, 행사 판단은 합으로 한 번(성분별 MAX 없음),
+      모든 노드의 콜 값 ≥ 0, 전환확률 분해에서는 음수 성분이 있어도 합은 0 이상
+    · 위험이자율 = 무위험이자율이면 두 옵션차익법이 같은 값 (두 할인계수가 같아진다)
+    """
+    print("\n[42] 할인 규칙 — 비중 범위 · 성분 합 · 한 번 판단 · 금리 같으면 두 방법 수렴")
+    t0 = _call_terms(k_s=3., k_e=21., k_f=3., k_hold=0, k_lock=0.)
+    full = engine(t0, call=False); memo = full["memo"]
+    for sp in (0, 1):
+        t = Terms(**{**G["asdict"](t0), "k_split": sp}); derive(t)
+        w = [(o.get("P", 0.0) if sp else (o["E"]/(o["E"] + o["B"]) if o["E"] + o["B"] > 1e-12 else 0.0))
+             for o in memo.values()]
+        chk_bool(f"  기준 {sp} · 비중 {min(w):.4f} ~ {max(w):.4f} — 모두 0~1", all(-1e-12 <= x <= 1 + 1e-12 for x in w))
+        nodes = {}; G["call_third_party"](t, full, 2, nodes=nodes)
+        neg = sum(1 for c, e, b in nodes.values() if c > 0 and (e < -1e-12 or b < -1e-12))
+        chk_bool(f"  기준 {sp} · 모든 노드 콜 값 ≥ 0 · 성분 합 = 콜 값 (음수 성분 노드 {neg}개)",
+                 all(c >= -1e-12 and abs(e + b - c) < 1e-9 for c, e, b in nodes.values()))
+    # 전환확률 분해의 음수 성분 — 기본 계약(의무보유가 콜 행사기간을 덮는다)에서 실제로 나온다
+    t = Terms(k_method=2, k_split=1, gap_m=6.0, carry=1, rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
+              cr_curve=[(1, .1409), (3, .1740), (5, .1905)]); derive(t)
+    f = engine(t, call=False); nodes = {}; G["call_third_party"](t, f, 2, nodes=nodes)
+    neg = [(c, e, b) for c, e, b in nodes.values() if c > 0 and (e < -1e-12 or b < -1e-12)]
+    chk_bool(f"  기본 계약 · 전환확률 분해 · 음수 성분 노드 {len(neg)}개 — 그래도 모든 노드 콜 값 ≥ 0 · 성분 합 = 콜 값",
+             len(neg) > 0 and all(c >= -1e-12 and abs(e + b - c) < 1e-9 for c, e, b in nodes.values()))
+    # 행사 판단은 합으로 한 번 — 행사 노드는 즉시행사가치가 계속보유(두 성분 합) 이상인 자리다
+    q_ok, n_hold, n_ex = True, 0, 0
+    for key, (c, e, b) in nodes.items():
+        o = f["memo"][key]
+        if "up" not in o or o["up"] not in nodes or o["dn"] not in nodes: continue
+        i = key[0]
+        cu, eu, bu = nodes[o["up"]]; cd, ed, bd = nodes[o["dn"]]; q = f["qi"](i)
+        he = (q*eu + (1-q)*ed)*math.exp(-f["fwdRF"](i)*f["dt"]); hb = (q*bu + (1-q)*bd)*math.exp(-f["fwdCR"](i)*f["dt"])
+        if abs(c - (he + hb)) < 1e-9:        # 보유 — 두 성분이 모두 계속보유 성분이다
+            n_hold += 1
+            if abs(e - he) > 1e-9 or abs(b - hb) > 1e-9: q_ok = False
+        elif c > 0:                          # 행사 — 즉시행사가치가 계속보유가치 이상이고 두 성분이 함께 온다
+            n_ex += 1
+            if c < he + hb - 1e-9 or abs(e + b - c) > 1e-9: q_ok = False
+    chk_bool(f"  한 번 판단 — 보유 노드 {n_hold}개는 두 성분 모두 계속보유, 행사 노드 {n_ex}개는 두 성분 모두 행사",
+             q_ok and n_hold > 0 and n_ex > 0)
+    for sp in (0, 1):
+        t = _call_terms(k_s=3., k_e=21., k_f=3., k_hold=0, k_lock=0., k_split=sp,
+                        cr_curve=[(1, .03), (2, .03), (3, .03)], cmp_cr=2)
+        f = engine(t, call=False)
+        v1, v2 = G["call_third_party"](t, f, 1), G["call_third_party"](t, f, 2)
+        chk(f"  위험 = 무위험 · 기준 {sp} · 혼합할인율 = 성분 분리할인", v1, v2, 1e-9)
+
+
+def test_call_rec_and_simple_oracle():
+    """방법별 차이 설명표 ① + ② = 실제 차이 (의무보유 설정과 무관), 그리고 손으로 세는 단순 사례.
+
+    단순 사례 — 전환권·풋·쿠폰 없음, 2년 후 120 상환, 1년 후 100 으로 콜 행사 가능, 위험이자율 연복리
+    5%, 대상비율 30%:  (120 ÷ 1.05² − 100 ÷ 1.05) × 30% = 4.081632653 — 세 방법 · 두 기준 모두.
+    """
+    print("\n[43] 차이 설명표 합계 · 단순 사례 4.081632653")
+    base = dict(rf_curve=[(1, .0226), (3, .0240), (5, .0252)], cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    for kh in (1, 0):
+        for km in (1, 2):
+            t = Terms(k_method=km, k_hold=kh, gap_m=6.0, **base); derive(t)
+            full, b0, b1, b2, ca, conv = G["decompose"](t)
+            rows, rec = G["call_compare"](t, full, b2)
+            A, O = rec["유무가치비교법 (적용 계약)"], rec["옵션차익법 (적용 산식·적용 설정)"]
+            s = rec["① 방법론 차이 (둘 다 의무보유 없음)"] + rec["② 의무보유가 두 방법에 다르게 들어가는 부분"]
+            chk(f"  의무보유 {'있음' if kh else '없음'} · 방법 {km} · ① + ② = 유무가치 − 옵션차익", s, A - O, 1e-9)
+    want = (120/1.05**2 - 100/1.05)*0.3
+    for km in (0, 1, 2):
+        for sp in (0, 1):
+            t = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2027-01-01", S0=1., K0=100., sig=0.30,
+                      gap_m=12.0, rfx_mode=0, p_s=99., p_e=0., cv_s=99., cv_e=0., k_s=12., k_e=12., k_f=12.,
+                      k_w=0.3, k_lock=0., k_hold=0, cpn=0.0, ytm=0.0, mat_amt=120., k_prem=0.0,
+                      rf_curve=[(1, .05), (2, .05), (3, .05)], cr_curve=[(1, .05), (2, .05), (3, .05)],
+                      cmp_rf=1, cmp_cr=1, k_third=1, k_method=km, k_split=sp)
+            derive(t)
+            full, b0, b1, b2, ca, conv = G["decompose"](t)
+            chk(f"  방법 {km} · 기준 {sp} · 4.081632653", ca, want, 1e-9)
+
+
+def test_wow_trace():
+    """유무가치비교법 차액의 구성 — 관련 약정 + 행사 판정 + 할인 방식 = 적용값 (항등식).
+
+    콜이 직접 누른 값(콜 행사 노드 · 강제전환 노드)은 0 이상이어야 한다. 음수 차액은 0 으로 덮지 않고
+    원인을 나눠 보인다 — 공개 발행조건(차바이오텍 RCPS 2024-05-16, 발행자 상환권 가정)은 할인 방식
+    효과가 음수라 차액이 음수가 된다.
+    """
+    print("\n[44] 유무가치비교법 차액의 구성 — 항등식과 음수 원인")
+    cases = [("기본 계약", dict()), ("의무보유 없음", dict(k_hold=0)), ("GS", dict(model="GS")),
+             ("콜 우선 · 전환 불가", dict(pc_order=1, k_conv_resp=0, k_hold=0))]
+    base = dict(rf_curve=[(1, .0226), (3, .0240), (5, .0252)], cr_curve=[(1, .1409), (3, .1740), (5, .1905)],
+                gap_m=6.0, carry=1)
+    for nm, kw in cases:
+        t = Terms(**base, **kw); derive(t)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        tr = G["wow_trace"](t, full, b2)
+        rows, rec = G["call_compare"](t, full, b2)
+        A = next(v for a, _, v, _ in rows if a.startswith("유무가치비교법 ("))
+        chk(f"  {nm} · 행사 판정 + 할인 방식 = 콜만의 차액", tr["X"] + tr["Y"], tr["A0"], 1e-9)
+        chk(f"  {nm} · 적용값 = 비교표 유무가치", tr["A"], A, 1e-9)
+        chk_bool(f"  {nm} · 콜이 직접 누른 값 ≥ 0 ({tr['X_call']:.4f} · {tr['X_forced']:.4f})",
+                 tr["X_call"] >= -1e-12 and tr["X_forced"] >= -1e-12)
+    t = Terms(inst="RCPS", mat_mode=0, gap_m=3., carry=1, S0=15647., K0=17354., floor=12148., par=500.,
+              d_issue="2024-05-16", d_base="2024-05-16", d_mat="2029-05-16",
+              cpn=0.01*500/17354., ipay=12., div_mode=0, ytm=.015, ytm_cmp=4,
+              cv_s=12., cv_e=59., rfx_mode=2, rfx_cyc=7., p_s=24., p_e=59., p_f=1., p_mode="accrue",
+              p_yield=.015, p_cmp=4, k_s=12., k_e=24., k_f=3., k_prem=.015, k_cmp=4, k_w=.20, k_lock=24.,
+              sig=.2112, rf_curve=[(1, .0344), (2, .0342), (3, .0341), (5, .0344)],
+              cr_curve=[(1, .15), (2, .15), (3, .15), (5, .15)], issuer_call=1)
+    derive(t)
+    full, b0, b1, b2, ca, conv = G["decompose"](t)
+    tr = G["wow_trace"](t, full, b2)
+    chk_bool(f"  공개 RCPS 발행자 상환권 · 차액 {tr['A']:.4f} < 0 이고 원인은 할인 방식 효과 ({tr['Y']:.4f} < 0)",
+             tr["A"] < 0 and tr["Y"] < 0 and tr["X"] > 0)
+    chk_bool("  음수 원인 문장이 할인 방식 효과를 짚는다", "할인 방식 효과" in G["wow_trace_note"](tr))
+    chk(f"  0 으로 덮지 않는다 — 적용 콜 값 = 차액", ca, tr["A"], 1e-9)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -1932,6 +2252,14 @@ def main():
     test_display_only_fields()
     test_holder_view()
     test_excel_limits_and_curves()
+    test_call_response_combos()
+    test_call_zero_and_scale()
+    test_call_coupon_add()
+    test_call_same_day_events()
+    test_call_grid_styles()
+    test_call_discount_rules()
+    test_call_rec_and_simple_oracle()
+    test_wow_trace()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

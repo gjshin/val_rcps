@@ -376,14 +376,16 @@ def test_call_tf(G):
     # 이표·리픽싱·조기상환 없음 · 평탄 곡선 · 콜 행사금액은 액면 그대로(프리미엄 0).
     # 손계산 함수는 app.py 를 보지 않고 썼다 — 값이 어긋나면 엔진과 손계산 중
     # 어느 쪽이 계약을 잘못 읽었는지 먼저 따질 것. 숫자를 여기 맞추지 말 것.
-    for sig, y_cr, mat, gap, prem in ((.30, .10, "2026-01-01", 6.0, 0.0),
-                                      (.45, .18, "2026-01-01", 6.0, .02),
-                                      (.30, .10, "2027-01-01", 3.0, .015)):
+    # 행사기간은 만기 한 노드 앞에서 끝낸다 — 앱은 만기일에 만기상환·전환을 매도청구보다 먼저 본다
+    # (세 평가방법 공통 규칙, 손계산대조 [40]). 손계산은 책의 절차 그대로 두고 그 판단이 끼어들지 않게 한다.
+    for sig, y_cr, mat, gap, prem, k_e in ((.30, .10, "2026-01-01", 6.0, 0.0, 6.),
+                                           (.45, .18, "2026-01-01", 6.0, .02, 6.),
+                                           (.30, .10, "2027-01-01", 3.0, .015, 21.)):
         t = G["Terms"](d_issue="2025-01-01", d_base="2025-01-01", d_mat=mat,
                        gap_m=gap, rfx_mode=0, carry=1, cpn=0.0, ytm=0.0,
                        S0=1000., K0=1000., sig=sig,
                        p_s=99., p_e=0., cv_s=0., cv_e=36.,
-                       k_w=.30, k_s=0., k_e=24., k_f=1., k_prem=prem, k_cmp=1,
+                       k_w=.30, k_s=0., k_e=k_e, k_f=1., k_prem=prem, k_cmp=1,
                        k_method=2, k_split=1, k_hold=1, k_lock=99.,
                        cmp_rf=2, cmp_cr=2)
         t.rf_curve = [(0.5, .03), (1, .03), (2, .03), (5, .03)]
@@ -393,7 +395,7 @@ def test_call_tf(G):
         n, dt_ = full["n"], full["dt"]
         rf_c, cr_c = cont(.03, 2), cont(y_cr, 2)
         # 행사금액은 계약대로 «액면 × (1 + 프리미엄 복리)» 다. 스텝 i 의 경과 연수는 i·Δt.
-        ks = lambda i: 100.0*(1 + prem)**(i*dt_)
+        ks = lambda i: (100.0*(1 + prem)**(i*dt_) if i*dt_*12 <= k_e + 1e-9 else None)
         hand, host, p0 = call_tf_hand(1000., 1000., sig, rf_c, cr_c, dt_, n, 100., 100., ks)
         got = G["call_third_party"](t, full, 2)
         chk(f"σ {sig:.0%} · 신용 {y_cr:.0%} · 노드 {n} · 프리미엄 {prem:.0%} — 콜 뿌리값",

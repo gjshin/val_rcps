@@ -156,10 +156,19 @@ def run_bond(G, t):
         # 신주인수권이 살아 있다고 보고 결정되는데, 부모에서 투자자가 미리 행사하면 그 콜은
         # 사채만 비싸게 사는 셈이라 부모 값이 오른다 — 상태 미추적의 알려진 한계.
         bw_nd = G["bw_cash"](t) and int(t.bw_detach) == 0 and t.k_w > 0
-        lim = fc > 0 or bw_nd
+        # 유무가치비교법 차액의 구성(wow_trace) — 콜이 직접 누른 값(콜 행사 · 강제전환 노드)은 0 이상이어야
+        # 하고, 음수는 투자자 대응(콜 앞에서 먼저 전환·조기상환)이나 할인 방식 효과에서만 와야 한다.
+        # 매도청구 통지 뒤 전환 불가(k_conv_resp=0)면 강제전환이 없어도 이 경로로 음수가 난다.
+        tr = G["wow_trace"](t, full, b2) if int(t.k_method) == 0 else {}
+        direct = (tr["X_call"] + tr["X_forced"]) if tr else None
+        via = bool(tr) and direct >= -TOL and (tr["Y"] < -TOL or tr["X_resp"] < -TOL)
+        lim = fc > 0 or bw_nd or via
         C["call_ge_0"] = ("limit" if lim else False,
                           f"매도청구권 {ca:.6f} · 강제전환 확률 {fc:.4f}"
-                          + (" (LIMIT 강제전환 할인율 효과)" if fc > 0 else (" (LIMIT 비분리형 BW 상태 미추적)" if bw_nd else "")))
+                          + (f" · 콜이 직접 누른 값 {direct:.4f} · 투자자 대응 {tr['X_resp']:.4f} · 할인 방식 {tr['Y']:.4f}"
+                             if tr else "")
+                          + (" (LIMIT 강제전환 할인율 효과)" if fc > 0 else (" (LIMIT 비분리형 BW 상태 미추적)" if bw_nd else
+                             (" (LIMIT 투자자 대응·할인 방식 효과 — 콜 직접 효과는 0 이상)" if via else ""))))
     tot = sum(v for _, v in rows[:-1])
     C["alloc_100"] = (abs(rows[-1][1] - 100) <= TOL_SUM and abs(tot - 100) <= TOL_SUM,
                       f"합계 {rows[-1][1]:.10f}")

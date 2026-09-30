@@ -191,6 +191,29 @@ def test_numeric_comparison_buttons_run_on_request():
     assert app.session_state.jd_bdt[1][1]['관문']
 
 
+def test_conversion_response_comparison_runs_on_request():
+    """매도청구 통지 뒤 전환 대응 — 값이 갈릴 자리(전환청구기간과 겹치고 의무보유가 없음)에서만 보이고,
+    누르기 전에는 계산하지 않는다. 두 읽기의 값이 나란히 나오고 지금 설정에 «적용» 표시가 붙는다."""
+    # 주가 150 · 전환가 100 — 전환이 유리한 자리에서 콜이 열려 두 읽기가 크게 갈린다(0 대 약 15)
+    case=synthetic();case.contract.update(p_s=0.,p_e=12.,issuer_call=2,k_w=.3,k_s=3.,k_e=9.,k_prem=.02,k_hold=0)
+    case.market.update(S0=150.)
+    case.method.update(conv_class='equity',k_method=2,k_split=1)
+    app=AppTest.from_file(str(ROOT/'app.py'),default_timeout=120)
+    app.session_state.case=case;app.run()
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
+    next(b for b in app.button if b.label=='현재 입력으로 평가').click().run()
+    next(w for w in app.selectbox if w.label=='분석 도구').set_value('상세 계산·회계 참고표').run()
+    next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('판단·근거').run()
+    assert not app.exception
+    assert 'jd_cr' not in app.session_state
+    next(b for b in app.button if b.label=='전환 대응 비교').click().run()
+    assert not app.exception, app.exception
+    rows = app.session_state.jd_cr[1]
+    assert [r[0] for r in rows] == ['통지 뒤 전환할 수 있다', '통지 뒤 전환할 수 없다']
+    assert [r[3] for r in rows] == [True, False]          # 기본 설정은 «전환할 수 있다»
+    assert rows[1][1] > rows[0][1]                        # 전환으로 피하지 못하면 콜 값이 크다
+
+
 def test_explicit_failed_peer_exception_in_ui(monkeypatch):
     import streamlit as st
     st.cache_data.clear()
