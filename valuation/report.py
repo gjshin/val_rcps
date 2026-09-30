@@ -32,9 +32,9 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
         return ws
 
     tm, summary = run.terms, run.summary
-    result_rows = [['평가 결과', '총액(원)', '1주당 가치(원, RCPS)', '원금 100 기준'],
+    result_rows = [['평가 결과', '총액(원)', '1주당 가치(원, RCPS·SHA 단일 계약)', '원금 100 기준' if tm.inst != 'SHA' else '계산기준금액 100 기준'],
                    ['건명', run.case.name], ['평가기준일', tm.d_base], ['상품·회차', tm.inst, tm.tranche],
-                   ['평가대상 발행금액·투자원금(원)', tm.face_total],
+                   [('계산기준금액(원) — 주당 기준가격 × 대상 주식수' if tm.inst == 'SHA' else '평가대상 발행금액·투자원금(원)'), tm.face_total],
                    ['평가모형', tm.model], ['산출물 범위', '입력 조건에 따른 계산 결과']]
     for key, value in summary['amounts_100'].items():
         result_rows.append([AMOUNT_LABELS[key], summary['amounts_total'][key],
@@ -45,6 +45,21 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
                    ['입력 식별값', summary['case_sha256']], ['계산 코드 식별값', summary['code_sha256']],
                    ['검토메모', run.case.notes]]
     sheet('평가요약', result_rows)
+    if summary.get('sha_rows'):
+        # 주주간계약 회차별 표 — 회차마다 따로 잰 풋·콜과 합계 (미행사 물량은 다음 회차로 넘기지 않는다).
+        cols = list(summary['sha_rows'][0])
+        tot = ['합계'] + [''] * (len(cols) - 1)
+        for k in ('풋 수량', '콜 수량', '풋 전액', '콜 전액'):
+            tot[cols.index(k)] = sum(r[k] for r in summary['sha_rows'])
+        sheet('회차별 결과', [cols] + [[r[k] for k in cols] for r in summary['sha_rows']] + [tot])
+        from .legacy import SHA_ROW_KEYS, sha_row_defaults
+        heads = dict(name='평가 구분', start='행사 시작일', end='행사 종료일', style='행사 방식', freq='주기(개월)',
+                     price='주당 기준가격(원)', rate='가격 가산율(연)', acc_from='가격 가산 기산일(비우면 계약일)',
+                     put_q='풋 수량', call_q='콜 수량', kill='상호소멸(1)', call_start='콜 시작일(비우면 풋과 같음)',
+                     call_end='콜 종료일', call_price='콜 기준가격(원)', call_rate='콜 가산율(연)',
+                     sig='회차 변동성(비우면 공통)', rf='회차 무위험 금리', pdisc='회차 풋 할인율', price_note='가격 산식 기록')
+        sheet('회차별 입력', [[heads[k] for k in SHA_ROW_KEYS]] +
+              [[sha_row_defaults(r)[k] for k in SHA_ROW_KEYS] for r in summary['applied_terms']['sha_rows']])
     header = ['항목', '원본 입력', '적용값', '가정·선택 근거', '출처', '기본값 보충']
     assumptions = {row['field']: row for row in run.case.assumptions}
     for group, name in [('contract', '계약조건'), ('market', '시장자료'), ('method', '평가방법')]:
@@ -319,7 +334,18 @@ def append_basic_accounting(wb, run):
     from . import legacy
     t, r = run.terms, run.raw
     if legacy.is_sha(t):
-        calculation_table(wb, '회계처리', [[DRAFT_NOTE], ['주주간계약', '권리·의무자별 회계처리는 별도 검토']])
+        # 세 당사자 — 발행회사 · 콜 권리자 · 풋 권리자. 원 단위(풋·콜 수량을 각각 곱한 값). 회차가 여럿이면 합계.
+        items = r['rows'] if r.get('portfolio') else [dict(tm=t, R=r)]
+        comp = {k: sum(legacy.sha_components_krw(x['tm'], x['R'])[k] for x in items) for k in ('eq', 'put', 'call', 'gpv')}
+        lines = legacy.sha_account_lines(items[0]['tm'] if len(items) == 1 else t, items[0]['R'],
+                                         has_call=any(x['R'].get('has_call') for x in items),
+                                         gross=(None if len(items) == 1 else False))
+        rows = [[DRAFT_NOTE], ['당사자', '계정', '총액(원)', '설명']]
+        for who in legacy.SHA_PARTIES:
+            acc, memo = lines[who]
+            for k, (name, c) in enumerate(acc):
+                rows.append([who, name, legacy.sha_eval(c, comp), memo if k == 0 else ''])
+        calculation_table(wb, '회계처리', rows)
         return
     args = [t] + [r[k] for k in ('full', 'b0', 'b1', 'b2', 'ca')]
     if legacy.holder_on(t):
