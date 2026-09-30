@@ -89,15 +89,19 @@ def main():
     # 의무보유를 반영한 cv30 · pt30 을 쓰는 것이 맞다.
     trees = [s for s in wb.sheetnames
              if re.match(r"^\d\d ", s) and not s.startswith("16 ")]
+    # 행사금액(7·8행)은 00 격자 공통의 계산 과정 행에서 한 단계씩 계산한다 — 그 행들도 함께 본다.
+    STEPS = {7: [20, 21, 22, 23, 24, 25, 26], 8: [20, 21, 24, 27, 28, 29, 30, 31]}
     for row, want in WANT.items():
         seen = set()
         for nm in trees:
             ws = wb[nm]
-            for c in range(3, 3+t.n+1):
-                v = ws.cell(row, c).value
-                if isinstance(v, str) and v.startswith("="):
-                    for mm in re.finditer(r"가정!\$C\$(\d+)", v):
-                        seen.add(km.get(int(mm.group(1)), "?%s" % mm.group(1)))
+            rows = [row] + (STEPS.get(row, []) if nm == "00 격자 공통" else [])
+            for rr in rows:
+                for c in range(3, 3+t.n+1):
+                    v = ws.cell(rr, c).value
+                    if isinstance(v, str) and v.startswith("="):
+                        for mm in re.finditer(r"가정!\$C\$(\d+)", v):
+                            seen.add(km.get(int(mm.group(1)), "?%s" % mm.group(1)))
         extra, miss = seen - want, want - seen
         ok = not extra and not miss
         if not ok: bad += 1
