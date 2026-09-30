@@ -7223,7 +7223,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         # 지급일은 계약(발행일) 기준이다. 평가기준일에서 다시 세면 결산 평가에서
         # 지급일이 밀린다 — 첫 조정 스텝(roff)과 같은 방식으로 잡는다.
         ("첫 지급 스텝", "payoff", pay_offset(tm, stp_lo), N0, True),
-        ("이자 지급주기 (개월)", "ipaym", tm.ipay, N2, True),
+        ("이자 지급주기 (개월) — 지급일은 앱이 계약일로 정함", "ipaym", tm.ipay, N2, False),
         ("만기보장수익률", "ytm", tm.ytm, P2, True),
         ("만기보장 복리 횟수", "ycm", tm.ytm_cmp, N0, True),
         ("만기상환금액 직접 입력 (%, 음수면 산식)", "matx",
@@ -7247,7 +7247,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("첫 조정 스텝", "roff", rfx_off, N0, True),
         ("전환 시작 (스텝)", "cvs", stp_lo(tm.cv_s), N0, True),
         ("전환 종료 (스텝)", "cve", stp_hi(tm.cv_e), N0, True),
-        ("조기상환 시작 (스텝)", "pst", stp_lo(tm.p_s), N0, True),
+        ("조기상환 시작 (스텝) — 행사일은 앱이 계약일로 정함", "pst", stp_lo(tm.p_s), N0, False),
         ("조기상환 종료 (스텝)", "pen", stp_hi(tm.p_e), N0, True),
         ("조기상환 주기 (스텝)", "frq", max(1, int(round(tm.p_f*mper))), N0, True),
         ("조기상환 행사금액", "prate", tm.p_rate, N2, True),
@@ -7257,7 +7257,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("매도청구 행사일 이자 별도지급 (1/0)", "kcadd",
          int(getattr(tm, "k_cpn_add", 0)), N0, True),
         ("조기상환 산식 (1 보장수익률 복리 / 0 확정 금액)", "pmode", (1 if tm.p_mode == "accrue" else 0), N0, True),
-        ("조기상환 시작 (발행일 기준 개월)", "psm", tm.p_s, N0, True),
+        ("조기상환 시작 (발행일 기준 개월) — 행사일은 앱이 계약일로 정함", "psm", tm.p_s, N0, False),
         ("조기상환 보장수익률", "pyld", tm.p_yield, P2, True),
         ("보장 복리 (연 회)", "pcmp", tm.p_cmp, N0, True),
         ("조기상환 지급분 공제 (1 이자 붙여 / 2 받은 금액만 / 0 안 뺌)", "pless",
@@ -9232,7 +9232,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                          "00 격자 공통 11·12행의 선도이자율 — 부트스트래핑 결과를 값으로 넣었다.")),
       ("앱이 정한 날짜", "조기상환·매도청구 행사일(00 격자 공통 20·27행)과 이자 지급일(9행)은 "
                      "계약서의 날짜를 앱이 «계약일 이후 첫 노드» 에 배정한 것이다. 같은 날의 권리는 "
-                     "같은 노드에 온다. 행사금액은 노드가 아니라 계약일의 경과기간으로 계산한다."),
+                     "같은 노드에 온다. 행사금액은 노드가 아니라 계약일의 경과기간으로 계산한다. "
+                     "그래서 가정 시트의 이자 지급주기·조기상환 시작은 노란 입력칸이 아니다 — "
+                     "엑셀에서 바꾸면 금액만 바뀌고 날짜는 그대로라 틀린 값이 나온다. 바꾸려면 앱에서 다시 계산한다."),
       ("머리 17행", "날짜·스텝·행사 가능 표시·행사금액·쿠폰·만기상환·선도이자율·σ·u·d·q 는 "
                    "「00 격자 공통」에서 한 번만 계산하고, 트리 시트의 1~17행은 그 칸을 가리킨다. "
                    "행사 시작일이 다른 트리(0% 트랜치 등)만 행사 가능 표시(3~5행)를 따로 계산한다."),

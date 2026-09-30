@@ -91,10 +91,7 @@ class Case:
         if unknown:
             raise ValueError(f"알 수 없는 프로젝트 항목: {', '.join(sorted(unknown))}")
         case = cls(**copy.deepcopy(obj))
-        # 상태확장(carry=0)은 없앴다 — 옛 평가파일은 경로가중치(1)로 연다.
-        for _sec in (case.contract, case.market, case.method):
-            if isinstance(_sec, dict) and _sec.get("carry") == 0:
-                _sec["carry"] = 1
+        _migrate_carry(case)
         if not isinstance(case.name, str) or not case.name.strip():
             raise ValueError("평가 건명을 입력하십시오.")
         for key in ("contract", "market", "method", "sources", "judgments", "market_evidence", "review_controls", "exercise_styles", "contract_review", "memos", "calibration"):
@@ -196,6 +193,20 @@ def validate_calibration(row):
         raise ValueError('보정 근거를 입력하십시오.')
 
 
+def _migrate_carry(case: Case) -> None:
+    """상태확장(carry=0)은 없앴다 — 옛 파일은 경로가중치(1)로 연다.
+
+    세 입력 영역과 가정(assumptions) 줄 모두에서 바꾼다. 가정 줄이 effective() 에서
+    입력을 덮어쓰므로 한 곳이라도 남으면 검증에서 막힌다.
+    """
+    for _sec in (case.contract, case.market, case.method):
+        if isinstance(_sec, dict) and _sec.get("carry") == 0:
+            _sec["carry"] = 1
+    for _row in case.assumptions or []:
+        if isinstance(_row, dict) and _row.get("field") == "carry" and _row.get("value") == 0:
+            _row["value"] = 1
+
+
 def import_legacy(obj: dict, name: str = "가져온 평가") -> Case:
     """Make historical defaults visible; never silently drop unknown input fields."""
     if not isinstance(obj, dict):
@@ -208,6 +219,7 @@ def import_legacy(obj: dict, name: str = "가져온 평가") -> Case:
     case = Case(name=name, imported_defaults=sorted(FIELDS - set(obj)))
     for key, value in values.items():
         getattr(case, section_for(key))[key] = value
+    _migrate_carry(case)
     case.notes = "기존 시나리오에서 가져옴. 보충된 기본값과 별도 계약조건을 검토하십시오."
     if isinstance(obj.get('_issue_px_source'), str):
         case.sources['issue_px'] = obj['_issue_px_source']
