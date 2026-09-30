@@ -104,6 +104,7 @@ def calculate(case: Case) -> Run:
     case, terms, issues, normalized = _prepare(case)
     if legacy.is_sha(terms):
         raw = legacy.sha_engine(terms)
+        raw["integrity"] = legacy.sha_integrity(terms, raw)
     else:
         full, b0, b1, b2, ca, conv = legacy.decompose(terms)
         raw = dict(full=full, b0=b0, b1=b1, b2=b2, ca=ca, conv=conv)
@@ -266,11 +267,10 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
     terms = copy.deepcopy(run.terms)
     # 계산이 고장 나지 않았는지 본 결과(calculate 가 잰 것). 개발용 점검이라 조서에는
     # 싣지 않고, 걸리면 조서를 만들지 않는다 — 틀린 계산이 조서로 나가는 마지막 관문이다.
-    if not legacy.is_sha(terms):
-        bad = run.raw.get("integrity") or []
-        if bad:
-            raise ValueError("계산 점검에서 이상이 발견되어 조서를 만들지 않았습니다 — "
-                             + ", ".join(bad) + ". 입력을 확인하고, 그대로라면 개발 담당자에게 알려 주십시오.")
+    bad = run.raw.get("integrity") or []
+    if bad:
+        raise ValueError("계산 점검에서 이상이 발견되어 조서를 만들지 않았습니다 — "
+                         + ", ".join(bad) + ". 입력을 확인하고, 그대로라면 개발 담당자에게 알려 주십시오.")
     from .report import basic_workbook, append_basic_accounting, finish_calculation_workbook
     if not formula and not detail:
         wb = basic_workbook(run, previous=previous, as_workbook=True)

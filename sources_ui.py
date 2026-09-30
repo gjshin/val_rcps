@@ -8,6 +8,13 @@ def show(topic, text='원문', keys=None):
     keys = keys or sources.refs(topic)
     if not keys:
         return
+    if not sources.internal():
+        # 배포본 — 원문은 싣지 않고 출처만 보인다 (이용 권한 미확인 자료).
+        with st.popover(f'근거 · {len(keys)}건'):
+            for k in keys:
+                st.markdown(f'- {sources.citation(k)}')
+            st.caption('원문은 해당 기준서·실무사례에서 확인하십시오.')
+        return
     with st.popover(f'{text} · {len(keys)}건'):
         choice = st.radio('근거', keys, format_func=sources.label, horizontal=True,
                           key=f'_src_{topic}_{"_".join(keys)}', label_visibility='collapsed')
@@ -17,4 +24,4 @@ def show(topic, text='원문', keys=None):
             if row['url']:
                 st.caption(f"출처: {row['url']} · {row['source']}")
             else:
-                st.caption(f"출처: {row['source']} (발췌 · 외부 배포 금지)")
+                st.caption(f"출처: {row['source']} (내부 사용본 발췌 · 외부 배포 금지)")

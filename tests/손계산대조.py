@@ -1326,8 +1326,8 @@ def test_call_split_text():
     chk_bool("계산에 쓴 Terms 로 지문을 뜬다", _rs(_tf)["terms_md5"] != _m1["terms_md5"])
     chk_bool("종류(값·수식)가 다르면 지문도 다르다", _rs(_t1, "수식")["terms_md5"] != _m1["terms_md5"])
     _rows = dict(_sr(_t1))
-    for _k in ("생성시각", "평가체계 버전", "계산 지문 (derive·되돌린 설정 반영 후)",
-               "시나리오 지문 (불러온 원본 JSON)", "주가 출처", "위험 곡선 출처"):
+    for _k in ("생성시각", "평가체계 버전", "계산 입력 식별값 (적용값 기준)",
+               "입력파일 식별값 (불러온 원본)", "주가 출처", "위험 곡선 출처"):
         chk_bool(f"조서 재현 기록에 «{_k}»", _k in _rows)
     # 13줄 + 「평가 관점」 (발행자 · 투자자). 회차 표시는 적었을 때만 한 줄 더한다
     chk_bool("조서 재현 기록은 14줄", len(_sr(_t1)) == 14)
@@ -1336,10 +1336,10 @@ def test_call_split_text():
     _t1b = Terms(**{**G["asdict"](_t1), "scen_md5": "deadbeef"})
     chk_bool("원본 지문을 실어도 계산 지문은 그대로", _st(_t1b) == _st(_t1))
     _rr = dict(_sr(_t1b))
-    chk_bool("조서에 시나리오 지문 줄", _rr["시나리오 지문 (불러온 원본 JSON)"] == "deadbeef")
-    chk_bool("조서에 계산 지문 줄", _rr["계산 지문 (derive·되돌린 설정 반영 후)"] == _st(_t1))
+    chk_bool("조서에 시나리오 지문 줄", _rr["입력파일 식별값 (불러온 원본)"] == "deadbeef")
+    chk_bool("조서에 계산 지문 줄", _rr["계산 입력 식별값 (적용값 기준)"] == _st(_t1))
     chk_bool("직접 입력이면 시나리오 지문은 «해당 없음»",
-             "해당 없음" in dict(_sr(_t1))["시나리오 지문 (불러온 원본 JSON)"])
+             "해당 없음" in dict(_sr(_t1))["입력파일 식별값 (불러온 원본)"])
     # 요청한 노드 간격과 실제로 쓴 간격은 다를 수 있다 — 둘을 나눠 적는다.
     _nd = _rr["노드 — 요청 간격 · 실제"]
     chk_bool("요청 간격을 적는다", f"요청 {_t1.gap_m:g}개월" in _nd)
@@ -1354,9 +1354,9 @@ def test_call_split_text():
     # 검산요약에도 한 줄 — 조서를 열면 어느 판에서 나왔는지 바로 보인다.
     _f1, _b0, _b1, _b2, _ca, _cv = G["decompose"](_t1)
     _ck = dict((x[0], x) for x in G["model_checks"](_t1, _f1, _b0, _b1, _b2, _ca))
-    chk_bool("검산요약에 재현 기록 줄", "재현 기록 · 앱 판 · 인풋 지문" in _ck)
+    chk_bool("검산요약에 재현 기록 줄", "재현 기록 · 앱 버전 · 입력 식별값" in _ck)
     chk_bool("검산요약 줄에 지문 앞 8자리",
-             _st(_t1)[:8] in _ck["재현 기록 · 앱 판 · 인풋 지문"][1])
+             _st(_t1)[:8] in _ck["재현 기록 · 앱 버전 · 입력 식별값"][1])
 
     # ── 시나리오 JSON 의 평가체계 버전 ──
     # 옛 파일에는 «_schema» 가 없다. 그때 Terms 기본값(유무가치비교법)으로 열려야

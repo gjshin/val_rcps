@@ -1,5 +1,6 @@
 """Contract-specific workpaper records with source excerpts."""
 import streamlit as st
+from valuation import sources
 from valuation.case import Case
 from valuation.evidence import evidence_cards, judgment_record, BOOK_TITLE, BOOK_SHA256
 from valuation.presentation import label, display_value
@@ -41,7 +42,8 @@ def main():
         for src in card['sources']:
             st.markdown(f"**{src['kind']} — {src['title']}**")
             st.caption(src['location'])
-            if src['quote']:
+            # 원문 발췌는 내부 사용본에서만 보인다 — 배포본은 출처(자료명·문단·쪽)만.
+            if src['quote'] and sources.internal():
                 st.markdown('> ' + src['quote'])
             if src.get('url'):
                 st.markdown(f"[해당 자료 열기]({src['url']})")

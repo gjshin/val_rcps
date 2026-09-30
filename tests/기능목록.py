@@ -199,7 +199,7 @@ def terms_enum_fields(G):
                  # 표시·기록 전용 — 회차 표시와 「평가에 반영하지 않은 권리」 문안
                  "tranche", "unmod_note",
                  # 최초 인식 차이의 분개 표기 전용 — 값에 영향 없음 (tests/test_judgment_sources.py 가 시험)
-                 "d1_pl", "d1_reason"): continue
+                 "d1_pl", "d1_reason", "split_base_why"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty

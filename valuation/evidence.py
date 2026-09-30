@@ -177,12 +177,13 @@ def review_input_key(case):
 
 
 def evidence_rows(case):
-    rows = [['검토 주제', '상태', '적용 시 확인할 내용', '주의할 범위', '근거 구분', '자료명', '문단·쪽', '짧은 발췌', '원문 위치', '대조일', '검토자', '결론', '판단근거', '계약조항']]
+    # 기준서·실무사례 원문은 조서에 싣지 않는다 — 출처(자료명·문단·쪽)만 적는다.
+    rows = [['검토 주제', '상태', '적용 시 확인할 내용', '주의할 범위', '근거 구분', '자료명', '문단·쪽', '원문 위치', '대조일', '검토자', '결론', '판단근거', '계약조항']]
     for card in evidence_cards(case):
         review = card['review']
         for src in card['sources']:
             rows.append([card['title'], card['status'], card['explanation'], card['limitation'], src['kind'], src['title'],
-                         src['location'], src['quote'], src.get('url', f"사용자 보유 PDF {src.get('pdf_page')}쪽"), src['checked_on'],
+                         src['location'], src.get('url', f"사용자 보유 PDF {src.get('pdf_page')}쪽"), src['checked_on'],
                          review.get('reviewer', ''), review.get('conclusion', ''), review.get('rationale', ''), review.get('contract_clause', '')])
     return rows
 

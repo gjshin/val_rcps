@@ -80,8 +80,10 @@ def test_memo_saved_to_case_and_workpaper():
     rows = [[c.value for c in r] for r in wb['판단·근거']]
     put = next(r for r in rows if r[1] == '조기상환청구권')
     assert put[4] == '앱 판정에 동의' and put[5].startswith('행사금액') and '1109 B4.3.5' in put[6]
-    assert any(r[0] == '1109 B4.3.5' and '상각후원가' in (r[3] or '') for r in rows)
-    assert any((r[0] or '').startswith('실무사례') for r in rows)
+    # 원문(기준서 본문·책 발췌)은 조서에 싣지 않는다 — 출처 표기만 남는다.
+    assert not any(r[0] == '근거 원문 발췌' for r in rows)
+    assert not any(r[0] == '1109 B4.3.5' and '상각후원가' in (r[3] or '') for r in rows)
+    assert '실무사례' in put[6]
 
 
 def test_judgment_sheets_can_be_left_out():
@@ -169,3 +171,14 @@ def test_day1_panel_in_results():
     assert not app.exception
     assert app.session_state.case.method['d1_pl'] == 1
     assert app.session_state.run.terms.d1_pl == 1   # 재평가 없이 반영
+
+
+def test_sources_show_citations_only_unless_internal(monkeypatch):
+    # 배포본은 출처만 — 원문 파일이 없어도 자료명·문단·쪽을 풀어 쓴다.
+    monkeypatch.delenv('VAL_INTERNAL_SOURCES', raising=False)
+    assert not sources.internal()
+    assert sources.citation('1109:B4.3.5') == 'K-IFRS 제1109호 문단 B4.3.5'
+    assert sources.citation('book:26-32').endswith('26~32쪽')
+    assert sources.citation('KGAAP15:15.20') == '일반기업회계기준 제15장 문단 15.20'
+    monkeypatch.setenv('VAL_INTERNAL_SOURCES', '1')
+    assert sources.internal()

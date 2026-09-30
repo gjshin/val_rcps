@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-30 04:41",
- "head": "b08919c",
- "app_sha256_12": "03db59f48bfe",
+ "generated": "2026-09-30 05:26",
+ "head": "7e98d97",
+ "app_sha256_12": "620a047d88d2",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 106.0,
+   "sec": 110.3,
    "last": "모두 통과",
    "tail": []
   },
@@ -19,7 +19,7 @@
    "cmd": "python3 tests/오라클.py",
    "ok": true,
    "code": 0,
-   "sec": 1.1,
+   "sec": 1.2,
    "last": "모두 통과",
    "tail": []
   },
@@ -35,18 +35,31 @@
   {
    "suite": "기능목록",
    "cmd": "python3 tests/기능목록.py --strict",
-   "ok": true,
-   "code": 0,
-   "sec": 0.9,
+   "ok": false,
+   "code": 1,
+   "sec": 0.8,
    "last": "   → tests/검증매트릭스.json (398 행)",
-   "tail": []
+   "tail": [
+    "3. 매트릭스",
+    "   상품         전체   PASS    BLOCK    LIMIT   FAIL      미검증",
+    "   CB        104    104        0        0      0        0",
+    "   RCPS      116    116        0        0      0        0",
+    "   BW        108    108        0        0      0        0",
+    "   SHA        43     43        0        0      0        0",
+    "   ALL        27      0        5       22      0        0",
+    "",
+    "   독립 오라클이 붙은 분기 124 / 열거형+권리 371",
+    "   조서 99_모형검증 매트릭스 요약 — 5 상품 · 398 행 (matrix_summary)",
+    "",
+    "   → tests/검증매트릭스.json (398 행)"
+   ]
   },
   {
    "suite": "조합시험",
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 68.4,
+   "sec": 68.6,
    "last": "→ tests/output/조합시험.json 1845 줄 · 실패 0 (tests/output/조합시험_실패.json) · 68초",
    "tail": []
   },
@@ -55,7 +68,7 @@
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 37.5,
+   "sec": 37.8,
    "last": "",
    "tail": []
   },
@@ -64,7 +77,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 16.9,
+   "sec": 17.5,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +86,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 51.1,
+   "sec": 51.0,
    "last": "",
    "tail": []
   }
@@ -128,6 +141,6 @@
    "NOT_TESTED": 0
   }
  },
- "all_ok": true,
- "sec": 289.9
+ "all_ok": false,
+ "sec": 295.2
 }

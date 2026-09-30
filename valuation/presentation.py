@@ -28,6 +28,8 @@ LABELS = {
     'model': '평가모형', 'view': '평가 관점', 'gap_m': '계산 간격(개월)', 'grid_days': '일수 기준 계산 간격',
     'conv_class': '전환권 회계분류 가정', 'p_sep': '상환청구권 분리 가정', 'k_sep': '콜 별도 금융상품 가정',
     'p_lost_int': '상환청구금액이 상실이자 보상 수준', 'fvpl_whole': '전체 당기손익 공정가치 지정 가정',
+    'split_tol': '풋 분리 판단 비교기준(기본 10%)', 'split_base_in': '풋 분리 판단 출발 금액(0 이하면 자동)',
+    'split_base_why': '풋 분리 판단 출발 금액 근거',
     'put_bdt': '상환청구권에 BDT 금리격자 적용', 'bdt_sig': 'BDT 금리 변동성(연, %)', 'bdt_base': 'BDT 금리곡선 방식',
     'rf_curve': '무위험 금리곡선', 'cr_curve': '위험 금리곡선', 'cr_curve_b': '보간용 두 번째 위험 금리곡선',
     'cmp_rf': '무위험 금리 복리 횟수(연)', 'cmp_cr': '위험 금리 복리 횟수(연)', 'y_type': '금리 자료 유형',
@@ -59,7 +61,7 @@ LABELS = {
     'notes': '검토메모', 'market_date': '시장자료 기준일',
     'sources': '자료 출처', 'contract': '계약서',
 }
-PERCENT = frozenset({'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'ytm', 'bdt_sig',
+PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'ytm', 'bdt_sig',
                      'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue'})
 EVENT_DATES = frozenset({'cv_s', 'cv_e', 'p_s', 'p_e', 'k_s', 'k_e', 'k_lock', 'ipo_m',
                         'sha_put_s', 'sha_put_e', 'sha_call_s', 'sha_call_e'})

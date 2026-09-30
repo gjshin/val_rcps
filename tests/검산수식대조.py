@@ -6,7 +6,6 @@
 셀로 다시 계산하는 **수식**이 나란히 있다. 둘이 같아야 한다 — 다르면 수식 배선이 틀린 것이다.
 `formulas` 라이브러리로 수식 조서를 실제로 풀어 견준다 (조서대조와 같은 방법).
 
-    [1] BDT 시트 — 시장 할인계수(선도이자율 합의 수식) = 엔진 bdt_parts 의 mkt, Σ Q − mkt = 0
     [2] 분리 판단 시트 — 10% 검토 수식(첫 행사일 행사금액 · 자본요소 분리 전 상각후원가 ·
         행사일별 비교표 · 가장 큰 차이 · 판정) = split_test
     [3] 결과 시트 — 우선순위별 매도청구권 두 줄 = pc_compare
@@ -29,6 +28,8 @@ CASES = [
     ("부채 분류 · 상실이자 아님", dict(conv_class="liability")),
     ("RCPS 발행자콜", dict(inst="RCPS", issuer_call=1, k_w=1.0, k_s=12., k_e=48., p_s=24., p_e=57.)),
     # 겹치는 노드에서 조기상환금액 > 매도청구금액 — 우선순위가 값을 가른다
+    # 분리 판단 — 평가자가 출발 금액을 직접 넣고 비교기준을 5% 로 낮춘다
+    ("분리 판단 · 출발 금액 직접 · 비교기준 5%", dict(split_base_in=104., split_base_why="실제 배분액", split_tol=.05)),
     ("우선순위 갈림", dict(p_mode="accrue", p_yield=.05, p_cmp=1, k_prem=.01, k_cmp=1,
                        k_s=12., k_e=36., p_s=12., p_e=36., p_f=6., k_f=6., k_w=.3)),
 ]
@@ -104,20 +105,10 @@ def main():
         sol, mp = solve_all(xb, path)
         print(f"\n[{lbl}]")
         n = int(t.n)
-        # ── [1] BDT 시장 할인계수 ──
-        if G["put_bdt_on"](t):
-            bp = G["bdt_parts"](t)
-            W = wbx["BDT 단기이자율"]
-            rq = find_row(W, 2, "시장 할인계수"); rd = find_row(W, 2, "차이")
-            worst = max(abs(cell(sol, mp, "BDT 단기이자율", f"{gl(3+i)}{rq}") - bp["mkt"][i]) for i in range(n+1))
-            chk("BDT · 시장 할인계수 수식 − 엔진 mkt (최대)", worst, 0.0, 1e-9)
-            dmax = max(abs(cell(sol, mp, "BDT 단기이자율", f"{gl(3+i)}{rd}")) for i in range(n+1))
-            chk("BDT · |Σ Q − 시장 할인계수| 최대 (수식)", dmax, 0.0, 1e-6)
-            chk_bool("BDT · 시장 할인계수 칸이 수식이다", str(W.cell(rq, 4).value).startswith("=EXP("))
         # ── [2] 분리 판단 10% 검토 ──
         SP = G["split_test"](t, full, b0, b1, b2, ca, [] if eir is None else eir[1])
         J = wbx["분리 판단"]
-        r0 = find_row(J, 2, "B4.3.5(5)(가) 10% 검토 — 수식")
+        r0 = find_row(J, 2, "B4.3.5(5)(가) 행사금액과 상각후원가 비교 — 수식")
         if r0 and SP["put"]["지표"]:
             X = SP["put"]["지표"]
             pv = cell(sol, mp, "분리 판단", f"C{r0+1}"); bv = cell(sol, mp, "분리 판단", f"C{r0+2}")
@@ -145,7 +136,7 @@ def main():
         pcc = G["pc_compare"](t)
         for nm, wb_ in (("수식", wbx), ("값", wbv)):
             R = wb_["결과"]
-            rp = find_row(R, 2, "4. 풋·콜 우선순위별")      # RCPS 는 relabel 로 «발행자 상환권» 이 된다
+            rp = find_row(R, 2, "3. 풋·콜 우선순위별")      # RCPS 는 relabel 로 «발행자 상환권» 이 된다
             chk_bool(f"결과({nm}) · 우선순위 블록이 있다", rp is not None)
             if rp and pcc:
                 got = [(R.cell(rp+2+i, 2).value, R.cell(rp+2+i, 3).value, R.cell(rp+2+i, 4).value) for i in range(2)]

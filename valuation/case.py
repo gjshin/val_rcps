@@ -26,6 +26,7 @@ METHOD = frozenset({
     "d_base", "model", "gap_m", "grid_days", "carry", "view", "conv_class", "p_sep", "k_sep",
     "k_method", "k_split", "put_bdt", "fvpl_whole", "bs_target", "bs_net",
     "prev_hold", "d1_pl", "d1_reason", "prev_host", "prev_deriv", "eir_issue", "cur_periods", "settle_amt",
+    "split_tol", "split_base_in", "split_base_why",
 })
 DERIVED = frozenset({"T", "n", "elapsed_m", "rem_m", "scen_md5"})
 FIELDS = frozenset(Terms.__dataclass_fields__) - DERIVED
@@ -306,6 +307,10 @@ def inspect_case(case: Case) -> list[Issue]:
     for key in ('ipay', 'p_f', 'k_f', 'rfx_cyc', 'sha_put_f', 'sha_call_f'):
         if key in values and values[key] <= 0:
             add('error', 'positive', key, '주기는 0보다 커야 합니다.')
+    if 'split_tol' in values and not 0 < values['split_tol'] < 1:
+        add('error', 'fraction', 'split_tol', '분리 판단 비교기준은 0%보다 크고 100%보다 작아야 합니다.')
+    if values.get('split_base_in', -1) > 0 and not str(values.get('split_base_why', '')).strip():
+        add('review', 'split_base_reason', 'split_base_in', '분리 판단 출발 금액을 직접 넣었으면 그 근거(실제 회계상 배분액 등)를 적으십시오.')
     for key in ('cpn', 'bdt_sig'):
         if key in values and values[key] < 0:
             add('error', 'negative', key, '음수는 지원하지 않습니다.')
