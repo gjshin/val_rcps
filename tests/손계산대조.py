@@ -991,6 +991,61 @@ def test_eir_expected_maturity():
     chk_bool("경과 뒤 — 평가기준일 이후 첫 조기상환 가능일", ex2 is not None and ex2[2] >= t2.elapsed_m and ex2[2] - 24 in (0., 3., 6.) or (ex2 is not None and abs(((ex2[2]-24) % 3)) < 1e-9))
 
 
+
+def test_emb_approach_allocation():
+    """분리 정책 — 접근법 1 은 얽힌 권리를 묶고, 접근법 2 는 조기상환권을 따로 판단한다 (실무사례 30~32쪽).
+
+    전환권이 부채이고 조기상환권을 «주계약에 포함» 으로 고른 계약에서
+
+      접근법 1 → 되돌린다(p_sep=1). 파생 = B2 − B0 (콜 내재면 − 콜), 주계약 = 100 + 콜 − (B2 − B0)
+      접근법 2 → 유지한다. 파생(전환권) = B2 − B1, 주계약(사채 + 풋) = 100 + 콜 − (B2 − B1),
+                 상각표 만기는 첫 조기상환 가능일(기대만기 · 실무사례 29쪽)
+
+    발행자 최초 인식 차이를 당기손익으로 고르면 주계약이 공정가치(B0 또는 B1)이고,
+    배분표 마지막 줄이 −(순평가금액 − 100) 이라 합계가 그대로 100 이다 (2019-I-KQA018).
+    """
+    print("\n[31] 분리 정책 접근법 1·2 · 발행자 최초 인식 차이")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    for inst, extra in (("CB", {}), ("RCPS", dict(issuer_call=2, k_w=.3, k_s=12., k_e=24.)),
+                        ("BW", dict(bw_pay=1))):
+        for ap in (1, 2):
+            t = Terms(inst=inst, rf_curve=RF, cr_curve=CR, gap_m=6.0, carry=1, conv_class="liability",
+                      emb_approach=ap, p_sep=0, **extra)
+            derive(t)
+            full, b0, b1, b2, ca, conv = G["decompose"](t)
+            rows, _ = G["allocate"](t, full, b0, b1, b2, ca)
+            kk = int(t.k_kind) == 1
+            host, der = rows[0][1], rows[1][1]
+            tag = f"{inst} 접근법 {ap}"
+            chk(f"{tag} — 배분 합계", rows[-1][1], 100.0, 1e-9)
+            if ap == 1:
+                chk_bool(f"{tag} — 풋 «주계약에 포함» 을 되돌린다", int(t.p_sep) == 1)
+                chk(f"{tag} — 파생 = B2 − B0", der, (b2 - b0) if t.k_sep else (b2 - ca - b0), 1e-9)
+                chk(f"{tag} — 주계약 = 100 + 콜 − (B2 − B0)", host, 100 + (0 if kk else ca) - (b2 - b0), 1e-9)
+            else:
+                chk_bool(f"{tag} — 풋 «주계약에 포함» 을 유지한다", int(t.p_sep) == 0)
+                chk(f"{tag} — 파생(전환권) = B2 − B1", der, (b2 - b1) if t.k_sep else (b2 - ca - b1), 1e-9)
+                chk(f"{tag} — 주계약 = 100 + 콜 − (B2 − B1)", host, 100 + (0 if kk else ca) - (b2 - b1), 1e-9)
+                ex = G["eir_expect"](t)
+                if inst != "BW":
+                    eir = G["eir_or_none"](t, full, b0, b1, b2, ca)
+                    chk_bool(f"{tag} — 상각표 만기 = 첫 조기상환 가능일", ex is not None and abs(eir[1][-1][1] - ex[0]) < 1e-9)
+                    chk(f"{tag} — 상각표 기말 = 그 시점 행사금액", eir[1][-1][5], ex[1], 1e-6)
+    # 발행자 최초 인식 차이 — 당기손익
+    for ap, ps in ((1, 1), (2, 0)):
+        t = Terms(rf_curve=RF, cr_curve=CR, gap_m=6.0, carry=1, conv_class="liability", emb_approach=ap, p_sep=ps,
+                  d1_pl=1, d1_reason="관측 가능한 시장자료")
+        derive(t)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        rows, _ = G["allocate"](t, full, b0, b1, b2, ca)
+        d = (b2 - ca) - 100.0
+        tag = f"당기손익 · 접근법 {ap}"
+        chk(f"{tag} — 주계약 = 공정가치", rows[0][1], b1 if ps == 0 else b0, 1e-9)
+        chk(f"{tag} — 최초 인식 손익 줄 = −차이", rows[-2][1], -d, 1e-9)
+        chk(f"{tag} — 배분 합계", rows[-1][1], 100.0, 1e-9)
+        dr = 100 + sum(-v for _, v in rows[:-1] if v < 0); cr = sum(v for _, v in rows[:-1] if v > 0)
+        chk(f"{tag} — 분개 차변 = 대변", dr, cr, 1e-9)
+
 def test_call_split_text():
     """제3자 콜옵션의 행사가 분해 — 부속예제(가치 구성비율) 대 한공회 본문 4.3.3(GS 전환확률)."""
     print("\n[27] 제3자 콜옵션 행사가 분해 · 콜옵션 유형")
@@ -1782,6 +1837,7 @@ def main():
     test_acc_mode_fv_only()
     test_call_strike_switch()
     test_eir_expected_maturity()
+    test_emb_approach_allocation()
     test_call_split_text()
     test_deduction_methods()
     test_div_basis()

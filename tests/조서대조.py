@@ -297,6 +297,21 @@ CASES = [
      dict(inst="BW", bw_pay=0, bw_detach=1, conv_class="liability", k_w=0.)),
     ("BW 현금납입 · 중간평가",
      dict(inst="BW", bw_pay=0, bw_detach=0, d_base="2025-12-31", k_w=0.)),
+    # ── 분리 정책 접근법 2 (한공회 실무사례 30~32쪽) — 조기상환권을 따로 판단해 주계약에 남긴다 ──
+    ("접근법 2 · 전환권 부채 · 풋 주계약", dict(conv_class="liability", emb_approach=2, p_sep=0)),
+    ("접근법 2 · 전환권 부채 · 콜 내재 · 풋 주계약",
+     dict(conv_class="liability", emb_approach=2, p_sep=0, k_sep=0, k_third=0, k_transfer=0)),
+    ("접근법 2 · 전환권 자본 · 콜 내재 · 풋 주계약",
+     dict(emb_approach=2, p_sep=0, k_sep=0, k_third=0, k_transfer=0)),
+    ("접근법 2 · 전환권 부채 · 풋 분리", dict(conv_class="liability", emb_approach=2, p_sep=1)),
+    # ── 발행자 최초 인식 차이를 당기손익으로 (회계기준원 2019-I-KQA018 · 1109 B5.1.2A(1)) ──
+    ("최초 인식 차이 당기손익 · 전환권 부채", dict(conv_class="liability", d1_pl=1, d1_reason="관측")),
+    ("최초 인식 차이 당기손익 · 접근법 2 · 풋 주계약",
+     dict(conv_class="liability", emb_approach=2, p_sep=0, d1_pl=1, d1_reason="관측")),
+    ("최초 인식 차이 당기손익 · 전체 지정",
+     dict(conv_class="liability", fvpl_whole=1, d1_pl=1, d1_reason="관측")),
+    ("최초 인식 차이 당기손익 · 콜 내재",
+     dict(conv_class="liability", d1_pl=1, d1_reason="관측", k_sep=0, k_third=0, k_transfer=0)),
 ]
 
 
@@ -472,32 +487,32 @@ def main():
                   % ("분개 대차", f"{drr:.4f}" if drr is not None else "없음",
                      f"{crr:.4f}" if crr is not None else "없음", want_dr,
                      "" if okj else "★"))
-            # 배분 각 줄이 allocate() 와 같은가
-            # 7 주계약 · 8 부채요소 · 9 조기상환권 · 10 복합내재파생 · 11 매도청구 · 12 전환권대가
-            if eng["fvpl"]:
-                # 전체 지정이면 첫 줄이 복합계약 한 줄이고 나머지 요소별 줄은 빈다.
-                rows_ord = [("복합계약 전체", 7), ("매도청구권", 11)]
-            elif eng["eq"] and eng["nosep"]:
-                rows_ord = [("부채요소", 8), ("매도청구권", 11), ("전환권대가", 12)]
-            elif eng["eq"]:
-                rows_ord = [("주계약", 7), ("조기상환청구권", 9), ("매도청구권", 11),
-                            ("전환권대가", 12)]
-            else:
-                rows_ord = [("주계약", 7), ("복합내재파생상품", 10), ("매도청구권", 11)]
-            if not eng["sep"]:
-                # 콜을 내재파생에 넣으면 자산 줄이 비고 파생 줄이 순액이 된다
-                rows_ord = [(nm, r) for nm, r in rows_ord if nm != "매도청구권"]
-                if eng["eq"]:
-                    rows_ord = [("주계약", 7), ("복합내재파생상품", 10),
-                                ("전환권대가", 12)]
-            for nm, r in rows_ord:
-                want = want_al.get(nm)
-                if nm == "매도청구권": want = -eng["ca"]
-                have = have_al.get(r)
+            # 배분 각 줄이 allocate() 와 같은가 — 엔진 줄마다 수식 조서의 자리를 이름으로 찾는다.
+            # 7 주계약(또는 전체) · 8 부채요소 · 9 조기상환권 · 10 파생상품부채(묶음·전환권)
+            # · 11 파생상품자산(매도청구권) · 12 전환권대가 또는 최초 인식 손익(부채일 때)
+            def _slot(k):
+                if k.startswith(("주계약", "복합계약 전체")): return 7
+                if k.startswith("부채요소"): return 8
+                if k.startswith("조기상환청구권"): return 9
+                if "파생상품자산" in k: return 11
+                if "파생상품부채" in k: return 10
+                if k.startswith(("전환권대가", "최초 인식")): return 12
+                return None
+            want_rows = {}
+            for k, v in eng["al"][:-1]:
+                _s = _slot(k)
+                want_rows[_s] = want_rows.get(_s, 0.0) + v
+            if None in want_rows:
+                bad += 1
+                print("   ★ 수식 조서에 자리가 없는 배분 줄이 있다:", [k for k, _ in eng["al"][:-1] if _slot(k) is None])
+            for r in range(7, 13):
+                want, have = want_rows.get(r), have_al.get(r)
+                if (want is None or abs(want) < 1e-9) and (have is None or abs(have) < 1e-9):
+                    continue                     # 둘 다 비었다 — 이 계약에 없는 줄
                 ok = have is not None and want is not None and abs(have - want) < 1e-4
                 if not ok: bad += 1
                 print("   %-22s 조서 %11s · 배분표 %9s  %s"
-                      % ("배분 · " + nm, f"{have:.4f}" if have is not None else "없음",
+                      % (f"배분 · {r}행", f"{have:.4f}" if have is not None else "없음",
                          f"{want:.4f}" if want is not None else "없음", "" if ok else "★"))
     print("\n" + ("모든 항목 일치" if bad == 0 else f"★ {bad}건 불일치"))
     return 0 if bad == 0 else 1

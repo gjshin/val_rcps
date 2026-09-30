@@ -62,7 +62,20 @@ def test_judgment_tab_is_light_until_buttons(monkeypatch):
     for head in ('분리 판정', '조기상환 행사 진단', '매도청구권 평가방법', '풋·콜 우선순위', '이자율모형(BDT) 검토', '추가 검토 항목'):
         assert head in text, head
     boxes = ' '.join(str(w.value) for kind in ('success', 'info') for w in app.get(kind))
-    assert '상각후원가' in boxes and '기준 10%' in boxes
+    # 평가기준일이 발행일보다 뒤다 — 다시 판정하지 않고 최초 판단을 이어 쓴다 (1109 B4.3.11).
+    assert '최초 인식 판단 이어 적용' in boxes and '상각후원가' not in boxes
+    assert 'B4.3.11' in ' '.join(str(c.value) for c in app.caption)
+
+
+def test_judgment_tab_compares_amortised_cost_at_issue(monkeypatch):
+    for name in ('call_compare', 'pc_compare', 'rate_signals'):
+        monkeypatch.setattr(legacy, name, lambda *a, **k: (_ for _ in ()).throw(AssertionError(name)))
+    case = call_case()
+    case.method['d_base'] = case.contract['d_issue']          # 발행일 평가 — 최초 판단
+    app = open_tab(case)
+    assert not app.exception, app.exception
+    boxes = ' '.join(str(w.value) for kind in ('success', 'info') for w in app.get(kind))
+    assert '상각후원가' in boxes and '기준 10%' in boxes and '회계정책' in boxes
 
 
 def test_memo_saved_to_case_and_workpaper():
@@ -122,7 +135,7 @@ def test_day1_gap_choice_and_journal():
         texts = [c.value for r in wb['회계처리'] for c in r if isinstance(c.value, str)]
         assert any('금융자산평가' in x and '최초 인식 차이' in x for x in texts)
         checks = [r[1].value for r in wb['판단·근거'].iter_rows() if r[0].value == '최초 인식 · 원인 점검']
-        assert len(checks) == 3
+        assert len(checks) == 4          # 금융상품이 아닌 것의 대가(1109 B5.1.1) 포함
 
 
 def test_calibration_record_and_carry_forward_in_ui():

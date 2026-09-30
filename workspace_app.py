@@ -68,11 +68,15 @@ def field(key, edited, case, prefix='input'):
         if selected == 'any':
             st.caption('행사기간 내 모든 계산시점에서 행사합니다. 계산 간격 변경 시에도 유지됩니다.')
             return
-    if key == 'p_sep' and not (edited.get('conv_class', 'equity') == 'equity' and int(edited.get('k_sep', 1)) != 0):
-        # 전환권이 부채이거나 콜을 내재파생에 넣으면 조기상환권은 그 파생과 묶여 분리된다 (1109 B4.3.4).
+    if key == 'p_sep' and not (int(edited.get('emb_approach', 1)) == 2 or
+                               (edited.get('conv_class', 'equity') == 'equity' and int(edited.get('k_sep', 1)) != 0)):
+        # 분리 정책 접근법 1 — 전환권이 부채이거나 콜을 내재파생에 넣으면 조기상환권은 그 파생과
+        # 묶여 분리된다 (1109 B4.3.4). 접근법 2 면 조기상환권을 따로 판단하므로 고를 수 있다.
         st.selectbox(title, [1], format_func=lambda v: CHOICES['p_sep'][v], key=widget_key + '_locked', disabled=True)
-        st.caption('전환권이 부채이거나 매도청구권을 내재파생에 포함하면 조기상환권은 그 파생과 묶어 하나의 '
-                   '복합내재파생상품으로 분리합니다 (1109 B4.3.4). «주계약에 포함» 은 고를 수 없습니다.')
+        st.caption('분리 정책이 접근법 1(얽힌 권리를 먼저 묶고 판단 — 한공회 실무사례 30~31쪽)이라, 전환권이 '
+                   '부채이거나 매도청구권을 내재파생에 포함하면 조기상환권은 그 파생과 묶어 하나의 '
+                   '복합내재파생상품으로 분리합니다 (1109 B4.3.4). 조기상환권을 따로 판단하려면 분리 정책을 '
+                   '접근법 2로 두십시오.')
         edited[key] = 1
         return
     if key in CHOICES:
@@ -283,11 +287,17 @@ def input_editor(case, autosave=False):
                 fields(['bdt_sig', 'bdt_base', 'rvol_rating', 'rvol_tenor', 'rvol_how'], edited, case)
     with st.expander('분해방법·기간 기준'):
         st.caption('회계분류는 사용자의 가정입니다. 구성요소 차액은 회계상 인식액과 구분하십시오.')
-        fields(['acc_basis', 'conv_class', 'p_sep', 'k_sep', 'p_lost_int', 'fvpl_whole'], edited, case)
         if inst != 'SHA':
-            st.caption('풋 분리 판단 — 조기상환 행사금액을 자본요소 분리 전 상각후원가와 비교합니다. 비교기준(기본 10%)은 '
-                       '기준서가 정한 수치가 아니므로 평가자가 정합니다. 출발 금액은 0 이하로 두면 앱 자동값(발행금액 100, '
-                       '발행회사가 별개 콜을 함께 샀으면 + 콜 가치)을 쓰고, 실제 회계상 배분액이 다르면 그 금액과 근거를 넣습니다.')
+            st.caption('내재파생 분리 정책은 회사가 고르는 회계정책입니다 (한공회 실무사례 30~32쪽). 접근법 1은 서로 '
+                       '얽힌 권리(전환권·조기상환권·발행회사 콜)를 먼저 묶고 판단하고, 접근법 2는 권리마다 분리 여부를 '
+                       '판단한 뒤 분리 대상끼리 묶습니다. 비슷한 거래에 같은 정책을 쓰십시오.')
+        fields(['acc_basis', 'conv_class', 'emb_approach', 'p_sep', 'k_sep', 'p_lost_int', 'fvpl_whole'], edited, case)
+        if inst != 'SHA':
+            st.caption('풋 분리 판단 — 조기상환 행사금액을 자본요소 분리 전 상각후원가와 비교합니다(전환권이 부채면 그 규정을 '
+                       '준용해 전환권을 떼기 전 금액). 비교기준(기본 10%)은 기준서가 정한 수치가 아니므로 회계정책으로 '
+                       '정합니다. 출발 금액은 0 이하로 두면 앱 자동값(발행금액 100, 발행회사가 별개 콜을 함께 샀으면 + 콜 '
+                       '가치)을 쓰고, 실제 회계상 배분액이 다르면 그 금액과 근거를 넣습니다. 평가기준일이 발행일보다 '
+                       '뒤이면 다시 판정하지 않고 최초 인식 때의 결론을 이어 씁니다 (1109 B4.3.11).')
             fields(['split_tol', 'split_base_in', 'split_base_why'], edited, case)
     with st.expander('후속평가·역산·기타 상세 입력'):
         st.caption('기존 모형의 전체 입력항목을 같은 평가파일에서 관리합니다. 여기서 변경한 값도 평가·분석에 직접 적용됩니다.')
@@ -353,7 +363,7 @@ def evidence_editor(case, pending=False):
 
 
 def day1_panel(run, case):
-    """투자자 최초 인식 — 모형값 / 거래가격 100 / 차이, 그리고 차이 처리 선택."""
+    """최초 인식 — 모형값 / 거래가격 100 / 차이, 그리고 차이 처리 선택 (투자자·발행자)."""
     day1 = run.summary.get('day1')
     if not day1:
         return
@@ -364,9 +374,15 @@ def day1_panel(run, case):
         with c2:
             source('day1')
         return
-    c1.warning(f"최초 인식 — {day1['nums']}. 주가 역산으로 보정하거나(1113 문단 64), 차이 처리를 고르십시오.")
+    c1.warning(f"최초 인식 — {day1['nums']}. 거래가격이 공정가치라면 먼저 평가를 거래가격에 보정하십시오 "
+               "(주가 역산 등 · 1113 문단 64). 보정하지 않으면 아래에서 차이 처리를 고릅니다.")
     with c2:
         source('day1')
+    if not day1.get('choice', True):
+        # 발행자 · 전환권 자본 — 차이는 잔여인 자본요소(전환권대가)에 흡수된다.
+        st.caption('전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수됩니다 (1032 문단 31). '
+                   '최초 인식 손익은 생기지 않습니다.')
+        return
     rev = st.session_state.get('revision', 0)
     eff = case.effective()
     d1, d2, d3 = st.columns([2, 4, 1])
@@ -379,6 +395,12 @@ def day1_panel(run, case):
         candidate.method['d1_pl'] = int(mode)
         candidate.method['d1_reason'] = reason.strip() if mode == 1 else ''
         save_case(candidate)
+    if day1.get('view') == 'issuer':
+        st.caption(("현재 처리 — 당기손익: 주계약을 공정가치로 두고 차이를 «최초 인식 손익» 으로 분개합니다. "
+                    if day1['mode'] == '당기손익' else
+                    "현재 처리 — 이연: 주계약 장부금액에서 차이를 빼 두고 유효이자율로 기간에 걸쳐 인식합니다. ")
+                   + '회계기준원 질의회신 2019-I-KQA018. 원인 점검 항목은 상세 계산 → 판단·근거 탭에 있습니다.')
+        return
     st.caption(f"현재 분개 표기 — {'금융자산평가이익(손실) — 최초 인식 차이' if day1['mode'] == '당기손익' else '최초 인식 차이 — 이연'}. "
                '원인 점검 3항목은 상세 계산 → 판단·근거 탭에 있습니다.')
 
