@@ -117,7 +117,8 @@ MANIFEST = {
     "view":        ("평가 관점", {"issuer": "발행자 — 부채·자본 분류와 요소별 배분",
                                "holder": "투자자 — 복합계약 전체 공정가치 (1109 4.3.2)"}, P_BOND),
     # ── 주주간계약 ──
-    "sha_writer":  ("풋 의무자", {0: "최대주주", 1: "발행회사", 2: "연대"}, ("SHA",)),
+    "sha_writer":  ("풋 행사 시 주식매수 의무자", {0: "콜 권리자(상대 주주)", 1: "발행회사", 2: "연대"}, ("SHA",)),
+    "sha_side":    ("순액 관점 (표시만)", {0: "콜 권리자 — 콜 − 풋", 1: "풋 권리자 — 풋 − 콜"}, ("SHA",)),
     "sha_disc":    ("풋 할인", {0: "무위험", 1: "위험 곡선", 2: "무위험 + 스프레드"}, ("SHA",)),
     "sha_qipo_kill": ("적격상장 시 콜", {0: "풋만 소멸", 1: "풋·콜 모두 소멸"}, ("SHA",)),
     "sha_kill":    ("한쪽 행사 시 상대 권리", {0: "존속 (독립)", 1: "소멸 (상호소멸)"}, ("SHA",)),
@@ -358,6 +359,10 @@ def collect_coverage(G):
                                             ("CB", "k_method", 0), ("CB", "k_method", 1), ("CB", "k_method", 2)],
         "test_wow_trace": [("CB", "model", "GS"), ("CB", "model", "TF"), ("RCPS", "issuer_call", 1),
                            ("CB", "k_conv_resp", 0), ("CB", "k_hold", 0)],
+        # SHA 점검 — 손으로 세운 격자(배당·고정 가격·가산기간 두 잣대·주 격자 매월 행사)와 회차 표 차단·독립
+        "test_sha_review_hand": [("SHA", "acc_basis", 0), ("SHA", "acc_basis", 1), ("SHA", "sha_disc", 0),
+                                 ("SHA", "call", True), ("SHA", "put", True)],
+        "test_sha_rows_block_and_isolate": [("SHA", "sha_kill", 0), ("SHA", "sha_kill", 1)],
         "test_decision_matches_old_chains": [("CB", "pc_order", 0), ("CB", "pc_order", 1),
                                              ("BW", "pc_order", 0), ("BW", "pc_order", 1)],
         "test_maturity_layer_in_distribution": [("RCPS", "mat_mode", 0), ("RCPS", "put", True),

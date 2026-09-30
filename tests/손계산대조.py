@@ -811,7 +811,7 @@ def test_sha_boundaries():
     for w in (0, 1, 2):
         t = Terms(inst="SHA", gap_m=3., sha_writer=w, sha_call_s=12., sha_call_e=36., rf_curve=RF, cr_curve=CR)
         derive(t); A = G["sha_accounts"](t, G["sha_engine"](t))
-        iss = A["발행회사"][0]; maj = A["최대주주"][0]
+        iss = A["발행회사"][0]; maj = A["콜 권리자"][0]
         if w == 0:
             chk_bool("의무자 최대주주 — 발행회사 인식 없음", iss[0][1] == 0.0 and len(iss) == 1)
             chk_bool("의무자 최대주주 — 최대주주 파생부채", maj[0][0].startswith("파생상품부채"))
@@ -2214,6 +2214,133 @@ def test_wow_trace():
     chk(f"  0 으로 덮지 않는다 — 적용 콜 값 = 차액", ca, tr["A"], 1e-9)
 
 
+# ══════════════════════════════════════════════════════════
+# SHA 점검 (2026-09-30) — 회차별 표 · 행사일 배정 · 가산기간 · 수량 · 배당수익률.
+# 기대값은 엔진 함수를 쓰지 않고 이항격자를 처음부터 다시 세운 값이다. 사례는 모두 가상 수치다.
+def _hand_crr(S0, sig, r_spot, div, days, n, ex, pay, disc_spot=None):
+    """평탄한 연복리 현물금리 · 연속 배당수익률 · 미국형(ex 에 든 노드에서만 행사) — 손으로 세운 격자."""
+    T = days/365; dt = T/n
+    u = math.exp(sig*math.sqrt(dt)); d = 1/u
+    r = math.log(1 + r_spot); rd = math.log(1 + (disc_spot if disc_spot is not None else r_spot))
+    p = (math.exp((r - div)*dt) - d)/(u - d)
+    V = [pay(n, S0*u**j*d**(n-j)) if n in ex else 0.0 for j in range(n+1)]
+    for i in range(n-1, -1, -1):
+        V = [max((p*V[j+1] + (1-p)*V[j])*math.exp(-rd*dt),
+                 pay(i, S0*u**j*d**(i-j)) if i in ex else 0.0) for j in range(i+1)]
+    return V[0]
+
+
+def _sha_row_case(rows, **kw):
+    base = dict(inst="SHA", S0=950., K0=1000., d_issue="2025-01-01", d_base="2025-01-01",
+                d_mat="2025-07-02", sig=.35, div_y=.02, grid_days=7., gap_m=1., sha_disc=0,
+                y_type="spot", cmp_rf=1, cmp_cr=1, sha_put_cmp=1, sha_call_cmp=1,
+                rf_curve=[(.25, .03), (30, .03)], cr_curve=[(.25, .03), (30, .03)], sha_rows=rows)
+    base.update(kw)
+    t = Terms(**base); derive(t)
+    return t, G["sha_portfolio"](t)
+
+
+def test_sha_review_hand():
+    """주주간계약 — 손으로 세운 격자와 엔진이 같은가 (회차별 표 경로).
+
+    (가) 고정 행사가격(가산율 0%) · 주 격자 · 기간 중 언제든지 · 배당수익률 2% — 미국형 풋·콜.
+         평가기준일 2025-01-01, 종료 2025-07-02 (182일 → 26구간). 모든 노드에서 행사할 수 있다.
+    (나) 풋·콜 수량이 다르면 원 단위 금액은 각자의 수량으로 곱한다.
+    (다) 가산율 6% 연복리 · 특정일 1회(2025-06-10, 기산일 2023-06-10 부터 24개월) — 행사금액
+         = 5,000 × 1.06² (계약 개월 ÷ 12). 실제 일수 선택이면 경과연수 = 기산일→행사일 실제 일수(윤일 포함 731일) ÷ 365.
+    (라) 주 격자에서 «매월» 정기 행사 — 계약일마다 그날 이후 첫 노드(허용 1일)다. 4노드마다가 아니다.
+    """
+    print("\n[45] 주주간계약 — 손으로 세운 격자 (회차별 표)")
+    row = dict(name="A", start="2025-01-01", end="2025-07-02", style="any", price=1000., rate=0.,
+               put_q=1000., call_q=0.)
+    t, P = _sha_row_case([row])
+    x = P["rows"][0]
+    want = _hand_crr(950., .35, .03, .02, 182, 26, set(range(27)), lambda i, S: max(1000. - S, 0.))
+    chk("(가) 풋 1주당 · 26구간 미국형 · 배당 2% (원)", x["put_ps"], want, 1e-6)
+    t, P = _sha_row_case([dict(row, put_q=0., call_q=700.)], S0=1100.)
+    x = P["rows"][0]
+    want = _hand_crr(1100., .35, .03, .02, 182, 26, set(range(27)), lambda i, S: max(S - 1000., 0.))
+    chk("(가) 콜 1주당 · 배당 2% 면 조기행사가 생긴다 (원)", x["call_ps"], want, 1e-6)
+    # (나) 수량
+    t, P = _sha_row_case([dict(row, put_q=619., call_q=464.)], S0=1000.)
+    x = P["rows"][0]
+    chk("(나) 풋 전액 = 풋 1주당 × 풋 수량 619", x["put_krw"], x["put_ps"]*619, 1e-6)
+    chk("(나) 콜 전액 = 콜 1주당 × 콜 수량 464", x["call_krw"], x["call_ps"]*464, 1e-6)
+    chk("(나) 합계 = 회차 합", P["put_krw"] + P["call_krw"], x["put_krw"] + x["call_krw"], 1e-6)
+    # (다) 가산율 — 특정일 1회 = 유럽형
+    r7 = dict(name="B", start="2025-06-10", end="2025-06-10", style="single", price=5000., rate=.06,
+              put_q=1., call_q=1.)
+    for ab in (1, 0):
+        t, P = _sha_row_case([r7], d_issue="2023-06-10", d_base="2024-11-29", d_mat="2025-06-10",
+                             S0=5400., sig=.30, div_y=0., acc_basis=ab)
+        x = P["rows"][0]; R = x["R"]; n = R["n"]
+        days = (G["dt"].date(2025, 6, 10) - G["dt"].date(2024, 11, 29)).days
+        # 실제 일수 — 기산일(2023-06-10)부터 행사일(2025-06-10)까지 731일(2024-02-29 포함) ÷ 365
+        yrs = 2.0 if ab else (G["dt"].date(2025, 6, 10) - G["dt"].date(2023, 6, 10)).days/365
+        K = 5000.*1.06**yrs
+        chk(f"(다) 행사금액 · {'계약 개월 ÷ 12' if ab else '실제 일수'} (원)", R["pk"](n)*5000./100, K, 1e-6)
+        chk(f"(다) 유럽형 풋 1주당 · {'계약 개월' if ab else '실제 일수'}", x["put_ps"],
+            _hand_crr(5400., .30, .03, 0., days, n, {n}, lambda i, S: max(K - S, 0.)), 1e-6)
+        chk(f"(다) 유럽형 콜 1주당 · {'계약 개월' if ab else '실제 일수'}", x["call_ps"],
+            _hand_crr(5400., .30, .03, 0., days, n, {n}, lambda i, S: max(S - K, 0.)), 1e-6)
+    # (라) 주 격자에서 매월 행사 — 노드 날짜를 손으로 센다
+    rm = dict(name="C", start="2025-02-01", end="2025-06-01", style="periodic", freq=1., price=1000., rate=0.,
+              put_q=1., call_q=0.)
+    t, P = _sha_row_case([rm])
+    R = P["rows"][0]["R"]; n = R["n"]
+    # 회차의 격자는 평가기준일부터 그 회차의 마지막 행사일(2025-06-01, 151일)까지다
+    d0 = G["dt"].date(2025, 1, 1); step = (G["dt"].date(2025, 6, 1) - d0).days/n
+    nodes = [d0 + G["dt"].timedelta(days=round(i*step)) for i in range(n+1)]
+    want = set()
+    for m in range(1, 6):
+        cd = G["dt"].date(2025, 1 + m, 1)
+        want.add(next(i for i, x in enumerate(nodes) if x >= cd - G["dt"].timedelta(days=1)))
+    chk_bool(f"(라) 매월 행사 노드 = 계약일 이후 첫 노드 {sorted(want)}", set(R["p_dates"]) == want)
+    chk_bool("(라) 4노드 간격 반올림이 아니다 (간격이 4·5 로 섞인다)",
+             len({b - a for a, b in zip(sorted(want), sorted(want)[1:])}) > 1)
+
+
+def test_sha_rows_block_and_isolate():
+    """회차별 표 — 계산을 막는 입력과, 회차끼리 섞이지 않는지.
+
+    · 평가기준일 전에 끝난 회차는 막는다 (이미 행사됐다고 가정하지 않는다).
+    · 풋·콜 수량이 다른 회차에 상호소멸을 켜면 막는다 (겹치는 수량을 나눠 넣으라고 안내).
+    · 회차 둘의 합계 = 회차 하나씩 따로 잰 값의 합 — 다음 회차로 물량을 넘기지 않는다.
+    · 한 회차의 행사기간·가격을 바꿔도 다른 회차 값은 그대로다.
+    """
+    print("\n[46] 주주간계약 — 회차별 표의 차단과 독립")
+    r1 = dict(name="1차", start="2025-02-01", end="2025-04-30", style="any", price=1000., rate=0.,
+              put_q=100., call_q=100.)
+    r2 = dict(name="2차", start="2025-05-01", end="2025-07-02", style="any", price=1100., rate=.05,
+              put_q=100., call_q=60., rf=.035, sig=.45)
+    t, P = _sha_row_case([r1, r2])
+    _, P1 = _sha_row_case([r1]); _, P2 = _sha_row_case([r2])
+    chk("회차 둘 합계 풋 = 1차 + 2차 따로", P["put_krw"], P1["put_krw"] + P2["put_krw"], 1e-6)
+    chk("회차 둘 합계 콜 = 1차 + 2차 따로", P["call_krw"], P1["call_krw"] + P2["call_krw"], 1e-6)
+    _, P3 = _sha_row_case([r1, dict(r2, price=1300., end="2025-06-15")])
+    chk("2차를 바꿔도 1차 풋은 그대로", P3["rows"][0]["put_krw"], P["rows"][0]["put_krw"], 1e-9)
+    bad = Terms(inst="SHA", d_issue="2024-01-01", d_base="2025-01-01", d_mat="2026-01-01",
+                sha_rows=[dict(r1, start="2024-03-01", end="2024-12-31")])
+    chk_bool("평가기준일 전에 끝난 회차 → 막음",
+             any("이미 행사" in m for _, m in G["sha_row_issues"](bad)))
+    bad.sha_rows = [dict(r2, kill=1)]
+    chk_bool("수량이 다른 회차의 상호소멸 → 막음",
+             any("상호소멸" in m for _, m in G["sha_row_issues"](bad)))
+    bad.sha_rows = [dict(r1), dict(r1)]
+    chk_bool("회차 이름이 겹치면 → 막음", any("겹칩니다" in m for _, m in G["sha_row_issues"](bad)))
+    # 실적 연동 행사가격 — (매출 − 차감) × 배수 ÷ 발행주식 총수, 손실률이 기준을 «초과» 하면 낮은 배수
+    px, m = G["sha_perf_price"](10_000e6, 1_500e6, 12., 10., 1.0, 1.5, 200_000)
+    chk("실적 연동 가격 · 손실률 12% > 10% → 1.0배", px, 8_500e6/200_000, 1e-9)
+    px, m = G["sha_perf_price"](10_000e6, 1_500e6, 10., 10., 1.0, 1.5, 200_000)
+    chk("실적 연동 가격 · 손실률 10% = 기준 → 1.5배 (초과가 아니다)", px, 8_500e6*1.5/200_000, 1e-9)
+    # 단일 계약(옛 평가파일) — 회차 표가 없으면 엔진 결과 그대로이고 원 단위는 계산기준금액 기준이다
+    ts = Terms(inst="SHA", S0=1000., K0=1000., face_total=1e9, gap_m=6.,
+               rf_curve=[(1, .0226), (5, .0252)], cr_curve=[(1, .05), (5, .06)]); derive(ts)
+    Ps = G["sha_portfolio"](ts); Rs = G["sha_engine"](ts)
+    chk("단일 계약 · 풋 100 기준 = 엔진", Ps["put"], Rs["put"], 1e-12)
+    chk("단일 계약 · 풋 원 = 풋 × 계산기준금액 ÷ 100", Ps["put_krw"], Rs["put"]*1e9/100, 1e-4)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -2260,6 +2387,8 @@ def main():
     test_call_discount_rules()
     test_call_rec_and_simple_oracle()
     test_wow_trace()
+    test_sha_review_hand()
+    test_sha_rows_block_and_isolate()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
