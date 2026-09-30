@@ -991,6 +991,146 @@ def test_eir_expected_maturity():
     chk_bool("경과 뒤 — 평가기준일 이후 첫 조기상환 가능일", ex2 is not None and ex2[2] >= t2.elapsed_m and ex2[2] - 24 in (0., 3., 6.) or (ex2 is not None and abs(((ex2[2]-24) % 3)) < 1e-9))
 
 
+
+def test_emb_approach_allocation():
+    """분리 정책 — 접근법 1 은 얽힌 권리를 묶고, 접근법 2 는 조기상환권을 따로 판단한다 (실무사례 30~32쪽).
+
+    전환권이 부채이고 조기상환권을 «주계약에 포함» 으로 고른 계약에서
+
+      접근법 1 → 되돌린다(p_sep=1). 파생 = B2 − B0 (콜 내재면 − 콜), 주계약 = 100 + 콜 − (B2 − B0)
+      접근법 2 → 유지한다. 파생(전환권) = B2 − B1, 주계약(사채 + 풋) = 100 + 콜 − (B2 − B1),
+                 상각표 만기는 첫 조기상환 가능일(기대만기 · 실무사례 29쪽)
+
+    발행자 최초 인식 차이를 당기손익으로 고르면 주계약이 공정가치(B0 또는 B1)이고,
+    배분표 마지막 줄이 −(순평가금액 − 100) 이라 합계가 그대로 100 이다 (2019-I-KQA018).
+    """
+    print("\n[34] 분리 정책 접근법 1·2 · 발행자 최초 인식 차이")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    for inst, extra in (("CB", {}), ("RCPS", dict(issuer_call=2, k_w=.3, k_s=12., k_e=24.)),
+                        ("BW", dict(bw_pay=1))):
+        for ap in (1, 2):
+            t = Terms(inst=inst, rf_curve=RF, cr_curve=CR, gap_m=6.0, carry=1, conv_class="liability",
+                      emb_approach=ap, p_sep=0, **extra)
+            derive(t)
+            full, b0, b1, b2, ca, conv = G["decompose"](t)
+            rows, _ = G["allocate"](t, full, b0, b1, b2, ca)
+            kk = int(t.k_kind) == 1
+            host, der = rows[0][1], rows[1][1]
+            tag = f"{inst} 접근법 {ap}"
+            chk(f"{tag} — 배분 합계", rows[-1][1], 100.0, 1e-9)
+            if ap == 1:
+                chk_bool(f"{tag} — 풋 «주계약에 포함» 을 되돌린다", int(t.p_sep) == 1)
+                chk(f"{tag} — 파생 = B2 − B0", der, (b2 - b0) if t.k_sep else (b2 - ca - b0), 1e-9)
+                chk(f"{tag} — 주계약 = 100 + 콜 − (B2 − B0)", host, 100 + (0 if kk else ca) - (b2 - b0), 1e-9)
+            else:
+                chk_bool(f"{tag} — 풋 «주계약에 포함» 을 유지한다", int(t.p_sep) == 0)
+                chk(f"{tag} — 파생(전환권) = B2 − B1", der, (b2 - b1) if t.k_sep else (b2 - ca - b1), 1e-9)
+                chk(f"{tag} — 주계약 = 100 + 콜 − (B2 − B1)", host, 100 + (0 if kk else ca) - (b2 - b1), 1e-9)
+                ex = G["eir_expect"](t)
+                if inst != "BW":
+                    eir = G["eir_or_none"](t, full, b0, b1, b2, ca)
+                    chk_bool(f"{tag} — 상각표 만기 = 첫 조기상환 가능일", ex is not None and abs(eir[1][-1][1] - ex[0]) < 1e-9)
+                    chk(f"{tag} — 상각표 기말 = 그 시점 행사금액", eir[1][-1][5], ex[1], 1e-6)
+    # 발행자 최초 인식 차이 — 당기손익
+    for ap, ps in ((1, 1), (2, 0)):
+        t = Terms(rf_curve=RF, cr_curve=CR, gap_m=6.0, carry=1, conv_class="liability", emb_approach=ap, p_sep=ps,
+                  d1_pl=1, d1_reason="관측 가능한 시장자료")
+        derive(t)
+        full, b0, b1, b2, ca, conv = G["decompose"](t)
+        rows, _ = G["allocate"](t, full, b0, b1, b2, ca)
+        d = (b2 - ca) - 100.0
+        tag = f"당기손익 · 접근법 {ap}"
+        chk(f"{tag} — 주계약 = 공정가치", rows[0][1], b1 if ps == 0 else b0, 1e-9)
+        chk(f"{tag} — 최초 인식 손익 줄 = −차이", rows[-2][1], -d, 1e-9)
+        chk(f"{tag} — 배분 합계", rows[-1][1], 100.0, 1e-9)
+        dr = 100 + sum(-v for _, v in rows[:-1] if v < 0); cr = sum(v for _, v in rows[:-1] if v > 0)
+        chk(f"{tag} — 분개 차변 = 대변", dr, cr, 1e-9)
+
+def test_tie_tolerance():
+    """동점 허용오차가 **견주는 금액의 크기에 비례**하는가 — 엔진(tie_tol)과 엑셀(xl_tol)이 같은 규칙인가.
+
+    금액이 1,000 이하이면 1e-9 그대로라 기존 결과가 바뀌지 않는다. 주가가 극단적으로 오른 노드처럼
+    금액이 아주 크면 반올림 오차(금액 × 1e-16 의 몇 배)가 1e-9 를 넘는다. 허용오차가 고정이면 그런
+    노드에서는 동점 규칙(전환·콜은 앞설 때만, 풋·보유는 동점이면)이 아니라 반올림 오차가 판정을 정해,
+    엔진과 엑셀의 판정 표시가 갈릴 수 있다. 기대값은 규칙에서 센 값이다.
+    """
+    print("\n[35] 동점 허용오차 — 견주는 금액 크기에 비례 (엔진 · 엑셀 같은 규칙)")
+    if "tie_tol" not in G:
+        print("  (tie_tol 미도입 — 건너뜀)"); return
+    tt, xt, nd, TOL = G["tie_tol"], G["xl_tol"], G["node_decide"], G["TOL"]
+    INF = math.inf
+    # ① 규칙 — 1,000 이하 1e-9 · 그 위로 큰 쪽 금액 × 1e-12 · 한쪽이 무한대(열리지 않은 권리)면 1e-9
+    for x, y, want in ((100.0, 99.0, 1e-9), (1000.0, 1.0, 1e-9), (5e6, 3.0, 5e-6),
+                       (3.0, -2e8, 2e-4), (INF, 5e6, 1e-9), (-INF, 120.0, 1e-9)):
+        got = tt(x, y)
+        chk_bool(f"허용오차({x:g}, {y:g}) = {want:g}", abs(got - want) <= 1e-12*want)
+    # ② 엑셀 식이 같은 값을 낸다 (formulas 로 식을 직접 계산)
+    try:
+        import formulas
+        for x, y in ((100.0, 99.0), (5e6, 3.0), (3.0, -2e8), (999999.0, 120.0)):
+            v = float(formulas.Parser().ast("=" + xt(repr(x), repr(y)))[1].compile()())
+            chk_bool(f"엑셀 식 = 엔진 ({x:g}, {y:g}) → {v:g}", abs(v - tt(x, y)) <= 1e-15*tt(x, y))
+    except ImportError:
+        print("  (formulas 없음 — 엑셀 식 계산 건너뜀)")
+    # ③ 큰 금액에서 반올림 몇 칸 차이는 동점이다 — 전환은 허용오차만큼 앞설 때만 이긴다
+    big = 1e8
+    noisy = big*(1 + 4e-16)                      # 1e8 의 반올림 세 칸 (약 4.5e-8)
+    chk_bool("  (전제) 고정 1e-9 였다면 잡음이 전환을 고른다", noisy >= big + TOL)
+    chk_bool("큰 금액 · 반올림 잡음 → 전환 아님 (보유)", nd(noisy, 0.0, INF, big, False) == "hold")
+    chk_bool("콜 우선 갈래도 같다 → 전환 아님", nd(noisy, 0.0, big, big, True) != "conv")
+    chk_bool("큰 금액 · 실질 차이 0.001 → 전환", nd(big + 1e-3, 0.0, INF, big, False) == "conv")
+    chk_bool("큰 금액 · 풋과 보유 동점(잡음) → 풋", nd(0.0, big, INF, noisy, False) == "put")
+    # ④ 100 근처는 예전과 같다 — 1e-10 은 동점, 1e-8 은 실질 차이
+    chk_bool("100 근처 · 1e-10 차이 → 동점이라 풋", nd(100.0 + 1e-10, 100.0, INF, 99.0, False) == "put")
+    chk_bool("100 근처 · 1e-8 차이 → 전환", nd(100.0 + 1e-8, 100.0, INF, 99.0, False) == "conv")
+
+
+def test_exercise_date_table():
+    """행사일 대조표 — 계약일을 어느 노드에 배정했고 며칠 어긋나는지 (손으로 센 날짜와 대조).
+
+    격자: 발행·평가 2025-01-01, 만기 2027-01-01, 월 간격(24구간 · 한 구간 30.4일 · 허용 5일).
+    노드 i 의 날짜 = 2025-01-01 + round(i × 30.4167)일.
+      3회 → 91일 → 2025-04-02.  계약일 2025-04-01(3개월) 보다 1일 뒤 — «계약일 뒤 첫 노드».
+     13회 → 395일 → 2026-01-31.  계약일 2026-02-01(13개월) 보다 1일 앞 — 허용 5일 안이라 같은 날.
+                                 12회 노드(2026-01-01)는 26일 앞이라 쓰지 않는다.
+    """
+    print("\n[36] 행사일 대조표 — 계약일과 실제로 쓴 노드")
+    if "exercise_date_rows" not in G:
+        print("  (행사일 대조표 미도입 — 건너뜀)"); return
+    t = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2027-01-01", gap_m=1.0,
+              p_s=3., p_e=13., p_f=10., rf_curve=[(1, .0226), (3, .0240)],
+              cr_curve=[(1, .1409), (3, .1740)])
+    derive(t)
+    rows = [r for r in G["exercise_date_rows"](t) if r[0] == "조기상환청구권"]
+    want = [("조기상환청구권", "1회차", "2025-04-01", 3, "2025-04-02", 1, "계약일 뒤 첫 노드 (1일 뒤)"),
+            ("조기상환청구권", "2회차", "2026-02-01", 13, "2026-01-31", -1,
+             "노드가 1일 앞섬 — 허용 5일 안이라 같은 날로 봄")]
+    for w in want:
+        chk_bool(f"{w[1]} {w[2]} → 노드 {w[3]} ({w[4]}, {w[5]:+d}일)", w in rows)
+    # 표의 노드가 격자가 실제로 여는 노드와 같다 — 표는 설명이 아니라 계산이 쓰는 배정이다
+    n = int(t.n); EA = G["exercise_amounts"](t, n, t.T/n)
+    opened = sorted(i for i in range(n + 1) if EA["p_on"](i))
+    chk_bool(f"격자가 조기상환을 여는 노드 {opened} = 표의 노드", opened == sorted(r[3] for r in rows))
+    # 허용 일수 — 월 5일 · 2주 3일 · 주 1일 (노드 간격의 4분의 1, 최소 1 · 최대 5)
+    tt = G["date_tol_days"]
+    chk_bool("허용 일수 월 5 · 2주 3 · 주 1 · 하루 1",
+             (tt(1/12), tt(14/365), tt(7/365), tt(1/365)) == (5, 3, 1, 1))
+    # 2주 격자에서도 표의 모든 줄이 규칙을 지킨다 — 차이는 −허용일수 이상, 앞 노드는 허용 밖
+    t2 = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2027-01-01", gap_m=0.5,
+               p_s=3., p_e=21., p_f=3., rf_curve=[(1, .0226), (3, .0240)],
+               cr_curve=[(1, .1409), (3, .1740)])
+    derive(t2)
+    n2 = int(t2.n); nd = G["node_dates"](t2, n2, t2.T/n2); tol = tt(t2.T/n2)
+    import datetime as _dt
+    bad = 0
+    for r in G["exercise_date_rows"](t2):
+        if r[0] != "조기상환청구권" or r[3] is None: continue
+        cd = _dt.date.fromisoformat(r[2]); i = r[3]
+        first = nd[i] >= cd - _dt.timedelta(days=tol) and (i == 0 or nd[i-1] < cd - _dt.timedelta(days=tol))
+        if not (first and (nd[i] - cd).days == r[5]): bad += 1
+    chk_bool(f"2주 격자 · 모든 회차가 «허용 일수 안의 첫 노드» (어긋남 {bad})", bad == 0)
+
+
 def test_call_split_text():
     """제3자 콜옵션의 행사가 분해 — 부속예제(가치 구성비율) 대 한공회 본문 4.3.3(GS 전환확률)."""
     print("\n[27] 제3자 콜옵션 행사가 분해 · 콜옵션 유형")
@@ -1782,6 +1922,9 @@ def main():
     test_acc_mode_fv_only()
     test_call_strike_switch()
     test_eir_expected_maturity()
+    test_emb_approach_allocation()
+    test_tie_tolerance()
+    test_exercise_date_table()
     test_call_split_text()
     test_deduction_methods()
     test_div_basis()

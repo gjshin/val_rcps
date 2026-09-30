@@ -77,7 +77,8 @@ python tools/run_engagement.py /outside-repo/engagement.json --out /outside-repo
 
 `--set`은 반복 가능하며 행사일은 `p_s_date=2035-04-09`처럼 지정할 수 있습니다.
 민감도 파일은 `[ {"label":"주가 +10%", "set":{"S0":11000}} ]` 형식입니다.
-`--check-formulas`는 **출력한 전체 격자**를 LibreOffice로 재계산하여 앱 값과 대사합니다. LibreOffice 설치가 필요하며 `VALUATION_SOFFICE`로 실행 경로를 지정할 수 있습니다.
+`--check-formulas`는 **출력한 전체 격자**를 LibreOffice로 재계산하여 앱 값과 대사합니다(결과 시트의 전체·주계약·부채요소·조기상환청구권·매도청구권·전환권대가, `--accounting` 이면 상각표 유효이자율까지 — `legacy.formula_key_cells`). 결과는 묶음 안 `수식재계산검사.json` 에 남습니다. LibreOffice(Calc) 설치가 필요하며 `VALUATION_SOFFICE`로 실행 경로를 지정할 수 있습니다.
+엑셀 안에서 입력을 바꾼 뒤 다시 계산되는지는 `python3 tests/엑셀입력변경.py`(formulas) 또는 `--libreoffice` 로 확인합니다.
 조서의 생성과 재계산 검사는 구분합니다. Microsoft Excel에서의 직접 열기 검사는 해당 실행환경에서 별도로 수행해야 합니다.
 
 ## 검증 명령

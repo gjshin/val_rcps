@@ -62,7 +62,7 @@ def _headline(nm, d):
     nums = ''
     if '첫 조기상환일 행사금액' in ind:
         nums = (f" · 행사금액 {ind['첫 조기상환일 행사금액']:,.2f} / 상각후원가 "
-                f"{ind['같은 시점 상각후원가']:,.2f} · 차이 {ind['차이']*100:.1f}% (비교기준 {ind.get('비교기준 (평가자 설정)', L.SPLIT_TOL):.0%} · 평가자 설정)")
+                f"{ind['같은 시점 상각후원가']:,.2f} · 차이 {ind['차이']*100:.1f}% (비교기준 {ind.get('비교기준 (회계정책)', L.SPLIT_TOL):.0%} · 회계정책)")
     return f"**{nm} — {d['결론']}**{nums}"
 
 
@@ -70,7 +70,11 @@ def split_section(t, full, b0, b1, b2, ca, LB, run):
     ah = L.acc_host(t, full, b0, b1, b2, ca)
     sp = L.split_test(t, full, b0, b1, b2, ca, [] if ah is None else L.eir_table(t, ah)[1])
     st.markdown('#### 분리 판정 (앱 판정 · 초안)')
-    st.caption('풋·콜이 주계약과 밀접한지를 전환권 분리 전에 판단합니다 (1109 B4.3.5 말미).')
+    st.caption('분리 정책 — ' + ('접근법 1 (얽힌 권리를 먼저 묶고 판단)' if L.emb_policy(t) == 1 else
+                                 '접근법 2 (권리마다 판단한 뒤 분리 대상끼리 묶기)')
+               + ' · 한공회 실무사례 30~32쪽. 풋·콜이 주계약과 밀접한지를 전환권 분리 전에 판단합니다 (1109 B4.3.5 말미).'
+               + (' 평가기준일이 발행일보다 뒤이므로 다시 판정하지 않고 최초 인식 때의 결론을 이어 씁니다 (1109 B4.3.11).'
+                  if t.elapsed_m > 0.01 else ''))
     items = ([('warrant', '신주인수권', 'embedded')] if L.is_bw(t) else []) + \
             [('put', LB['put'], 'split_put'), ('call', LB['call'], 'third_party_call' if t.k_third else 'split_call')]
     for key, nm, topic in items:
@@ -89,12 +93,19 @@ def split_section(t, full, b0, b1, b2, ca, LB, run):
             if d['근거']:
                 st.caption('근거 · ' + ' · '.join(d['근거']))
             st.write('평가방법 — ' + L.inst_text(t, d['평가']))
+            if key == 'put' and d['지표'] and d.get('회차'):
+                # 행사일마다 견준 표 — 조서 «분리 판단» 시트의 행사일별 표와 같은 값이다.
+                st.dataframe(pd.DataFrame([[round(m, 2), max(0.0, (m - t.elapsed_m)/12), pv, bv, f'{g*100:.1f}%']
+                                           for m, pv, bv, g in d['회차']], columns=L.SPLIT_DATE_COLS),
+                             hide_index=True, use_container_width=True)
+                st.caption('행사일마다 행사금액과 같은 시점 상각후원가를 견주고, 가장 큰 차이로 판정합니다. '
+                           '조서 «분리 판단» 시트의 행사일별 표와 같은 값입니다.')
         with c2:
             source(topic)
         memo(f'split_{key}', run)
     if not sp['put']['설정일치']:
         st.error(f"설정 불일치 — 판정 「{sp['put']['결론']}」, 입력 「"
-                 + ('분리' if int(t.p_sep) else '분리하지 않음') + "」. 입력의 「분해방법·기간 기준」에서 맞추십시오.")
+                 + ('분리하지 않음' if L.put_in_host(t) else '분리') + "」. 입력의 「분해방법·기간 기준」에서 맞추십시오.")
     if not sp['call']['설정일치']:
         st.error(f"설정 불일치 — 판정 「{sp['call']['결론']}」, 입력 「"
                  + ('별도 금융상품' if t.k_sep else '복합내재파생에 포함') + "」. 입력의 「분해방법·기간 기준」에서 맞추십시오.")
@@ -273,7 +284,9 @@ def extra_topics(run):
                  dict(id='day1_inputs', title='[최초 인식 차이] 입력값이 거래 당시와 맞나요?',
                       questions=['희석 반영 여부, 할인율, 변동성']),
                  dict(id='day1_price', title='[최초 인식 차이] 거래가격이 공정가치가 아닐 수 있나요?',
-                      questions=['특수관계자·이해관계인 거래, 다른 권리와 묶인 거래 (1113 B4)'])]
+                      questions=['특수관계자·이해관계인 거래, 다른 권리와 묶인 거래 (1113 B4)']),
+                 dict(id='day1_nonfin', title='[최초 인식 차이] 차이가 금융상품이 아닌 다른 것의 대가인가요?',
+                      questions=['제3자에게 준 콜·용역 대가 등 — 자산 요건을 못 채우면 비용 (1109 B5.1.1 · 질의회신 2019-I-KQA018)'])]
     if not rows:
         return
     st.markdown('#### 추가 검토 항목')

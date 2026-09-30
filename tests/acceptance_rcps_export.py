@@ -117,7 +117,10 @@ def main():
                 data=bundle.read('formula_review.xlsx' if formula else 'value_review.xlsx')
             path=a.out/f'{days}_{"formula" if formula else "value"}.xlsx';path.write_bytes(data)
             check=inspect_workbook(data);assert not check['errors']
-            if a.recalculate and formula:check.update(recalculate_and_compare(data))
+            if a.recalculate and formula:
+                _r=run.raw
+                _eir=legacy.eir_or_none(run.terms,_r['full'],_r['b0'],_r['b1'],_r['b2'],_r['ca'])
+                check.update(recalculate_and_compare(data,expected=legacy.formula_key_cells(run.terms,_r,_eir)))
             checks.append(check)
             print(f'{days} days: {option} saved; {time.monotonic()-start:.1f}s',flush=True)
         reports.append(dict(days=days,intervals=run.terms.n,amounts=run.summary['amounts_100'],checks=checks,seconds=time.monotonic()-start))

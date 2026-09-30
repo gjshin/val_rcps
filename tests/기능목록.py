@@ -58,6 +58,9 @@ MANIFEST = {
     "p_mode":      ("조기상환 행사금액 산정", {"fixed": "고정 금액", "accrue": "보장수익률 복리 누적"}, P_BOND),
     "p_cmp":       ("조기상환 보장 복리 횟수", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회", 12: "월"}, P_BOND),
     "p_sep":       ("조기상환권 회계", {1: "분리 · 파생상품부채", 0: "주계약에 포함 (분리하지 않음)"}, P_BOND),
+    # 복수 내재파생을 언제 묶는가 — 회계정책 (한공회 실무사례 30~32쪽)
+    "emb_approach": ("내재파생 분리 정책", {1: "접근법 1 — 얽힌 권리를 먼저 묶고 판단",
+                                        2: "접근법 2 — 권리마다 판단한 뒤 분리 대상끼리 묶기"}, P_BOND),
     "p_lost_int":  ("행사금액이 상실이자 보상 수준", {0: "아니다", 1: "그렇다 (B4.3.5(5)(나))"}, P_BOND),
     # ── 발행자 콜 ──
     "k_method":    ("매도청구권 평가방법", {0: "유무가치비교", 1: "옵션차익 · GS식 전환가중확률할인",
@@ -165,7 +168,7 @@ BLOCKS = [
      "ui", "tests/손계산대조.py::test_all_step_risk_neutral_probabilities"),
     ("GS + 매도청구권 평가방법 1·2", "compat() 이 k_method=0 으로 되돌린다. 사이드바 잠금 캡션·validate 경고·derive 되돌림이 같은 문구 (COMPAT_GS_KMETHOD)",
      "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
-    ("전환권 부채 + 조기상환권 미분리", "compat() 이 p_sep=1 로 되돌린다 (COMPAT_PSEP). 값은 전부터 같았고 이제 경고가 붙는다",
+    ("분리 정책 접근법 1 + 전환권 부채 + 조기상환권 미분리", "compat() 이 p_sep=1 로 되돌린다 (COMPAT_PSEP). 접근법 2 면 되돌리지 않는다",
      "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
     ("GS 또는 전환권 부채 + BDT", "compat() 이 put_bdt=0 으로 되돌린다 (COMPAT_BDT). 값은 전부터 같았고 이제 경고가 붙는다",
      "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
@@ -357,6 +360,15 @@ def collect_coverage(G):
         "test_call_strike_switch": [("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1),
                                     ("RCPS", "k_less_cpn", 0), ("BW", "k_less_cpn", 0), ("CB", "call", True)],
         "test_eir_expected_maturity": [("CB", "p_sep", 0), ("CB", "p_sep", 1), ("CB", "k_sep", 1)],
+        # 분리 정책 — 세 상품 · 두 접근법 · 발행자 최초 인식 차이 당기손익
+        "test_emb_approach_allocation": [("CB", "emb_approach", 1), ("CB", "emb_approach", 2),
+                                         ("RCPS", "emb_approach", 1), ("RCPS", "emb_approach", 2),
+                                         ("BW", "emb_approach", 1), ("BW", "emb_approach", 2),
+                                         ("CB", "p_sep", 0), ("CB", "conv_class", "liability")],
+        # 동점 허용오차 — 금액 크기에 비례 (엔진 tie_tol · 엑셀 xl_tol), 두 우선순위 갈래
+        "test_tie_tolerance": [("CB", "pc_order", 0), ("CB", "pc_order", 1)],
+        # 행사일 대조표 — 손으로 센 노드 날짜 · 격자가 여는 노드와 같은가 · 2주 격자 규칙
+        "test_exercise_date_table": [("CB", "mid", False), ("CB", "p_sched", "")],
         # 이미 지급한 이자·배당의 공제 방식 — 세 권리 · 세 상품 · 세 방식을 독립 산식과 대조
         "test_deduction_methods": [("CB", "p_less_cpn", 0), ("CB", "p_less_cpn", 1), ("CB", "p_less_cpn", 2), ("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1), ("CB", "k_less_cpn", 2), ("CB", "m_less_cpn", 0), ("CB", "m_less_cpn", 1), ("CB", "m_less_cpn", 2), ("RCPS", "p_less_cpn", 0), ("RCPS", "p_less_cpn", 1), ("RCPS", "p_less_cpn", 2), ("RCPS", "k_less_cpn", 0), ("RCPS", "k_less_cpn", 1), ("RCPS", "k_less_cpn", 2), ("RCPS", "m_less_cpn", 0), ("RCPS", "m_less_cpn", 1), ("RCPS", "m_less_cpn", 2), ("BW", "p_less_cpn", 0), ("BW", "p_less_cpn", 1), ("BW", "p_less_cpn", 2), ("BW", "k_less_cpn", 0), ("BW", "k_less_cpn", 1), ("BW", "k_less_cpn", 2), ("BW", "m_less_cpn", 0), ("BW", "m_less_cpn", 1), ("BW", "m_less_cpn", 2)],
         "test_div_basis": [("RCPS", "div_basis", 0), ("RCPS", "div_basis", 1), ("RCPS", "div_mode", 1)],

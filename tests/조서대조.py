@@ -297,6 +297,21 @@ CASES = [
      dict(inst="BW", bw_pay=0, bw_detach=1, conv_class="liability", k_w=0.)),
     ("BW 현금납입 · 중간평가",
      dict(inst="BW", bw_pay=0, bw_detach=0, d_base="2025-12-31", k_w=0.)),
+    # ── 분리 정책 접근법 2 (한공회 실무사례 30~32쪽) — 조기상환권을 따로 판단해 주계약에 남긴다 ──
+    ("접근법 2 · 전환권 부채 · 풋 주계약", dict(conv_class="liability", emb_approach=2, p_sep=0)),
+    ("접근법 2 · 전환권 부채 · 콜 내재 · 풋 주계약",
+     dict(conv_class="liability", emb_approach=2, p_sep=0, k_sep=0, k_third=0, k_transfer=0)),
+    ("접근법 2 · 전환권 자본 · 콜 내재 · 풋 주계약",
+     dict(emb_approach=2, p_sep=0, k_sep=0, k_third=0, k_transfer=0)),
+    ("접근법 2 · 전환권 부채 · 풋 분리", dict(conv_class="liability", emb_approach=2, p_sep=1)),
+    # ── 발행자 최초 인식 차이를 당기손익으로 (회계기준원 2019-I-KQA018 · 1109 B5.1.2A(1)) ──
+    ("최초 인식 차이 당기손익 · 전환권 부채", dict(conv_class="liability", d1_pl=1, d1_reason="관측")),
+    ("최초 인식 차이 당기손익 · 접근법 2 · 풋 주계약",
+     dict(conv_class="liability", emb_approach=2, p_sep=0, d1_pl=1, d1_reason="관측")),
+    ("최초 인식 차이 당기손익 · 전체 지정",
+     dict(conv_class="liability", fvpl_whole=1, d1_pl=1, d1_reason="관측")),
+    ("최초 인식 차이 당기손익 · 콜 내재",
+     dict(conv_class="liability", d1_pl=1, d1_reason="관측", k_sep=0, k_third=0, k_transfer=0)),
 ]
 
 
@@ -348,12 +363,18 @@ def build(G, over, path):
                                conv_start=_cs, put_start=_ps), t.model)
     ctp1 = G["call_third_party"](t, full, 1)
     ctp2 = G["call_third_party"](t, full, 2)
+    eir = G["eir_or_none"](t, full, b0, b1, b2, ca)
     open(path, "wb").write(
-        G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv,
-                                G["eir_or_none"](t, full, b0, b1, b2, ca)))
+        G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv, eir))
 
     import openpyxl
     wb = openpyxl.load_workbook(path)
+    # 분리 판단의 유효이자율 칸은 라벨로 찾는다 — 시트 이름을 바꾸기 전에.
+    split_r = None
+    if "분리 판단" in wb.sheetnames:
+        for (c,) in wb["분리 판단"].iter_rows(min_col=2, max_col=2):
+            if isinstance(c.value, str) and c.value.startswith("유효이자율 (자본요소 분리 전"):
+                split_r = c.row
     mp = {nm: f"S{i:02d}" for i, nm in enumerate(wb.sheetnames)}
     for ws in wb.worksheets:
         for row in ws.iter_rows():
@@ -375,7 +396,11 @@ def build(G, over, path):
                 al=al, eq=(t.conv_class == "equity"), sep=(t.k_sep != 0),
                 fvpl=G["fvpl_on"](t),
                 nosep=(t.conv_class == "equity" and t.k_sep != 0
-                       and int(t.p_sep) == 0)), \
+                       and int(t.p_sep) == 0),
+                # 유효이자율 — 상각표(인식한 주계약)와 분리 판단(자본요소 분리 전 금액)
+                eir=eir, sh_m=mp.get("상각표"),
+                eir0=(G["eir_table"](t, G["split_base"](t, ca))[0] if split_r else None),
+                split_r=split_r, sh_j=mp.get("분리 판단")), \
         mp["결과"], mp["회계처리"]
 
 
@@ -419,7 +444,7 @@ def main():
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "wb.xlsx")
             eng, res, acc = build(G, over, path)
-            got = solve(path, (res, acc))
+            got = solve(path, tuple(x for x in (res, acc, eng["sh_m"], eng["sh_j"]) if x))
         print(f"\n[{lbl}]")
         for nm, cell, key in ROWS:
             want = eng[key] if key else eng["b1"] - eng["b0"]
@@ -472,33 +497,56 @@ def main():
                   % ("분개 대차", f"{drr:.4f}" if drr is not None else "없음",
                      f"{crr:.4f}" if crr is not None else "없음", want_dr,
                      "" if okj else "★"))
-            # 배분 각 줄이 allocate() 와 같은가
-            # 7 주계약 · 8 부채요소 · 9 조기상환권 · 10 복합내재파생 · 11 매도청구 · 12 전환권대가
-            if eng["fvpl"]:
-                # 전체 지정이면 첫 줄이 복합계약 한 줄이고 나머지 요소별 줄은 빈다.
-                rows_ord = [("복합계약 전체", 7), ("매도청구권", 11)]
-            elif eng["eq"] and eng["nosep"]:
-                rows_ord = [("부채요소", 8), ("매도청구권", 11), ("전환권대가", 12)]
-            elif eng["eq"]:
-                rows_ord = [("주계약", 7), ("조기상환청구권", 9), ("매도청구권", 11),
-                            ("전환권대가", 12)]
-            else:
-                rows_ord = [("주계약", 7), ("복합내재파생상품", 10), ("매도청구권", 11)]
-            if not eng["sep"]:
-                # 콜을 내재파생에 넣으면 자산 줄이 비고 파생 줄이 순액이 된다
-                rows_ord = [(nm, r) for nm, r in rows_ord if nm != "매도청구권"]
-                if eng["eq"]:
-                    rows_ord = [("주계약", 7), ("복합내재파생상품", 10),
-                                ("전환권대가", 12)]
-            for nm, r in rows_ord:
-                want = want_al.get(nm)
-                if nm == "매도청구권": want = -eng["ca"]
-                have = have_al.get(r)
+            # 배분 각 줄이 allocate() 와 같은가 — 엔진 줄마다 수식 조서의 자리를 이름으로 찾는다.
+            # 7 주계약(또는 전체) · 8 부채요소 · 9 조기상환권 · 10 파생상품부채(묶음·전환권)
+            # · 11 파생상품자산(매도청구권) · 12 전환권대가 또는 최초 인식 손익(부채일 때)
+            def _slot(k):
+                if k.startswith(("주계약", "복합계약 전체")): return 7
+                if k.startswith("부채요소"): return 8
+                if k.startswith("조기상환청구권"): return 9
+                if "파생상품자산" in k: return 11
+                if "파생상품부채" in k: return 10
+                if k.startswith(("전환권대가", "최초 인식")): return 12
+                return None
+            want_rows = {}
+            for k, v in eng["al"][:-1]:
+                _s = _slot(k)
+                want_rows[_s] = want_rows.get(_s, 0.0) + v
+            if None in want_rows:
+                bad += 1
+                print("   ★ 수식 조서에 자리가 없는 배분 줄이 있다:", [k for k, _ in eng["al"][:-1] if _slot(k) is None])
+            for r in range(7, 13):
+                want, have = want_rows.get(r), have_al.get(r)
+                if (want is None or abs(want) < 1e-9) and (have is None or abs(have) < 1e-9):
+                    continue                     # 둘 다 비었다 — 이 계약에 없는 줄
                 ok = have is not None and want is not None and abs(have - want) < 1e-4
                 if not ok: bad += 1
                 print("   %-22s 조서 %11s · 배분표 %9s  %s"
-                      % ("배분 · " + nm, f"{have:.4f}" if have is not None else "없음",
+                      % (f"배분 · {r}행", f"{have:.4f}" if have is not None else "없음",
                          f"{want:.4f}" if want is not None else "없음", "" if ok else "★"))
+        # 유효이자율도 엑셀 수식(이분법)으로 구한다 — 엔진과 같은 값이어야 하고,
+        # 그 이자율로 돈 상각표의 마지막 기말이 상환금액과 맞아야 한다.
+        if eng["eir"] is not None and eng["sh_m"]:
+            r_e, rows_e, red_e, _ = eng["eir"]
+            M = got[eng["sh_m"]]
+            have, last = M.get("C10"), M.get(f"H{15 + len(rows_e) - 1}")
+            ok = have is not None and abs(have - r_e) <= 1e-9*max(1.0, abs(r_e))
+            okl = last is not None and abs(last - red_e) < 1e-6
+            bad += (not ok) + (not okl)
+            print("   %-22s 조서 %11s · 엔진 %10.6f%%  %s"
+                  % ("상각표 유효이자율", f"{have*100:.6f}%" if have is not None else "없음",
+                     r_e*100, "" if ok else "★"))
+            print("   %-22s 조서 %11s · 상환 %11.4f  %s"
+                  % ("상각표 마지막 기말", f"{last:.4f}" if last is not None else "없음",
+                     red_e, "" if okl else "★"))
+        if eng["split_r"]:
+            have = got[eng["sh_j"]].get(f"C{eng['split_r']}")
+            want = eng["eir0"]
+            ok = have is not None and abs(have - want) <= 1e-9*max(1.0, abs(want))
+            bad += not ok
+            print("   %-22s 조서 %11s · 엔진 %10.6f%%  %s"
+                  % ("분리 판단 유효이자율", f"{have*100:.6f}%" if have is not None else "없음",
+                     want*100, "" if ok else "★"))
     print("\n" + ("모든 항목 일치" if bad == 0 else f"★ {bad}건 불일치"))
     return 0 if bad == 0 else 1
 

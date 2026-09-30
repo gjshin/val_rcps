@@ -17,7 +17,7 @@ from valuation import legacy
 from valuation.case import inspect_case
 from valuation.market_data import query_spec, make_pack, validate_pack, parse_price_table, export_volatility_workbook
 from valuation.service import calculate, export_bundle
-from valuation.xlsx_validation import inspect_workbook
+from valuation.xlsx_validation import inspect_workbook, compare_cells
 from test_v2_workflow import synthetic
 from test_unified_workflow import prices
 
@@ -28,6 +28,25 @@ OMITTED = {'검토기록','V2_검토기록','V2_계약과가정','V2_추가권�
 def workbook(run, formula=False, detail=False, accounting=False):
     with zipfile.ZipFile(io.BytesIO(export_bundle(run, formula=formula, detail=detail, accounting=accounting))) as z:
         return load_workbook(io.BytesIO(z.read('formula_review.xlsx' if formula else 'value_review.xlsx')))
+
+
+def test_recalc_check_compares_app_values_not_a_removed_sheet():
+    """재계산 검사가 조서에서 뺀 «수식대사» 시트 대신 앱 값을 들고 와 견준다."""
+    run = calculate(synthetic())
+    r = run.raw
+    eir = legacy.eir_or_none(run.terms, r['full'], r['b0'], r['b1'], r['b2'], r['ca'])
+    keys = legacy.formula_key_cells(run.terms, r, eir)
+    assert {k[0] for k in keys} >= {'전체 (적용 물량)', '주계약', '매도청구권 (적용값)', '상각표 유효이자율'}
+    wb = workbook(run, formula=True, accounting=True)
+    for label, sheet, cell, _ in keys:           # 모두 수식 칸을 가리킨다 — 값으로 굳은 칸이 아니다
+        v = wb[sheet][cell].value
+        assert isinstance(v, str) and v.startswith('='), (label, sheet, cell, v)
+    from openpyxl import Workbook
+    fake = Workbook(); ws = fake.active; ws.title = '결과'
+    ws['C10'] = 100.0; ws['C16'] = 37.5
+    rows = compare_cells(fake, [('a', '결과', 'C10', 100.0 + 1e-9), ('b', '결과', 'C16', 37.6),
+                                ('c', '상각표', 'C10', 0.1)])
+    assert [x[4] for x in rows] == ['일치', '불일치', '불일치']
 
 
 @pytest.mark.parametrize('days', [0,7,14])

@@ -51,13 +51,25 @@ ACCOUNTING_ONLY = frozenset({"d1_pl", "d1_reason"})
 
 
 def day1_summary(terms, raw):
-    """투자자 최초 인식(평가기준일 = 발행일)의 모형값 · 거래가격 100 · 차이."""
-    if legacy.is_sha(terms) or not legacy.holder_on(terms) or terms.elapsed_m > 0.01:
+    """최초 인식(평가기준일 = 발행일)의 모형값 · 거래가격 100 · 차이 — 투자자와 발행자.
+
+    발행자는 회계기준원 질의회신 2019-I-KQA018 대로 순평가금액(콜 차감 후)을 거래가격과 견준다.
+    전환권이 부채(복합계약)면 이연(기본) 또는 당기손익을 고르고, 자본이면 차이가 자본요소에 흡수된다.
+    """
+    if legacy.is_sha(terms) or terms.elapsed_m > 0.01:
         return None
-    net = float(raw["b2"] - raw["ca"])
+    if legacy.holder_on(terms):
+        net = float(raw["b2"] - raw["ca"])
+        choice = True
+        mode = "당기손익" if int(terms.d1_pl) == 1 else "이연"
+    else:
+        d1 = legacy.issuer_day1(terms, raw["b0"], raw["b1"], raw["b2"], raw["ca"])
+        if d1 is None:
+            return None
+        net, choice, mode = float(d1["net"]), bool(d1["hybrid"]), d1["mode"]
     diff = net - 100.0
-    mode = "당기손익" if int(terms.d1_pl) == 1 else "이연"
     return {"model": net, "price": 100.0, "diff": diff, "mode": mode,
+            "view": "holder" if legacy.holder_on(terms) else "issuer", "choice": choice,
             "nums": f"모형값 {net:,.4f} / 거래가격 100 / 차이 {diff:+,.4f}",
             "verdict": ("차이 없음 (보정됨)" if abs(diff) < 0.005 else f"차이 {diff:+,.4f} — 처리: {mode}")}
 

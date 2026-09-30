@@ -371,7 +371,7 @@ def judgment_rows(run):
             if not d or not d['있음']:
                 continue
             ind = d['지표']
-            nums = (f"행사금액 {ind['첫 조기상환일 행사금액']:,.4f} / 상각후원가 {ind['같은 시점 상각후원가']:,.4f} / 차이 {ind['차이']:.2%} (비교기준 {ind.get('비교기준 (평가자 설정)', legacy.SPLIT_TOL):.0%} · 평가자 설정)"
+            nums = (f"행사금액 {ind['첫 조기상환일 행사금액']:,.4f} / 상각후원가 {ind['같은 시점 상각후원가']:,.4f} / 차이 {ind['차이']:.2%} (비교기준 {ind.get('비교기준 (회계정책)', legacy.SPLIT_TOL):.0%} · 회계정책)"
                     if '첫 조기상환일 행사금액' in ind else '')
             add('분리 판정', nm, legacy.inst_text(t, d['결론'] + ' — ' + ' '.join(d['이유'])), nums, f'split_{key}', topic)
         if t.k_w > 0:
@@ -397,7 +397,8 @@ def judgment_rows(run):
 
 
 DAY1_TOPICS = [('day1_rights', '모형이 빠뜨린 권리가 있나요?'), ('day1_inputs', '입력값이 거래 당시와 맞나요?'),
-               ('day1_price', '거래가격이 공정가치가 아닐 수 있나요? (1113 B4)')]
+               ('day1_price', '거래가격이 공정가치가 아닐 수 있나요? (1113 B4)'),
+               ('day1_nonfin', '차이가 금융상품이 아닌 다른 것의 대가인가요? (1109 B5.1.1 · 2019-I-KQA018)')]
 
 
 def finish_calculation_workbook(wb, run, *, formula=False, accounting=False, judgment=False):

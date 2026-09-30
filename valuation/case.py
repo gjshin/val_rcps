@@ -23,7 +23,7 @@ MARKET = frozenset({
     "rvol_rating", "rvol_tenor", "rvol_how", "sha_spread",
 })
 METHOD = frozenset({
-    "d_base", "model", "gap_m", "grid_days", "carry", "view", "conv_class", "p_sep", "k_sep",
+    "d_base", "model", "gap_m", "grid_days", "carry", "view", "conv_class", "emb_approach", "p_sep", "k_sep",
     "k_method", "k_split", "put_bdt", "fvpl_whole", "bs_target", "bs_net",
     "prev_hold", "d1_pl", "d1_reason", "prev_host", "prev_deriv", "eir_issue", "cur_periods", "settle_amt",
     "split_tol", "split_base_in", "split_base_why",

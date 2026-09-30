@@ -909,10 +909,18 @@ if _shared_run is None:
 
                 st.divider()
                 st.markdown("**회계 처리**")
-                _psok = (t.conv_class == "equity" and t.k_sep != 0)
+                t.emb_approach = st.selectbox(
+                    "내재파생 분리 정책 (회계정책)", [1, 2], index=1 if int(getattr(t, "emb_approach", 1)) == 2 else 0,
+                    format_func=lambda x: ("접근법 1 — 얽힌 권리를 먼저 묶고 판단 (기본)" if x == 1 else
+                                           "접근법 2 — 권리마다 판단한 뒤 분리 대상끼리 묶기"),
+                    help="한공회 실무사례 30~32쪽 — 복수의 내재파생상품을 언제 묶는지는 기준서가 정하지 않아 "
+                         "회사가 회계정책으로 고르고 비슷한 거래에 같게 씁니다. 접근법 1은 전환권(부채)·"
+                         "조기상환권·발행회사 콜처럼 얽힌 권리를 먼저 묶고, 접근법 2는 권리마다 분리 여부를 "
+                         "판단한 뒤 분리 대상끼리 묶습니다.")
+                _psok = psep_free(t)
                 t.p_sep = 1 if st.selectbox(
                     inst_text(t, "조기상환권 처리"), [1, 0], index=0 if int(t.p_sep) else 1,
-                    format_func=lambda x: (("분리 — 전환권과 묶어 복합내재파생상품" if t.conv_class != "equity"
+                    format_func=lambda x: (("분리 — 얽힌 권리와 묶어 복합내재파생상품" if t.conv_class != "equity"
                                             else "분리 · 파생상품부채") if x
                                            else "주계약에 포함 (분리하지 않음)"),
                     disabled=not _psok,
@@ -922,6 +930,10 @@ if _shared_run is None:
                 if not _psok:
                     st.caption(inst_text(t, COMPAT_PSEP))
                     t.p_sep = 1
+                elif int(t.p_sep) == 0 and t.conv_class != "equity":
+                    st.caption("분리 정책 접근법 2 — 조기상환권을 주계약에 남기고 전환권만 파생상품부채로 "
+                               "둡니다. 주계약(사채 + 조기상환권)을 상각후원가로 두고, 상각표의 만기는 "
+                               "**첫 조기상환 가능일(기대만기)** 입니다.")
                 elif int(t.p_sep) == 0:
                     st.caption("부채요소(사채 + 조기상환권)를 통째로 상각후원가로 둡니다. "
                                "파생상품부채를 세우지 않고, 상각표도 부채요소에서 "
@@ -2382,17 +2394,23 @@ _detail_sections = ["구성요소", "회계처리", "판단·근거", "이자율
 _detail_section = st.selectbox("상세 분석 항목", _detail_sections[:-1] if _shared_run is not None else _detail_sections, key="_legacy_section")
 
 if _detail_section == _detail_sections[0]:
+    # «뜻» 열 — 같은 «주계약» 이 공정가치(여기)와 최초 장부금액(회계처리)으로 두 번 나오므로,
+    # 여기 숫자가 무엇인지 이름으로 밝힌다. 차액은 그 권리의 증분가치다.
     df = pd.DataFrame([
-        [f"B0  {LB['host'].split(' (')[0]} — 옵션 없음", b0, None, "—"],
-        [f"B1  {LB['put']} 추가", b1, b1-b0, LB["put"]],
+        [f"B0  {LB['host'].split(' (')[0]} — 옵션 없음", b0, None, "—",
+         "주계약 공정가치 (최초 장부금액은 「회계처리」)"],
+        [f"B1  {LB['put']} 추가", b1, b1-b0, LB["put"],
+         f"{LB['put']}을 포함한 부채요소 · 차액 = {LB['put']}의 증분가치"],
         [inst_text(t, "B2  전환권 추가"), b2, b2-b1,
          inst_text(t, "전환권")
          + (" (존속기간 만료 시 자동전환 포함)" if auto_conv(t) else "")
-         + (" — 행사해도 사채가 남는다" if bw_cash(t) else "")],
+         + (" — 행사해도 사채가 남는다" if bw_cash(t) else ""),
+         f"{LB['call']} 반영 전 {LB['inst']} 공정가치"],
         [f"B3  {LB['call']} 반영", b2-ca, -ca,
          (f"{LB['call']} (전체에 걸림)" if issuer_redeem(t)
-          else f"{LB['call']} ({t.k_w*100:.0f}% 한도)")]],
-        columns=["단계", "가치", "차액", "해당 옵션"])
+          else f"{LB['call']} ({t.k_w*100:.0f}% 한도)"),
+         f"{LB['call']} 반영 후 순평가금액"]],
+        columns=["단계", "가치", "차액", "해당 옵션", "뜻"])
     st.dataframe(df.style.format({"가치": "{:,.2f}", "차액": "{:+,.2f}"}, na_rep="—"),
                  use_container_width=True, hide_index=True)
     _sc = ipo_scenarios(t)
@@ -2470,12 +2488,23 @@ if _detail_section == _detail_sections[1]:
     else:
         alloc_rows, alloc_note = allocate(t, full, b0, b1, b2, ca)
         af = allocate_full(t, alloc_rows + alloc_extra(t, ca))
-        st.dataframe(pd.DataFrame(af, columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
-            {"100 기준": "{:,.2f}", "전액 기준 (원)": "{:,.0f}"}),
+        st.dataframe(pd.DataFrame(af, columns=["항목", "최초 장부금액 (100 기준)", "전액 기준 (원)"]).style.format(
+            {"최초 장부금액 (100 기준)": "{:,.2f}", "전액 기준 (원)": "{:,.0f}"}),
             use_container_width=True, hide_index=True)
         st.caption(f"{'발행총액' if is_rcps(t) else '전자등록총액'} {t.face_total:,.0f}원 "
                    "기준으로 환산했습니다.")
         st.caption(alloc_note)
+        # 발행자 최초 인식 대사 — 조서 「회계처리」 시트의 같은 표 (회계기준원 2019-I-KQA018)
+        _d1x = issuer_day1(t, b0, b1, b2, ca)
+        if _d1x:
+            st.markdown("### 최초 인식 대사 — 발행자")
+            st.dataframe(pd.DataFrame([[k, v, v/100*t.face_total] for k, v in issuer_day1_rows(_d1x)],
+                                      columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
+                {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
+                use_container_width=True, hide_index=True)
+            st.caption(ISSUER_DAY1 if _d1x["hybrid"] else
+                       "전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수됩니다 (1032 문단 31). "
+                       "최초 인식 손익은 생기지 않습니다.")
         if t.issue_cost > 0:
             _cs, _c100 = cost_split(t, alloc_rows)
             _F = t.face_total/100
@@ -2501,11 +2530,7 @@ if _detail_section == _detail_sections[1]:
                               else "잔여 주계약이 0 이하라 상각표가 없습니다 (아래 상각표 탭)."))
         # 분개는 배분표를 그대로 뒤집는다 — 조서와 같은 규칙. 음수 줄(자산)만
         # 차변으로 가고 나머지는 대변이다. 따로 쓰면 두 표가 어긋난다.
-        _je = [("현금", 100.0, None)]
-        for _k, _v in alloc_rows[:-1]:
-            _nm = inst_text(t, _k.split(" · ")[0])
-            if _v < 0: _je.append((f"파생상품자산 ({_nm})", -_v, None))
-            else:      _je.append((f"    {_nm}", None, _v))
+        _je = [(inst_text(t, _k).replace("　", "    "), _dr, _cr) for _k, _dr, _cr in alloc_journal(alloc_rows)]
         _w = max(len(k) for k, _, _ in _je) + 2
         _ln = [f"차) {k:<{_w}} {dr:>12,.4f}" if dr is not None else
                f"    대) {k.strip():<{_w-4}} {cr:>12,.4f}" for k, dr, cr in _je]
@@ -3044,7 +3069,7 @@ if _detail_section == _detail_sections[8]:
                  if _neg < -1e-9 else ""))),
             ("행사할 수 없는 자리에서 권리가 작동하지는 않는가",
              (f"작동하지 않는다 — {len(full['memo']):,}개 노드를 전부 확인했고 "
-              f"어긋난 곳이 없다. 계약일 이후 첫 노드부터 주기마다만 열리고, "
+              f"어긋난 곳이 없다. 계약일에 배정한 노드에서만 열리고(아래 «행사일 대조»), "
               f"매도청구가 열리는 노드는 {_flags}개다"
               if _ill == 0 else f"**확인 필요** — 어긋난 노드 {_ill}개")),
             ("지분·부채 분해가 모형과 맞는가",
@@ -3108,6 +3133,16 @@ if _detail_section == _detail_sections[8]:
                        "의심하십시오. 매도청구권은 이 시험에 넣지 않습니다 — "
                        "한도·의무보유가 걸려 있어 극단에서도 단순한 값으로 "
                        "붙지 않습니다.")
+
+    # ── 계약일과 실제로 쓴 노드 — 조서 «분리 판단» 시트와 같은 표 ──
+    _exr = exercise_date_rows(t)
+    if _exr:
+        with st.expander("행사일 대조 — 계약일과 실제로 쓴 노드"):
+            st.caption(exdate_head(t))
+            st.dataframe(pd.DataFrame([["—" if v is None else v for v in _row] for _row in _exr],
+                                      columns=EXDATE_COLS),
+                         use_container_width=True, hide_index=True)
+            st.caption("규칙 — " + EXDATE_RULE)
 
     st.markdown("**신용스프레드가 발행조건과 맞는가**")
     st.caption('거래가격이 공정가치이며 동일한 권리 범위라는 전제를 검토한 경우, 목표 100과 모형가치의 차이를 금리 보정으로 비교합니다. 거래가격 차이의 원인이 신용스프레드라고 단정하지 않습니다.')
