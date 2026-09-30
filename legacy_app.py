@@ -2711,6 +2711,11 @@ if _detail_section == _detail_sections[2]:
         t.split_base_why = f7.text_input(
             "출발 금액을 직접 넣은 근거", value=t.split_base_why,
             disabled=t.split_base_in <= 0)
+        if t.split_base_in > 0 and not str(t.split_base_why).strip():
+            # 근거 없는 직접 입력은 적용하지 않는다 — 평가 화면(inspect_case)과 같은 규칙.
+            st.error("분리 판단 출발 금액을 직접 넣었으면 그 근거(실제 회계상 배분액 등)를 적으십시오. "
+                     "근거를 적기 전까지는 자동값으로 판단합니다.")
+            t.split_base_in = -1.0
 
     import judgment_ui
     judgment_ui.render(t, full, b0, b1, b2, ca, conv, LB, _shared_run)
