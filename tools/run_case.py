@@ -78,8 +78,6 @@ def main(argv=None, *, legacy_cli=False):
             a.out.parent.mkdir(parents=True, exist_ok=True)
             a.out.write_text(json.dumps(case.to_dict(), ensure_ascii=False, indent=2), encoding='utf-8')
             return 0
-        if formula and case.effective().get('carry') == 0 and case.effective().get('rfx_mode', 0) > 0:
-            raise ValueError('상태확장 리픽싱은 같은 방법의 수식 조서를 지원하지 않습니다. --no-formula로 값 조서를 만드십시오.')
         run = calculate(case)
         previous = read_case(a.previous) if a.previous else None
         data = export_bundle(run, formula=formula, detail=a.detail or legacy_cli,

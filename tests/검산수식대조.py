@@ -7,9 +7,9 @@
 `formulas` 라이브러리로 수식 조서를 실제로 풀어 견준다 (조서대조와 같은 방법).
 
     [1] BDT 시트 — 시장 할인계수(선도이자율 합의 수식) = 엔진 bdt_parts 의 mkt, Σ Q − mkt = 0
-    [2] 분리 판단 시트 — 10% 검토 수식(행사금액 · 상각후원가 · 차이 · 판정) = split_test
-    [3] 결과 시트 — 우선순위별 매도청구권 두 줄 = pc_compare, 마팅게일 검산(δ>0) = 1
-    [4] 검산요약 시트 — 값·판정 수식 = 값 조서의 문자열 (수식화된 줄만)
+    [2] 분리 판단 시트 — 10% 검토 수식(첫 행사일 행사금액 · 자본요소 분리 전 상각후원가 ·
+        행사일별 비교표 · 가장 큰 차이 · 판정) = split_test
+    [3] 결과 시트 — 우선순위별 매도청구권 두 줄 = pc_compare
 
     python3 tests/검산수식대조.py            # 전체
     python3 tests/검산수식대조.py --quick    # 앞 두 케이스
@@ -119,12 +119,26 @@ def main():
         J = wbx["분리 판단"]
         r0 = find_row(J, 2, "B4.3.5(5)(가) 10% 검토 — 수식")
         if r0 and SP["put"]["지표"]:
+            X = SP["put"]["지표"]
             pv = cell(sol, mp, "분리 판단", f"C{r0+1}"); bv = cell(sol, mp, "분리 판단", f"C{r0+2}")
-            gap = cell(sol, mp, "분리 판단", f"C{r0+4}"); vd = cell(sol, mp, "분리 판단", f"C{r0+5}")
-            chk("분리 판단 · 행사금액 수식 = split_test", pv, SP["put"]["지표"]["첫 조기상환일 행사금액"], 1e-6)
-            chk("분리 판단 · 상각후원가 수식 = split_test", bv, SP["put"]["지표"]["같은 시점 상각후원가"], 1e-6)
-            chk("분리 판단 · 차이 수식 = split_test", gap, SP["put"]["지표"]["차이"], 1e-9)
+            gmax = cell(sol, mp, "분리 판단", f"C{r0+4}"); g1 = cell(sol, mp, "분리 판단", f"D{r0+4}")
+            vd = cell(sol, mp, "분리 판단", f"C{r0+5}")
+            chk("분리 판단 · 첫 행사일 행사금액 수식 = split_test", pv, X["첫 조기상환일 행사금액"], 1e-6)
+            chk("분리 판단 · 분리 전 상각후원가 수식 = split_test", bv, X["같은 시점 상각후원가"], 1e-6)
+            chk("분리 판단 · 첫 행사일 차이 수식 = split_test", g1, X["차이"], 1e-9)
+            chk("분리 판단 · 가장 큰 차이 수식 = split_test", gmax, X["가장 큰 차이"], 1e-9)
             chk_bool(f"분리 판단 · 판정 수식 «{vd}» = «{SP['put']['결론']}»", vd == SP["put"]["결론"])
+            # 행사일별 비교표 — 회차마다 행사금액 · 상각후원가 · 차이
+            rh = find_row(J, 2, "발행 후 개월", r0)
+            rows = SP["put"].get("회차", [])
+            chk_bool(f"분리 판단 · 행사일 비교표 {len(rows)}줄", rh is not None and len(rows) > 0)
+            worst = 0.0
+            for k, (m, p_, b_, g_) in enumerate(rows if rh else []):
+                rw = rh + 1 + k
+                worst = max(worst, abs(cell(sol, mp, "분리 판단", f"D{rw}") - p_),
+                            abs(cell(sol, mp, "분리 판단", f"E{rw}") - b_),
+                            100*abs(cell(sol, mp, "분리 판단", f"F{rw}") - g_))
+            chk("분리 판단 · 행사일별 표 수식 − split_test (최대)", worst, 0.0, 1e-6)
         else:
             chk_bool("분리 판단 · 조기상환권 없음 → 수식 블록 없음", r0 is None and not SP["put"]["지표"])
         # ── [3] 결과 시트 — 우선순위 두 줄 · 마팅게일 ──
@@ -140,26 +154,6 @@ def main():
                     chk(f"결과({nm}) · {lb} 전환권대가", gcv, cv2, 1e-9)
             elif rp:
                 chk_bool(f"결과({nm}) · 겹치지 않음 문구", "겹치는 노드" in str(R.cell(rp+1, 2).value))
-        mg = cell(sol, mp, "결과", "C29")
-        chk("결과 · 주가 마팅게일 (δ 반영) = 1", mg, 1.0, 1e-6)
-        # ── [4] 검산요약 — 수식화된 줄 = 값 조서 문자열 ──
-        Cx, Cv = wbx["검산요약"], wbv["검산요약"]
-        nrow = 0
-        for r in range(6, 40):
-            nm = Cv.cell(r, 2).value
-            if not nm or nm == "모든 항목 적합" or str(nm).startswith("확인 필요 "):
-                if not nm: break
-                continue
-            fx = Cx.cell(r, 3).value
-            if isinstance(fx, str) and fx.startswith("="):
-                nrow += 1
-                for col, what in ((3, "값"), (4, "판정"), (5, "설명")):
-                    fv = Cx.cell(r, col).value
-                    if isinstance(fv, str) and fv.startswith("="):
-                        got = cell(sol, mp, "검산요약", f"{gl(col)}{r}")
-                        want = Cv.cell(r, col).value
-                        chk_bool(f"검산요약 · {nm} · {what} «{str(got)[:28]}» = «{str(want)[:28]}»", str(got) == str(want))
-        print(f"  (검산요약 수식 줄 {nrow})")
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

@@ -1,25 +1,25 @@
 {
- "generated": "2026-09-30T00:11:58",
- "head": "6b2fc89",
+ "generated": "2026-09-30T03:16:51",
+ "head": "9a5c891",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
   "CB": {
-   "PASS": 105,
+   "PASS": 104,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 117,
+   "PASS": 116,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "BW": {
-   "PASS": 109,
+   "PASS": 108,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -464,11 +464,11 @@
    "n_tests": 14
   },
   {
-   "case_id": "CB-carry-0",
+   "case_id": "CB-carry-1",
    "product": "CB",
    "branch": "carry",
-   "value": 0,
-   "label": "상태확장 (정확)",
+   "value": 1,
+   "label": "경로가중 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
    "status": "PASS",
@@ -488,29 +488,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 152
-  },
-  {
-   "case_id": "CB-carry-1",
-   "product": "CB",
-   "branch": "carry",
-   "value": 1,
-   "label": "경로가중 근사",
-   "meaning": "리픽싱 조정일 처리",
-   "kind": "enum",
-   "status": "PASS",
-   "oracle": "hand_calc_independent",
-   "independent_oracle": true,
-   "covered_by": [
-    "tests/설정전수대조.py::조정일 처리 · 경로가중",
-    "tests/손계산대조.py::test_refix_weighted_average_on_reset_date",
-    "tests/손계산대조.py::test_rfx_anytime",
-    "tests/손계산대조.py::test_display_only_fields",
-    "tests/손계산대조.py::test_excel_limits_and_curves",
-    "tests/오라클.py::test_refix",
-    "tests/분기전수.py::carry=1"
-   ],
-   "n_tests": 7
+   "n_tests": 157
   },
   {
    "case_id": "CB-carry-2",
@@ -548,16 +526,16 @@
    "n_tests": 2
   },
   {
-   "case_id": "RCPS-carry-0",
+   "case_id": "RCPS-carry-1",
    "product": "RCPS",
    "branch": "carry",
-   "value": 0,
-   "label": "상태확장 (정확)",
+   "value": 1,
+   "label": "경로가중 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "hand_calc_independent",
-   "independent_oracle": true,
+   "oracle": "engine_vs_workbook",
+   "independent_oracle": false,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
     "tests/값조서대조.py::equity·0·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
@@ -572,23 +550,7 @@
     "tests/값조서대조.py::equity·1·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354",
     "tests/값조서대조.py::equity·2·TF·1·inst=RCPS,mat_mode=0,S0=15647.0,K0=17354"
    ],
-   "n_tests": 51
-  },
-  {
-   "case_id": "RCPS-carry-1",
-   "product": "RCPS",
-   "branch": "carry",
-   "value": 1,
-   "label": "경로가중 근사",
-   "meaning": "리픽싱 조정일 처리",
-   "kind": "enum",
-   "status": "PASS",
-   "oracle": "invariants",
-   "independent_oracle": false,
-   "covered_by": [
-    "tests/분기전수.py::carry=1"
-   ],
-   "n_tests": 1
+   "n_tests": 50
   },
   {
    "case_id": "RCPS-carry-2",
@@ -623,11 +585,11 @@
    "n_tests": 1
   },
   {
-   "case_id": "BW-carry-0",
+   "case_id": "BW-carry-1",
    "product": "BW",
    "branch": "carry",
-   "value": 0,
-   "label": "상태확장 (정확)",
+   "value": 1,
+   "label": "경로가중 근사",
    "meaning": "리픽싱 조정일 처리",
    "kind": "enum",
    "status": "PASS",
@@ -648,22 +610,6 @@
     "tests/값조서대조.py::equity·0·GS·1·inst=BW,bw_pay=1,bw_detach=0,k_w=0.3"
    ],
    "n_tests": 41
-  },
-  {
-   "case_id": "BW-carry-1",
-   "product": "BW",
-   "branch": "carry",
-   "value": 1,
-   "label": "경로가중 근사",
-   "meaning": "리픽싱 조정일 처리",
-   "kind": "enum",
-   "status": "PASS",
-   "oracle": "invariants",
-   "independent_oracle": false,
-   "covered_by": [
-    "tests/분기전수.py::carry=1"
-   ],
-   "n_tests": 1
   },
   {
    "case_id": "BW-carry-2",
@@ -8555,7 +8501,7 @@
    "product": "ALL",
    "branch": "리픽싱 근사법(경로가중 등)은 근사",
    "value": null,
-   "label": "E[1/K] ≠ 1/E[K]. 상태확장이 정확법",
+   "label": "E[1/K] ≠ 1/E[K]. 노드마다 전환가액을 여럿 들고 가는 정확법(상태확장)은 값 조서와 수식 조서를 같게 만들 수 없어 앱에서 뺐다 — 근사 방법 세 가지 중 하나를 쓴다",
    "meaning": "계산은 하되 한계를 표시",
    "kind": "limitation",
    "status": "KNOWN_LIMITATION",

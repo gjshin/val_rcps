@@ -45,7 +45,7 @@ def test_metadata_edit_updates_evidence_without_pricing(monkeypatch):
     with zipfile.ZipFile(io.BytesIO(export_bundle(updated))) as z:
         assert json.loads(z.read('case.json'))['notes'] == edited.notes
         wb = load_workbook(io.BytesIO(z.read('value_review.xlsx')))
-        assert any(c.value == edited.sources['S0'] for row in wb['출처기록'] for c in row)
+        assert any(c.value == edited.sources['S0'] for row in wb['조서 정보'] for c in row)
 
 
 @pytest.mark.parametrize('section,key,value', [
@@ -212,7 +212,9 @@ def test_detailed_exports_judgment_sheets_are_optional(inst, formula):
         wb = load_workbook(io.BytesIO(z.read(name)))
         assert '판단·근거' in wb.sheetnames
         if inst != 'SHA':
-            assert {'분리 판단', '검산요약', '99_모형검증'} <= set(wb.sheetnames)
+            assert '분리 판단' in wb.sheetnames
+        # 개발용 점검 시트는 어느 설정에서도 조서에 싣지 않는다 (앱이 뒤에서 점검한다).
+        assert not {'검산요약', '99_모형검증', '산술검산'} & set(wb.sheetnames)
 
 
 def test_reversed_exercise_dates_cannot_silently_remove_a_right():

@@ -91,6 +91,10 @@ class Case:
         if unknown:
             raise ValueError(f"알 수 없는 프로젝트 항목: {', '.join(sorted(unknown))}")
         case = cls(**copy.deepcopy(obj))
+        # 상태확장(carry=0)은 없앴다 — 옛 평가파일은 경로가중치(1)로 연다.
+        for _sec in (case.contract, case.market, case.method):
+            if isinstance(_sec, dict) and _sec.get("carry") == 0:
+                _sec["carry"] = 1
         if not isinstance(case.name, str) or not case.name.strip():
             raise ValueError("평가 건명을 입력하십시오.")
         for key in ("contract", "market", "method", "sources", "judgments", "market_evidence", "review_controls", "exercise_styles", "contract_review", "memos", "calibration"):
@@ -280,7 +284,7 @@ def inspect_case(case: Case) -> list[Issue]:
              "carry": 3, "k_method": 2, "k_less_cpn": 2, "p_less_cpn": 2, "m_less_cpn": 2}
     for key, value in values.items():
         if types[key] is int:
-            if value < 0 or (key not in counts and value > multi.get(key, 1)):
+            if value < (1 if key == "carry" else 0) or (key not in counts and value > multi.get(key, 1)):
                 add("error", "enum", key, "지원하지 않는 선택값입니다.")
     if not 0 <= values.get("k_w", 0) <= 1:
         add("error", "fraction", "k_w", "콜 대상 비율은 0~1이어야 합니다.")

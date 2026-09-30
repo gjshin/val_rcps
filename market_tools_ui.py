@@ -152,6 +152,18 @@ def main(case):
         if upload:
             try:
                 series = parse_price_table(legacy.read_upload(upload.name, upload.getvalue()))
+                # 첫 줄에 제목이 없으면 첫 관측값이 열 이름으로 읽혀 그날 금리가 빠지고, 출처 기록에
+                # 「16.027…」 같은 숫자가 열 이름으로 남는다. 숫자 열 이름은 받지 않는다.
+                def _numeric(name):
+                    try:
+                        float(str(name).replace('%', '').replace(',', '').strip()); return True
+                    except ValueError:
+                        return False
+                if any(_numeric(name) for name, _ in series):
+                    raise ValueError('파일 첫 줄이 제목이 아니라 숫자로 보입니다(열 이름: '
+                                     + ', '.join(str(n) for n, _ in series if _numeric(n))
+                                     + '). 첫 관측값이 열 이름으로 읽혀 빠집니다. 첫 줄에 「날짜, BBB- 5Y」처럼 '
+                                       '제목을 넣어 다시 올리십시오.')
                 idx = st.selectbox('금리 시계열 선택', range(len(series)), format_func=lambda i: series[i][0])
                 name, rows = series[idx]
                 date = case.effective().get('d_base')

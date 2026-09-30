@@ -187,7 +187,7 @@ def threeway_groups():
     return [
         ("1 중간평가 × 당일 행사 × 이표 지급일", ("CB", "RCPS", "BW"), [("@", mid_axes())]),
         ("2 리픽싱 × 풋/콜 × 우선순위", ("CB",),
-         [("rfx_mode", [0, 1, 2]), ("~put", [True, False]), ("~call", [True, False]), ("pc_order", [0, 1]), ("carry", [0, 1])]),
+         [("rfx_mode", [0, 1, 2]), ("~put", [True, False]), ("~call", [True, False]), ("pc_order", [0, 1]), ("carry", [1, 2])]),
         ("3 RCPS 자동전환/상환 × 배당 × 콜 갈래", ("RCPS",),
          [("mat_mode", [0, 1]), ("div_mode", [0, 1]), ("~cpn", [True, False]), ("issuer_call", [0, 1, 2])]),
         ("4 BW 현금/대용 × 분리/비분리 × 풋/콜", ("BW",),
@@ -279,7 +279,7 @@ def rand_terms(G, product, rng, risky=None):
     over.update(cpn=cpn, ytm=ytm, ipay=rng.choice([1., 3., 6., 12.]), ytm_cmp=rng.choice([0, 1, 2, 4]),
                 cv_s=float(rng.choice([0, 1, 6, 12])), cv_e=float(H - 1),
                 rfx_mode=rng.choice([0, 1, 2]), rfx_cyc=rng.choice([1., 3., 6., 12.]),
-                floor=round(rng.uniform(500, 1000), 0), par=500., carry=rng.choice([0, 1, 2, 3]),
+                floor=round(rng.uniform(500, 1000), 0), par=500., carry=rng.choice([1, 2, 3]),
                 p_s=float(rng.choice([0, 12, 18, 24, 36])), p_e=float(H - rng.choice([1, 3, 12])), p_f=rng.choice([1., 3., 6.]),
                 p_mode=rng.choice(["fixed", "accrue"]), p_yield=round(rng.uniform(0, .1), 4), p_cmp=rng.choice([0, 1, 2, 4, 12]),
                 p_rate=round(rng.uniform(100, 130), 2),
@@ -290,7 +290,6 @@ def rand_terms(G, product, rng, risky=None):
                 p_sep=rng.choice([0, 1]), fvpl_whole=rng.choice([0, 0, 1]), bs_net=rng.choice([0, 1]),
                 issue_cost=rng.choice([0., 0., 1e8, 5e8]), div_y=round(rng.choice([0., 0., .01, .03]), 3),
                 put_bdt=rng.choice([0, 0, 1]), bdt_sig=.2, bdt_base=rng.choice([0, 1]))
-    if over["carry"] == 0 and over["rfx_mode"] and (H/gap) > 60: over["carry"] = 1   # 상태확장 120 노드 권장
     # derive()/compat() 가 되돌릴 조합은 처음부터 만들지 않는다 — 표본을 버리지 않기 위해서다.
     # (되돌림 자체는 분기전수·손계산대조 [19] 가 본다)
     if over["model"] == "GS": over["k_method"] = 0

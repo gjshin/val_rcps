@@ -139,19 +139,22 @@ def test_export_keeps_input_evidence_and_manifest(formula):
         name = "formula_review.xlsx" if formula else "value_review.xlsx"
         wb = load_workbook(io.BytesIO(z.read(name)), data_only=False)
         assert not {"V2_검토기록", "V2_계약과가정", "V2_추가권리"} & set(wb.sheetnames)
-        assert "계산정보" in wb and "확인사항" in wb
-        sheet = wb['출처기록'] if formula else wb['시장자료']
+        assert "조서 정보" in wb
+        sheet = wb['조서 정보'] if formula else wb['시장자료']
         cells = [cell for row in sheet for cell in row if cell.value == case.sources["S0"]]
         assert cells and all(cell.data_type == "s" for cell in cells)
 
 
-def test_formula_export_never_silently_switches_refixing_method():
+def test_old_state_expansion_files_open_as_path_weighting():
+    # 상태확장(carry=0)은 없앴다. 옛 평가파일은 경로가중치(1)로 열리고 수식 조서도 만들어진다.
     case = synthetic()
     case.contract.update(rfx_mode=1, floor=20., rfx_cyc=3.)
-    case.method["carry"] = 0
-    run = calculate(case)
-    with pytest.raises(ValueError, match="동일한 수식"):
-        export_bundle(run, formula=True)
+    obj = case.to_dict(); obj["method"]["carry"] = 0
+    opened = Case.from_dict(obj)
+    assert opened.method["carry"] == 1
+    run = calculate(opened)
+    assert run.terms.carry == 1
+    export_bundle(run, formula=True)
 
 
 def test_cli_and_service_use_identical_calculation_and_evidence(tmp_path):
