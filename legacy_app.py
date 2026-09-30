@@ -912,8 +912,9 @@ if _shared_run is None:
                 _psok = (t.conv_class == "equity" and t.k_sep != 0)
                 t.p_sep = 1 if st.selectbox(
                     inst_text(t, "조기상환권 처리"), [1, 0], index=0 if int(t.p_sep) else 1,
-                    format_func=lambda x: ("분리 · 파생상품부채" if x
-                                           else "분리하지 않음 · 부채요소에 포함"),
+                    format_func=lambda x: (("분리 — 전환권과 묶어 복합내재파생상품" if t.conv_class != "equity"
+                                            else "분리 · 파생상품부채") if x
+                                           else "주계약에 포함 (분리하지 않음)"),
                     disabled=not _psok,
                     help="행사금액이 상각후원가와 거의 같으면 주채무계약과 밀접하게 "
                          "관련되어 분리하지 않습니다 (기준서 1109 문단 B4.3.5(5)(가)). "
@@ -2710,6 +2711,11 @@ if _detail_section == _detail_sections[2]:
         t.split_base_why = f7.text_input(
             "출발 금액을 직접 넣은 근거", value=t.split_base_why,
             disabled=t.split_base_in <= 0)
+        if t.split_base_in > 0 and not str(t.split_base_why).strip():
+            # 근거 없는 직접 입력은 적용하지 않는다 — 평가 화면(inspect_case)과 같은 규칙.
+            st.error("분리 판단 출발 금액을 직접 넣었으면 그 근거(실제 회계상 배분액 등)를 적으십시오. "
+                     "근거를 적기 전까지는 자동값으로 판단합니다.")
+            t.split_base_in = -1.0
 
     import judgment_ui
     judgment_ui.render(t, full, b0, b1, b2, ca, conv, LB, _shared_run)

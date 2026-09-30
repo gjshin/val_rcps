@@ -520,10 +520,10 @@ COMPAT_GS_KMETHOD = ("**GS 에서는 유무가치비교법만 지원합니다.**
                      "(한공회 4.4.3). GS 로 재려면 신용위험 처리를 TF 로 바꾸십시오.")
 COMPAT_KKIND = ("**제3자 기특정 콜옵션은 별도의 금융상품입니다.** 발행 시 제3자가 정해져 있어 거래상대방이 "
                 "발행자가 아니므로 내재파생에 넣을 수 없습니다 (문단 4.3.1). 회계 처리를 «별도 금융상품» 으로 되돌렸습니다.")
-COMPAT_PSEP = ("조기상환권을 분리하지 않는 선택은 전환권을 **자본**으로 두고 매도청구권을 "
-               "**별도 금융상품**으로 볼 때만 고를 수 있습니다. 매도청구권을 내재파생으로 "
-               "묶으면 복수의 내재파생을 하나의 복합내재파생으로 다루므로 (문단 B4.3.4) "
-               "조기상환권도 함께 분리됩니다. 전환권이 부채여도 같은 이유로 묶음에 들어갑니다.")
+COMPAT_PSEP = ("조기상환권 처리를 «주계약에 포함(분리하지 않음)» 으로 둘 수 없습니다. 전환권이 부채이거나 "
+               "매도청구권을 내재파생에 포함하면, 조기상환권은 그 파생상품과 **묶어서 하나의 복합내재파생상품**"
+               "으로 주계약에서 떼어 냅니다 (문단 B4.3.4) — 조기상환권 처리를 «분리» 로 두십시오. "
+               "«주계약에 포함» 은 전환권이 자본이고 매도청구권이 별도 금융상품일 때만 고를 수 있습니다.")
 COMPAT_BDT = ("BDT 금리격자는 전환권을 **자본**으로 두고 **TF** 를 쓸 때만 켤 수 있습니다. "
               "자본이면 전환권대가가 잔여라 부채요소만 바꿔도 배분이 성립하지만, 부채이면 "
               "복합내재파생을 전체로서 재야 해서 전체 가치까지 함께 손봐야 합니다.")
@@ -6655,7 +6655,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         ("조기상환금액 지급분 공제", (DED_TXT[ded_of(tm, "p")] if tm.p_mode == "accrue"
                                   else "해당 없음 (고정률)"), None),
         ("조기상환권 회계 처리",
-         ("분리하지 않음 · 부채요소에 포함" if _nosep else "분리 · 파생상품부채"),
+         ("주계약에 포함 (분리하지 않음)" if _nosep else "분리 · 파생상품부채"),
          None),
         ("매도청구 시작 / 종료 / 주기", _md(tm.k_s, tm.k_s <= tm.k_e), None), ("　  ", _md(tm.k_e, tm.k_s <= tm.k_e), None), ("　   ", tm.k_f, N0),
         ("매도청구금액 지급분 공제", DED_TXT[ded_of(tm, "k")], None),
@@ -7216,7 +7216,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
     sec(J, _r, "판정과 회계처리 설정이 맞는가", span=6); _r += 1
     if _mis:
         for _nm, _d in _mis:
-            _set = ((("분리 · 파생상품부채" if int(tm.p_sep) else "분리하지 않음 · 부채요소에 포함")
+            _set = ((("분리 · 파생상품부채" if int(tm.p_sep) else "주계약에 포함 (분리하지 않음)")
                      if _nm == "조기상환청구권" else
                      ("별도 금융상품" if tm.k_sep else "복합내재파생에 포함")))
             put(J, _r, 2, f"★ {_nm}", bold=True, color=RED, border=True)
@@ -7557,7 +7557,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("의무보유 만료 (스텝)", "lockend",
          (stp_hi(tm.k_lock) if int(tm.k_hold) else -1), N0, False),
         ("의무보유가 조기상환청구도 막음 (1/0)", "lkput", int(tm.k_lock_put), N0, False),
-        ("조기상환권 처리 (1 분리 / 0 부채요소에 포함)", "psep", int(tm.p_sep), N0, True),
+        ("조기상환권 처리 (1 분리 — 전환권이 부채면 전환권과 묶어 복합내재파생 / 0 주계약에 포함)", "psep", int(tm.p_sep), N0, True),
         ("조기상환 행사금액이 상실이자 보상 수준 (1/0)", "plost", int(tm.p_lost_int), N0, True),
         # 분리 판단의 판정 수식이 이 칸을 본다 — 바꾸면 판정이 따라온다.
         ("풋 분리 판단 비교기준 (평가자 설정 · 기준서가 정한 수치 아님)", "stol", split_tol(tm), P2, True),
@@ -7672,7 +7672,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         "ksplit": {0: "가치 구성비율", 1: "전환확률 (본문 4.3.3)"},
         "kkind": {0: "제3자 지정 가능", 1: "제3자 사전 특정"},
         "khold": {1: "있음", 0: "없음"}, "lkput": {1: "막는다", 0: "전환만 막는다"},
-        "psep": {1: "분리", 0: "부채요소에 포함"}, "plost": {1: "예", 0: "아니오"},
+        "psep": {1: "분리 (전환권이 부채면 전환권과 묶음)", 0: "주계약에 포함"}, "plost": {1: "예", 0: "아니오"},
         "ksep": {1: "별도 금융상품", 0: "복합내재파생에 포함"},
         "mdl": {0: "TF", 1: "GS"}, "pbdt": {0: "금리 고정 격자", 1: "BDT 금리격자"},
         "bbase": {0: "위험 곡선에 직접", 1: "무위험 + 확정 스프레드"},
@@ -9340,7 +9340,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     sec(J, _r, "판정과 회계처리 설정이 맞는가", span=6); _r += 1
     if _mis:
         for _nm, _d in _mis:
-            _set = ((("분리 · 파생상품부채" if int(tm.p_sep) else "분리하지 않음 · 부채요소에 포함")
+            _set = ((("분리 · 파생상품부채" if int(tm.p_sep) else "주계약에 포함 (분리하지 않음)")
                      if _nm == "조기상환청구권" else
                      ("별도 금융상품" if tm.k_sep else "복합내재파생에 포함")))
             put(J, _r, 2, f"★ {_nm}", bold=True, color=RED, border=True)

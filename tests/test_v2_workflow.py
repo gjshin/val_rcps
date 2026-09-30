@@ -193,6 +193,16 @@ def test_formula_workbook_does_not_offer_date_inputs_it_cannot_follow():
     assert seen >= 1
 
 
+def test_manual_split_base_needs_a_reason():
+    # 분리 판단 출발 금액을 직접 넣었으면 근거가 있어야 평가·조서로 간다.
+    case = synthetic()
+    case.method.update(split_base_in=104.0, split_base_why="")
+    with pytest.raises(CaseError):
+        calculate(case)
+    case.method["split_base_why"] = "실제 회계상 배분액"
+    assert calculate(case).terms.split_base_in == 104.0
+
+
 def test_cli_and_service_use_identical_calculation_and_evidence(tmp_path):
     case = synthetic()
     source, output = tmp_path / "case.json", tmp_path / "result.zip"
