@@ -258,7 +258,7 @@ if _shared_run is None:
                 format_func=lambda x: {"CB": "전환사채 (CB) · 액면 100 기준",
                                        "BW": "신주인수권부사채 (BW) · 액면 100 기준",
                                        "RCPS": "상환전환우선주 (RCPS) · 1주 발행가 100 기준",
-                                       "SHA": "주주간계약 (SHA) · 투자원금 100 기준"}[x],
+                                       "SHA": "주주간계약 (SHA) · 주당 기준가격 100 기준"}[x],
                 help="격자·이자율·변동성·조서 기계는 같습니다. RCPS 를 고르면 우선배당·"
                      "존속기간 만료 처리·발행자 상환권·발행가 역산이 열립니다. 매도청구권은 "
                      "「발행자 상환권」으로 잡으면 유무가치비교법 한 갈래로 잠기고, "
@@ -533,7 +533,7 @@ if _shared_run is None:
             _s0_before = float(t.S0)
             _v = st.number_input("평가기준일 주가 (원)", value=bval("S0", float(t.S0)), step=1.0,
                                    help=("비상장이면 지분가치 평가액 ÷ 주식수를 넣거나, 아래에서 "
-                                         "투자원금으로 역산하십시오." if _SHA else
+                                         "계산기준금액으로 역산하십시오." if _SHA else
                                          "비상장이면 별도 지분평가액 ÷ 주식수를 넣거나, 아래에서 "
                                          "발행가로 역산하십시오. 이자부부채에서 이 증권을 빼고 "
                                          "보통주식수로 나눈 값은 **희석 전** 입니다 — 이 도구는 "
@@ -593,7 +593,7 @@ if _shared_run is None:
                          "최초인식 차이를 따로 보고 있다면 「본체」 입니다. 매도청구권이 "
                          "클수록 두 답이 벌어집니다."))
             _bs_block = [x for x in st.session_state.get("_miss_prev", []) if x != "평가기준일 주가"]
-            if bc2.button(("투자원금으로 지분 역산" if _SHA else "발행가로 주가 역산"),
+            if bc2.button(("기준가격으로 지분 역산" if _SHA else "발행가로 주가 역산"),
                           use_container_width=True, disabled=bool(_bs_block),
                           help=("«지분가치 + 풋 − 콜» 이 목표와 같아지는 주가를 이분법으로 "
                                 "찾아 위 칸에 넣습니다." if _SHA else
@@ -603,7 +603,7 @@ if _shared_run is None:
                     _S, _v, _k = (sha_backsolve(t, t.bs_target) if _SHA else backsolve(t))
                 if _k < 0 and _SHA:
                     st.error(f"격자가 목표에 닿지 않습니다 (주가 {_S:,.0f}원에서 {_v:,.2f}). "
-                             "**풋 자체가 투자원금보다 클 수 있습니다** — 보장수익률이 붙은 "
+                             "**풋 자체가 기준가격보다 클 수 있습니다** — 가산율이 붙은 "
                              "풋은 주가가 아무리 낮아도 행사금액의 현재가치만큼 값이 남기 "
                              "때문입니다. 그때는 역산이 성립하지 않으므로 지분가치를 직접 "
                              "넣으시고, 풋 할인율에 의무자의 신용을 반영하셨는지 보십시오.")
@@ -635,18 +635,22 @@ if _shared_run is None:
                 st.success(f"주가 {t.S0:,.2f}원 — {st.session_state.px_src}. 조서에 "
                            "그대로 적힙니다. 기말 재평가에는 쓰지 마십시오 — 그때는 "
                            "발행가가 기준이 아닙니다.")
-            _lk0 = ("주당 인수가액 (원)" if _SHA else inst_text(t, "현재 전환가액 (원)"))
+            _lk0 = ("주당 기준가격 (원)" if _SHA else inst_text(t, "현재 전환가액 (원)"))
             _v = st.number_input(
                 _lk0, value=bval("K0", float(t.K0)), step=1.0,
-                help=("투자자가 1주에 낸 금액입니다. 지분가치 = 100 × 주가 ÷ 이 값 이라, "
-                      "평가기준일 주가가 이 값과 같으면 지분가치가 100 입니다." if _SHA else
+                help=("풋 행사금액이 출발하는 1주당 기준매매가격입니다(가산율을 붙이기 전). 지분가치 = "
+                      "100 × 주가 ÷ 이 값 이라, 평가기준일 주가가 이 값과 같으면 지분가치가 100 입니다." if _SHA else
                       "리픽싱이 이미 일어났으면 조정된 값을 넣으십시오."))
             t.K0 = bget("K0", _v, t.K0, _lk0.replace(" (원)", ""))
             if _SHA:
                 _v = st.number_input(
-                    "투자원금 총액 (원)", value=bval("face_total", float(t.face_total)), step=1e8,
-                    format="%.0f", help="화면과 조서의 전액 기준 금액을 계산합니다.")
-                t.face_total = bget("face_total", _v, t.face_total, "투자원금 총액")
+                    "계산기준금액 (원)", value=bval("face_total", float(t.face_total)), step=1e8,
+                    format="%.0f", help="주당 기준가격 × 대상 주식수. 풋·콜 대상 주식수를 따로 넣지 않으면 "
+                                        "이 금액 ÷ 주당 기준가격을 대상 주식수로 씁니다.")
+                t.face_total = bget("face_total", _v, t.face_total, "계산기준금액")
+                if t.sha_rows:
+                    st.info("이 평가파일에는 회차별 표가 있습니다 — 회차별 표는 「평가 작업」 화면에서 고칩니다. "
+                            "아래 풋·콜 칸은 계산에 쓰지 않습니다.")
                 st.caption("주주간계약에는 사채가 없어 표면이자·만기상환금액·거래원가 칸이 "
                            "없습니다. 아래 「주주간계약」 칸에서 풋과 콜을 넣으십시오.")
             # 주주간계약에는 사채가 없다. 표면이자·만기상환·거래원가 칸을 뺀다.
@@ -1506,19 +1510,20 @@ if _shared_run is None:
 
         else:
             with st.expander("주주간계약 — 풋 · 콜", expanded=True):
-                st.caption(("금액 기준은 투자원금 100 입니다." if _DATE_MODE else
-                            "모두 **투자일(발행일) 기준 개월**입니다. 계약서 그대로 넣으십시오. "
-                            "금액 기준은 투자원금 100 입니다."))
-                st.markdown("**투자자 풋옵션** — 보유 지분을 되팔 권리")
+                st.caption(("금액 기준은 주당 기준가격 100 입니다." if _DATE_MODE else
+                            "모두 **계약일(가격 가산 기산일) 기준 개월**입니다. 계약서 그대로 넣으십시오. "
+                            "금액 기준은 주당 기준가격 100 입니다."))
+                st.markdown("**풋옵션** — 주식 보유자가 상대방에게 주식을 사 달라고 요구할 권리")
                 q1, q2, q3 = st.columns(3)
                 t.sha_put_s, t.sha_put_e = _sched_pair(q1, q2, t.sha_put_s, t.sha_put_e, "shap")
-                t.sha_put_f = q3.number_input("주기 (개월)", value=float(t.sha_put_f),
-                                              step=1.0, key="shapf")
+                with q3:
+                    t.sha_put_e, t.sha_put_f = exercise_mode_ui(t.sha_put_s, t.sha_put_e, t.sha_put_f,
+                                                                "shapmode", node_gap_m(t))
                 t.sha_put_yield = st.number_input(
                     "풋 보장수익률 (%)", value=t.sha_put_yield*100, step=0.5,
                     format="%.4f",
-                    help="행사금액 = 투자원금 × (1 + 보장수익률 복리). 계약서의 「연 복리 "
-                         "X% 를 가산한 금액」 조항이 여기입니다.")/100
+                    help="행사금액 = 기준가격 × (1 + 가산율 복리). 계약서의 「연 복리 "
+                         "X% 를 가산한 금액」 조항이 여기입니다. 0% 이면 고정 행사가격입니다.")/100
                 t.sha_put_cmp = int(st.number_input(
                     "풋 보장 복리 횟수 (연)", value=int(t.sha_put_cmp), step=1,
                     min_value=0, max_value=12, help=HLP_CMP))
@@ -1526,7 +1531,7 @@ if _shared_run is None:
                            f"**{100*(1+accrue_rate(t.sha_put_s/12, t.sha_put_yield, 0.0, t.sha_put_cmp)):,.4f}**"
                            "　(투자원금 100 기준)")
                 st.divider()
-                st.markdown("**최대주주 콜옵션** — 투자자 지분을 사 갈 권리")
+                st.markdown("**콜옵션** — 상대방이 주식 보유자에게 주식을 팔라고 요구할 권리")
                 if not _DATE_MODE:
                     st.caption("시작이 종료보다 크면 콜이 없는 계약입니다 (둘 다 0 이면 없음).")
                 r1, r2, r3 = st.columns(3)
@@ -1537,12 +1542,14 @@ if _shared_run is None:
                     if t.sha_call_e <= 0 or t.sha_call_s > t.sha_call_e:
                         t.sha_call_s, t.sha_call_e = 0.0, max(12.0, t.T*12 + t.elapsed_m)
                     t.sha_call_s, t.sha_call_e = _sched_pair(r1, r2, t.sha_call_s, t.sha_call_e, "shac")
-                t.sha_call_f = r3.number_input("주기 (개월)", value=float(t.sha_call_f),
-                                               step=1.0, key="shacf")
+                if t.sha_call_e > 0 and t.sha_call_s <= t.sha_call_e:
+                    with r3:
+                        t.sha_call_e, t.sha_call_f = exercise_mode_ui(t.sha_call_s, t.sha_call_e, t.sha_call_f,
+                                                                      "shacmode", node_gap_m(t))
                 t.sha_call_prem = st.number_input(
                     "콜 행사금액 가산율 (%)", value=t.sha_call_prem*100, step=0.5,
                     format="%.4f",
-                    help="행사금액 = 투자원금 × (1 + 가산율 복리).")/100
+                    help="행사금액 = 기준가격 × (1 + 가산율 복리). 0% 이면 고정 행사가격입니다.")/100
                 t.sha_call_cmp = int(st.number_input(
                     "콜 가산 복리 횟수 (연)", value=int(t.sha_call_cmp), step=1,
                     min_value=0, max_value=12, help=HLP_CMP))
@@ -1581,10 +1588,10 @@ if _shared_run is None:
 
             with st.expander("의무자 · 할인율", expanded=True):
                 t.sha_writer = int(st.selectbox(
-                    "풋 의무자 (누가 사 주는가)", [0, 1, 2], index=int(t.sha_writer),
-                    format_func=lambda x: ["최대주주 (발행회사는 당사자가 아니다)",
+                    "풋 행사 시 주식매수 의무자", [0, 1, 2], index=int(t.sha_writer),
+                    format_func=lambda x: ["콜 권리자·상대 주주 (발행회사는 당사자가 아니다)",
                                            "발행회사 (자기지분상품 매입의무)",
-                                           "최대주주 · 발행회사 연대"][x],
+                                           "상대 주주 · 발행회사 연대"][x],
                     help="발행회사가 의무자면 자기지분상품을 매입할 의무라 기준서 1032 "
                          "문단 23 이 걸립니다 — 옵션 공정가치가 아니라 **상환금액의 "
                          "현재가치를 총액으로** 금융부채에 싣고 자본에서 뺍니다."))
@@ -2073,9 +2080,25 @@ if is_sha(t):
         st.warning("확인이 필요합니다\n\n" + "\n".join(f"- {w}" for w in _sw))
     if st.session_state.get("_legacy_price_key") != _detail_key:
         with st.spinner("계산 중"):
-            st.session_state._legacy_price = sha_engine(t)
+            st.session_state._legacy_price = sha_portfolio(t)
         st.session_state._legacy_price_key = _detail_key
     R = st.session_state._legacy_price
+    _T_ALL, _P_ALL = t, R
+    if R.get("portfolio"):
+        # 회차별 표 — 합계를 먼저 보이고, 아래 상세는 고른 회차 하나를 보여 준다.
+        st.markdown("#### 회차별 결과")
+        st.dataframe(pd.DataFrame([[x["name"], x["window"], x["K"], x["qp"], x["qc"], x["put_ps"], x["call_ps"],
+                                    x["put_krw"], x["call_krw"]] for x in R["rows"]]
+                                  + [["합계", "", None, None, None, None, None, R["put_krw"], R["call_krw"]]],
+                                  columns=["회차", "행사기간", "주당 기준가격", "풋 수량", "콜 수량", "풋 1주당",
+                                           "콜 1주당", "풋 전액 (원)", "콜 전액 (원)"]).style.format(
+            {"주당 기준가격": "{:,.2f}", "풋 수량": "{:,.0f}", "콜 수량": "{:,.0f}", "풋 1주당": "{:,.2f}",
+             "콜 1주당": "{:,.2f}", "풋 전액 (원)": "{:,.0f}", "콜 전액 (원)": "{:,.0f}"}, na_rep=""),
+            use_container_width=True, hide_index=True)
+        _names = [x["name"] for x in R["rows"]]
+        _x = R["rows"][_names.index(st.selectbox("아래 상세를 볼 회차", _names, key="_legacy_sha_row"))]
+        t, R = _x["tm"], _x["R"]
+        st.caption("아래 표는 고른 회차 하나의 계산입니다 — 100 기준은 그 회차의 주당 기준가격 100 입니다.")
     if R["qbad"]:
         _i, _q = R["qbad"][0]
         st.error(
@@ -2088,59 +2111,63 @@ if is_sha(t):
         st.stop()
     _eqv = 100*t.S0/t.K0
     _hascall = t.sha_call_e > 0 and t.sha_call_s <= t.sha_call_e
-    _F = t.face_total/100.0
+    # 원 단위 — 풋·지분은 풋 수량, 콜은 콜 수량으로 곱한다 (두 수량이 다를 수 있다).
+    _qp, _qc = sha_qty(t)
+    _kp = t.K0/100.0
+    _Fp, _Fc, _Fe = _kp*_qp, _kp*_qc, _kp*max(_qp, _qc)
     if _shared_run is None:
         with _HEAD.container():
             st.title("주주간계약 평가")
-            st.caption("투자자가 이미 가진 지분에 붙은 **풋**과 **콜**을 이항격자에서 "
-                       "각각 평가합니다. 사채가 없으므로 순차 차감이 아닙니다. 금액은 "
-                       "투자원금 100 기준입니다.")
+            st.caption("주식 보유자가 이미 가진 지분에 붙은 **풋**과 **콜**을 이항격자에서 "
+                       "각각 평가합니다. 사채가 없으므로 순차 차감이 아닙니다. 100 기준은 "
+                       "주당 기준가격 100 입니다.")
         m1, m2, m3 = st.columns(3)
-        m1.metric("투자자 풋옵션", f"{R['put']:,.2f}",
-                  help="지분을 보장수익률로 되팔 권리")
-        m2.metric("최대주주 콜옵션", f"{R['call']:,.2f}",
-                  help="지분을 사 갈 권리. 콜이 없으면 0")
-        m3.metric("지분가치", f"{_eqv:,.2f}", help="100 × 주가 ÷ 주당 인수가액")
+        m1.metric("풋옵션 (원)", f"{_P_ALL['put_krw']:,.0f}",
+                  help="주식 보유자가 상대방에게 주식을 사 달라고 요구할 권리")
+        m2.metric("콜옵션 (원)", f"{_P_ALL['call_krw']:,.0f}",
+                  help="상대방이 주식 보유자에게 주식을 팔라고 요구할 권리. 콜이 없으면 0")
+        m3.metric("지분가치 (100 기준)", f"{_eqv:,.2f}", help="100 × 주가 ÷ 주당 기준가격")
 
     _sha_sections = ["구성요소", "회계처리 — 세 관점", "행사 분포",
                      "이자율곡선", "주가·변동성", "민감도", "검산", "조서"]
     _sha_section = st.selectbox("상세 분석 항목", _sha_sections, key="_legacy_sha_section")
 
     if _sha_section == _sha_sections[0]:
-        _crow = ([["－ 최대주주 콜옵션", -R["call"], -R["call"]*_F,
+        _crow = ([["－ 콜옵션 (상대방)", -R["call"], -R["call"]*_Fc,
                    "MAX(지분가치 − 행사금액, 0) 을 미국형으로"]]
                  if _hascall else [])
         st.dataframe(pd.DataFrame([
-            ["지분가치 (평가기준일)", _eqv, _eqv*_F, "100 × 주가 ÷ 주당 인수가액"],
-            ["＋ 투자자 풋옵션", R["put"], R["put"]*_F,
+            ["지분가치 (평가기준일)", _eqv, _eqv*_Fe, "100 × 주가 ÷ 주당 기준가격"],
+            ["＋ 풋옵션 (주식 보유자)", R["put"], R["put"]*_Fp,
              "MAX(행사금액 − 지분가치, 0) 을 미국형으로"]]
             + _crow
-            + [["＝ 투자자 순포지션 참고값", _eqv + R["put"] - R["call"],
-                (_eqv + R["put"] - R["call"])*_F,
-                "투자 시점 평가면 투자원금(100)과 견줍니다"]],
+            + [["＝ 주식 보유자 쪽 합계 참고값", _eqv + R["put"] - R["call"],
+                _eqv*_Fe + R["put"]*_Fp - R["call"]*_Fc,
+                "하나의 금융상품 가치가 아닙니다"]],
             columns=["항목", "100 기준", "전액 기준 (원)", "설명"]).style.format(
             {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
             use_container_width=True, hide_index=True)
-        st.caption("풋과 콜을 **따로** 평가합니다. 풋은 투자자가, 콜은 최대주주가 고르므로 "
+        st.caption("풋과 콜을 **따로** 평가합니다. 풋은 주식 보유자가, 콜은 상대방이 고르므로 "
                    "한 격자에서 함께 최적화하면 두 사람을 한 사람으로 만드는 셈이 "
-                   "됩니다. 각자의 재무제표에 총액으로 싣는 것도 같은 이유입니다. "
-                   "위 표의 «투자자 순포지션 참고값» 은 세 값을 더해 본 참고치이지 하나의 "
-                   "금융상품 가치가 아닙니다.")
-        _pk0 = 100*(1 + accrue_rate(t.sha_put_s/12, t.sha_put_yield, 0.0, t.sha_put_cmp))
-        _pk1 = 100*(1 + accrue_rate(t.sha_put_e/12, t.sha_put_yield, 0.0, t.sha_put_cmp))
-        _rows = [["풋 행사기간", f"{t.sha_put_s:,.0f} ~ {t.sha_put_e:,.0f}개월 · "
-                              f"{t.sha_put_f:,.0f}개월마다"],
-                 ["풋 행사금액", f"{_pk0:,.4f} (첫날) ~ {_pk1:,.4f} (마지막날)"]]
-        if _hascall:
-            _ck0 = 100*(1 + accrue_rate(t.sha_call_s/12, t.sha_call_prem, 0.0,
-                                        t.sha_call_cmp))
-            _ck1 = 100*(1 + accrue_rate(t.sha_call_e/12, t.sha_call_prem, 0.0,
-                                        t.sha_call_cmp))
-            _rows += [["콜 행사기간", f"{t.sha_call_s:,.0f} ~ {t.sha_call_e:,.0f}개월 · "
-                                   f"{t.sha_call_f:,.0f}개월마다"],
-                      ["콜 행사금액", f"{_ck0:,.4f} ~ {_ck1:,.4f}"]]
-        else:
-            _rows.append(["콜옵션", "없음 (시작 > 종료)"])
+                   "됩니다. 각자의 재무제표에 총액으로 싣는 것도 같은 이유입니다.")
+        _pd, _cd = R["p_dates"], R["c_dates"]
+        _dd = lambda m: months_to_date(t.d_issue, m).isoformat()
+        _rows = []
+        if _pd:
+            _i0, _i1 = min(_pd), max(_pd)
+            _rows += [["풋 행사일", f"{_dd(t.sha_put_s)} ~ {_dd(t.sha_put_e)} · "
+                                 + ("기간 중 언제든지" if R["p_cont"] else f"{t.sha_put_f:g}개월마다")
+                                 + f" · 격자 {len(_pd)}회"],
+                      ["풋 행사금액 (주당)", f"{R['pk'](_i0)*_kp:,.2f}원 (첫 행사일) ~ {R['pk'](_i1)*_kp:,.2f}원 (마지막)"]]
+        if _hascall and _cd:
+            _j0, _j1 = min(_cd), max(_cd)
+            _rows += [["콜 행사일", f"{_dd(t.sha_call_s)} ~ {_dd(t.sha_call_e)} · "
+                                 + ("기간 중 언제든지" if R["c_cont"] else f"{t.sha_call_f:g}개월마다")
+                                 + f" · 격자 {len(_cd)}회"],
+                      ["콜 행사금액 (주당)", f"{R['ck'](_j0)*_kp:,.2f}원 ~ {R['ck'](_j1)*_kp:,.2f}원"]]
+        elif not _hascall:
+            _rows.append(["콜옵션", "없음"])
+        _rows.append(["대상 주식수", f"풋 {_qp:,.0f}주 · 콜 {_qc:,.0f}주"])
         _rows.append(["풋 할인율", ["무위험 곡선", "위험 곡선",
                                  f"무위험 + {t.sha_spread:.2%}"][int(t.sha_disc)]])
         if int(t.ipo_on):
@@ -2149,16 +2176,22 @@ if is_sha(t):
                                       else "풋만 소멸")])
         st.dataframe(pd.DataFrame(_rows, columns=["계약 조건", "내용"]),
                      use_container_width=True, hide_index=True)
+        _xr = exercise_date_rows(t)
+        if _xr:
+            st.markdown("**행사일 대조 — 계약상 행사일과 실제로 쓴 노드**")
+            st.dataframe(pd.DataFrame(_xr, columns=EXDATE_COLS), use_container_width=True, hide_index=True)
+            st.caption(EXDATE_RULE)
 
     if _sha_section == _sha_sections[1]:
         st.write("같은 계약인데 세 사람의 재무제표에 실리는 것이 완전히 다릅니다. "
                  "**풋 의무자**에 따라 달라집니다.")
         acc = sha_accounts(t, R)
-        for who in ("발행회사", "최대주주", "투자자"):
+        acc_k = sha_accounts(t, R, krw=True)
+        for who in SHA_PARTIES:
             rows, memo = acc[who]
             st.markdown(f"### {who}")
             st.dataframe(pd.DataFrame(
-                [[k, v, v*_F] for k, v in rows],
+                [[k, v, acc_k[who][0][i][1]] for i, (k, v) in enumerate(rows)],
                 columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
                 {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
                 use_container_width=True, hide_index=True)
@@ -2168,11 +2201,11 @@ if is_sha(t):
             st.divider()
             st.markdown("### 옵션 공정가치 대 총액 부채 — 얼마나 다른가")
             st.dataframe(pd.DataFrame([
-                ["풋옵션 공정가치 (파생상품부채)", R["put"], R["put"]*_F,
-                 "최대주주가 의무자일 때"],
-                ["상환금액의 현재가치 (금융부채 총액)", _g["pv"], _g["pv"]*_F,
+                ["풋옵션 공정가치 (파생상품부채)", R["put"], R["put"]*_Fp,
+                 "콜 권리자(상대 주주)가 의무자일 때"],
+                ["상환금액의 현재가치 (금융부채 총액)", _g["pv"], _g["pv"]*_Fp,
                  "발행회사가 의무자일 때 — 1032 문단 23"],
-                ["차이", _g["pv"] - R["put"], (_g["pv"] - R["put"])*_F,
+                ["차이", _g["pv"] - R["put"], (_g["pv"] - R["put"])*_Fp,
                  "같은 조항인데 이만큼 갈립니다"]],
                 columns=["항목", "100 기준", "전액 기준 (원)", "언제"]).style.format(
                 {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
@@ -2210,13 +2243,13 @@ if is_sha(t):
             rows += [["적격상장으로 소멸", dd["qipo"]/tot, t.ipo_m if t.ipo_on else None],
                      ["행사기간 만료", dd["expire"]/tot, t.T*12 + t.elapsed_m]]
             return rows
-        st.markdown("#### 투자자 풋옵션")
+        st.markdown("#### 풋옵션 (주식 보유자)")
         st.dataframe(pd.DataFrame(_tab(_dp, "풋", "콜"),
             columns=["유형", "비중", "평균 시점(개월)"]).style.format(
             {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
             use_container_width=True, hide_index=True)
         if _hascall:
-            st.markdown("#### 최대주주 콜옵션")
+            st.markdown("#### 콜옵션 (상대방)")
             st.dataframe(pd.DataFrame(_tab(_dc, "콜", "풋"),
                 columns=["유형", "비중", "평균 시점(개월)"]).style.format(
                 {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
@@ -2339,7 +2372,8 @@ if is_sha(t):
                                 rate=None, rate_how="",
                                 ir=bool(len(t.rf_curve) >= 2
                                         and len(credit_curve(t)) >= 2))
-                    data = build_xlsx_sha(t, R, formula=(skind == "수식"),
+                    # 회차별 표면 회차 전부(합계·회계처리 포함)를 한 권에 싣는다.
+                    data = build_xlsx_sha(_T_ALL, _P_ALL, formula=(skind == "수식"),
                                           attach=_att)
                     fn = f"주주간계약평가조서_{skind}{tranche_tag(t)}_{dt.date.today()}.xlsx"
                 data = export_with_sources(data, t)

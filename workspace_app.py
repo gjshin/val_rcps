@@ -54,7 +54,7 @@ def field(key, edited, case, prefix='input'):
     rev = st.session_state.get('revision', 0)
     required = REQUIRED | (RCPS_REQUIRED if edited.get('inst') == 'RCPS' else set())
     value = edited.get(key, None if key in required or key in EVENT_DATES else DEFAULTS.get(key))
-    widget_key, title = f'{prefix}_{key}_{rev}', label(key)
+    widget_key, title = f'{prefix}_{key}_{rev}', label(key, edited.get('inst'))
     override = next((r for r in case.assumptions if r['field'] == key), None)
     if override and prefix == 'input':
         st.caption(f"{title}: 계산에는 별도 가정 {display_value(key, override['value'], case.contract.get('d_issue'))}을 적용합니다. ‘출처·평가가정’에서 변경하십시오.")
@@ -153,6 +153,213 @@ def right_period(title, start, end, edited, case, extra, errors):
     return on
 
 
+SHA_COLS = [('name', '평가 구분'), ('start', '행사 시작일'), ('end', '행사 종료일'), ('style', '행사 방식'),
+            ('freq', '주기(개월)'), ('price', '주당 기준가격(원)'), ('rate', '가격 가산율(연 %)'),
+            ('put_q', '풋 수량(주)'), ('call_q', '콜 수량(주)'), ('kill', '상호소멸')]
+SHA_COLS_CALL = [('call_start', '콜 시작일'), ('call_end', '콜 종료일'), ('call_price', '콜 기준가격(원)'),
+                 ('call_rate', '콜 가산율(연 %)')]
+SHA_COLS_MKT = [('sig', '변동성(연 %)'), ('rf', '무위험 금리(연 %)'), ('pdisc', '풋 할인율(연 %)')]
+SHA_COLS_ACC = [('acc_from', '가격 가산 기산일')]
+SHA_PCT = {'rate', 'call_rate', 'sig', 'rf', 'pdisc'}
+SHA_DATES = {'start', 'end', 'call_start', 'call_end', 'acc_from'}
+SHA_STYLE = {'any': '기간 중 언제든지', 'periodic': '정기', 'single': '특정일 1회'}
+
+
+def _sha_frame(rows, cols):
+    """회차 줄(dict) → 표. 비율은 %로, 날짜는 날짜로 보여 준다."""
+    out = []
+    for r in rows:
+        row = {}
+        for k, title in cols:
+            v = r.get(k)
+            if k in SHA_PCT:
+                v = None if v in (None, '') else float(v) * 100
+            elif k in SHA_DATES:
+                try:
+                    v = dt.date.fromisoformat(v) if v else None
+                except ValueError:
+                    v = None
+            elif k == 'style':
+                v = SHA_STYLE.get(v or 'any', SHA_STYLE['any'])
+            elif k == 'kill':
+                v = bool(v)
+            row[title] = v
+        out.append(row)
+    return pd.DataFrame(out, columns=[t for _, t in cols])
+
+
+def _sha_rows_from(frame, cols, old):
+    """표 → 회차 줄. 숨긴 선택 칸(콜 조건·회차 금리·기산일)은 비운다 — 숨기면 공통 값을 쓴다는 뜻이다.
+
+    실적 연동 가격의 산식 기록(price_note)은 같은 이름·같은 가격일 때만 남긴다.
+    """
+    back = {v: k for k, v in SHA_STYLE.items()}
+    prev = {r.get('name'): r for r in old}
+    rows = []
+    for rec in frame.to_dict('records'):
+        if all(v is None or (isinstance(v, float) and pd.isna(v)) or v == '' for v in rec.values()):
+            continue
+        row = {}
+        for k, title in cols:
+            v = rec.get(title)
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                v = None
+            if k in SHA_PCT:
+                v = None if v is None else float(v) / 100
+            elif k in SHA_DATES:
+                v = v.isoformat() if hasattr(v, 'isoformat') else (str(v) if v else '')
+            elif k == 'style':
+                v = back.get(v, 'any')
+            elif k == 'kill':
+                v = int(bool(v))
+            elif k in ('freq', 'price', 'put_q', 'call_q', 'call_price') and v is not None:
+                v = float(v)
+            elif k == 'name':
+                v = str(v or '').strip()
+            row[k] = v
+        row = {k: v for k, v in row.items() if v not in (None, '')}
+        row['name'] = row.get('name') or f'{len(rows)+1}회차'
+        p = prev.get(row['name'])
+        if p and p.get('price_note') and p.get('price') == row.get('price'):
+            row['price_note'] = p['price_note']
+        rows.append(row)
+    return rows
+
+
+def sha_editor(edited, case, errors):
+    """주주간계약 입력 — 회차별 표(주식수·원 단위)가 기본이다. 기존 평가파일의 단일 계약 칸도 연다."""
+    rev = st.session_state.get('revision', 0)
+    rows = list(edited.get('sha_rows') or [])
+    mode = st.radio('입력 방식', ['회차별 표 (주식수·원)', '단일 계약 (계산기준금액 100 기준 · 기존 방식)'],
+                    index=0 if (rows or not case.facts().get('sha_put_e')) else 1, horizontal=True,
+                    key=f'sha_mode_{rev}',
+                    help='회차별 표 — 계약·연도·물량별로 행사기간·주당 기준가격·가산율·풋·콜 수량을 한 줄씩 넣습니다. '
+                         '연도별 물량을 한 줄로 합치지 마십시오 — 합치면 모든 물량을 모든 기간에 행사할 수 있는 것으로 '
+                         '계산됩니다. 미행사 물량을 다음 연도로 넘기지 않습니다.')
+    st.caption('풋 = 주식 보유자가 상대방에게 주식을 사 달라고 요구할 권리 · 콜 = 상대방이 주식 보유자에게 주식을 팔라고 '
+               '요구할 권리. 계약서의 «매수청구권·매도청구권» 명칭만 보고 정하지 말고, 누가 누구에게 어떤 거래를 요구하는지로 '
+               '나누십시오. 콜 권리자가 늘 최대주주인 것은 아닙니다.')
+    if mode.startswith('단일'):
+        if rows:
+            st.info('회차별 표를 비우고 단일 계약 칸으로 계산합니다. 표의 내용은 이 입력을 저장하면 지워집니다.')
+        edited['sha_rows'] = []
+        st.caption('모든 금액은 계산기준금액 100 기준입니다. 주당 기준가격 칸에 1주당 기준매매가격을 넣습니다.')
+        right_period('풋 있음', 'sha_put_s', 'sha_put_e', edited, case, ['sha_put_f', 'sha_put_yield', 'sha_put_cmp'], errors)
+        right_period('콜 있음', 'sha_call_s', 'sha_call_e', edited, case, ['sha_call_f', 'sha_call_prem', 'sha_call_cmp', 'sha_call_k'], errors)
+        fields(['sha_put_q', 'sha_call_q', 'sha_writer', 'sha_disc', 'sha_kill', 'sha_side'], edited, case)
+        if edited.get('sha_disc') == 2:
+            field('sha_spread', edited, case)
+        return
+    if not rows:
+        rows = [dict(name='1회차', start='', end='', style='any', price=None, rate=0., put_q=0., call_q=0., kill=0)]
+    c1, c2, c3 = st.columns(3)
+    show_call = c1.checkbox('풋·콜 조건이 다른 회차가 있다', value=any(r.get(k) not in (None, '') for r in rows
+                            for k, _ in SHA_COLS_CALL), key=f'sha_callcols_{rev}',
+                            help='콜의 행사기간·기준가격·가산율이 풋과 다르면 켭니다. 비운 칸은 풋과 같습니다.')
+    show_mkt = c2.checkbox('회차별 금리·변동성', value=any(r.get(k) is not None for r in rows for k, _ in SHA_COLS_MKT),
+                           key=f'sha_mktcols_{rev}', help='비운 칸은 아래 시장자료(공통 곡선·변동성)를 씁니다. 금리를 넣으면 그 회차는 그 '
+                                                         '금리를 평평하게 씁니다(무위험은 콜·확률, 풋 할인율은 풋 할인).')
+    show_acc = c3.checkbox('가격 가산 기산일이 계약일과 다른 회차', value=any(r.get('acc_from') for r in rows),
+                           key=f'sha_acccols_{rev}')
+    cols = SHA_COLS + (SHA_COLS_CALL if show_call else []) + (SHA_COLS_MKT if show_mkt else []) + (SHA_COLS_ACC if show_acc else [])
+    cfg = {'행사 방식': st.column_config.SelectboxColumn(options=list(SHA_STYLE.values()), required=True),
+           '행사 시작일': st.column_config.DateColumn(format='YYYY-MM-DD'),
+           '행사 종료일': st.column_config.DateColumn(format='YYYY-MM-DD'),
+           '콜 시작일': st.column_config.DateColumn(format='YYYY-MM-DD'),
+           '콜 종료일': st.column_config.DateColumn(format='YYYY-MM-DD'),
+           '가격 가산 기산일': st.column_config.DateColumn(format='YYYY-MM-DD'),
+           '주당 기준가격(원)': st.column_config.NumberColumn(min_value=0., format='%.2f'),
+           '콜 기준가격(원)': st.column_config.NumberColumn(min_value=0., format='%.2f'),
+           '풋 수량(주)': st.column_config.NumberColumn(min_value=0., format='%.0f'),
+           '콜 수량(주)': st.column_config.NumberColumn(min_value=0., format='%.0f'),
+           '주기(개월)': st.column_config.NumberColumn(min_value=0., format='%.2f', help='정기 행사일 때만 씁니다.'),
+           '가격 가산율(연 %)': st.column_config.NumberColumn(format='%.4f', help='0 이면 고정 행사가격입니다.'),
+           '상호소멸': st.column_config.CheckboxColumn(help='같은 주식에 붙은 풋·콜이면 켭니다 — 한쪽이 행사되면 다른 쪽이 '
+                                                        '소멸합니다. 풋·콜 수량이 같아야 합니다.')}
+    frame = st.data_editor(_sha_frame(rows, cols), num_rows='dynamic', hide_index=True, key=f'sha_rows_{rev}',
+                           column_config=cfg, use_container_width=True)
+    new_rows = _sha_rows_from(frame, cols, rows)
+    edited['sha_rows'] = new_rows
+    st.session_state.setdefault('_rendered_fields', set()).update({'sha_rows', 'K0', 'face_total', 'd_mat'})
+    # 표에서 정해지는 공통 칸 — 평가 종료일(마지막 행사일) · 첫 회차 기준가격 · 계산기준금액
+    ends, base = [], 0.
+    for r in new_rows:
+        for k in ('end', 'call_end'):
+            if r.get(k): ends.append(r[k])
+        base += float(r.get('price') or 0) * max(float(r.get('put_q') or 0), float(r.get('call_q') or 0))
+    if ends:
+        edited['d_mat'] = max(ends)
+    if new_rows and new_rows[0].get('price'):
+        edited['K0'] = float(new_rows[0]['price'])
+    if base > 0:
+        edited['face_total'] = base
+    st.caption(f'회차 {len(new_rows)}개 · 계산기준금액 {base:,.0f}원 (주당 기준가격 × 대상 주식수의 합) · 평가 종료일 '
+               f'{edited.get("d_mat", "—")}. 가격 가산 기산일은 비우면 계약일입니다. 가산율 0% 는 고정 행사가격입니다.')
+    fields(['sha_put_cmp', 'acc_basis', 'sha_writer', 'sha_disc', 'sha_side'], edited, case)
+    if edited.get('sha_disc') == 2:
+        field('sha_spread', edited, case)
+    st.caption('가산 복리 횟수는 풋·콜 모든 회차에 씁니다. 풋 할인 방식은 회차별 풋 할인율을 비운 회차에 적용합니다.')
+    edited['sha_call_cmp'] = edited.get('sha_put_cmp', 1)
+    with st.expander('실적 연동 행사가격 계산 (보조)'):
+        sha_price_helper(edited, rev)
+    with st.expander('이 모델이 다루지 않는 계약 조건'):
+        st.markdown('- 풋·콜 상호소멸은 **같은 회차 안에서만** 적용합니다. 회차 사이의 소멸·물량 이월은 반영하지 않습니다.\n'
+                    '- 같은 날 풋·콜이 함께 행사되면 «풋·콜 동시 행사 시 우선권»(아래 상세)을 따릅니다 — 계약의 통지·우선 조항을 '
+                    '확인하십시오.\n'
+                    '- 행사일부터 실제 대금 지급일까지의 시차, 동반매도·우선매수권, 상대방의 부도 가능성(할인율로만 반영)은 '
+                    '모형에 넣지 않습니다.\n'
+                    '- 실적에 따라 달라지는 행사가격은 추정 재무수치로 계산한 가격을 **고정해** 평가합니다. 미래 실적의 '
+                    '불확실성은 반영하지 않습니다.')
+
+
+def sha_price_helper(edited, rev):
+    """주당 행사가격 = (직전 회계연도 매출액 − 차감액) × 적용 배수 ÷ 발행주식 총수.
+
+    영업손실률이 기준을 **초과**하면 낮은 배수, 아니면 높은 배수. 추정 재무수치로 계산한 가격을 고정해
+    회차 표에 넣는다 — 미래 실적의 불확실성까지 반영한 모형이 아니다.
+    """
+    st.caption('주당 행사가격 = (산식 재무제표 연도 매출액 − 차감액) × 적용 배수 ÷ 발행주식 총수. 영업손실률이 기준을 '
+               '**초과**하면 «초과 시 배수», 아니면 «이하 시 배수». 계약상 산식에 쓰는 재무제표는 보통 행사연도의 **직전** '
+               '회계연도입니다 — 두 연도를 따로 적으십시오. 추정 재무수치로 계산한 가격을 고정해 평가합니다 (미래 실적의 '
+               '불확실성은 반영하지 않습니다).')
+    rows = [r['name'] for r in edited.get('sha_rows') or []]
+    base = st.session_state.get('_sha_price_tbl') or [dict(회차=(rows[0] if rows else ''), 행사연도=None, 재무제표연도=None,
+                                                          **{'매출액(원)': None, '차감액(원)': 0., '영업손실률(%)': None,
+                                                             '기준 손실률(%)': 10., '초과 시 배수': 1.0, '이하 시 배수': 1.5,
+                                                             '발행주식 총수(주)': None})]
+    tbl = st.data_editor(pd.DataFrame(base), num_rows='dynamic', hide_index=True, key=f'sha_price_{rev}',
+                         column_config={'회차': st.column_config.SelectboxColumn(options=rows)})
+    out, notes = [], {}
+    for rec in tbl.to_dict('records'):
+        try:
+            rev_, ded, loss, thr = (float(rec[k]) for k in ('매출액(원)', '차감액(원)', '영업손실률(%)', '기준 손실률(%)'))
+            hi, lo_, n_sh = float(rec['초과 시 배수']), float(rec['이하 시 배수']), float(rec['발행주식 총수(주)'])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if n_sh <= 0 or any(pd.isna(x) for x in (rev_, ded, loss, thr, hi, lo_, n_sh)):
+            continue
+        from valuation.legacy import sha_perf_price
+        px, mult = sha_perf_price(rev_, ded, loss, thr, hi, lo_, n_sh)
+        fy, ey = rec.get('재무제표연도'), rec.get('행사연도')
+        note = (f"실적 연동 — ({rev_:,.0f} − {ded:,.0f}) × {mult:g}배 ÷ {n_sh:,.0f}주 = {px:,.2f}원 · 영업손실률 {loss:g}% "
+                f"{'>' if loss > thr else '≤'} {thr:g}% · 행사연도 {ey or '?'} · 재무제표 {fy or '?'}년 (추정치 고정)")
+        out.append({'회차': rec.get('회차'), '행사연도': ey, '재무제표 연도': fy, '적용 배수': mult, '주당 행사가격(원)': px})
+        if rec.get('회차'):
+            notes[rec['회차']] = (px, note)
+        if ey and fy and str(ey).isdigit() and str(fy).isdigit() and int(fy) >= int(ey):
+            st.warning(f'{rec.get("회차") or ey}: 재무제표 연도({fy})가 행사연도({ey})보다 늦지 않습니다 — 계약이 «직전 회계연도» '
+                       '를 쓰는지 확인하십시오.')
+    if out:
+        st.dataframe(pd.DataFrame(out), hide_index=True)
+    st.session_state['_sha_price_tbl'] = tbl.to_dict('records')
+    if notes and st.button('계산한 가격을 회차 표에 넣기', key=f'sha_price_apply_{rev}',
+                           help='같은 이름의 회차에 주당 기준가격을 넣고 가격 가산율을 0%(고정 가격)로 둡니다.'):
+        for r in edited.get('sha_rows') or []:
+            if r['name'] in notes:
+                r['price'], r['rate'], r['price_note'] = notes[r['name']][0], 0., notes[r['name']][1]
+        st.session_state['_sha_price_applied'] = True
+
+
 def curve_editor(key, edited):
     st.session_state.setdefault('_rendered_fields', set()).add(key)
     current = edited.get(key, [])
@@ -173,20 +380,22 @@ def input_editor(case, autosave=False):
     draft_errors = []
     inst = edited['inst']
     st.subheader('평가대상 및 기준일')
-    fields(['tranche', 'view', 'd_issue', 'd_base', 'd_mat', 'face_total'], edited, case)
+    if inst == 'SHA' and edited.get('sha_rows'):
+        # 회차별 표 — 평가 종료일·계산기준금액·주당 기준가격은 표에서 정해진다 (sha_editor).
+        fields(['tranche', 'd_issue', 'd_base'], edited, case)
+    elif inst == 'SHA':
+        fields(['tranche', 'd_issue', 'd_base', 'd_mat', 'face_total'], edited, case)
+    else:
+        fields(['tranche', 'view', 'd_issue', 'd_base', 'd_mat', 'face_total'], edited, case)
     if inst == 'RCPS':
         fields(['issue_px', 'par', 'mat_mode', 'div_mode', 'div_basis'], edited, case)
     if inst == 'BW':
         fields(['bw_pay', 'bw_detach'], edited, case)
     st.subheader('계약조건')
-    field('K0', edited, case)
+    if inst != 'SHA' or not edited.get('sha_rows'):
+        field('K0', edited, case)
     if inst == 'SHA':
-        st.caption('현재 전환가액 칸에는 주당 인수가액을 입력합니다. 풋과 콜을 각각 계산합니다.')
-        right_period('주주간계약 풋 있음', 'sha_put_s', 'sha_put_e', edited, case, ['sha_put_f', 'sha_put_yield', 'sha_put_cmp'], draft_errors)
-        right_period('주주간계약 콜 있음', 'sha_call_s', 'sha_call_e', edited, case, ['sha_call_f', 'sha_call_prem', 'sha_call_cmp'], draft_errors)
-        fields(['sha_writer', 'sha_disc', 'sha_kill'], edited, case)
-        if edited.get('sha_disc') == 2:
-            field('sha_spread', edited, case)
+        sha_editor(edited, case, draft_errors)
     else:
         fields(['cpn', 'ipay'], edited, case)
         if inst != 'RCPS' or edited.get('mat_mode') == 1:
@@ -291,7 +500,10 @@ def input_editor(case, autosave=False):
             st.caption('내재파생 분리 정책은 회사가 고르는 회계정책입니다 (한공회 실무사례 30~32쪽). 접근법 1은 서로 '
                        '얽힌 권리(전환권·조기상환권·발행회사 콜)를 먼저 묶고 판단하고, 접근법 2는 권리마다 분리 여부를 '
                        '판단한 뒤 분리 대상끼리 묶습니다. 비슷한 거래에 같은 정책을 쓰십시오.')
-        fields(['acc_basis', 'conv_class', 'emb_approach', 'p_sep', 'k_sep', 'p_lost_int', 'fvpl_whole'], edited, case)
+        if inst != 'SHA':
+            fields(['acc_basis', 'conv_class', 'emb_approach', 'p_sep', 'k_sep', 'p_lost_int', 'fvpl_whole'], edited, case)
+        elif not edited.get('sha_rows'):
+            field('acc_basis', edited, case)
         if inst != 'SHA':
             st.caption('풋 분리 판단 — 조기상환 행사금액을 자본요소 분리 전 상각후원가와 비교합니다(전환권이 부채면 그 규정을 '
                        '준용해 전환권을 떼기 전 금액). 비교기준(기본 10%)은 기준서가 정한 수치가 아니므로 회계정책으로 '
@@ -360,6 +572,25 @@ def evidence_editor(case, pending=False):
                 candidate = Case.from_dict(case.to_dict())
                 candidate.assumptions = [r for r in candidate.assumptions if r['field'] != key]
                 candidate.assumptions.append(dict(field=key, value=proposed[key], rationale=reason)); save_case(candidate)
+
+
+def sha_result_panel(run):
+    """주주간계약 결과 — 회차별 풋·콜과 합계, 순액(관점). 계산은 하지 않고 실행 결과만 보여 준다."""
+    t, tot = run.terms, run.summary['amounts_total']
+    side = int(getattr(t, 'sha_side', 0))
+    net = (tot['call'] - tot['put']) if side == 0 else (tot['put'] - tot['call'])
+    st.metric(('순액 — 콜 권리자 관점 (콜 − 풋)' if side == 0 else '순액 — 풋 권리자 관점 (풋 − 콜)') + ' (원)', f'{net:,.0f}',
+              help='두 권리는 보유자가 달라 각자 총액으로 싣습니다. 순액은 참고값입니다.')
+    rows = run.summary.get('sha_rows')
+    if rows:
+        frame = pd.DataFrame(rows)
+        total = {'회차': '합계', '풋 전액': frame['풋 전액'].sum(), '콜 전액': frame['콜 전액'].sum(),
+                 '풋 수량': frame['풋 수량'].sum(), '콜 수량': frame['콜 수량'].sum()}
+        frame = pd.concat([frame, pd.DataFrame([total])], ignore_index=True)
+        st.dataframe(frame.style.format({'주당 기준가격': '{:,.2f}', '풋 수량': '{:,.0f}', '콜 수량': '{:,.0f}',
+                                         '풋 1주당': '{:,.2f}', '콜 1주당': '{:,.2f}', '풋 전액': '{:,.0f}',
+                                         '콜 전액': '{:,.0f}'}, na_rep=''), hide_index=True, use_container_width=True)
+        st.caption('회차마다 따로 계산해 더했습니다. 연도별 미행사 물량을 다음 회차로 넘기지 않습니다.')
 
 
 def day1_panel(run, case):
@@ -503,8 +734,10 @@ def main():
                 col.metric(AMOUNT_LABELS[key] + ' (원)', f'{values[key]:,.0f}')
                 if run.summary['amounts_per_share']:
                     col.caption(f"1주당 {run.summary['amounts_per_share'][key]:,.2f}원")
+            if run.terms.inst == 'SHA':
+                sha_result_panel(run)
             day1_panel(run, case)
-            with st.expander('구성요소·원금 100 기준 상세'):
+            with st.expander('구성요소·원금 100 기준 상세' if run.terms.inst != 'SHA' else '계산기준금액 100 기준 상세'):
                 st.caption('순차 차감에 따른 참고값입니다. 회계상 인식액을 확정한 표가 아닙니다.')
                 st.dataframe(pd.DataFrame([{'항목': AMOUNT_LABELS[k], '총액(원)': values[k], '원금 100 기준': v}
                                           for k, v in run.summary['amounts_100'].items()]), hide_index=True)

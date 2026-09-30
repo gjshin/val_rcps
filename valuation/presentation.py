@@ -43,10 +43,13 @@ LABELS = {
     'ipo_min': '상장 최소 공모가격(원)', 'ipo_conv': 'IPO 시 보통주 강제전환',
     'bw_pay': 'BW 행사대금 납입 방식', 'bw_detach': 'BW 분리형 여부',
     'sha_put_s': '주주간계약 풋 행사 시작일', 'sha_put_e': '주주간계약 풋 행사 종료일', 'sha_put_f': '주주간계약 풋 주기(개월)',
-    'sha_put_yield': '주주간계약 풋 보장수익률(연, %)', 'sha_put_cmp': '주주간계약 풋 복리 횟수(연, 0은 단리)',
+    'sha_put_yield': '주주간계약 풋 가격 가산율(연, %, 0은 고정 가격)', 'sha_put_cmp': '주주간계약 풋 가산 복리 횟수(연, 0은 단리)',
     'sha_call_s': '주주간계약 콜 행사 시작일', 'sha_call_e': '주주간계약 콜 행사 종료일', 'sha_call_f': '주주간계약 콜 주기(개월)',
-    'sha_call_prem': '주주간계약 콜 가산율(연, %)', 'sha_call_cmp': '주주간계약 콜 복리 횟수(연, 0은 단리)',
-    'sha_writer': '풋 의무자', 'sha_disc': '주주간계약 풋 할인 방식', 'sha_spread': '주주간계약 신용스프레드(%p)',
+    'sha_call_prem': '주주간계약 콜 가격 가산율(연, %, 0은 고정 가격)', 'sha_call_cmp': '주주간계약 콜 가산 복리 횟수(연, 0은 단리)',
+    'sha_call_k': '콜 주당 기준가격(원, -1은 풋과 같음)', 'sha_put_q': '풋 대상 주식수(-1은 계산기준금액 ÷ 기준가격)',
+    'sha_call_q': '콜 대상 주식수(-1은 계산기준금액 ÷ 기준가격)', 'sha_side': '순액을 보는 관점',
+    'sha_rows': '주주간계약 회차별 표',
+    'sha_writer': '풋 행사 시 주식매수 의무자', 'sha_disc': '주주간계약 풋 할인 방식', 'sha_spread': '주주간계약 신용스프레드(%p)',
     'sha_qipo_kill': '적격상장 시 소멸 권리', 'sha_kill': '주주간계약 권리의 상호소멸',
     'bs_target': '역산 목표(원금 100 기준)', 'bs_net': '역산 목표금액 기준',
     'prev_hold': '투자자 전기 장부금액(원금 100 기준, -1은 없음)',
@@ -87,7 +90,8 @@ CHOICES = {
     'y_type': {'par': '만기수익률', 'spot': '현물이자율'},
     'rate_mode': {'direct': '직접 입력', 'rating': '두 신용등급 사이 보간', 'pick': '기존 직접입력'},
     'bdt_base': {0: '위험 금리곡선', 1: '무위험 금리 + 확정 스프레드'},
-    'sha_writer': {0: '최대주주', 1: '발행회사', 2: '연대'},
+    'sha_writer': {0: '콜 권리자(상대 주주)', 1: '발행회사', 2: '상대 주주·발행회사 연대'},
+    'sha_side': {0: '콜 권리자 관점 (콜 − 풋)', 1: '풋 권리자 관점 (풋 − 콜)'},
     'sha_disc': {0: '무위험 금리', 1: '위험 금리', 2: '무위험 금리 + 스프레드'},
     'sha_qipo_kill': {0: '풋만 소멸', 1: '풋·콜 모두 소멸'},
     'sha_kill': {0: '독립', 1: '한쪽 행사 시 다른 권리 소멸'},
@@ -101,9 +105,19 @@ for _key in ('p_less_cpn', 'k_less_cpn', 'm_less_cpn'):
 LABELS.setdefault('input', '입력 점검')
 
 
-def label(key):
+# 주주간계약 화면에서만 바꿔 부르는 이름 — 사채가 없으므로 전환가액·발행일·발행금액이라 부르지 않는다.
+SHA_LABELS = {
+    'd_issue': '계약일(가격 가산 기산일)', 'K0': '주당 기준가격(원)',
+    'face_total': '계산기준금액(원) — 주당 기준가격 × 대상 주식수', 'd_mat': '평가 종료일(마지막 행사 가능일)',
+    'S0': '대상 주식 주당가치(원)',
+}
+
+
+def label(key, inst=None):
     if key.startswith('additional_rights['):
         return '별도 계약조건 ' + str(int(key.split('[')[1][:-1]) + 1)
+    if inst == 'SHA' and key in SHA_LABELS:
+        return SHA_LABELS[key]
     return LABELS.get(key, key)
 
 
