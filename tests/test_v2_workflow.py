@@ -139,19 +139,58 @@ def test_export_keeps_input_evidence_and_manifest(formula):
         name = "formula_review.xlsx" if formula else "value_review.xlsx"
         wb = load_workbook(io.BytesIO(z.read(name)), data_only=False)
         assert not {"V2_검토기록", "V2_계약과가정", "V2_추가권리"} & set(wb.sheetnames)
-        assert "계산정보" in wb and "확인사항" in wb
-        sheet = wb['출처기록'] if formula else wb['시장자료']
+        assert "조서 정보" in wb
+        sheet = wb['조서 정보'] if formula else wb['시장자료']
         cells = [cell for row in sheet for cell in row if cell.value == case.sources["S0"]]
         assert cells and all(cell.data_type == "s" for cell in cells)
 
 
-def test_formula_export_never_silently_switches_refixing_method():
+def test_old_state_expansion_files_open_as_path_weighting():
+    # 상태확장(carry=0)은 없앴다. 옛 평가파일은 경로가중치(1)로 열리고 수식 조서도 만들어진다.
     case = synthetic()
     case.contract.update(rfx_mode=1, floor=20., rfx_cyc=3.)
-    case.method["carry"] = 0
-    run = calculate(case)
-    with pytest.raises(ValueError, match="동일한 수식"):
-        export_bundle(run, formula=True)
+    obj = case.to_dict(); obj["method"]["carry"] = 0
+    opened = Case.from_dict(obj)
+    assert opened.method["carry"] == 1
+    run = calculate(opened)
+    assert run.terms.carry == 1
+    export_bundle(run, formula=True)
+    # 가정 줄로 덮어쓴 carry=0 도 바뀌어야 한다 — effective() 가 입력을 덮어쓴다.
+    obj = case.to_dict()
+    obj["assumptions"] = [{"field": "carry", "value": 0, "rationale": "옛 파일"}]
+    opened = Case.from_dict(obj)
+    assert opened.assumptions[0]["value"] == 1
+    assert calculate(opened).terms.carry == 1
+
+
+@pytest.mark.parametrize("path", sorted((ROOT / "시나리오").glob("*.json")))
+def test_legacy_scenarios_with_state_expansion_still_calculate(path):
+    # 저장소의 옛 시나리오(import_legacy 경로) 가운데 상태확장이 들어 있는 것도 계산돼야 한다.
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    if obj.get("carry") != 0:
+        pytest.skip("상태확장 설정이 아님")
+    case = import_legacy(obj, name=path.stem)
+    assert case.facts()["carry"] == 1
+    assert calculate(case).terms.carry == 1
+
+
+def test_formula_workbook_does_not_offer_date_inputs_it_cannot_follow():
+    # 이자 지급일·조기상환 행사일은 앱이 계약일로 정해 00 격자 공통에 값으로 넣는다.
+    # 가정 시트의 주기·시작 칸이 노란 입력칸이면, 엑셀에서 바꿨을 때 금액만 바뀌고
+    # 날짜는 그대로라 조용히 틀린 값이 나온다 — 입력칸으로 내놓지 않는다.
+    run = calculate(synthetic())
+    with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, formula=True))) as z:
+        wb = load_workbook(io.BytesIO(z.read("formula_review.xlsx")))
+    ws = wb["가정"]
+    # 상품에 따라 «이자→배당», «조기상환→상환청구» 로 이름이 바뀐다.
+    seen = 0
+    for r in range(1, ws.max_row + 1):
+        lab = str(ws.cell(r, 2).value or "")
+        if "지급주기 (개월)" in lab or lab.startswith(("조기상환 시작", "상환청구 시작")):
+            seen += 1
+            assert "앱이 계약일로 정함" in lab, lab
+            assert ws.cell(r, 3).fill.fill_type in (None, "none"), lab   # 노란 입력칸이 아니다
+    assert seen >= 1
 
 
 def test_cli_and_service_use_identical_calculation_and_evidence(tmp_path):

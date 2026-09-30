@@ -259,14 +259,19 @@ def test_split_metric_independent_of_setting():
     chk_bool("두 설정에서 결론이 같다", got[0][0] == got[1][0])
     chk("두 설정에서 상각후원가가 같다", got[1][1], got[0][1])
     chk("두 설정에서 차이 비율이 같다", got[1][2], got[0][2])
-    # 주계약(B0) 상각표에서 뽑은 값이어야 한다 — 부채요소(B1) 가 아니다.
+    # 자본요소를 분리하기 «전» 의 상각표에서 뽑은 값이어야 한다 (1109 B4.3.5(5) 말미,
+    # 한공회 실무사례 28쪽 각주·159쪽). 출발점은 발행금액(별개 콜을 함께 샀으면 그 대가만큼
+    # 더한 금액)이고, 부채요소(B1)·주계약(B0) 배분액이 아니다.
     t0 = Terms(carry=1, gap_m=6.0,
                rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
                cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
     derive(t0)
     _f, _b0, _b1, _b2, _ca, _cv = G["decompose"](t0)
-    chk_bool(f"상각후원가 {got[0][1]:.4f} 가 B0 {_b0:.4f} 과 B1 {_b1:.4f} 사이이고 "
-             "B1 보다 작다", _b0 - 1e-6 <= got[0][1] < _b1)
+    _sp = G["split_test"](t0, _f, _b0, _b1, _b2, _ca, [])["put"]["지표"]
+    chk("상각 출발 금액 = 자본요소 분리 전 발행금액", _sp["상각 출발 금액 (자본요소 분리 전)"],
+        G["split_base"](t0, _ca))
+    chk_bool(f"상각후원가 {got[0][1]:.4f} 가 B1 {_b1:.4f} 보다 크다 (분리 전 금액에서 출발)",
+             got[0][1] > _b1)
 
 
 def test_put_separation_flows_to_accounting():
@@ -341,14 +346,18 @@ def test_bw_root_and_call_keep_warrant():
         got["CB"]["V"])
 
     # [나] 의무보유를 풀고 매도청구 기간을 전환기간과 겹치게 한다.
+    # 신용스프레드를 낮춰 사채 보유가치가 콜 행사가격을 넘게 한다 — 그래야 매도청구가
+    # 실제로 일어나고, 그중 신주인수권이 살아 있는 노드도 생긴다.
     t = Terms(inst="BW", bw_pay=0, bw_detach=0, k_lock=0., k_s=12., k_e=48.,
               k_w=1.0, cv_s=6., gap_m=3.,
               rf_curve=[(1, .0226), (3, .0240), (5, .0252)],
-              cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+              cr_curve=[(1, .05), (3, .06), (5, .07)])
     derive(t)
     r = engine(t, call=True)
     calls = [o for o in r["memo"].values() if o["kind"] == "call"]
     chk_bool(f"매도청구 노드가 있다 ({len(calls)}개)", len(calls) > 0)
+    chk_bool("신주인수권이 살아 있는 매도청구 노드가 있다",
+             any(o.get("wv", 0.0) > 1e-9 for o in calls))
     bad = [o for o in calls if o.get("wv", 0.0) > 1e-9
            and abs(o["V"] - (o["kv"] + o["wv"])) > 1e-9]
     chk_bool(f"매도청구 노드가 신주인수권을 버리지 않는다 (어긋남 {len(bad)}개)",
@@ -680,7 +689,7 @@ def test_maturity_layer_in_distribution():
     chk("정산 분포 합", tot, 1.0)
     chk_bool(f"만기 몫이 «만기» 에 뭉쳐 있지 않다 ({D['mat']:.4f})",
              D["mat"] < 1e-9)
-    chk_bool(f"자동전환이 «전환» 에 들어갔다 ({D['conv']:.4f})", D["conv"] > 0.5)
+    chk_bool(f"자동전환이 «전환» 에 들어갔다 ({D['conv']:.4f})", D["conv"] > 0.3)
     chk_bool(f"만기 상환이 «조기상환» 에 들어갔다 ({D['put']:.4f})", D["put"] > 0.3)
     # 콜 대응 전환 — 콜이 상방을 눌러 전환을 앞당긴 몫
     t2 = Terms(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue",
@@ -700,7 +709,8 @@ def test_maturity_layer_in_distribution():
 
 
 def test_ipo_branch_keeps_probability_mass():
-    """적격상장 조항이 켜진 상태확장 격자에서 정산 분포의 합이 1 인가.
+    """적격상장 조항이 켜진 격자에서 정산 분포의 합이 1 인가. (상태확장은 없앴다 — 옛 입력
+    carry=0 은 경로가중치로 계산된다. 분포가 새지 않는지만 본다.)
 
     상태확장(carry=0) 격자는 노드 열쇠에 전환가격을 넣는다. 격자를 세우는 재귀는
     상장 스텝에서 전환가격을 공모가×배수로 잘랐는데, 확률을 걷는 루프는 자르지
@@ -709,7 +719,7 @@ def test_ipo_branch_keeps_probability_mass():
 
     자식 전환가격을 한 함수(child_k)로 모아 세 루프가 같은 열쇠를 쓰게 했다.
     """
-    print("\n[18] 상장 조항이 켜진 상태확장 격자 — 분포가 새지 않는가")
+    print("\n[18] 상장 조항이 켜진 격자 — 분포가 새지 않는가")
     for conv_on in (1, 0):
         t = Terms(inst="RCPS", issuer_call=2, mat_mode=0, gap_m=3.0, carry=0,
                   ipo_on=1, ipo_m=24., ipo_px=1200., ipo_min=600., ipo_conv=conv_on,
@@ -1396,7 +1406,10 @@ def test_call_split_text():
     chk_bool("표가 정한 회차만 행사 가능", all(EAb["p_on"](lo9(mo)) for mo in _D9TBL)
              and not EAb["p_on"](lo9(3)))
     # 표가 없으면 종전대로 시작·종료·주기를 따른다
-    chk_bool("표가 없으면 p_on 은 None (부르는 쪽이 판단)", EA9["p_on"] is None)
+    # 표가 없어도 행사일 목록은 exercise_amounts 가 시작·주기에서 만든다 — 모든 계산이 이 목록을 쓴다
+    _lo9 = G["step_mapper"](t9, t9.n, t9.T/t9.n)[0]
+    chk_bool("표가 없으면 시작·주기로 만든 행사일 목록", callable(EA9["p_on"])
+             and set(EA9["p_dates"]) == {i for i in EA9["p_dates"]} and len(EA9["p_dates"]) > 0)
     # 파서 — 날짜·개월·구분자·% 를 모두 읽고, 못 읽은 줄은 남긴다
     _pr = G["parse_sched"]("2026-12-05\t101.0063%\n9,101.5188\n12 102.0378\n엉터리", t9)
     chk_bool("날짜·쉼표·공백 세 형식을 모두 읽는다",

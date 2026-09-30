@@ -288,4 +288,6 @@ def test_detailed_workpapers_omit_contract_review_keep_exercise_mode(formula):
         wb = load_workbook(io.BytesIO(z.read(name)))
         assert '계약검토안' not in wb
         assert json.loads(z.read('case.json'))['contract_review'] == case.contract_review
-        assert wb['행사방식'].cell(2,2).value == '기간 중 언제든지'
+        info = [[c.value for c in row] for row in wb['조서 정보']]
+        at = next(i for i, r in enumerate(info) if r[0] == '행사방식')
+        assert info[at+2][1] == '기간 중 언제든지'

@@ -168,15 +168,14 @@ def test_legacy_export_sources_leave_numerical_formulas_untouched():
     assert updated['판단근거']['B2'].data_type=='s'
 
 
-def test_legacy_cli_refuses_implicit_formula_approximation_before_writing(tmp_path):
+def test_legacy_cli_runs_old_state_expansion_file_as_path_weighting(tmp_path):
+    # 상태확장(carry=0)은 없앴다 — 옛 시나리오도 경로가중치로 계산해 값·수식 조서를 만든다.
     import subprocess, sys
     case=synthetic();case.contract['rfx_mode']=1;case.method['carry']=0
     input_path=tmp_path/'case.json';input_path.write_text(json.dumps(case.effective()))
     target=tmp_path/'output'
     run=subprocess.run([sys.executable,str(ROOT/'tools/run_valuation.py'),str(input_path),'--out',str(target)],capture_output=True,text=True)
-    assert run.returncode != 0
-    assert '--no-formula' in run.stderr
-    assert not target.exists()
+    assert run.returncode == 0, run.stderr
 
 
 def test_legacy_import_preserves_values_and_rejects_case_envelopes():

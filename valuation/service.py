@@ -89,8 +89,8 @@ def _prepare(case: Case):
         raise CaseError(issues)
     before = asdict(terms)
     legacy.derive(terms)
-    if terms.n > 1200 or (terms.carry == 0 and terms.rfx_mode > 0 and terms.n > 100):
-        issues.append(Issue("error", "resource_limit", "gap_m", "검토 작업공간의 계산 한도를 초과합니다. 일반 격자는 1,200구간, 상태확장 리픽싱은 100구간까지 지원합니다."))
+    if terms.n > 1200:
+        issues.append(Issue("error", "resource_limit", "gap_m", "검토 작업공간의 계산 한도를 초과합니다. 격자는 1,200구간까지 지원합니다."))
         raise CaseError(issues)
     normalized = {k: {"input": before[k], "applied": v}
                   for k, v in asdict(terms).items() if k in FIELDS and before[k] != v}
@@ -107,6 +107,11 @@ def calculate(case: Case) -> Run:
     else:
         full, b0, b1, b2, ca, conv = legacy.decompose(terms)
         raw = dict(full=full, b0=b0, b1=b1, b2=b2, ca=ca, conv=conv)
+        # 계산이 고장 나지 않았는지 보는 개발용 점검 — 조서에는 싣지 않고, 걸리면 조서를
+        # 만들지 않는다(export_bundle). 평가할 때 한 번 재어 실행 기록에 남긴다.
+        _args = (terms, full, b0, b1, b2, ca)
+        raw["integrity"] = [c[0] for c in legacy.model_checks(*_args, legacy.eir_or_none(*_args), light=True)
+                            if c[2] == "확인 필요" and c[0] in legacy.HARD_CHECKS]
     run = _assemble(case, terms, raw, issues, normalized)
     run.summary["calculation_seconds"] = time.perf_counter() - started
     return run
@@ -259,8 +264,13 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
     judgment — 판단·근거 시트와 분리 판단·검산요약·모형검증 시트를 싣는다(기본).
     """
     terms = copy.deepcopy(run.terms)
-    if formula and terms.carry == 0 and terms.rfx_mode > 0:
-        raise ValueError("상태확장 리픽싱은 동일한 수식 조서로 내보낼 수 없습니다. 값 조서를 사용하십시오.")
+    # 계산이 고장 나지 않았는지 본 결과(calculate 가 잰 것). 개발용 점검이라 조서에는
+    # 싣지 않고, 걸리면 조서를 만들지 않는다 — 틀린 계산이 조서로 나가는 마지막 관문이다.
+    if not legacy.is_sha(terms):
+        bad = run.raw.get("integrity") or []
+        if bad:
+            raise ValueError("계산 점검에서 이상이 발견되어 조서를 만들지 않았습니다 — "
+                             + ", ".join(bad) + ". 입력을 확인하고, 그대로라면 개발 담당자에게 알려 주십시오.")
     from .report import basic_workbook, append_basic_accounting, finish_calculation_workbook
     if not formula and not detail:
         wb = basic_workbook(run, previous=previous, as_workbook=True)

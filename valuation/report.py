@@ -215,6 +215,94 @@ def append_controls(data, run, *, final=False):
 DRAFT_NOTE = '입력 가정에 따른 초안입니다. 계약별 회계처리는 별도로 검토하십시오.'
 
 
+INFO_SHEET = '조서 정보'
+
+
+def info_sheet(wb, run, *, formula=False):
+    """몇 줄짜리 기록을 한 장에 모은다 — 계산 정보 · 자료 출처 · 행사방식 · 확인할 사항 ·
+    (수식 조서면) 엑셀 수식으로 다시 계산한 값과 앱 결과의 대조.
+
+    계산이 고장 나지 않았는지 보는 개발용 점검(산술검산·모형검증)은 조서에 싣지 않는다 —
+    service.export_bundle 이 조서를 만들 때 돌리고, 걸리면 조서를 만들지 않는다.
+    """
+    s, t = run.summary, run.terms
+    for old in ('계산정보', '확인사항', '산술검산', '출처기록', '행사방식', '수식대사', '변동성조회조건', INFO_SHEET):
+        if old in wb:
+            del wb[old]
+    ws = wb.create_sheet(INFO_SHEET)
+    ws.sheet_view.showGridLines = False
+    for col, w in zip('ABCDE', (34, 60, 22, 22, 16)):
+        ws.column_dimensions[col].width = w
+    NAVY = PatternFill('solid', fgColor='17365D')
+    r = [1]
+
+    def title(text):
+        c = ws.cell(r[0], 1, text); c.font = Font(bold=True, size=12, color='17365D'); r[0] += 1
+
+    def head(cols):
+        for j, h in enumerate(cols, 1):
+            c = ws.cell(r[0], j, h); c.font = Font(bold=True, color='FFFFFF'); c.fill = NAVY
+        r[0] += 1
+
+    def row(vals):
+        for j, v in enumerate(vals, 1):
+            c = ws.cell(r[0], j, str(v) if isinstance(v, (dict, list, tuple)) else v)
+            c.alignment = Alignment(vertical='top', wrap_text=True)
+            if isinstance(v, str):
+                c.data_type = 's'          # 입력·출처 문자열은 절대 엑셀 수식으로 읽히지 않는다
+            elif isinstance(v, (int, float)):
+                c.number_format = '#,##0.000000'
+        r[0] += 1
+        return r[0] - 1
+
+    title('계산 정보'); head(['항목', '내용'])
+    for k, v in [['건명', run.case.name], ['평가기준일', t.d_base], ['평가모형', t.model], ['구간 수', t.n],
+                 ['간격 설정', f'{t.grid_days:g}일 기준' if t.grid_days else f'{t.gap_m:g}개월'],
+                 ['평균 간격(일)', s['grid']['average_days']], ['입력 식별값', s['case_sha256']],
+                 ['계산 코드 식별값', s['code_sha256']]]:
+        row([k, v])
+    r[0] += 1
+    if run.case.sources:
+        title('자료 출처'); head(['입력항목', '출처'])
+        for k, v in run.case.sources.items():
+            row([label(k), v])
+        r[0] += 1
+    pack = run.case.market_evidence.get('sig')
+    if pack:
+        title('변동성 조회 조건'); head(['항목', '내용'])
+        for k, v in [['조회 조건', pack['query']], ['산출 옵션', pack['opt']], ['적용 변동성', pack['sigma']],
+                     ['자료 출처', pack['source']], ['취득시각', pack['retrieved_at']]] + \
+                [['제외·확인사항', x] for x in pack['warnings']]:
+            row([k, v])
+        r[0] += 1
+    if run.case.exercise_styles:
+        title('행사방식'); head(['항목', '방식'])
+        for k, v in run.case.exercise_styles.items():
+            row([label(k) if k != 'cv' else '전환·신주인수권',
+                 {'any': '기간 중 언제든지', 'single': '특정일', 'periodic': '정기 행사'}[v]])
+        r[0] += 1
+    skip = {'source', 'legacy_defaults', 'engine_defaults', 'judgement_scope', 'market_date'}
+    warnings = [i for i in run.issues if i.code not in skip]
+    title('확인할 사항'); head(['항목', '확인할 사항', '수치 영향', '확인 방법'])
+    for i in warnings:
+        row([label(i.field), i.message, i.impact, i.action])
+    if not warnings:
+        row(['—', '없음'])
+    r[0] += 1
+    if formula and '결과' in wb and t.inst != 'SHA':
+        title('엑셀 수식으로 다시 계산한 값 = 앱 결과')
+        head(['항목', '앱 계산값(100)', '엑셀 수식 값(100)', '차이', '일치 여부'])
+        refs = [('주계약', '결과!C16', run.raw['b0']), ('부채요소', '결과!C17', run.raw['b1']),
+                ('전체 가치', '결과!C10', run.raw['b2']), ('콜옵션', '결과!C22', run.raw['ca']),
+                ('순포지션', '결과!C10-결과!C22', run.raw['b2']-run.raw['ca'])]
+        for name, ref, value in refs:
+            i = row([name, value])
+            ws.cell(i, 3, '=' + ref).number_format = '#,##0.000000'
+            ws.cell(i, 4, f'=C{i}-B{i}').number_format = '#,##0.000000'
+            ws.cell(i, 5, f'=IF(ABS(D{i})<=MAX(0.00000001,ABS(B{i})*0.0000000001),"일치","차이 발생")')
+    return ws
+
+
 def calculation_table(wb, name, rows):
     if name in wb:
         del wb[name]
@@ -347,41 +435,12 @@ def finish_calculation_workbook(wb, run, *, formula=False, accounting=False, jud
         ws.column_dimensions['D'].width = 40
         ws.column_dimensions['C'].width = 60
     s, t = run.summary, run.terms
-    calculation_table(wb, '계산정보', [['항목', '내용'], ['건명', run.case.name],
-        ['평가기준일', t.d_base], ['평가모형', t.model], ['구간 수', t.n],
-        ['간격 설정', f'{t.grid_days:g}일 기준' if t.grid_days else f'{t.gap_m:g}개월'],
-        ['평균 간격(일)', s['grid']['average_days']], ['입력 식별값', s['case_sha256']],
-        ['계산 코드 식별값', s['code_sha256']]])
-    skip = {'source', 'legacy_defaults', 'engine_defaults', 'judgement_scope', 'market_date'}
-    warnings = [i for i in run.issues if i.code not in skip]
-    calculation_table(wb, '확인사항', [['항목', '확인할 사항', '수치 영향', '확인 방법']] +
-        [[label(i.field), i.message, i.impact, i.action] for i in warnings])
-    if '산술검산' not in wb:
-        calculation_table(wb, '산술검산', [['검사 항목', '결과', '계산 내역']] +
-            [[x['name'], '통과' if x['passed'] else '차이 발생', x['detail']] for x in s['checks']])
-    if run.case.sources and '출처기록' not in wb:
-        calculation_table(wb, '출처기록', [['입력항목', '출처']] + [[label(k),v] for k,v in run.case.sources.items()])
+    info_sheet(wb, run, formula=formula)
     pack = run.case.market_evidence.get('sig')
-    if pack:
+    # 변동성 산출내역(σ 시트)을 함께 실으면 같은 주가 자료라 따로 싣지 않는다.
+    if pack and not any(n.startswith('σ ') for n in wb.sheetnames):
         calculation_table(wb, '변동성원자료', [['대상', '날짜', '수정종가']] +
             [[name,day,price] for name, prices in pack['series'] for day,price in prices])
-        calculation_table(wb, '변동성조회조건', [['항목', '내용'], ['조회 조건', pack['query']],
-            ['산출 옵션', pack['opt']], ['적용 변동성', pack['sigma']], ['자료 출처', pack['source']],
-            ['취득시각', pack['retrieved_at']]] + [['제외·확인사항', x] for x in pack['warnings']])
-    if '행사방식' not in wb:
-        calculation_table(wb, '행사방식', [['항목', '방식']] +
-            [[label(k) if k != 'cv' else '전환·신주인수권', {'any':'기간 중 언제든지','single':'특정일','periodic':'정기 행사'}[v]]
-             for k,v in run.case.exercise_styles.items()])
-    if formula and '결과' in wb and t.inst != 'SHA':
-        refs = [('주계약', '결과!C16', run.raw['b0']), ('부채요소', '결과!C17', run.raw['b1']),
-                ('전체 가치', '결과!C10', run.raw['b2']), ('콜옵션', '결과!C22', run.raw['ca']),
-                ('순포지션', '결과!C10-결과!C22', run.raw['b2']-run.raw['ca'])]
-        ws = calculation_table(wb, '수식대사', [['항목', '앱 계산값(100)', '수식 계산값(100)', '차이', '일치 여부']] +
-            [[name,value,None,None,None] for name,ref,value in refs])
-        for i, (_,ref,_) in enumerate(refs, 2):
-            ws.cell(i,3,'='+ref)
-            ws.cell(i,4,f'=C{i}-B{i}')
-            ws.cell(i,5,f'=IF(ABS(D{i})<=MAX(0.00000001,ABS(B{i})*0.0000000001),"일치","차이 발생")')
     # Excel rejects overlong formulas. Stop with the exact cell before download.
     for ws in wb:
         for cell in ws._cells.values():

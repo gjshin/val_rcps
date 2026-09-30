@@ -294,9 +294,9 @@ if _shared_run is None:
               t.model = st.selectbox("신용위험 처리", ["TF", "GS"],
                                    index=0 if t.model == "TF" else 1,
                                    format_func=lambda x: "TF · 값을 쪼갠다" if x == "TF" else "GS · 할인율을 섞는다")
-              t.carry = st.selectbox("조정일 아닌 시점", [0, 1, 2, 3], index=t.carry,
-                                   format_func=lambda i: ["상태확장 (정확)", "경로가중치",
-                                                          "확률가중평균", "특정노드선택"][i])
+              t.carry = st.selectbox("조정일 아닌 시점", [1, 2, 3], index=max(0, int(t.carry) - 1),
+                                   format_func=lambda i: {1: "경로가중치", 2: "확률가중평균",
+                                                          3: "특정노드선택"}[i])
               t.conv_class = st.selectbox(inst_text(t, "전환권 회계 분류"),
                                         ["equity", "liability"],
                                         index=0 if t.conv_class == "equity" else 1,
@@ -3164,13 +3164,10 @@ if _detail_section == _detail_sections[9]:
                     if x == "값" else "수식 조서 — 엑셀에서 다시 계산됨")
     if kind == "값":
         st.caption("앱이 계산한 값을 그대로 담습니다. 셀을 바꿔도 다시 계산되지 않으므로 "
-                   "입력 가정과 검토기록을 확인한 후 사용하십시오. 상태확장을 포함한 모든 설정에서 만들 수 있습니다.")
+                   "입력 가정과 검토기록을 확인한 후 사용하십시오.")
     else:
         st.caption("가정 시트의 노란 셀을 바꾸면 엑셀 안에서 트리가 다시 계산됩니다. "
-                   "선도이자율만 값으로 들어갑니다. 노드 수와 리픽싱 주기는 격자 구조라 바꿀 수 없습니다.")
-        if t.carry == 0 and t.rfx_mode > 0:
-            st.warning("상태확장은 한 노드에 전환가격이 여럿이라 수식으로 펼 수 없습니다. "
-                       "같은 계산방법의 값 조서를 사용하십시오. 근사 수식 조서가 필요하면 계산방법을 명시적으로 변경한 후 다시 평가하십시오.")
+                   "노드 수와 리픽싱 주기는 격자 구조라 바꿀 수 없습니다.")
     # 산출해 놓고 적용하지 않은 변동성이 있으면 여기서 막아 세운다. 조서를
     # 만드는 자리가 마지막 관문이라, 입력화면 경고를 놓쳐도 여기서는 보인다.
     _unap = []
@@ -3199,8 +3196,7 @@ if _detail_section == _detail_sections[9]:
                      "지금 만들면 위의 **조서에 들어가는 값**으로 계산됩니다.")
 
     c1, c2 = st.columns([1, 2])
-    if c1.button("조서 만들기", type="primary", use_container_width=True,
-                 disabled=kind == "수식" and t.carry == 0 and t.rfx_mode > 0):
+    if c1.button("조서 만들기", type="primary", use_container_width=True):
         try:
             with st.spinner("엑셀 작성 중"):
                 # 산출내역을 조서 안에 함께 싣는다. 수식 조서에서는 종가·고시
@@ -3220,8 +3216,6 @@ if _detail_section == _detail_sections[9]:
                     fn = f"{LB['short']}평가조서_값{tranche_tag(t)}_{dt.date.today()}.xlsx"
                 else:
                     tf = Terms(**asdict(t))
-                    if tf.carry == 0 and tf.rfx_mode > 0:
-                        raise ValueError("상태확장 리픽싱의 계산방법을 조서 생성 중 바꿀 수 없습니다. 값 조서를 사용하십시오.")
                     ff, f0, f1, f2, fca, fconv = decompose(tf)
                     data = build_xlsx_formula(tf, ff, f0, f1, f2, fca, fconv,
                                               eir_or_none(tf, ff, f0, f1, f2, fca),

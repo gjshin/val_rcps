@@ -96,10 +96,16 @@ def test_numerical_warnings_and_listed_raw_prices_are_in_export():
     assert any('29.05%' in i.message for i in run.issues)
     for formula in (False,True):
         wb=workbook(run,formula,True)
-        raw = list(wb['변동성원자료'].values)[1:]
-        assert [(r[0],r[1]) for r in raw] == [('Listed',day) for day,price in series[0][1]]
-        assert [r[2] for r in raw] == pytest.approx([price for day,price in series[0][1]],rel=1e-14)
-        assert any('29.05%' in str(c.value) for row in wb['확인사항'] for c in row)
+        # 변동성 산출내역(σ 시트)이 있으면 원자료도 그 안에 있다 — 같은 주가를 두 번 싣지 않는다.
+        if '변동성원자료' in wb.sheetnames:
+            raw = list(wb['변동성원자료'].values)[1:]
+            assert [(r[0],r[1]) for r in raw] == [('Listed',day) for day,price in series[0][1]]
+            assert [r[2] for r in raw] == pytest.approx([price for day,price in series[0][1]],rel=1e-14)
+        else:
+            sig = [n for n in wb.sheetnames if n.startswith('σ ')]
+            vals = [c.value for n in sig for row in wb[n] for c in row if isinstance(c.value, (int, float))]
+            assert all(any(abs(v - price) < 1e-9 for v in vals) for day, price in series[0][1])
+        assert any('29.05%' in str(c.value) for row in wb['조서 정보'] for c in row)
 
 
 @pytest.mark.parametrize('days',[0,7])

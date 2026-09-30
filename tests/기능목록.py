@@ -51,7 +51,7 @@ MANIFEST = {
     "model":       ("신용위험 처리", {"TF": "지분·부채 분리 할인 (TF)",
                                    "GS": "전환확률 가중 할인 (GS)"}, P_BOND),
     "conv_class":  ("전환권 회계 분류", {"equity": "자본", "liability": "파생상품부채"}, P_BOND),
-    "carry":       ("리픽싱 조정일 처리", {0: "상태확장 (정확)", 1: "경로가중 근사",
+    "carry":       ("리픽싱 조정일 처리", {1: "경로가중 근사",
                                      2: "위험중립확률 가중 근사", 3: "특정노드 선택 근사"}, P_BOND),
     "rfx_mode":    ("리픽싱 방식", {0: "없음", 1: "하향만", 2: "하향+상향"}, P_BOND),
     # ── 투자자 풋 ──
@@ -343,7 +343,7 @@ def collect_coverage(G):
         "test_unsupported_combos_agree": [("CB", "model", "GS"), ("CB", "k_method", 0), ("CB", "p_sep", 1),
                                           ("CB", "put_bdt", 0), ("CB", "conv_class", "liability"), ("CB", "k_sep", 0)],
         "test_ipo_branch_keeps_probability_mass": [("RCPS", "ipo_on", 1), ("RCPS", "ipo_conv", 1),
-                                                   ("RCPS", "ipo_conv", 0), ("RCPS", "carry", 0),
+                                                   ("RCPS", "ipo_conv", 0),
                                                    ("RCPS", "rfx_mode", 0)],
         # 날짜↔개월 변환과 종가 고르기 — 격자 값이 아니라 입력 경로의 시험. step_mapper 를 밟는다.
         "test_date_month_roundtrip": [("CB", "mid", True)],
@@ -360,7 +360,7 @@ def collect_coverage(G):
         # 이미 지급한 이자·배당의 공제 방식 — 세 권리 · 세 상품 · 세 방식을 독립 산식과 대조
         "test_deduction_methods": [("CB", "p_less_cpn", 0), ("CB", "p_less_cpn", 1), ("CB", "p_less_cpn", 2), ("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1), ("CB", "k_less_cpn", 2), ("CB", "m_less_cpn", 0), ("CB", "m_less_cpn", 1), ("CB", "m_less_cpn", 2), ("RCPS", "p_less_cpn", 0), ("RCPS", "p_less_cpn", 1), ("RCPS", "p_less_cpn", 2), ("RCPS", "k_less_cpn", 0), ("RCPS", "k_less_cpn", 1), ("RCPS", "k_less_cpn", 2), ("RCPS", "m_less_cpn", 0), ("RCPS", "m_less_cpn", 1), ("RCPS", "m_less_cpn", 2), ("BW", "p_less_cpn", 0), ("BW", "p_less_cpn", 1), ("BW", "p_less_cpn", 2), ("BW", "k_less_cpn", 0), ("BW", "k_less_cpn", 1), ("BW", "k_less_cpn", 2), ("BW", "m_less_cpn", 0), ("BW", "m_less_cpn", 1), ("BW", "m_less_cpn", 2)],
         "test_div_basis": [("RCPS", "div_basis", 0), ("RCPS", "div_basis", 1), ("RCPS", "div_mode", 1)],
-        "test_rfx_anytime": [("CB", "rfx_mode", 2), ("CB", "carry", 0), ("CB", "carry", 1), ("CB", "carry", 2)],
+        "test_rfx_anytime": [("CB", "rfx_mode", 2), ("CB", "carry", 1), ("CB", "carry", 2)],
         # 표시 전용 칸(회차·반영하지 않은 권리·희석 주식수)이 값을 바꾸지 않고 조서에만 실린다
         "test_display_only_fields": [("CB", "carry", 1)],
         # 엑셀 한 칸 수식 한도 · 이자율 곡선 범위 경고
@@ -399,7 +399,7 @@ def collect_coverage(G):
         "test_call_tf": [("CB", "k_method", 2), ("CB", "k_split", 1), ("CB", "k_hold", 1),
                          ("CB", "k_lock_put", 1), ("CB", "k_kind", 0), ("CB", "call", True)],
         "test_date_boundaries": [("CB", "mid", True), ("CB", "mid", False)],
-        "test_sequential_identities": [("CB", "carry", 0), ("CB", "k_sep", 1), ("CB", "model", "TF")],
+        "test_sequential_identities": [("CB", "carry", 1), ("CB", "k_sep", 1), ("CB", "model", "TF")],
     }
     tf = "tests/오라클.py"
     src = open(os.path.join(ROOT, tf), encoding="utf-8").read()
