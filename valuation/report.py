@@ -375,7 +375,7 @@ def judgment_rows(run):
                     if '첫 조기상환일 행사금액' in ind else '')
             add('분리 판정', nm, legacy.inst_text(t, d['결론'] + ' — ' + ' '.join(d['이유'])), nums, f'split_{key}', topic)
         if t.k_w > 0:
-            method = {0: '유무가치비교법', 1: '옵션차익 혼합할인율', 2: '옵션차익 지분·부채 분리할인'}[int(t.k_method)]
+            method = {0: '유무가치비교법', 1: '옵션차익 혼합할인율', 2: '옵션차익 성분 분리할인 (주식결제·현금결제)'}[int(t.k_method)]
             add('평가방법', '매도청구권 평가방법', f'적용: {method}', f"콜 {r['ca']:,.4f}", 'call_method', 'call_method')
             if legacy.pc_overlap(t):
                 add('평가방법', '풋·콜 우선순위', ['투자자 조기상환 우선', '발행자 매도청구 우선'][int(t.pc_order)], '', 'priority', 'priority')

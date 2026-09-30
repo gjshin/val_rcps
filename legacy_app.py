@@ -194,8 +194,10 @@ if _shared_run is None:
                 st.session_state.scen_id = _sid
                 # 매도청구권 평가체계가 바뀌기 «전» 에 저장된 파일이면 알려 준다. 값은 저장된
                 # 대로 연다 — 과거 조서의 재현성이 먼저다. 바꾸고 싶으면 버튼을 누른다.
-                st.session_state.scen_old = (int(o.get("_schema", 1)) < SCHEMA_VER
-                                             and float(o.get("k_w", 0) or 0) > 0)
+                # 저장 당시의 체계 번호를 적어 둔다(0 이면 알릴 것 없음) — 1 과 2 는 알릴 내용이 다르다.
+                _sv = int(o.get("_schema", 1))
+                st.session_state.scen_old = (_sv if (_sv < SCHEMA_VER and float(o.get("k_w", 0) or 0) > 0)
+                                             else 0)
                 # 원본 시나리오 지문을 Terms 에 싣고 다닌다 — 조서에 「시나리오 지문」과
                 # 「계산 지문」을 나란히 적기 위해서다. 두 지문이 다른 것은 정상이다:
                 # derive() 가 경과기간·노드 수를 채우고 compat 가 지원하지 않는 조합을
@@ -229,7 +231,14 @@ if _shared_run is None:
                        "지원하지 않는 조합을 되돌린 «실제로 계산에 쓴» 값의 지문이라 "
                        "파일과 같지 않은 것이 정상입니다.")
 
-        if st.session_state.get("scen_old"):
+        if int(st.session_state.get("scen_old") or 0) == 2:
+            # 체계 2 → 3: 매도청구 통지 뒤 전환 대응을 따로 받고, 세 평가방법이 같은 사건 규칙을 쓴다.
+            st.info("이 시나리오는 **매도청구 통지 뒤 전환 대응**을 따로 고르기 전에 저장되었습니다. "
+                    "기본값 «전환할 수 있다» 로 열었습니다 — 유무가치비교법 값은 그대로이고, 옵션차익법 값은 "
+                    "세 평가방법이 같은 규칙(통지 뒤 전환 대응 · 상장 · 만기일 · 행사일 이자)을 쓰도록 바뀌어 "
+                    "저장 당시와 다를 수 있습니다. 계약서의 매도청구 조항을 확인하고 필요하면 매도청구권 칸에서 "
+                    "«전환할 수 없다» 로 바꾸십시오.")
+        elif st.session_state.get("scen_old"):
             st.info("이 시나리오는 **매도청구권 평가체계를 정리하기 전**에 저장되었습니다. "
                     "값은 **저장된 대로** 열었습니다 — 과거 조서를 그대로 재현하기 위해서입니다. "
                     "현재 기본 방법(옵션차익 · TF식 지분-채권 분리할인 + 본문 4.3.3 전환확률 분해, "
@@ -398,7 +407,7 @@ if _shared_run is None:
                 if not hide: st.caption(f"발행일 기준 {s_:,.0f}개월 하루만 행사할 수 있습니다.")
                 return s_, max(1.0, float(f_))
             if _m == "기간 중 언제든지":
-                st.caption(f"주기를 노드 간격({gap_m:g}개월)으로 맞췄습니다 — 행사기간의 "
+                st.caption(f"주기를 노드 간격({gap_m:.3g}개월)으로 맞췄습니다 — 행사기간의 "
                            "모든 노드에서 행사할 수 있습니다.")
                 return e_, gap_m
             return e_, st.number_input("주기 (개월)", value=float(f_), step=1.0,
@@ -785,9 +794,9 @@ if _shared_run is None:
                          "주가 격자로 표현할 수 없습니다. 여기서 고르지 말고 「평가에 반영하지 않은 "
                          "권리」에 적으십시오.")
                 if _rany == "언제든지":
-                    t.rfx_cyc = float(t.gap_m); bfill("rfx_cyc")
+                    t.rfx_cyc = node_gap_m(t); bfill("rfx_cyc")
                     if t.rfx_mode > 0:
-                        st.caption(f"조정 주기를 노드 간격({t.gap_m:g}개월)으로 맞췄습니다 — 모든 "
+                        st.caption(f"조정 주기를 노드 간격({node_gap_m(t):.3g}개월)으로 맞췄습니다 — 모든 "
                                    "노드에서 전환가액을 조정합니다. 조정 시점마다 전환가액이 그 노드의 "
                                    "주가로 정해지므로 「조정일 아닌 시점」 처리방식에 따른 차이가 "
                                    "거의 사라집니다.")
@@ -859,7 +868,7 @@ if _shared_run is None:
                 _p1, _p2 = st.columns(2)
                 t.p_s, t.p_e = _sched_pair(_p1, _p2, t.p_s, t.p_e, "p", none_lab="이 권리 없음",
                                            fields=("p_s", "p_e"))
-                t.p_e, t.p_f = exercise_mode_ui(t.p_s, t.p_e, t.p_f, "pmode_ui", t.gap_m,
+                t.p_e, t.p_f = exercise_mode_ui(t.p_s, t.p_e, t.p_f, "pmode_ui", node_gap_m(t),
                                                 hide=is_blank("p_s"))
                 # 표가 있으면 아래 산식 칸은 계산에 쓰이지 않는다. 칸을 그리기 «전» 에
                 # 직전 실행의 텍스트를 읽어 잠근다 — 위젯 순서를 바꾸지 않아도 된다.
@@ -1187,7 +1196,7 @@ if _shared_run is None:
                     _k1, _k2 = st.columns(2)
                     t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음",
                                                fields=("k_s", "k_e"))
-                    t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m,
+                    t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", node_gap_m(t),
                                                     hide=is_blank("k_s"))
                     _kl = sched_rows(t.k_sched, t)     # 이 갈래에는 표 칸이 없다 — Terms 값을 본다
                     _v = st.number_input("상환 보장수익률 (연 %)", value=bval("k_prem", t.k_prem*100), step=0.5,
@@ -1215,7 +1224,7 @@ if _shared_run is None:
                     _k1, _k2 = st.columns(2)
                     t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음",
                                                fields=("k_s", "k_e"))
-                    t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m,
+                    t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", node_gap_m(t),
                                                     hide=is_blank("k_s"))
                     _kl = sched_rows(st.session_state.get("ksched_rcps", t.k_sched), t)
                     _v = st.number_input(
@@ -1310,7 +1319,7 @@ if _shared_run is None:
                   _k1, _k2 = st.columns(2)
                   t.k_s, t.k_e = _sched_pair(_k1, _k2, t.k_s, t.k_e, "k", none_lab="이 권리 없음",
                                              fields=("k_s", "k_e"))
-                  t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", t.gap_m,
+                  t.k_e, t.k_f = exercise_mode_ui(t.k_s, t.k_e, t.k_f, "kmode_ui", node_gap_m(t),
                                                   hide=is_blank("k_s"))
                   _kl = sched_rows(st.session_state.get("ksched_cb", t.k_sched), t)
                   _v = st.number_input("프리미엄 (연 %)", value=bval("k_prem", t.k_prem*100), step=0.5,
@@ -1411,19 +1420,38 @@ if _shared_run is None:
                   t.pc_order = int(st.selectbox(
                       "조기상환청구권과 겹칠 때", [0, 1], index=int(t.pc_order),
                       format_func=lambda i: ["투자자 조기상환 우선", "발행자 매도청구 우선"][i],
-                      help="같은 날 두 권리가 모두 열릴 때의 계약상 우선순위입니다.\n\n"
+                      help="같은 날 조기상환청구와 매도청구가 모두 열릴 때 어느 쪽이 먼저인지 정합니다. "
+                           "전환과 매도청구 사이는 아래 칸에서 따로 정합니다.\n\n"
                            "**투자자 조기상환 우선** — 통지한 조기상환을 매도청구로 막지 "
                            "못합니다. 한국 사모 전환사채의 매도청구권은 사채 «일부를 "
                            "매수»하는 권리이지 상환이 아니라는 읽기입니다.\n\n"
                            "**발행자 매도청구 우선** — 매도청구가 유효하게 행사되면 "
-                           "투자자는 전환으로만 대응할 수 있습니다. 미국식 callable "
-                           "convertible 의 표준 처리입니다.\n\n"
+                           "투자자는 조기상환으로 피할 수 없습니다.\n\n"
                            "두 행사금액이 다르고 행사기간이 겹칠 때만 값이 갈립니다. "
                            "겹치지 않으면 어느 쪽을 고르셔도 같은 답이 나옵니다."))
                   st.caption("계약서에 「이미 통지된 조기상환청구는 매도청구로 "
                              "번복할 수 없다」 같은 조항이 있으면 첫 번째입니다. "
                              "**계약 우선순위가 수식보다 먼저입니다** — 고른 근거를 "
                              "조서에 남기십시오.")
+                  if not bw_cash(t):
+                      # 전환과 매도청구 사이 — 풋·콜 우선순위와 따로 묻는다(하나가 다른 것을 바꾸지 않게).
+                      t.k_conv_resp = int(st.selectbox(
+                          "매도청구 통지를 받은 뒤 전환", [1, 0],
+                          index=[1, 0].index(int(getattr(t, "k_conv_resp", 1))),
+                          format_func=lambda i: {1: "전환할 수 있다 (전환이 먼저)",
+                                                 0: "전환할 수 없다 (매도청구가 먼저)"}[i],
+                          key="kresp_ui",
+                          help="매도청구 통지를 받은 투자자가 그 물량을 전환해 매도청구를 피할 수 있는지는 "
+                               "계약이 정합니다.\n\n"
+                               "**전환할 수 있다** — 통지기간 안에 전환청구를 할 수 있는 계약입니다. 전환가치가 "
+                               "매도청구금액보다 크면 투자자가 전환하므로 콜이 사채를 사지 못합니다. 미국식 "
+                               "callable convertible 의 표준 처리이고, 종전 유무가치비교법 격자가 쓰던 읽기입니다.\n\n"
+                               "**전환할 수 없다** — 「매도청구 통지를 받은 사채는 전환청구를 할 수 없다」 같은 "
+                               "조항이 있는 계약입니다.\n\n"
+                               "세 평가방법(유무가치비교법 · 옵션차익 두 방법)이 모두 이 선택을 따릅니다. "
+                               "의무보유 기간에는 어느 쪽이든 전환할 수 없습니다."))
+                  with st.expander("같은 날 겹치는 사건의 처리 (세 평가방법 공통)"):
+                      st.table(pd.DataFrame(event_order_rows(t), columns=["사건", "처리"]))
 
             with st.expander("기말 재평가 · 전기 장부금액"):
                 st.caption("평가기준일이 발행일보다 뒤인 **결산 평가**라면 전기말 장부금액을 넣으십시오. "

@@ -223,7 +223,7 @@ def input_editor(case, autosave=False):
                     widget_key = f'input_{key}_{st.session_state.get("revision", 0)}'
                     if widget_key in st.session_state:
                         st.session_state[widget_key] = edited[key]
-            st.caption('발행자 상환권은 콜 유무 가치 비교, 제3자 콜은 TF 옵션차익 지분·부채 분리할인을 초기 설정으로 사용합니다. 기존 평가파일의 선택은 유지하며, 다른 방법을 선택한 경우 근거를 기록하십시오.')
+            st.caption('발행자 상환권은 콜 유무 가치 비교, 제3자 콜은 옵션차익 성분 분리할인(주식결제·현금결제)을 초기 설정으로 사용합니다. 기존 평가파일의 선택은 유지하며, 다른 방법을 선택한 경우 근거를 기록하십시오.')
             fields(['k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp'], edited, case)
             if inst == 'RCPS' and edited.get('issuer_call') == 1:
                 edited['k_w'] = 1.
@@ -237,7 +237,7 @@ def input_editor(case, autosave=False):
                 policy = (2 if third_now and edited.get('model', 'TF') == 'TF' else 0, 1)
                 if (edited.get('k_method'), edited.get('k_split')) != policy:
                     if st.button('현재 기본 평가방법으로 전환', key=f'call_policy_{st.session_state.get("revision", 0)}',
-                                 help='발행자 상환권 → 유무가치 비교, 제3자 콜(TF) → 옵션차익 지분·부채 분리할인 + 전환확률 분해. 값이 달라질 수 있습니다.'):
+                                 help='발행자 상환권 → 유무가치 비교, 제3자 콜(TF) → 옵션차익 성분 분리할인(주식결제·현금결제) + 전환확률 분해. 값이 달라질 수 있습니다.'):
                         edited['k_method'], edited['k_split'] = policy
                         for key in ['k_method', 'k_split']:
                             st.session_state.pop(f'input_{key}_{st.session_state.get("revision", 0)}', None)

@@ -1,7 +1,7 @@
 {
- "generated": "2026-09-30 09:46",
- "head": "0920b64",
- "app_sha256_12": "39df9ceb5ccc",
+ "generated": "2026-09-30 13:48",
+ "head": "adbedc1",
+ "app_sha256_12": "e04cd3942ad5",
  "quick": true,
  "python": "3.11.15",
  "suites": [
@@ -10,7 +10,7 @@
    "cmd": "python3 tests/손계산대조.py",
    "ok": true,
    "code": 0,
-   "sec": 132.4,
+   "sec": 124.4,
    "last": "모두 통과",
    "tail": []
   },
@@ -19,7 +19,7 @@
    "cmd": "python3 tests/오라클.py",
    "ok": true,
    "code": 0,
-   "sec": 1.4,
+   "sec": 1.1,
    "last": "모두 통과",
    "tail": []
   },
@@ -28,8 +28,8 @@
    "cmd": "python3 tests/분기전수.py",
    "ok": true,
    "code": 0,
-   "sec": 9.0,
-   "last": "→ tests/output/분기전수.json 377 줄",
+   "sec": 9.2,
+   "last": "→ tests/output/분기전수.json 381 줄",
    "tail": []
   },
   {
@@ -37,8 +37,8 @@
    "cmd": "python3 tests/기능목록.py --strict",
    "ok": true,
    "code": 0,
-   "sec": 1.1,
-   "last": "   → tests/검증매트릭스.json (404 행)",
+   "sec": 1.0,
+   "last": "   → tests/검증매트릭스.json (408 행)",
    "tail": []
   },
   {
@@ -46,8 +46,8 @@
    "cmd": "python3 tests/조합시험.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 84.9,
-   "last": "→ tests/output/조합시험.json 1836 줄 · 실패 0 (tests/output/조합시험_실패.json) · 84초",
+   "sec": 81.9,
+   "last": "→ tests/output/조합시험.json 1844 줄 · 실패 0 (tests/output/조합시험_실패.json) · 81초",
    "tail": []
   },
   {
@@ -55,7 +55,7 @@
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 51.4,
+   "sec": 47.8,
    "last": "",
    "tail": []
   },
@@ -64,7 +64,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 21.6,
+   "sec": 22.4,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +73,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 61.4,
+   "sec": 53.9,
    "last": "",
    "tail": []
   },
@@ -82,7 +82,7 @@
    "cmd": "python3 tests/엑셀입력변경.py",
    "ok": true,
    "code": 0,
-   "sec": 166.6,
+   "sec": 205.6,
    "last": "",
    "tail": []
   }
@@ -102,14 +102,14 @@
  "baseline_ok": true,
  "matrix": {
   "CB": {
-   "PASS": 106,
+   "PASS": 108,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
    "NOT_TESTED": 0
   },
   "RCPS": {
-   "PASS": 118,
+   "PASS": 120,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -138,5 +138,5 @@
   }
  },
  "all_ok": true,
- "sec": 530.5
+ "sec": 548.0
 }

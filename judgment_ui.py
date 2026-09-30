@@ -174,18 +174,32 @@ def call_section(t, full, b2, sp, run):
         source('call_method')
     if c1.button('콜 평가방법 비교', key='jd_call_btn'):
         with st.spinner('방법별로 다시 계산합니다.'):
-            st.session_state.jd_call = (_key(t), L.call_compare(t, full, b2))
+            st.session_state.jd_call = (_key(t), (*L.call_compare(t, full, b2), L.wow_trace(t, full, b2)))
     got = _saved('jd_call', t)
     if got:
-        cmp_rows, rec = got
+        cmp_rows, rec, tr = got
         base = next((v for nm, _, v, _ in cmp_rows if nm.startswith('유무가치비교법 (')), None)
         st.dataframe(pd.DataFrame([[nm, sp_, v, (v - base) if base else 0., '◀ 적용' if on else '']
                                    for nm, sp_, v, on in cmp_rows],
                                   columns=['방법', '지분·채권 구분', '값', '유무가치 대비', '']).style.format(
             {'값': '{:,.4f}', '유무가치 대비': '{:+,.4f}'}), hide_index=True, use_container_width=True)
+        st.caption(L.call_compare_note(t))
+        if tr:
+            # 유무가치비교법 차액의 구성 — 음수여도 0 으로 덮지 않고 원인을 나눠 보인다 (조서 결과 시트와 같은 표)
+            st.dataframe(pd.DataFrame(L.wow_trace_rows(tr), columns=['유무가치비교법 차액의 구성', '값']).style.format(
+                {'값': '{:,.4f}'}), hide_index=True, use_container_width=True)
+            (st.warning if (tr['A'] < 0 or tr['A0'] < 0) else st.caption)(L.wow_trace_note(tr))
         if rec:
-            st.caption('차이 분해 — ' + ' · '.join(f'{k} {v:,.4f}' for k, v in rec.items()))
-    with st.expander('옵션차익혼합할인법 여섯 단계'):
+            # 조서 결과 시트와 같은 분해 — 마지막 줄이 ① + ② 이자 실제 차이다.
+            _dA = rec['유무가치비교법 (적용 계약)'] - rec['옵션차익법 (적용 산식·적용 설정)']
+            st.dataframe(pd.DataFrame([[k, v] for k, v in rec.items()]
+                                      + [['차이 (유무가치 − 옵션차익) = ① + ②', _dA]],
+                                      columns=['차이 분해', '값']).style.format({'값': '{:,.4f}'}),
+                         hide_index=True, use_container_width=True)
+            st.caption(L.CALL_REC_NOTE)
+    with st.expander('같은 날 겹치는 사건의 처리 (세 평가방법 공통)'):
+        st.table(pd.DataFrame(L.event_order_rows(t), columns=['사건', '처리']))
+    with st.expander('옵션차익법 계산 단계'):
         st.markdown(L.inst_text(t, L.CALL_HOWTO))
     st.caption('앱 권고 — ' + L.inst_text(t, sp['call']['평가']).replace('**', ''))
     memo('call_method', run, '방법 선택 근거')
@@ -214,6 +228,29 @@ def priority_section(t, ca, conv, run):
                                   columns=['우선순위', '매도청구권', '전환권대가', '']).style.format(
             {'매도청구권': '{:,.4f}', '전환권대가': '{:,.4f}'}), hide_index=True, use_container_width=True)
     memo('priority', run, '우선순위 조항')
+
+
+def cresp_section(t, ca, conv, run):
+    """매도청구 통지 뒤 전환 대응 — 값이 갈릴 자리가 있을 때만 두 값을 나란히 보인다 (조서 결과 시트와 같은 표)."""
+    ov = L.cresp_overlap(t)
+    if t.k_w <= 0 or not ov:
+        return
+    st.markdown('#### 매도청구 통지 뒤 전환 대응')
+    st.warning(f'매도청구 행사일 {len(ov)}회가 전환청구기간과 겹치고 의무보유로 막히지 않습니다 '
+               f'(첫 회차 발행 후 {ov[0]:,.1f}개월). 통지를 받은 투자자가 전환으로 피할 수 있는지에 따라 '
+               '세 평가방법의 값이 모두 갈립니다 — 계약서의 매도청구 조항을 확인하십시오.')
+    c1, c2 = st.columns([5, 1])
+    with c2:
+        source('priority')
+    if c1.button('전환 대응 비교', key='jd_cr_btn'):
+        with st.spinner('두 읽기로 다시 계산합니다.'):
+            st.session_state.jd_cr = (_key(t), L.cresp_compare(t))
+    got = _saved('jd_cr', t)
+    if got is not None:
+        st.dataframe(pd.DataFrame([[a, b, c, '◀ 적용' if on else ''] for a, b, c, on in got],
+                                  columns=['통지 뒤 전환', '매도청구권', '전환권대가', '']).style.format(
+            {'매도청구권': '{:,.4f}', '전환권대가': '{:,.4f}'}), hide_index=True, use_container_width=True)
+    memo('conv_resp', run, '매도청구 조항')
 
 
 def bdt_section(t, full, b0, b1, b2, ca, run):
@@ -310,6 +347,7 @@ def render(t, full, b0, b1, b2, ca, conv, LB, run=None):
     put_exercise_section(t)
     call_section(t, full, b2, sp, run)
     priority_section(t, ca, conv, run)
+    cresp_section(t, ca, conv, run)
     bdt_section(t, full, b0, b1, b2, ca, run)
     allocation_section(t, full, b0, b1, b2, ca)
     extra_topics(run)
