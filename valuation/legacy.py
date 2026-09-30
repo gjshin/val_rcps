@@ -158,6 +158,13 @@ class Terms:
     #            독립이 아니므로 한 격자에서 함께 풀어야 한다.
     sha_kill: int = 0             # 0 독립 / 1 상호소멸
     p_lost_int: int = 0           # 조기상환 행사금액이 상실이자 보상 수준인가
+    # 풋 분리 판단 — 「행사금액이 상각후원가와 거의 같은가」(1109 B4.3.5(5)(가)).
+    # 기준서는 수치를 정하지 않는다. 비교기준은 평가자가 정하고(기본 10%), 상각 출발
+    # 금액은 자동값(발행금액 100, 별개 콜을 함께 샀으면 + 콜 가치)을 쓰되 실제 회계상
+    # 배분액이 다르면 평가자가 넣는다(0 이하면 자동값). 근거는 split_base_why 에 적는다.
+    split_tol: float = 0.10
+    split_base_in: float = -1.0
+    split_base_why: str = ""
     fvpl_whole: int = 0           # 복합계약 전체를 당기손익-공정가치로 지정했는가
     k_method: int = 0
     p_sep: int = 1                  # 조기상환권 1 분리 / 0 주계약에 포함
@@ -937,7 +944,7 @@ def fv_only_rows(tm: Terms, full, b0, b1, b2, ca):
     """공정가치 전용일 때 조서·화면에 싣는 표 — [(항목, 100 기준)]. 배분표와 같은 함수에서 나온다."""
     rows, _ = allocate(tm, full, b0, b1, b2, ca)
     rm = remeasure(tm, rows)
-    out = [("전체 (적용 트랜치)", b2), ("부채요소 (사채 + 조기상환권)", b1), ("주계약 (옵션 없는 사채 · 참고)", b0)]
+    out = [("전체 (적용 물량 기준)", b2), ("부채요소 (사채 + 조기상환권)", b1), ("주계약 (옵션 없는 사채 · 참고)", b0)]
     out.append((("복합계약 전체 · 당기손익-공정가치" if fvpl_on(tm) else
                  "파생상품부채 공정가치 (결산 재측정 대상)"), rm["fv_liab"]))
     if rm["fv_asset"] > 1e-12: out.append(("파생상품자산 (매도청구권) 공정가치", rm["fv_asset"]))
@@ -1674,6 +1681,14 @@ def blend_curves(pts_a, pts_b, ra, rb, rt):
     return out
 
 
+def rating_blend_kind(tm) -> str:
+    """두 등급으로 대상 등급 곡선을 만드는 방식 — 두 등급 사이면 「보간」, 밖이면 「외삽」."""
+    ia, ib, it = rating_idx(tm.rt_a), rating_idx(tm.rt_b), rating_idx(tm.rt_tgt)
+    if min(ia, ib, it) < 0 or ia == ib:
+        return "보간"
+    return "보간" if min(ia, ib) <= it <= max(ia, ib) else "외삽"
+
+
 def to_cont(r, m):
     """이산복리(연 m회) → 연속복리.  국고채 반기(2), 회사채 분기(4)가 관행이다."""
     return m*math.log(1 + r/m) if (m and m > 0) else r
@@ -2107,6 +2122,23 @@ def pick(res, model): return res["GS"] if model == "GS" else res["TF"]
 # ══════════════════════════════════════════════════════════
 # 3-B. 주주간계약 — 지분에 붙은 풋과 콜
 # ══════════════════════════════════════════════════════════
+def sha_integrity(tm: Terms, R: dict) -> list:
+    """주주간계약 평가가 고장 나지 않았는지 — 앱이 평가할 때 보고, 걸리면 조서를 만들지 않는다.
+
+    위험중립가중치 q 가 0 과 1 사이인가, 풋이 지금 행사했을 때의 값보다 작지 않은가,
+    풋·콜이 음수가 아닌가.
+    """
+    bad = []
+    if R.get("qbad") or not (0 < R.get("q", 0.5) < 1):
+        bad.append("위험중립가중치 q 가 0 과 1 사이를 벗어남")
+    imm = max(R["pk"](0) - 100*tm.S0/tm.K0, 0.0) if R["p_on"](0) else 0.0
+    if R["put"] < imm - 1e-6:
+        bad.append("풋 가치가 지금 행사했을 때의 값보다 작음")
+    if min(R["put"], R["call"]) < -1e-6:
+        bad.append("풋·콜 가치가 음수")
+    return bad
+
+
 def sha_engine(tm: Terms):
     """주주간계약을 지분가치 격자에서 잰다.
 
@@ -2605,6 +2637,45 @@ def call_method_text(tm: Terms) -> str:
 
 
 
+def call_method_rows(tm: Terms) -> list:
+    """매도청구권 평가방법을 항목별로 나눈다 — [(항목, 내용)]. 한 칸에 여러 가정을 몰지 않는다."""
+    if tm.k_w <= 0 or is_sha(tm):
+        return [("매도청구권", "없음")]
+    km = int(tm.k_method)
+    rows = [("콜 유형", "제3자 사전 기특정 콜 — 최초 인식 시 주주간 분배(한공회 실무사례 4.5.4 접근법 2-2)"
+             if int(tm.k_kind) == 1 else
+             ("발행회사 또는 지정 제3자의 매수청구권 — 제3자 가상지정관점(한공회 실무사례 4.4.3 접근법 2)"
+              if tm.k_third else "발행회사의 매수청구권"))]
+    if km == 0:
+        rows += [("평가방법", "유무가치비교법 — 매도청구 조항이 있을 때와 없을 때의 가치 차이 (한공회 실무사례 4.3.2)"),
+                 ("기초자산", "해당 없음 — 매도청구 대상 물량과 비대상 물량을 같은 격자에서 각각 계산"),
+                 ("할인·행사가격 배분", "해당 없음 — 각 격자가 선택한 모형(TF/GS)으로 할인")]
+    else:
+        rows += [("평가방법", "옵션차익법 · " + ("전환확률 가중 혼합할인율" if km == 1
+                                          else "주식결제·현금결제 성분 분리 할인")
+                              + " (한공회 실무사례 3.2 · 4.4.3)"),
+                 ("기초자산", "매도청구 조항을 뺀 전환사채 가치 (한공회 실무사례 4.4.2 · 4.4.3)"),
+                 ("할인·행사가격 배분", ("매도청구 행사가격을 GS 전환확률로 주식결제·현금결제 성분에 배분 (한공회 실무사례 4.3.3)"
+                                    if int(tm.k_split) == 1 else
+                                    "매도청구 행사가격을 주식결제분·현금결제분 가치 구성비율로 배분 (비례균등차감법)"))]
+    rows.append(("적용 수량", f"발행총액의 {tm.k_w:.0%} (매도청구 한도)"))
+    if int(tm.k_hold) == 1 and tm.k_lock > 0:
+        rows.append(("전환제한", f"콜 대상 물량은 발행 후 {tm.k_lock:,.0f}개월까지 "
+                     + ("전환·조기상환청구가 제한됨" if int(tm.k_lock_put) else "전환이 제한됨")
+                     + (" — 유무가치비교법은 그 효과를 가치에 포함" if km == 0 else
+                        " — 제한 자체를 별도 가치로 더하지 않고, 콜 행사 가능성이 유지되는 효과만 반영")))
+    else:
+        rows.append(("전환제한", "없음 — 투자자가 전환·조기상환하면 그 물량의 콜도 소멸"))
+    if int(tm.pc_order) == 1:
+        rows.append(("동시 행사 시 우선순위", "발행자 매도청구 우선"))
+    std = ("유무가치비교법 (4.3.2)" if (issuer_redeem(tm) or not tm.k_third)
+           else "옵션차익법 (4.3.4 · 4.4.3)")
+    now = "유무가치비교법" if km == 0 else "옵션차익법"
+    rows.append(("한공회 실무사례의 기본 접근법", std + (" — 적용한 방법과 같음" if now in std else
+                                                    " — 적용한 방법과 다름. 선택 근거를 남기십시오 (4.6.2)")))
+    return rows
+
+
 def sha_accounts(tm: Terms, R):
     """주주간계약을 세 당사자의 재무제표로 옮긴다.
 
@@ -2992,16 +3063,22 @@ def backsolve(tm: Terms, target: float = None, lo: float = None, hi: float = Non
     return mid, fm, 80
 
 
-# 분리 판단에서 "행사가격이 상각후원가와 거의 같다" 로 볼 문턱.
-# 기준서는 "거의 같다" 라고만 하고 수치를 주지 않는다. 실무에서 널리 쓰는
-# 10% 를 기본으로 두되, 문턱 근처면 그 사실 자체를 알린다.
+# 분리 판단에서 "행사가격이 상각후원가와 거의 같다" 로 볼 문턱의 기본값.
+# 기준서는 "거의 같다" 라고만 하고 수치를 주지 않는다 — 기준서가 정한 수치가 아니라
+# 실무에서 쓰는 10% 를 기본으로 두고, 평가자가 split_tol 로 바꾼다.
 SPLIT_TOL = 0.10
 
 
-def _close_test(strike, amort):
+def split_tol(tm: "Terms | None" = None) -> float:
+    """평가자가 정한 비교기준 (기본 10%)."""
+    v = float(getattr(tm, "split_tol", SPLIT_TOL)) if tm is not None else SPLIT_TOL
+    return v if v > 0 else SPLIT_TOL
+
+
+def _close_test(strike, amort, tol=SPLIT_TOL):
     """행사가격과 상각후원가가 '거의 같은가' — 문단 B4.3.5(5)(가)."""
     gap = abs(strike - amort)/max(abs(amort), 1e-9)
-    return gap, gap <= SPLIT_TOL
+    return gap, gap <= tol
 
 
 def split_call_separate(tm: Terms) -> bool:
@@ -3025,7 +3102,15 @@ def split_base(tm: Terms, ca: float) -> float:
 
     발행금액 100 에서 출발하되, 발행회사가 별개의 콜옵션을 함께 사들였다면(제3자 지정
     가능 콜) 그 대가만큼 전환사채에 더 배분된다 — 159쪽의 CU1,200 이 그 경우다.
+    실제 회계상 배분액이 다르면 평가자가 split_base_in 으로 넣는다 (0 이하면 자동값).
     """
+    if float(getattr(tm, "split_base_in", -1.0)) > 0:
+        return float(tm.split_base_in)
+    return split_base_auto(tm, ca)
+
+
+def split_base_auto(tm: Terms, ca: float) -> float:
+    """앱이 정하는 출발 금액 — 발행금액 100 (+ 발행회사가 함께 산 별개 콜의 가치)."""
     return 100.0 + (float(ca) if split_call_separate(tm) else 0.0)
 
 
@@ -3050,6 +3135,11 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
     # 실제로 인식한 배분액(rows_eir)도 쓰지 않는다 — 분리 여부 설정에 따라 출발점이
     # 바뀌면 「분리하지 않기로 했더니 가까워져 분리하지 않아도 된다」는 순환이 생긴다.
     base0 = split_base(tm, ca)
+    tol = split_tol(tm)
+    _base_by = ("평가자 입력" + (f" — {tm.split_base_why.strip()}" if str(tm.split_base_why).strip() else "")
+                if float(getattr(tm, "split_base_in", -1.0)) > 0 else
+                ("앱 자동값 — 발행금액 100 + 발행회사가 함께 산 별개 콜의 가치"
+                 if split_call_separate(tm) else "앱 자동값 — 발행금액 100"))
     try:
         _rows_host = eir_table(tm, base0)[1]
     except Exception:
@@ -3080,7 +3170,7 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
             _chk.append((_m, _pv, _bv, _close_test(_pv, _bv)[0]))
         _, pv, bv, gap = _chk[0]
         _worst = max(_chk, key=lambda x: x[3])
-        close = _worst[3] <= SPLIT_TOL
+        close = _worst[3] <= tol
         _wtxt = (f" 행사일 {len(_chk)}회 가운데 차이가 가장 큰 회차는 발행 후 "
                  f"{_worst[0]:g}개월({_worst[3]*100:.1f}%)입니다." if len(_chk) > 1 else "")
         why, cite = [], []
@@ -3104,16 +3194,18 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
         elif close:
             res = "분리하지 않을 여지"
             why.append(f"첫 조기상환일 행사금액 {pv:,.2f} 와 같은 시점 상각후원가 "
-                       f"{bv:,.2f}(자본요소 분리 전, 발행금액 {base0:,.2f} 에서 출발) 의 "
-                       f"차이가 {gap*100:.1f}% 입니다.{_wtxt} 모든 행사일에서 거의 "
-                       "같으므로 밀접하게 관련되어 있다고 볼 여지가 있습니다.")
+                       f"{bv:,.2f}(자본요소 분리 전 금액 {base0:,.2f} 에서 출발) 의 "
+                       f"차이가 {gap*100:.1f}% 입니다.{_wtxt} 모든 행사일에서 평가자가 정한 "
+                       f"비교기준 {tol*100:g}% 이내이므로 밀접하게 관련되어 있다고 볼 여지가 "
+                       "있습니다. 비교기준은 기준서가 정한 수치가 아닙니다.")
             cite.append("1109 문단 B4.3.5(5)(가)")
         else:
             res = "분리"
             why.append(f"첫 조기상환일 행사금액 {pv:,.2f} 와 같은 시점 상각후원가 "
-                       f"{bv:,.2f}(자본요소 분리 전, 발행금액 {base0:,.2f} 에서 출발) 의 "
-                       f"차이가 {gap*100:.1f}% 입니다.{_wtxt} 거의 같지 않은 행사일이 "
-                       "있습니다.")
+                       f"{bv:,.2f}(자본요소 분리 전 금액 {base0:,.2f} 에서 출발) 의 "
+                       f"차이가 {gap*100:.1f}% 입니다.{_wtxt} 평가자가 정한 비교기준 "
+                       f"{tol*100:g}% 를 넘는 행사일이 있습니다. 비교기준은 기준서가 정한 "
+                       "수치가 아닙니다.")
             why.append("같은 조건의 별도 금융상품이 파생상품의 정의를 충족하고, "
                        "복합계약 전체를 당기손익-공정가치로 측정하지 않습니다.")
             cite += ["1109 문단 B4.3.5(5)", "문단 4.3.3"]
@@ -3129,7 +3221,9 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                                 "차이": gap,
                                 "상각 출발 금액 (자본요소 분리 전)": base0,
                                 "가장 큰 차이": _worst[3],
-                                "가장 큰 차이 · 발행 후 개월": _worst[0]},
+                                "가장 큰 차이 · 발행 후 개월": _worst[0],
+                                "비교기준 (평가자 설정)": tol,
+                                "출발 금액 근거": _base_by},
                           회차=_chk)
 
     # ── 매도청구권 ────────────────────────────────────────────
@@ -3143,7 +3237,7 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
         kv = ks(first_k)
         kb = amort_at(max(0.0, (_EA["k_dates"].get(first_k, tm.elapsed_m + first_k*dt_*12)
                                 - tm.elapsed_m)/12))
-        kgap, kclose = _close_test(kv, kb)
+        kgap, kclose = _close_test(kv, kb, tol)
         why, cite = [], []
         if tm.k_third or tm.k_transfer:
             res = "별도의 금융상품"
@@ -3295,7 +3389,7 @@ def split_memo(sp) -> str:
     return "\n\n".join(out)
 
 
-RIGHT_COLS = ["권리", "권리자", "행사기간", "행사조건", "페이오프", "우선순위"]
+RIGHT_COLS = ["권리", "권리자", "행사기간", "행사조건", "행사 시 지급액", "우선순위"]
 
 
 def rights_table(tm: Terms):
@@ -3357,7 +3451,7 @@ def rights_table(tm: Terms):
         rows.append((L["call"], _who, _mo(tm.k_s, tm.k_e, tm.k_f),
                      (" · ".join(_cond) if _cond else "—"),
                      "100 × (1 + 프리미엄 복리)" + ded_suffix(tm, "k"),
-                     ("발행자 우선" if int(tm.pc_order) == 1 else "투자자 풋에 밀림")))
+                     ("동시 행사 시 발행자 매도청구 우선" if int(tm.pc_order) == 1 else "동시 행사 시 투자자 상환청구권 우선")))
     return rows
 
 
@@ -3800,11 +3894,11 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None, light=False):
                 "; ".join(f"{k} → {v}" for k, v, _ in notes) if notes else "없음"))
     # 재현 기록 한 줄 — 이 조서가 어느 판의 앱에서 나왔는지 검산요약에서 바로 보인다.
     _m = run_stamp(tm)
-    out.append(("재현 기록 · 앱 판 · 인풋 지문",
+    out.append(("재현 기록 · 앱 버전 · 입력 식별값",
                 f"{_m['app_sha12'] or '?'} · {_m['terms_md5'][:8]}",
                 "적합" if _m["app_sha12"] else "확인 필요",
-                (f"소스 판 {_m['git_head']} · 가정 시트에 전체 기록" if _m["git_head"]
-                 else "소스 판(git)을 확인하지 못했다 — 가정 시트에 나머지 기록") ))
+                (f"계산 코드 버전 {_m['git_head']} · 가정 시트에 전체 기록" if _m["git_head"]
+                 else "계산 코드 버전(git)을 확인하지 못했다 — 가정 시트에 나머지 기록") ))
     return out
 
 
@@ -3827,11 +3921,11 @@ def sha_checks(tm: Terms, R):
                 "" if R["qi_step"] < 0 else f"주가 > {tm.ipo_min:,.0f} 인 노드에서 풋 소멸" + (" · 콜도 소멸" if int(tm.sha_qipo_kill) else "")))
     # 재현 기록 한 줄 — model_checks 와 같은 형식이다.
     _m = run_stamp(tm)
-    out.append(("재현 기록 · 앱 판 · 인풋 지문",
+    out.append(("재현 기록 · 앱 버전 · 입력 식별값",
                 f"{_m['app_sha12'] or '?'} · {_m['terms_md5'][:8]}",
                 "적합" if _m["app_sha12"] else "확인 필요",
-                (f"소스 판 {_m['git_head']} · 해설 시트에 전체 기록" if _m["git_head"]
-                 else "소스 판(git)을 확인하지 못했다 — 해설 시트에 나머지 기록")))
+                (f"계산 코드 버전 {_m['git_head']} · 해설 시트에 전체 기록" if _m["git_head"]
+                 else "계산 코드 버전(git)을 확인하지 못했다 — 해설 시트에 나머지 기록")))
     return out
 
 
@@ -3870,7 +3964,7 @@ def write_call_rows(R, r, tm: Terms, full, b2, put, sec, fmt4, pct, grey):
     """
     cmp_, rec = call_compare(tm, full, b2)
     if not cmp_: return r
-    sec(R, r, "5. 매도청구권 — 방법별 값과 선택 근거 (값 · 4.6.2 문서화)", span=6); r += 1
+    sec(R, r, "4. 매도청구권 — 방법별 값과 선택 근거 (값 · 4.6.2 문서화)", span=6); r += 1
     put(R, r, 2, call_type_note(tm).replace("**", ""), color=grey, size=9)
     R.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
     R.row_dimensions[r].height = 42; r += 2
@@ -3902,10 +3996,10 @@ def write_call_rows(R, r, tm: Terms, full, b2, put, sec, fmt4, pct, grey):
                      "존속하여 행사 가능성이 유지되는 효과만 담는다.", color=grey, size=9)
         R.merge_cells(start_row=r, start_column=2, end_row=r, end_column=7)
         R.row_dimensions[r].height = 58; r += 2
-    put(R, r, 2, "적용 방법 · 문안", bold=True, border=True, size=9)
-    put(R, r, 3, call_method_text(tm), border=True, size=9)
-    R.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
-    R.row_dimensions[r].height = 58; r += 1
+    for _lb, _tx in call_method_rows(tm):
+        put(R, r, 2, _lb, bold=True, border=True, size=9)
+        put(R, r, 3, _tx, border=True, size=9)
+        R.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7); r += 1
     put(R, r, 2, "평가기법 선택 근거 (4.6.2)", bold=True, border=True, size=9)
     put(R, r, 3, (tm.k_basis.strip() or "— 사이드바 「평가기법 선택 근거」에 적으면 여기에 실린다"),
         border=True, size=9)
@@ -3916,7 +4010,7 @@ def write_call_rows(R, r, tm: Terms, full, b2, put, sec, fmt4, pct, grey):
 def write_pc_rows(R, r, tm: Terms, put, sec, fmt4, grey):
     """결과 시트 «우선순위별 매도청구권» — 값이다(트리 자체가 한 우선순위로 만들어지므로). 두 조서 공통."""
     pcc = pc_compare(tm)
-    sec(R, r, "4. 풋·콜 우선순위별 매도청구권 (값 · 계약이 정한다)", span=5); r += 1
+    sec(R, r, "3. 풋·콜 우선순위별 매도청구권 (값 · 계약이 정한다)", span=5); r += 1
     if pcc is None:
         put(R, r, 2, "겹치는 노드에서 조기상환금액이 매도청구금액보다 큰 자리가 없어 두 우선순위가 같은 답이다.",
             color=grey, size=9)
@@ -5468,8 +5562,8 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
                (R_MD, "중앙값", f"=MEDIAN({D1}:{DN})", R_N6, False),
                (R_MA, "MAD (×1.4826)", f"=MEDIAN($E${R0+1}:$E${last})*1.4826",
                 R_N6, False),
-               (R_LO, "정상범위 하한", f"=$C${R_MD}-$C${R_MK}*$C${R_MA}", R_N6, False),
-               (R_HI, "정상범위 상한", f"=$C${R_MD}+$C${R_MK}*$C${R_MA}", R_N6, False),
+               (R_LO, "통계적 제외기준 하한", f"=$C${R_MD}-$C${R_MK}*$C${R_MA}", R_N6, False),
+               (R_HI, "통계적 제외기준 상한", f"=$C${R_MD}+$C${R_MK}*$C${R_MA}", R_N6, False),
                (R_EX, "제외 개수",
                 f"=COUNT({D1}:{DN})-COUNT($G${R0+1}:$G${last})", R_N0, False),
                (R_SD, "일 변동성", f"=_xlfn.STDEV.S($G${R0+1}:$G${last})", R_P4, False),
@@ -5626,7 +5720,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
     r = 5
     sec(C, r, "방법"); r += 1
     cols(C, r, ["단계", "내용"], [26, 64]); r += 1
-    steps = ([("1. 입력", "현물이자율(제로커브)을 고시된 그대로 받는다"),
+    steps = ([("1. 입력", "현물이자율(제로커브) — 앱에 입력한 적용 금리곡선"),
               ("2. 연속환산", "연속 = m · ln(1 + r ÷ m).  복리 횟수 m 을 무시하고 "
                             "ln(1+r) 로만 바꾸면 할인계수와 위험중립확률이 어긋난다"),
               ("3. 보간", "고시 만기 사이는 직선으로 잇는다"),
@@ -5650,7 +5744,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
                  ("무위험 복리 횟수 (연)", int(tm.cmp_rf)),
                  ("위험 복리 횟수 (연)", int(tm.cmp_cr)),
                  ("위험 곡선 방식", {"pick": "표에서 등급 하나",
-                                  "rating": "두 등급 보간"}.get(tm.rate_mode,
+                                  "rating": f"두 등급 {rating_blend_kind(tm)} ({tm.rt_a} · {tm.rt_b} → {tm.rt_tgt})"}.get(tm.rate_mode,
                                                           "직접 입력")),
                  ("위험 곡선 출처", tm.cr_src or "직접 입력"),
                  ("평가기준일", tm.d_base), ("만기일", tm.d_mat),
@@ -5660,7 +5754,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
                  ("한 구간 Δt (년)", round(dt_, 8)),
                  ("주가 변동성 σ", tm.sig)]
                 + ([("BDT 단기이자율 변동성 σ", tm.bdt_sig),
-                    ("BDT σ 산출방식", sig_how or "직접 입력 (산출근거 없음)"),
+                    ("BDT σ 산출방식", sig_how or "직접 입력 — 이 조서에 금리변동성 산출내역이 포함되어 있지 않습니다"),
                     ("BDT 기준 곡선", "위험 곡선에 직접"
                      if tm.bdt_base == 0 else "무위험 + 확정 스프레드")]
                    if put_bdt_on(tm) else [])):
@@ -5682,17 +5776,22 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
                "보통주 배당수익률 δ 는 그 드리프트에서만 빠지고 할인율에는 닿지 않는다.")
     r += 1
     if put_bdt_on(tm):
-        note(C, r, "BDT 단기이자율 변동성 σ 는 조기상환권을 재는 금리격자에만 쓴다. "
-                   "산출방식 줄이 「직접 입력」이면 근거가 조서에 없다는 뜻이다 — "
-                   "앱 조서 탭의 「금리변동성 산출내역」 리포트를 함께 철하십시오.")
+        note(C, r, "BDT 단기이자율 변동성 σ 는 조기상환청구권을 평가하는 금리격자에만 쓴다(전환권·매도청구권 "
+                   "가치는 주가 격자에서 계산한다). 산출방식 줄이 「직접 입력」이면 이 조서에 금리변동성 산출내역이 "
+                   "포함되어 있지 않습니다 — 앱 조서 탭의 「금리변동성 산출내역」 리포트를 함께 철하십시오.")
         r += 1
-    note(C, r, "위험 곡선 출처는 앱의 이자율 칸에서 고른 그대로다. 두 등급 보간이면 "
-               "아래 입력곡선 시트의 위험 열이 이미 섞인 곡선이고, 등급 하나를 "
-               "고르셨으면 고시표의 그 줄이 그대로 들어간다.")
+    note(C, r, "위험 곡선 출처는 앱의 이자율 칸에서 고른 그대로다. 두 등급으로 대상 등급을 만들었으면 "
+               "(대상 등급이 두 등급 사이면 보간, 밖이면 외삽) 아래 입력곡선 시트의 위험 열이 그렇게 만든 "
+               "적용 금리곡선이고, 등급 하나를 고르셨으면 고시표의 그 줄이 그대로 들어간다.")
+    r += 1
+    note(C, r, "1년 미만 만기의 수익률은 현금흐름이 한 번인 할인채 수익률로 보아 할인계수를 구했다. "
+               "국내 채권의 관행적 복할인(끝 구간 단리)과의 차이는 3개월·3% 기준 가격의 약 0.003% 이다.")
 
     # ── 입력곡선 ──
     I = sheet(IN, widths=[12, 16, 15, 5, 12, 16, 15])
-    head(I, 2, "입력 곡선", "고시된 그대로 적는다. 이 두 표가 리포트 전체의 뿌리다.",
+    head(I, 2, "입력 곡선", ("적용 금리곡선 — 앱에 입력한 곡선" + (" (위험 곡선은 등급 조정 후 적용 금리곡선)"
+                                                         if tm.rate_mode == "rating" else "")
+                             + ". 이후 모든 이자율 계산의 출발점이다."),
          span=7)
     cols(I, R0IN-1, ["무위험 만기", "수익률", "연속환산", "",
                      "위험 만기", "수익률", "연속환산"],
@@ -5787,7 +5886,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
                     _nt = f"이표 시점 사이 만기 — 첫 이표({first:.2f}년)는 기간 비율 {first*cmp_:.2f} 만큼"
                 put(W, rr, 8, f"=-LN(G{rr})/C{rr}", fmt=R_P4, border=True, align="right")
                 if t_ > _last + 1e-9:
-                    _nt = f"보외 — 마지막 만기 {_last:g}년 수익률 연장"
+                    _nt = f"외삽 — 마지막 만기 {_last:g}년 수익률로 연장"
                 if _nt:
                     put(W, rr, 9, _nt, color=(RPT["red"] if "보외" in _nt else RPT["grey"]),
                         size=9, border=True)
@@ -5797,7 +5896,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
             note(W, R0+N+1, "DF 는 앞 이표 시점의 결과를 이어 받는다(누적 DF). 이표 주기와 어긋난 "
                             "입력 만기(예: 반기 이표 곡선의 3M·9M)도 한 줄씩 풀어 곡선에 넣는다 — "
                             "비고 열에 방법을 적었다. 입력 곡선의 마지막 만기 뒤는 마지막 수익률로 "
-                            "평평하게 연장한다(보외).", span=8)
+                            "평평하게 연장한다(외삽).", span=8)
 
     # ── 선도이자율 ──
     def spot_ref(leg, t, tref=None):
@@ -5848,14 +5947,13 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
         put(F, rr, 12, f"=(EXP(G{rr}*$C$7)-$I$7)/($G$7-$I$7)", fmt=R_N4,
             border=True, align="right")
         if t1 > _lastc + 1e-9:
-            put(F, rr, 13, f"보외 — 곡선 마지막 만기 {_lastc:g}년 뒤", color=RPT["red"],
+            put(F, rr, 13, f"외삽 — 곡선 마지막 만기 {_lastc:g}년 뒤", color=RPT["red"],
                 size=9, border=True)
     note(F, 10+n+1, "t₀·t₁ 은 Δt 로 계산되고 현물 네 열은 그 두 칸을 읽는다. 곡선의 마지막 만기 "
-                    "뒤는 마지막 수익률로 평평하게 연장하므로(보외) 선도이자율이 한 값으로 "
-                    "굳는다 — 비고 열에 표시한다. "
-                    "스프레드가 음수인 줄이 있으면 두 곡선을 바꿔 넣은 것이다. "
-                    "q 가 0 과 1 밖으로 나가면 변동성이 너무 낮거나 노드가 너무 성긴 "
-                    "것이다 — 격자가 무차익 조건을 못 맞춘다.", span=11)
+                    "뒤는 마지막 수익률로 평평하게 연장하므로(외삽) 선도이자율이 한 값으로 "
+                    "고정된다 — 비고 열에 표시한다. "
+                    "스프레드(위험 − 무위험)가 음수인 줄이 있으면 두 곡선의 구분·기준일·보간 방법을 확인하십시오. "
+                    "위험중립 상승확률 q 가 0 과 1 사이를 벗어나면 이 격자로 계산할 수 없다 — 앱이 평가 단계에서 막는다.", span=11)
     # 조서 안에 심은 경우 — 트리 11·12행이 참조할 시트 이름과 첫 자료행
     if not _own: return (FS, 10)
     return _save(wb)
@@ -5870,7 +5968,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
 # 계약서도 그것을 「매도청구권」이라 부르므로 그 토막만 빼고 바꾼다.
 _RCPS_HEAD = [
     ("전환사채", "상환전환우선주"), ("조기상환청구권", "상환청구권"), ("조기상환권", "상환청구권"),
-    ("조기상환", "상환청구"),
+    ("조기상환청구", "상환청구"), ("조기상환 청구", "상환청구"), ("조기상환", "상환청구"),
 ]
 _RCPS_CALL = [
     ("매도청구권자산", "발행자 상환권 가치"),
@@ -5883,7 +5981,7 @@ _RCPS_TAIL = [
     ("만기보장수익률", "만료 시 상환 보장수익률"),
     ("만기보장 복리", "만료 시 상환 보장 복리"),
     ("만기상환금액", "만료 시 상환금액"), ("만기상환", "만료 시 상환"),
-    ("옵션 없는 사채", "옵션 없는 우선주부채"),
+    ("옵션 없는 사채", "옵션 없는 우선주부채"), ("옵션 제외 사채", "옵션 제외 우선주부채"),
     ("순수사채", "순수 우선주부채"), ("순수 사채", "순수 우선주부채"),
     ("없는 사채", "없는 우선주부채"),
     ("사채와 독립적으로", "우선주와 독립적으로"),
@@ -5899,6 +5997,7 @@ _BW_WORDS = [
     ("전환사채", "신주인수권부사채"),
     ("전환권대가", "신주인수권대가"), ("전환권조정", "신주인수권조정"),
     ("전환권", "신주인수권"),
+    ("전환주식수", "인수주식수"),
     ("전환가격", "행사가격"), ("전환가치", "행사가치"), ("전환비율", "행사비율"),
     ("전환청구기간", "행사기간"), ("전환기간", "행사기간"),
     ("전환청구", "신주인수권 행사"), ("전환확률", "행사확률"),
@@ -5926,6 +6025,184 @@ def inst_words(tm: Terms):
     return _RCPS_WORDS
 
 
+# 계산 시트마다 「이 결과를 어디에 쓰는가」 — 시트 상단 설명에 붙인다 (계산 코드용 이름).
+USED_BY = {
+    "01 주가": "04 전환가치 · 02 전환가격(조정일) · 도달확률",
+    "02a 이월 전환가격": "02 전환가격",
+    "02b 정기 조정": "02 전환가격",
+    "02 전환가격": "03 전환비율 · 다음 시점 02a",
+    "03 전환비율": "04 전환가치",
+    "04 전환가치": "09 의사결정 · 05 지분가치 · 08 금융상품가치 (GS: 14)",
+    "05 지분가치": "앞 시점의 07 보유가치 · 08 금융상품가치",
+    "06 부채가치": "앞 시점의 07 보유가치 · 08 금융상품가치",
+    "07 보유가치": "09 의사결정 · 08 금융상품가치",
+    "08 금융상품가치": "결과 시트(콜 반영 전 가치) · 19 콜 즉시행사가치",
+    "09 의사결정": "05 지분가치 · 06 부채가치",
+    "10 주계약가치": "결과 시트(주계약)",
+    "11 GS 전환확률": "12 GS 할인율 · 11b",
+    "11 전환확률": "12 전환확률 · 할인율 · 11b · 17a · 17b",
+    "12 GS 할인율": "13 GS 보유가치", "12 전환확률 · 할인율": "13 전환확률 · 보유가치",
+    "13 GS 보유가치": "14 GS 금융상품가치", "13 전환확률 · 보유가치": "14 전환확률 · 금융상품가치",
+    "14 GS 금융상품가치": "결과 시트(콜 반영 전 가치) · 앞 시점의 11",
+    "14 전환확률 · 금융상품가치": "앞 시점의 11 전환확률",
+    "16 부채요소": "결과 시트(부채요소)",
+    "19 콜 페이오프": "17a · 17b · 23 · 24",
+    "17a 행사 지분몫": "23 방법2 지분몫", "17b 행사 채권몫": "24 방법2 부채몫",
+    "21 방법2 지분보유": "23 방법2 지분몫", "22 방법2 부채보유": "24 방법2 부채몫",
+    "23 방법2 지분몫": "결과 시트(매도청구권) · 앞 시점의 21",
+    "24 방법2 부채몫": "결과 시트(매도청구권) · 앞 시점의 22",
+}
+
+
+def used_by(name: str) -> str:
+    u = USED_BY.get(name) or ("결과 시트(콜 반영 후 가치)" if name.startswith("15 ") else "")
+    return f"  ▶ 사용처: {u}" if u else ""
+
+
+def sheet_display_names(tm: Terms) -> dict:
+    """계산 코드가 쓰는 시트 이름 → 조서에 보이는 이름.
+
+    코드 안에서는 짧은 옛 이름(05 지분가치 …)을 그대로 쓰고, 조서를 다 만든 뒤
+    rename_sheets 가 시트 이름·수식 참조·설명 문구를 한꺼번에 바꾼다 — 계산용 이름과
+    표시용 이름을 나눠 수식이 깨지지 않게 한다. TF 의 주식결제분·현금결제분은 회계상
+    자본요소·부채요소와 금액이 다를 수 있어 회계 명칭을 쓰지 않는다.
+    """
+    bw, rc = is_bw(tm), is_rcps(tm)
+    inst = "BW" if bw else "RCPS" if rc else "CB"
+    unit = "발행가 100당" if rc else "액면 100당"
+    cv = "행사" if bw else "전환"
+    host = "우선주부채" if rc else "사채"
+    putw = "상환청구권" if rc else "풋"
+    callw = "발행자 상환권" if issuer_redeem(tm) else "콜"
+    m = {
+        "03 전환비율": f"03 {'인수' if bw else '전환'}주식수 ({unit})",
+        "04 전환가치": f"04 즉시{cv}가치",
+        "05 지분가치": "05 주식결제분 가치",
+        "06 부채가치": "06 현금결제분 가치",
+        "07 보유가치": "07 계속보유가치",
+        "08 금융상품가치": f"08 {callw} 반영 전 {inst} 가치",
+        "10 주계약가치": f"10 옵션 제외 {host}가치",
+        "11b 채권확률 (1 − 전환확률)": f"11b 비{cv}확률 (1 − {cv}확률)",
+        "16 부채요소": f"16 {'신주인수권' if bw else '전환권'} 제외 {host}가치 ({putw} 포함)",
+        "16c 부채요소 (발행자 상환권)": f"16c {cv}권 제외 · 발행자 상환권 포함",
+        "17a 행사 지분몫": "17a 콜 행사 시 주식결제 성분",
+        "17b 행사 채권몫": "17b 콜 행사 시 현금결제 성분",
+        "19 콜 페이오프": "19 콜 즉시행사가치",
+        "21 방법2 지분보유": "21 콜 계속보유 · 주식결제 성분",
+        "22 방법2 부채보유": "22 콜 계속보유 · 현금결제 성분",
+        "23 방법2 지분몫": "23 콜 가치 · 주식결제 성분",
+        "24 방법2 부채몫": "24 콜 가치 · 현금결제 성분",
+        "IR 표지": "IR 이자율 산출요약",
+        "σ 표지": "σ 주가변동성 산출요약",
+        "σr 표지": "σr 금리변동성 산출요약",
+    }
+    if bw_cash(tm):
+        # 현금납입 BW — 05·06 은 주식결제·현금결제 구분이 아니라 신주인수권과 사채 자체다.
+        m["05 지분가치"], m["06 부채가치"] = "05 신주인수권가치", "06 사채가치"
+    kw = f"{tm.k_w:.0%}" if tm.k_w > 0 else ""
+    if kw and not issuer_redeem(tm):
+        m[f"15 {kw} 트랜치"] = f"15 매도청구 대상 {kw}"
+    return m
+
+
+def rename_sheets(wb, mapping: dict, words=()):
+    """시트 이름을 바꾸고, 그 이름을 쓰는 수식·글자·하이퍼링크를 함께 고친다. 값은 그대로다.
+
+    words — 상품 용어 치환(BW 의 전환→행사 등). 설명 문구는 relabel_inst 가 바꾸므로
+    시트 이름에도 같은 치환을 해야 「02 행사가격」 같은 참조 문구와 탭 이름이 맞는다.
+    """
+    mapping = dict(mapping)
+    if words:
+        for nm in wb.sheetnames:
+            cur = mapping.get(nm, nm)
+            for a, b in words:
+                cur = cur.replace(a, b)
+            mapping[nm] = cur
+    mapping = {o: nn for o, nn in mapping.items() if o in wb.sheetnames and o != nn}
+    for o, nn in mapping.items():
+        assert len(nn) <= 31 and not any(ch in nn for ch in r":\/?*[]"), nn
+        wb[o].title = nn
+    order = sorted(mapping, key=len, reverse=True)
+    for ws in wb.worksheets:
+        for c in list(ws._cells.values()):
+            v = c.value
+            if isinstance(v, str):
+                nv = v
+                for o in order:
+                    if o in nv:
+                        nv = nv.replace(o, mapping[o])
+                if not nv.startswith("="):
+                    nv = nv.replace("**", "")      # 화면용 굵은 글씨 기호는 엑셀에 찍지 않는다
+                if nv != v:
+                    c.value = nv
+            if c.hyperlink is not None and c.hyperlink.location:
+                loc = c.hyperlink.location
+                for o in order:
+                    loc = loc.replace(o, mapping[o])
+                c.hyperlink.location = loc
+    return wb
+
+
+# 상품 이름을 바꾸면 안 되는 말 — 세 상품을 나란히 적은 적용범위 문장, 기준서 용어.
+_RELABEL_KEEP = ("전환사채·신주인수권부사채·상환전환우선주", "전환채무상품", "상환전환우선주")
+# 받침에 따라 모양이 바뀌는 조사. 뒤에 띄어쓰기·문장부호·줄끝이 올 때만 조사로 본다.
+_JOSA = (("은", "는"), ("이", "가"), ("을", "를"), ("과", "와"), ("으로", "로"))
+_JOSA_RE = re.compile(r"(은|는|이|가|을|를|과|와|으로|로)(?=[\s,.·)」』—:;]|$)")
+
+
+def _batchim(ch: str):
+    """한글 마지막 글자의 받침 — (있는가, ㄹ 받침인가). 한글이 아니면 None."""
+    code = ord(ch) - 0xAC00
+    if not 0 <= code < 11172:
+        return None
+    jong = code % 28
+    return jong != 0, jong == 8
+
+
+def fix_josa(text: str, word: str) -> str:
+    """word 바로 뒤의 조사를 word 의 받침에 맞춘다 (행사은 → 행사는, 상환청구을 → 상환청구를)."""
+    b = _batchim(word[-1]) if word else None
+    if b is None or word not in text:
+        return text
+    has, rieul = b
+    out, i = [], 0
+    while True:
+        j = text.find(word, i)
+        if j < 0:
+            out.append(text[i:]); break
+        k = j + len(word)
+        out.append(text[i:k])
+        m = _JOSA_RE.match(text, k)
+        if m:
+            got = m.group(1)
+            for with_b, without_b in _JOSA:
+                if got in (with_b, without_b):
+                    if with_b == "으로":
+                        right = "로" if (not has or rieul) else "으로"
+                    else:
+                        right = with_b if has else without_b
+                    out.append(right); k = m.end(); break
+        i = k
+    return "".join(out)
+
+
+def relabel_text(v: str, words) -> str:
+    """한 글자 칸을 상품 용어로 바꾼다 — 지켜야 할 말은 가려 두고, 바꾼 말 뒤 조사를 고친다."""
+    keep = {}
+    for n_, w in enumerate(_RELABEL_KEEP):
+        if w in v:
+            tok = f"\x00{n_}\x00"; keep[tok] = w; v = v.replace(w, tok)
+    used = []
+    for a, b in words:
+        if a in v:
+            v = v.replace(a, b); used.append(b)
+    for b in used:
+        v = fix_josa(v, b)
+    for tok, w in keep.items():
+        v = v.replace(tok, w)
+    return v
+
+
 def relabel_inst(wb, tm: Terms):
     """조서의 글자 셀을 그 상품의 용어로 바꾼다. 값·수식은 그대로다."""
     words = inst_words(tm)
@@ -5935,9 +6212,8 @@ def relabel_inst(wb, tm: Terms):
             v = c.value
             if not isinstance(v, str) or v.startswith("="): continue
             if v.strip() in _DECISIONS: continue
-            for a, b in words:
-                if a in v: v = v.replace(a, b)
-            if v != c.value: c.value = v
+            nv = relabel_text(v, words)
+            if nv != c.value: c.value = nv
 
 
 def _stamp(tm: Terms, kind: str = "") -> str:
@@ -6020,15 +6296,15 @@ def stamp_rows(tm: Terms, kind: str = "") -> list:
     m = run_stamp(tm, kind)
     return ([("회차", tm.tranche)] if getattr(tm, "tranche", "") else []) + [
             ("생성시각", m["made_at"]),
-            ("앱 판 (app.py SHA-256 앞 12자리)", m["app_sha12"] or "확인 못 함"),
-            ("소스 판 (git HEAD)", m["git_head"] or "확인 못 함"),
+            ("앱 버전 식별값 (app.py 앞 12자리)", m["app_sha12"] or "확인 못 함"),
+            ("계산 코드 버전 (git)", m["git_head"] or "확인 못 함"),
             ("평가체계 버전", f"{m['schema']}"),
             # 두 지문은 다른 것을 가리킨다. 다른 것이 정상이다 — 원본을 열면
             # derive() 가 경과기간·노드 수를 채우고 compat 가 지원하지 않는 조합을
             # 되돌리므로, 실제로 계산에 들어간 Terms 는 파일과 같지 않다.
-            ("시나리오 지문 (불러온 원본 JSON)",
+            ("입력파일 식별값 (불러온 원본)",
              (m["scen_md5"] or "해당 없음 — 화면에서 직접 입력")),
-            ("계산 지문 (derive·되돌린 설정 반영 후)", m["terms_md5"]),
+            ("계산 입력 식별값 (적용값 기준)", m["terms_md5"]),
             ("노드 — 요청 간격 · 실제",
              f"요청 {m['gap_req']:g}개월 · 노드 {m['n']}개 · "
              f"실제 간격 {m['gap_act']:,.3f}개월 · Δt {m['dt_yr']:,.4f}년"),
@@ -6036,8 +6312,11 @@ def stamp_rows(tm: Terms, kind: str = "") -> list:
             ("주가 출처", m["px_src"]),
             ("위험 곡선 출처", m["cr_src"]),
             ("변동성 σ", f"{m['sig']:.4f}"),
-            ("신용위험 처리 · 조정일 처리 · 리픽싱 · 행사금액 경과기간",
-             f"{m['model']} · {m['carry']} · {m['rfx_mode']} · "
+            ("신용위험 처리 · 전환가격 조정 · 조정일 아닌 시점 처리 · 행사금액 경과기간",
+             f"{m['model']} · "
+             + {0: '조정 없음', 1: '하향만', 2: '하향·상향'}.get(int(m['rfx_mode']), str(m['rfx_mode'])) + " · "
+             + ({1: '경로가중 근사', 2: '위험중립확률 가중 근사', 3: '특정노드 선택 근사'}.get(int(m['carry']), str(m['carry']))
+                if int(m['rfx_mode']) else '해당 없음') + " · "
              f"{'계약 개월÷12' if m['acc_basis'] else 'Actual/365'}"),
             ("매도청구권 평가방법", K_METHODS[int(m["k_method"])]),
             ("평가 관점", view_text(tm))]
@@ -6256,9 +6535,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
     def call_amt(i, on=True):
         return (EA["call"](i) + _kcx(i)) if (on and _kin(i)) else 999999
 
-    HEAD = ["Date", "time-step", "Flag(전환)", "Flag(조기상환)", "Flag(매도청구)",
-            "Flag(리픽싱)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환",
-            "무위험 선도이자율", "위험 선도이자율", "σ", "u", "d", "q", "1−q"]
+    HEAD = ["날짜", "스텝(노드 번호)", "전환 가능 (1=예)", "조기상환 가능 (1=예)", "매도청구 가능 (1=예)",
+            "전환가격 조정일 (1=예)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환금액",
+            "무위험 선도이자율", "위험 선도이자율", "주가변동성 σ", "상승계수 u", "하락계수 d",
+            "위험중립 상승확률 q", "하락확률 1−q"]
 
     def newsheet(name, ttl, note, refs, call_on=True):
         W = wb.create_sheet(name); W.sheet_view.showGridLines = False
@@ -6287,14 +6567,15 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
             g(13, tm.sig, P2); g(14, full["u"], N4); g(15, full["d"], N4)
             g(16, full["q"], N4); g(17, 1-full["q"], N4)
         title(W, 18, ttl, span=min(n+1, 14))
-        put(W, 19, 2, "r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
+        put(W, 18, 3+min(n+1, 14), note + used_by(name), color=GREY, size=9)
+        put(W, 19, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
         for i in range(n+1):
             put(W, 19, 3+i, i, bold=True, size=8, fmt=N0, align="center",
                 fill=(RFXC if i in REFIXC else LIGHT), border=True)
         for r in range(n+1):
             put(W, R0+r, 2, r, bold=True, size=8, fmt=N0, align="center", fill=LIGHT, border=True)
         put(W, R0+n+2, 2, note, color=GREY, size=9)
-        put(W, R0+n+3, 2, "참조: " + refs, color=GREEN, size=9)
+        put(W, R0+n+3, 2, "이 시트가 참조하는 시트: " + refs, color=GREEN, size=9)
         put(W, R0+n+4, 2, "r 은 하락 횟수. 위로 갈수록 주가가 높다.", color=GREY, size=9)
         W.freeze_panes = "C20"
         return W
@@ -6385,7 +6666,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         ("지분·채권 구분 기준", (K_SPLITS[int(tm.k_split)] if tm.k_method else "해당 없음 (유무가치비교법)"), None),
         ("콜 대상물량 의무보유", (K_HOLDS[int(tm.k_hold)] if tm.k_method else "유무가치비교법은 격자에서 직접 반영"), None),
         ("콜옵션 유형", K_KINDS[int(tm.k_kind)], None),
-        ("평가기법 문안", call_method_text(tm), None),
+        ("평가기법", " · ".join(v for k, v in call_method_rows(tm)[:2]) + " — 상세는 결과 시트", None),
         ("풋·콜 우선순위", ("발행자 콜 우선 — 콜을 당하면 전환으로만 대응한다" if int(tm.pc_order) == 1 else "투자자 풋 우선 — 통지한 조기상환을 매도청구로 막지 못한다"), None),
         ("매도청구권 회계 처리",
          "별도 금융상품" if tm.k_sep else "복합내재파생에 포함", None)]),
@@ -6425,22 +6706,22 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
 
     # ── 트리 시트 ──
     T01 = newsheet("01 주가", "① 주가트리  S = S0 × u^(스텝−r) × d^r",
-        "위로 갈수록 상승이 많은 경로다.", "가정")
+        "위로 갈수록 주가 상승 횟수가 많은 경로다.", "가정")
     fill_tree(T01, lambda i, r: round(S(i, i-r), 2), N2)
 
     # 전환가격을 바꾸는 조항(리픽싱·상장 조정)이 없으면 전환가격은 모든 노드에서 같다 —
     # 02·03 트리를 싣지 않는다 (수식 조서와 같은 기준).
     _kconst = tm.rfx_mode == 0 and not (is_rcps(tm) and tm.ipo_on and tm.ipo_px > 0)
     if not _kconst:
-        T02 = newsheet("02 전환가격", "② 전환가격트리  조정일이면 주가를 자르고, 아니면 이어받는다",
+        T02 = newsheet("02 전환가격", "② 전환가격트리  조정일에는 조정 규칙으로 새 전환가격을 정하고, 아니면 직전 값을 이어받는다",
             "조정일 열은 주황색이다.", "01 · 가정")
         fill_tree(T02, lambda i, r: (round(node(i, r)["K"], 2) if node(i, r) else None), N2)
 
-        T03 = newsheet("03 전환비율", "③ 전환비율트리  100 ÷ 전환가격",
-            "리픽싱으로 전환가격이 내려가면 받는 주식 수가 늘어난다.", "02")
+        T03 = newsheet("03 전환비율", "③ 전환주식수트리  (액면 100당) 100 ÷ 전환가격",
+            "액면 100 당 받을 주식 수(100 ÷ 전환가격)다. 전환가격이 내려가면 늘어난다.", "02")
         fill_tree(T03, lambda i, r: (round(100/node(i, r)["K"], 4) if node(i, r) else None), N4)
 
-    T04 = newsheet("04 전환가치", "④ 전환가치트리  주가 × 전환비율",
+    T04 = newsheet("04 전환가치", "④ 즉시전환가치트리  주가 × 전환주식수",
         ("전환청구기간 밖이면 0이다. 전환가격이 바뀌는 조항이 없어 100 × 주가 ÷ 현재 전환가액이다."
          if _kconst else "전환청구기간 밖이면 0이다."), ("01 · 가정" if _kconst else "01 · 03"))
     fill_tree(T04, lambda i, r: (round(node(i, r)["cv"], 2) if node(i, r) else None))
@@ -6454,27 +6735,27 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
     if _tf:
         T05 = newsheet("05 지분가치",
             ("⑤ 신주인수권가치트리  행사가치 − 100" if _bwc else
-             "⑤ 지분가치트리  주식으로 받게 될 부분"),
-            ("권면액 100 만큼 현금을 내고 그 값어치 주식을 받는다. 지금 행사와 계속 보유 "
-             "중 큰 쪽이고, 계속 보유는 다음 열 값을 무위험이자율로 할인한 값이다."
+             "⑤ 주식결제분 가치트리  전환해 주식으로 받게 될 부분"),
+            ("권면액 100 만큼 현금을 내고 그 가치의 주식을 받는다. 즉시 행사와 계속보유 가운데 큰 값이고, "
+             "계속보유가치는 다음 시점 값을 무위험 이자율로 할인한 값이다."
              if _bwc else
-             "전환하면 전환가치, 상환하면 0, 보유하면 다음 열 값을 무위험이자율로 할인한 값이다."),
+             "전환하면 전환가치, 상환하면 0, 계속보유하면 다음 시점 값을 무위험 이자율로 할인한 값이다."),
             "04 · 09 · 다음 열 05")
         fill_tree(T05, lambda i, r: (round(node(i, r)["E"], 2) if node(i, r) else None))
 
         T06 = newsheet("06 부채가치",
-            ("⑥ 사채가치트리  신주인수권과 무관하게 남는 사채" if _bwc else
-             "⑥ 부채가치트리  현금으로 받게 될 부분"),
-            ("조기상환금액과 계속보유를 견주고, 매도청구가 걸리면 그 금액에서 잘린다."
+            ("⑥ 사채가치트리  신주인수권 행사와 관계없이 남는 사채" if _bwc else
+             "⑥ 현금결제분 가치트리  상환·이자로 현금을 받게 될 부분"),
+            ("조기상환금액과 계속보유가치를 비교하고, 매도청구가 행사되면 매도청구금액으로 제한된다."
              if _bwc else
-             "전환하면 0, 상환하면 그 금액, 보유하면 다음 열 값을 위험 선도이자율로 할인한 값이다."),
+             "전환하면 0, 상환하면 그 금액, 계속보유하면 다음 시점 값을 위험 선도이자율로 할인한 값이다."),
             "09 · 다음 열 06")
         fill_tree(T06, lambda i, r: (round(node(i, r)["B"], 2) if node(i, r) else None))
 
-        T07 = newsheet("07 보유가치", "⑦ 보유가치트리  지금 행사하지 않을 때의 값",
+        T07 = newsheet("07 보유가치", "⑦ 계속보유가치트리  이 시점에 행사하지 않을 때의 값",
             ("신주인수권은 무위험, 사채는 위험 선도이자율로 따로 할인해 더한다."
              if _bwc else
-             "지분은 무위험, 부채는 위험 선도이자율로 따로 할인해 더한다. 이것이 TF 모형이다."),
+             "주식결제분은 무위험, 현금결제분은 위험 선도이자율로 따로 할인해 더한다 (TF 모형)."),
             "다음 열 05 · 06")
         fill_tree(T07, lambda i, r: (round(node(i, r)["hold"], 2) if node(i, r) else None))
 
@@ -6484,25 +6765,25 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
              "⑨ 의사결정트리  전환 · 상환P · 상환C · 보유"),
             ("신주인수권 행사 여부는 ⑤ 를 보라 — 그 칸이 «행사가치 − 100» 과 같으면 "
              "그 노드에서 행사한다." if _bwc else
-             "위쪽은 전환, 아래쪽은 상환이 몰린다. 매도청구는 중간 띠에 나타난다."), "04 · 07")
+             "주가가 높은 위쪽은 전환, 낮은 아래쪽은 상환이 많다. 매도청구는 그 사이 노드에 나타난다."), "04 · 07")
         lab = {"conv": "전환", "put": "상환P", "call": "상환C", "hold": "보유",
                "mat": "만기상환", "auto": "자동전환", "ipo": "상장전환"}
         fill_tree(T08, lambda i, r: (lab.get(node(i, r)["kind"], "") if node(i, r) else None), txt=True)
 
         T09 = newsheet("08 금융상품가치",
-            ("⑧ 금융상품가치트리 = 신주인수권 + 사채" if _bwc else
-             "⑧ 금융상품가치트리 = 지분가치 + 부채가치"),
-            "네 갈래 중 최적을 고른 뒤의 값이다. 07과 비교하면 어디서 행사가 일어났는지 보인다.",
+            ("⑧ 콜 반영 전 가치트리 = 신주인수권 + 사채" if _bwc else
+             "⑧ 콜 반영 전 가치트리 = 주식결제분 + 현금결제분"),
+            "전환·조기상환·매도청구·계속보유 가운데 선택한 결과의 값이다. 07 과 비교하면 어느 노드에서 행사가 일어났는지 보인다.",
             "05 · 06")
         fill_tree(T09, lambda i, r: (round(node(i, r)["E"]+node(i, r)["B"], 2) if node(i, r) else None))
         wb.move_sheet("08 금융상품가치", offset=wb.sheetnames.index("09 의사결정") - wb.sheetnames.index("08 금융상품가치"))
     else:
-        T10 = newsheet("05 GS 전환확률", "⑤ [GS] 전환확률트리  전환 1 · 현금 0 · 보유면 다음 두 칸의 평균",
-            "이 확률로 할인율을 섞는다. 자식에서 가져오므로 순환참조가 없다.", "07 · 다음 열 05")
+        T10 = newsheet("05 GS 전환확률", "⑤ [GS] 전환확률트리  전환 1 · 상환 0 · 계속보유면 다음 시점 전환확률의 위험중립 가중평균",
+            "이 확률로 무위험·위험 이자율을 가중한 할인율을 만든다. 다음 시점의 계산 결과를 참조하므로 순환참조가 발생하지 않는다.", "07 · 다음 열 05")
         fill_tree(T10, lambda i, r: (round(node(i, r)["P"], 4) if node(i, r) else None), N4)
 
         T11 = newsheet("06 GS 할인율", "⑥ [GS] 위험조정할인율트리  y = 확률 × 무위험 + (1−확률) × 위험",
-            "위쪽은 무위험에, 아래쪽은 위험이자율에 가깝다.", "05")
+            "전환 가능성이 높은 위쪽 노드는 무위험 이자율에, 아래쪽 노드는 위험 이자율에 가깝다.", "05")
         def gs_rate(i, r):
             o = node(i, r)
             if not o or i >= n: return None
@@ -6511,29 +6792,23 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         fill_tree(T11, gs_rate, P2)
 
         T12 = newsheet("07 GS 금융상품가치", "⑦ [GS] 금융상품가치트리",
-            "네 갈래 중 최적을 고른 뒤의 값이다.", "04 · 06")
+            "전환·조기상환·매도청구·계속보유 가운데 선택한 결과의 값이다.", "04 · 06")
         fill_tree(T12, lambda i, r: (round(node(i, r)["V"], 2) if node(i, r) else None))
 
     # ── BDT (조기상환권을 금리격자로 잴 때만) ──
     if put_bdt_on(tm):
         BP, BV = bdt_grid(tm, True)
-        _, BV0 = bdt_grid(tm, False)
         d0 = dt.date.fromisoformat(tm.d_base)
         for nm, ttl, note, grid, rate in (
             ("BDT 단기이자율", "BDT 단기이자율격자  r(i,j) = a · exp(2σ·j·√Δt)",
-             "로그정규라 이자율이 음수가 되지 않는다. j 는 상승 횟수이고 클수록 "
-             "금리가 높다 — 주가 트리와 달리 위로 갈수록 낮다. 기준금리 a 는 곡선을 "
-             "정확히 되돌리도록 역산한 값이다.", None, True),
-            ("BDT 부채요소", "BDT 부채요소  전환 없는 사채 + 조기상환권",
+             "로그정규 분포를 따르므로 단기이자율이 음수가 되지 않는다. j 는 금리 상승 횟수이고 클수록 금리가 높다(주가 트리와 달리 표의 아래쪽이 높은 금리). 기준금리 a 는 이 격자로 계산한 할인계수가 적용 금리곡선의 할인계수와 같아지도록 앱이 역산한 값이다.", None, True),
+            ("BDT 부채요소", "BDT 부채요소  전환권 제외 사채 + 조기상환청구권 (금리격자)",
              "MAX(조기상환금액, 계속보유) 를 고른다. 계속보유는 다음 두 칸을 0.5 씩 "
-             "섞어 그 칸의 단기이자율로 할인한 값이다.", BV, False),
-            ("BDT 주계약", "BDT 주계약  옵션이 없는 사채",
-             "조기상환권을 빼고 같은 격자로 굴린 값이다. 곡선을 정확히 되돌리므로 "
-             "⑩ 주계약과 같아야 한다 — 캘리브레이션 검산이다.", BV0, False)):
+             "가중해 그 노드의 단기이자율로 할인한 값이다.", BV, False),):
             W = wb.create_sheet(nm); W.sheet_view.showGridLines = False
             W.column_dimensions["B"].width = 18
             for i in range(n+1): W.column_dimensions[gl(3+i)].width = 9
-            for r, h in enumerate(["Date", "time-step", "Flag(조기상환)", "조기상환금액",
+            for r, h in enumerate(["날짜", "스텝(노드 번호)", "조기상환 가능 (1=예)", "조기상환금액",
                                    "쿠폰", "만기상환", "기준금리 a", "확정 스프레드"],
                                   start=1):
                 put(W, r, 2, h, bold=True, size=8, fill=LIGHT, border=True)
@@ -6568,38 +6843,6 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
                 put(W, 13+n+2, 2, "t = 0", bold=True)
                 put(W, 13+n+2, 3, round(grid[0][0], 6), bold=True, fmt=N2,
                     align="right")
-            else:
-                # 캘리브레이션 검산 — 도달가격을 더하면 시장 무이표채 가격이다.
-                # 기준금리 a 를 이 조건에 맞춰 역산했으므로 0 이 나와야 한다.
-                QR = 13+n+3
-                sec(W, QR-1, f"캘리브레이션 검산 — 격자가 {BP['base_nm']}을 되돌리는가")
-                put(W, QR, 2, "j ＼ 스텝", bold=True, size=8, fill=LIGHT,
-                    border=True, align="center")
-                for i in range(n+1):
-                    put(W, QR, 3+i, i, bold=True, size=8, fmt=N0, align="center",
-                        fill=LIGHT, border=True)
-                for j in range(n+1):
-                    put(W, QR+1+j, 2, j, bold=True, size=8, fmt=N0,
-                        align="center", fill=LIGHT, border=True)
-                for i in range(n+1):
-                    for j in range(len(BP["Q"][i])):
-                        put(W, QR+1+j, 3+i, round(BP["Q"][i][j], 10), fmt=N6,
-                            size=8, align="right")
-                for k, (nm, fn) in enumerate((
-                        ("모형 무이표채  Σ Q", lambda i: sum(BP["Q"][i])),
-                        ("시장 할인계수", lambda i: BP["mkt"][i]),
-                        ("차이", lambda i: sum(BP["Q"][i]) - BP["mkt"][i]))):
-                    r2 = QR+n+2+k
-                    put(W, r2, 2, nm, bold=True, size=8, fill=LIGHT, border=True)
-                    for i in range(n+1):
-                        put(W, r2, 3+i, round(fn(i), 12), fmt=N6, size=8,
-                            align="right", bold=(k == 2))
-                put(W, QR+n+5, 2,
-                    "도달가격 Q(i,j) 는 그 칸에 이르는 경로의 확률을 그 경로의 "
-                    "할인율로 할인해 더한 값이다. 스텝별로 모두 더하면 그 만기의 "
-                    "무이표채 가격이 되고, 그것이 시장 할인계수와 같아야 한다 — "
-                    "무차익거래 조건이다. 기준금리 a 를 이 조건에 맞춰 이분법으로 "
-                    "역산했으므로 차이가 0 이다.", color=GREY, size=9)
             W.freeze_panes = "C13"
 
     # ── 이자율곡선 ──
@@ -6666,22 +6909,23 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
     if issuer_redeem(tm) and ca > 0:
         put(R, 10, 2, f"발행자 상환권을 전환권 없는 부채 격자에서 재면 {full.get('ca_debt', 0.0):,.4f} 다. "
             "부채요소·전환권대가 배분에는 이 값을 쓴다 (1032 문단 31 — 비자본 파생 특성은 "
-            "부채요소에 포함). 위 B3 의 차액은 전체 격자에서 전환 상승분을 자른 크기다.",
+            "부채요소에 포함). 위 B3 의 차액은 전체 격자에서 발행자 상환권이 전환에 따른 가치 상승을 제한한 크기다.",
             color=GREY, size=9)
     # 앱에서 고른 모형만 싣는다.
     sec(R, 11, "2. 신용위험 처리 — "
         + ("지분·부채 분리 — 현금납입 BW 는 TF 와 GS 가 같은 값을 낸다" if _bwc else
-           "TF · 값을 쪼갠다" if _tf else "GS · 할인율을 섞는다"),
+           "TF · 주식결제분은 무위험, 현금결제분은 위험 이자율로 할인" if _tf else
+           "GS · 전환확률로 무위험·위험 이자율을 가중한 할인율"),
         span=5)
-    for i, h in enumerate(["모형", "전체", "지분", "부채", "전환확률"]):
+    for i, h in enumerate(["모형", "전체", "주식결제분", "현금결제분", "전환확률"]):
         put(R, 12, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
     if _tf:
-        put(R, 13, 2, "TF · 값을 쪼갠다", border=True)
+        put(R, 13, 2, "TF", border=True)
         for j2, v in enumerate([fullv["TF"], fullv["E"], fullv["B"]]):
             put(R, 13, 3+j2, v, fmt=N2, align="right", border=True)
         put(R, 13, 6, "", border=True)
     else:
-        put(R, 13, 2, "GS · 할인율을 섞는다", border=True)
+        put(R, 13, 2, "GS (전체 × 전환확률로 나눔)", border=True)
         for j2, v in enumerate([fullv["GS"], fullv["GS"]*fullv["P"], fullv["GS"]*(1-fullv["P"])]):
             put(R, 13, 3+j2, v, fmt=N2, align="right", border=True)
         put(R, 13, 6, fullv["P"], fmt=N4, align="right", border=True)
@@ -6690,22 +6934,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
             "B2 는 상환권을 뺀 참고값이다.", color=GREY, size=9)
     put(R, 15, 2, "앱에서 고른 방법만 싣습니다. 다른 방법의 값은 이 조서에 없습니다.",
         color=GREY, size=9)
-    sec(R, 17, "3. 검산", span=5)
-    imm = 100*tm.S0/tm.K0
+    # 숫자가 맞는지 보는 확인(q 범위·하한·배분 합계 등)은 앱이 평가할 때 수행한다 —
+    # 이상이 있으면 조서를 만들지 않는다. 조서에는 싣지 않는다.
     al = allocate(tm, full, b0, b1, b2, ca)[0]
-    ck = [("위험중립가중치 q · 첫 구간", full["q"], 0 < full["q"] < 1),
-          ("위험중립가중치 q · 최소", full["qmin"], not full["qbad"]),
-          ("위험중립가중치 q · 최대", full["qmax"], not full["qbad"]),
-          ("상승계수 u", full["u"], full["u"] > 1),
-          ("전체 ≥ 순수사채가치", b2-full["host"], b2 >= full["host"]-1e-6),
-          ("전체 ≥ 즉시 전환가치", b2-imm, not (tm.cv_s <= 0 and b2 < imm-1e-6)),
-          ("배분 합계 = 100", al[-1][1], abs(al[-1][1]-100) < 0.01)]
-    for i, (k, v, ok) in enumerate(ck):
-        put(R, 18+i, 2, k, border=True)
-        put(R, 18+i, 3, v, fmt=N4, align="right", border=True)
-        put(R, 18+i, 4, "적합" if ok else "확인 필요",
-            color=(GREEN if ok else RED), align="center", border=True)
-    _rk = 18 + len(ck) + 1
+    _rk = 17
     _rk = write_pc_rows(R, _rk, tm, put, sec, N4, GREY)
     write_call_rows(R, _rk + 1, tm, full, b2, put, sec, N4, P2, GREY)
 
@@ -6772,7 +7004,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
             align="right", border=True)
     # 기특정 콜의 참고 문구는 «줄» 이 아니라 이 문장에 이어 붙인다 — 아래 행들이 밀리면
     # 거래원가·기말 재평가 블록의 시작 행이 어긋난다.
-    put(E, tr+2, 2, "최초 인식에는 어떠한 손익도 생기지 않는다. 차변과 대변 합계가 일치해야 한다."
+    put(E, tr+2, 2, "부채·자본 구성요소를 나누는 배분 자체로는 손익이 생기지 않는다. 거래원가와, 거래가격이 "
+        "공정가치와 다를 때의 차이(최초 인식 손익)는 별도 검토 대상이다."
         + "".join("  ※ " + NOTE_KKIND.format(v=f"{_v:,.4f}") for _, _v in alloc_extra(tm, ca)),
         color=GREY, size=9)
     put(E, tr+3, 2, "전환권 분류: " + ("파생상품부채 — 주계약을 잔여로"
@@ -6783,7 +7016,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         _cs, _c100 = cost_split(tm, al)
         rc = tr+5
         sec(E, rc, "거래원가 배분 (1032 문단 38)", span=6)
-        for i, h in enumerate(["요소", "배분액 (100)", "거래원가 몫 (100)", "몫 (원)", "처리"]):
+        for i, h in enumerate(["요소", "배분액 (100)", "거래원가 배분액 (100)", "거래원가 배분액 (원)", "처리"]):
             put(E, rc+1, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
         for i, (k, v, c, how) in enumerate(_cs):
             put(E, rc+2+i, 2, k, border=True, size=9)
@@ -6970,6 +7203,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         for _a, _v in _d["지표"].items():
             put(J, _r, 2, _a, border=True)
             put(J, _r, 3, (f"{_v*100:.1f}%" if _a in ("차이", "가장 큰 차이") else
+                           f"{_v*100:g}%" if _a.startswith("비교기준") else
+                           _v if isinstance(_v, str) else
                            ("예" if _v is True else "아니오" if _v is False
                             else f"{_v:,.4f}")), border=True); _r += 1
         _r += 1
@@ -6998,7 +7233,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
                   "확인 항목을 **앱에서** 바꾸면 결론과 문안이 함께 바뀐다. "
                   "이 시트는 그 결과를 옮겨 적은 것이라 수식이 없다.  판정에 쓰는 "
                   "상각후원가는 문단 B4.3.5(5) 말미대로 **자본요소를 분리하기 전** "
-                  "금액에서 출발하므로 분리 여부 설정과 무관하다.",
+                  "금액에서 출발하므로 분리 여부 설정과 무관하다. 비교기준(평가자 설정)은 기준서가 정한 "
+                  "수치가 아니며, 이 판정은 수치 비교 결과이고 분리 여부는 계약 조건과 함께 평가자가 판단한다.",
         color=GREY, size=9)
     for _row in J.iter_rows(min_row=5, max_row=_r, min_col=3, max_col=3):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
@@ -7031,60 +7267,63 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
     H = wb.create_sheet("해설", 0); H.sheet_view.showGridLines = False
     H.column_dimensions["B"].width = 22; H.column_dimensions["C"].width = 96
     title(H, 2, "이 조서를 읽는 법", span=2)
+    _tf = tm.model == "TF"
+    _flow = ("가정 → 01 주가 → " + ("" if _kconst else "02 전환가격 → 03 전환비율 → ")
+             + "04 전환가치 → " + ("05 지분가치 → 06 부채가치 → 07 보유가치 → 08 금융상품가치 → 09 의사결정"
+                                  if _tf else "05 GS 전환확률 → 06 GS 할인율 → 07 GS 금융상품가치")
+             + " → 결과 → 회계처리 → 상각표 → 분리 판단")
     ex = [("시트 순서", ""),
-      ("구조", "트리 하나가 시트 하나다. 가정 → 01 주가 → … → 12 GS → 결과 → 검산요약 → 회계처리."),
-      ("따라가기", "시트 탭을 왼쪽부터 차례로 누르면 계산이 쌓이는 순서 그대로다."),
+      ("구조", "계산 단계 하나가 시트 하나입니다. " + _flow + "."),
+      ("따라가기", "시트 탭을 왼쪽부터 차례로 보면 계산이 쌓이는 순서와 같습니다."),
       ("", ""),
-      ("머리 17행은 모두 같다", ""),
-      ("1행 Date", "평가기준일 + 스텝 × Δt. 계약상 행사일과 대조해 보는 자리다."),
-      ("1~2행", "날짜와 스텝 번호"),
-      ("3~6행", "Flag — 전환 · 조기상환 · 매도청구 · 리픽싱이 가능한 열에 1이 뜬다"),
-      ("7~10행", "조기상환금액 · 매도청구금액 · 쿠폰 · 만기상환"),
-      ("11~12행", "무위험 선도이자율과 위험 선도이자율"),
-      ("13~17행", "σ · u · d · q · 1−q"),
+      ("각 계산 시트의 공통조건 1~17행", ""),
+      ("1행 날짜", "평가기준일 + 스텝 × 구간 길이(Δt). 계약상 행사일과 대조하는 자리입니다."),
+      ("2행 스텝", "평가기준일부터 센 노드 번호입니다."),
+      ("3~6행 행사 가능 표시", "전환 · 조기상환 · 매도청구 · 전환가격 조정이 가능한 시점에 1 을 표시합니다."),
+      ("7~10행 금액", "조기상환금액 · 매도청구금액 · 이자 · 만기상환금액 (액면 100 기준)."),
+      ("11~12행 선도이자율", "무위험 선도이자율과 위험 선도이자율 (한 구간, 연속복리)."),
+      ("13~17행 격자 변수", "주가변동성 σ · 상승계수 u · 하락계수 d · 위험중립 상승확률 q · 하락확률 1−q."),
       ("", ""),
-      ("행은 하락 횟수다", ""),
-      ("r = 0", "한 번도 안 내린 경로. 맨 위이고 주가가 가장 높다."),
-      ("r = 스텝", "계속 내린 경로. 맨 아래다."),
-      ("빈칸", "그 시점에 존재하지 않는 노드다."),
+      ("행 번호 r 은 하락 횟수", ""),
+      ("r = 0", "한 번도 하락하지 않은 경로 — 맨 위, 주가가 가장 높습니다."),
+      ("r = 스텝", "매번 하락한 경로 — 맨 아래입니다."),
+      ("빈칸", "그 시점에는 존재하지 않는 노드입니다."),
       ("", ""),
       ("계산 순서", ""),
-      ("만기부터", "만기에는 미래가 없어 전환가치·조기상환·만기상환만 비교하면 끝난다."),
-      ("한 칸씩 왼쪽", "07 보유가치가 다음 열의 05·06을 가져와 할인한다."),
-      ("그다음", "08 금융상품가치가 최적을 고르고, 09 의사결정이 이름을 붙이고, 05·06이 확정된다."),
-      ("순환이 아닌 이유", "05·06은 같은 열의 09를 보지만, 07은 다음 열의 05·06을 본다."),
-      ("", "오른쪽 열이 먼저 확정되고 왼쪽으로 오므로 고리가 닫히지 않는다."),
+      ("만기부터", "만기 시점에는 이후가 없으므로 전환가치·조기상환금액·만기상환금액만 비교합니다."),
+      ("한 시점씩 앞으로", ("07 보유가치가 다음 시점의 05 지분가치·06 부채가치를 할인해 계속보유가치를 구합니다."
+                        if _tf else "07 GS 금융상품가치가 다음 시점 값을 06 GS 할인율로 할인해 계속보유가치를 구합니다.")),
+      ("그다음", ("09 의사결정이 전환·상환·계속보유 중 하나를 고르고, 그 결정에 따라 05·06 이 정해지며 "
+                "08 금융상품가치 = 05 + 06 입니다." if _tf else
+                "07 GS 금융상품가치가 전환·상환·계속보유 중 큰 값을 고르고, 05 GS 전환확률이 그 결정을 기록합니다.")),
+      ("순환참조가 없는 이유", "각 칸은 같은 시점의 값과 다음 시점의 계산 결과만 참조하므로 순환참조가 발생하지 않습니다."),
       ("", ""),
-      ("TF와 GS", ""),
-      ("TF", "05~09. 값을 지분과 부채로 쪼개 각각 다른 이자율로 할인한다."),
-      ("GS", "10~12. 값은 하나로 두고 전환확률로 할인율을 섞는다."),
-      ("비교", "09와 12의 같은 칸을 비교하면 두 모형의 차이가 그 노드에서 얼마인지 보인다."),
+      ("TF 와 GS", ""),
+      ("TF (Tsiveriotis–Fernandes)", "가치를 주식결제분(전환해 주식으로 받을 부분)과 현금결제분(상환·이자로 받을 부분)으로 "
+              "나누어, 주식결제분은 무위험 이자율, 현금결제분은 위험 이자율로 할인합니다. "
+              "TF 계산 시트에서는 08 금융상품가치 = 05 지분가치 + 06 부채가치가 모든 노드에서 성립합니다."),
+      ("GS (Goldman Sachs)", "가치는 하나로 두고, 각 노드의 전환확률로 무위험·위험 이자율을 가중한 할인율로 할인합니다."),
+      ("이 조서", f"이 조서는 {tm.model} 로 계산했습니다. 다른 모형의 계산 시트는 싣지 않습니다."),
+      ("회계 금액과의 관계", "TF 의 주식결제분·현금결제분은 모형의 할인 구분이며, 회계상 자본요소·부채요소 배분액과 "
+              "금액이 다를 수 있습니다. 회계 배분은 결과·회계처리 시트를 보십시오."),
       ("", ""),
       ("노드에서 무엇을 고르는가", ""),
-      ("투자자 권리", "전환 · 조기상환청구 · 보유. 셋 중 자기에게 가장 유리한 것을 고른다."),
-      ("발행자 권리", "매도청구. 투자자 가치를 눌러 내리는 쪽으로만 쓴다."),
-      ("적용한 식", "MAX(전환, MIN(MAX(보유, 조기상환), 매도청구))　— 발행자 매도청구 우선" if int(tm.pc_order) == 1 else "MAX(전환, 조기상환, MIN(보유, 매도청구))　— 투자자 조기상환 우선"),
-      ("우선순위", "두 권리가 같은 노드에서 함께 열릴 때 누가 먼저 움직이는지는 "
-              "계약이 정한다 — 수식이 정하는 것이 아니다. 두 행사금액이 다르고 "
-              "행사기간이 겹치는 자리에서만 값이 갈린다. 「분리 판단」 시트의 "
-              "「계약상 권리」 표에 고른 근거를 남겨야 한다."),
-      ("동점 처리", "전환은 허용오차(1e-9)만큼 앞설 때만 이긴다. 동점이면 현금(상환)이다. "
-              "리픽싱이 주가로 재설정되는 날에는 전환가치가 정확히 100 이 되어 "
-              "조기상환금액과 동점이 되는데, 정해 두지 않으면 부동소수 잡음이 갈라 놓는다."),
-      ("만기 노드", "매도청구는 없다. 전환가치와 현금(MAX(조기상환금액, 만기상환금액) + 이자) "
-              "둘만 견준다."),
-      ("두 모형이 한 노드에", "한 노드가 **두 모형을 함께 담는다** — 지분·부채 두 줄은 "
-              "TF(Tsiveriotis–Fernandes) 이고, 금융상품가치 한 줄은 GS(Goldman Sachs) 다. "
-              "그래서 «금융상품가치 ≠ 지분 + 부채» 인 것이 정상이다. 결함이 아니라 두 "
-              "모형이 같은 계약을 다르게 재는 것이다 — 지분+부채는 TF 결과와, "
-              "금융상품가치는 GS 결과와 각각 정확히 맞는다."),
-      ("결정은 한 곳에서", "전환사채·우선주와 신주인수권부사채가 **같은 판정 함수**를 "
-              "쓴다. 상품마다 다른 것은 「이겼을 때 무엇을 받는가」뿐이다 — 예전에는 "
-              "판정까지 복제되어 있어 한쪽만 고쳐지는 일이 있었다."),
+      ("투자자 권리", "전환 · 조기상환청구 · 계속보유 가운데 투자자에게 가장 유리한 것을 고릅니다."),
+      ("발행자 권리", ("발행자 상환권 — 발행회사가 정한 금액으로 상환할 수 있는 권리. 행사되면 투자자가 받는 금액이 "
+                     "발행자 상환금액으로 제한됩니다." if issuer_redeem(tm) else
+                     "매도청구(발행회사 또는 지정 제3자의 매수청구). 행사되면 투자자가 받는 금액이 매도청구금액으로 제한됩니다.")),
+      ("적용한 식", "MAX(전환, MIN(MAX(보유, 조기상환), 매도청구))　— 동시 행사 시 발행자 매도청구 우선" if int(tm.pc_order) == 1 else "MAX(전환, 조기상환, MIN(보유, 매도청구))　— 동시 행사 시 투자자 조기상환 우선"),
+      ("우선순위", "두 권리가 같은 시점에 함께 행사될 수 있을 때 어느 쪽이 우선하는지는 계약이 정합니다. "
+              "두 행사금액이 다르고 행사기간이 겹치는 시점에서만 결과가 달라집니다. "
+              "적용한 우선순위와 근거는 「분리 판단」 시트의 「계약상 권리」 표에 남깁니다."),
+      ("같은 가치일 때의 선택 기준", "전환가치가 상환 금액보다 1e-9(10억분의 1) 넘게 클 때만 전환을 고르고, 같으면 상환을 고릅니다. "
+              "전환가격이 그날 주가로 조정되는 날에는 전환가치가 정확히 100 이 되어 "
+              "조기상환금액과 같아질 수 있으므로 기준을 미리 정해 둡니다."),
+      ("만기 시점", "매도청구는 없습니다. 전환가치와 현금(MAX(조기상환금액, 만기상환금액) + 이자) 두 가지만 비교합니다."),
       ("", ""),
       ("이 파일의 성격", ""),
-      ("값 조서", "평가앱이 계산한 결과를 값으로 담았다. 수식이 아니므로 셀을 바꿔도 다시 계산되지 않는다."),
-      ("재계산", "인풋을 바꾸려면 앱에서 다시 계산한 뒤 조서를 새로 내려받으면 된다.")]
+      ("값 조서", "앱이 계산한 결과를 값으로 담았습니다. 수식이 아니므로 칸을 바꿔도 다시 계산되지 않습니다."),
+      ("다시 계산", "입력을 바꾸려면 앱에서 다시 계산한 뒤 조서를 새로 내려받습니다.")]
     r = 4
     for a2, b3 in ex:
         if a2 and not b3: sec(H, r, a2, span=2)
@@ -7104,6 +7343,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         _rest = [w for w in wb._sheets if w.title not in _attached]
         _tail = [w for w in wb._sheets if w.title in _attached]
         wb._sheets = _rest + _tail
+    rename_sheets(wb, sheet_display_names(tm), _BW_WORDS if is_bw(tm) else ())
     polish_wb(wb)
     relabel_inst(wb, tm)
     if as_workbook: return wb
@@ -7138,6 +7378,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     else:
         KW = f"{tm.k_w*100:,.0f}%"
         KW0 = f"{(1-tm.k_w)*100:,.0f}%"
+    # 물량 표기 — 콜이 걸리지 않는 쪽과 걸리는 쪽. 발행자 상환권(RCPS)은 물량이 아니라 격자 둘이다.
+    _NONCALL, _CALLED = (("발행자 상환권을 뺀 참고 격자", "발행자 상환권을 반영한 격자") if issuer_redeem(tm) else
+                         (f"매도청구 대상이 아닌 {KW0} 물량", f"매도청구 대상 {KW} 물량"))
     stp_lo, stp_hi = step_mapper(tm, n, dt_)
     # 의무보유가 미루는 두 시작점 — 엔진의 lock_delay 와 같은 값을 쓴다.
     _lk_cs, _lk_ps = lock_delay(tm)
@@ -7193,7 +7436,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     A = wb.create_sheet("가정"); A.sheet_view.showGridLines = False
     for cc, w in (("B", 30), ("C", 16), ("D", 46)): A.column_dimensions[cc].width = w
     title(A, 1, "전환사채 평가 조서 — 수식 포함", span=3)
-    put(A, 2, 2, "노란 셀을 바꾸면 모든 트리 시트가 다시 계산된다.", color=GREY, size=9)
+    put(A, 2, 2, "노란 칸을 바꾸면 그 값을 쓰는 계산 시트가 다시 계산됩니다. 흰 칸(앱이 정한 값)과 주황색 칸(고정 산출값)은 "
+                 "앱에서 바꾸고 조서를 새로 만들어야 합니다 — 해설 시트의 「재계산 범위」 참고.", color=GREY, size=9)
     spec = [
         # 진짜 날짜로 넣는다. 각 트리 머리 1행이 이 셀로 스텝 날짜를 계산한다.
         ("발행일", "d_issue", dt.date.fromisoformat(tm.d_issue), DATE, True),
@@ -7315,6 +7559,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("의무보유가 조기상환청구도 막음 (1/0)", "lkput", int(tm.k_lock_put), N0, False),
         ("조기상환권 처리 (1 분리 / 0 부채요소에 포함)", "psep", int(tm.p_sep), N0, True),
         ("조기상환 행사금액이 상실이자 보상 수준 (1/0)", "plost", int(tm.p_lost_int), N0, True),
+        # 분리 판단의 판정 수식이 이 칸을 본다 — 바꾸면 판정이 따라온다.
+        ("풋 분리 판단 비교기준 (평가자 설정 · 기준서가 정한 수치 아님)", "stol", split_tol(tm), P2, True),
         # 전체 지정이면 배분표가 한 줄이 되고 상각표를 만들지 않는다. 트리는
         # 그대로다 — 평가가 아니라 **인식**을 바꾸는 스위치다.
         ("복합계약 전체 당기손익-공정가치 지정", "fvpl",
@@ -7392,7 +7638,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                                         "khold", "lockend", "lkput"}),
             ("6. 시장자료", {"S0", "s0src", "sig", "divy", "crsrc", "rfc", "bsig", "rvhow", "bbase"}),
             ("7. 평가방법 (앱에서 고른 값 — 여기서 바꿔도 트리가 따라오지 않는다)",
-             {"mdl", "eqcls", "kmeth", "ksplit", "kkind", "psep", "plost", "fvpl", "ksep", "pbdt"}),
+             {"mdl", "eqcls", "kmeth", "ksplit", "kkind", "psep", "plost", "stol", "fvpl", "ksep", "pbdt"}),
             ("8. 격자 (계산용)", {"n", "dt", "u", "dd", "q", "q1"}),
             ("9. 회계 입력", {"cost", "pdrv", "phst"})]
     if tm.k_w <= 0:
@@ -7496,15 +7742,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(A, _r0+1+_i, 2, _l, color=GREY, size=9)
         put(A, _r0+1+_i, 3, _v, color=GREY, size=9)
     if put_bdt_on(tm):
-        put(A, nb+3, 2, "BDT 변동성 σ 도 마찬가지다. BDT 격자의 기준금리 a 는 "
-            "「σ 가 지금 값일 때 시장 금리곡선을 맞추도록」 역산한 값이라 조서에 "
-            "숫자로 박혀 있다. 여기서 σ 만 바꾸면 격자는 움직이는데 a 는 그대로라 "
-            "시장 곡선과 어긋난다 — 「BDT 단기이자율」 시트의 캘리브레이션 검산이 "
-            "그때 틀어진다. σ 를 바꾸려면 앱에서 바꾸십시오.", color=RED, size=9)
+        put(A, nb+3, 2, "BDT 금리변동성 σ 도 마찬가지다. BDT 격자의 기준금리 a 는 「σ 가 지금 값일 때 "
+            "적용 금리곡선과 할인계수가 같아지도록」 앱이 역산한 고정 산출값이다. 이 파일에서 σ 만 바꾸면 "
+            "격자는 움직이지만 a 는 그대로라 결과가 적용 금리곡선과 맞지 않는다. σ 를 바꾸려면 앱에서 바꾸십시오.",
+            color=RED, size=9)
 
-    HEAD = ["Date", "time-step", "Flag(전환)", "Flag(조기상환)", "Flag(매도청구)",
-            "Flag(리픽싱)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환",
-            "무위험 선도이자율", "위험 선도이자율", "σ", "u", "d", "q", "1−q"]
+    HEAD = ["날짜", "스텝(노드 번호)", "전환 가능 (1=예)", "조기상환 가능 (1=예)", "매도청구 가능 (1=예)",
+            "전환가격 조정일 (1=예)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환금액",
+            "무위험 선도이자율", "위험 선도이자율", "주가변동성 σ", "상승계수 u", "하락계수 d",
+            "위험중립 상승확률 q", "하락확률 1−q"]
     ey = el/12
 
     SSC = "00 행사금액표"          # 계약서의 회차별 표 — 있으면 트리가 여기를 먼저 본다
@@ -7713,7 +7959,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                     kf = _kv0(st)
                 put(W, CROW['kamt'], 3+i, f"=({kf}+{_cadd(i, 'kcadd')})", fmt=N4, align="center", size=8)
         put(W, 35, 2, "트리 시트의 1~17행은 이 시트를 가리킨다. 트리마다 행사 시작일이 다를 때"
-            "(0% 트랜치 등)만 그 시트가 행사 가능 표시(3~5행)를 따로 계산한다. "
+            "(매도청구 대상 물량 등)만 그 시트가 행사 가능 표시(3~5행)를 따로 계산한다. "
             "금액(7·8행)은 늘 이 시트 26·33행에서 가져와 그 시트의 행사 가능 표시로 켠다. "
             "행사일(20·27행 빨간 숫자)은 계약서의 날짜를 앱이 노드에 배정한 것이다 — 날짜를 "
             "바꾸려면 앱에서 조서를 다시 만든다.", color=GREY, size=9)
@@ -7747,8 +7993,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 put(W, r, 3+i, v, fmt=fm, align="center", size=8, color=(col or "000000"))
         title(W, 18, ttl, span=min(n+1, 14))
         # 이 시트가 무엇을 계산하는지 한 줄로 — 제목 바로 오른쪽에 (틀 고정 영역 안)
-        put(W, 18, 3+min(n+1, 14), note, color=GREY, size=9)
-        put(W, 19, 2, "r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
+        put(W, 18, 3+min(n+1, 14), note + used_by(name), color=GREY, size=9)
+        put(W, 19, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
         for i in range(n+1):
             put(W, 19, 3+i, i, bold=True, size=8, fmt=N0, align="center",
                 fill=(RFXC if i in REFIXSET else LIGHT), border=True)
@@ -7756,7 +8002,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(W, R0+r, 2, r, bold=True, size=8, fmt=N0, align="center",
                 fill=LIGHT, border=True)
         put(W, R0+n+2, 2, note, color=GREY, size=9)
-        put(W, R0+n+3, 2, "참조: " + refs, color=GREEN, size=9)
+        put(W, R0+n+3, 2, "이 시트가 참조하는 시트: " + refs, color=GREEN, size=9)
         put(W, R0+n+4, 2, ("r 은 하락 횟수. 11·12행 선도이자율은 IR 선도이자율 시트에서 온다." if _irref
                            else "r 은 하락 횟수. 11·12행 선도이자율만 값이다."), color=AMB, size=9)
         W.freeze_panes = "C20"
@@ -7792,7 +8038,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
 
     # ── 01 주가 ──
     W = newsheet(S1, "① 주가트리",
-                 "맨 위는 직전 열 맨 위 × u, 나머지는 직전 열 한 칸 위 × d.", "가정")
+                 "맨 위 노드는 직전 시점 맨 위 × u, 나머지는 직전 시점 한 칸 위 노드 × d.", "가정")
     fill(W, lambda i, r, L, Lp, Ln: (f"={K['S0']}" if i == 0 else
          (f"={Lp}{R0}*{L}$14" if r == 0 else f"={Lp}{R0+r-1}*{L}$15")), N2)
 
@@ -7802,12 +8048,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         W2.column_dimensions["B"].width = 12
         title(W2, 2, "도달확률  P(i,r) = P(i−1,r)×q + P(i−1,r−1)×(1−q)",
               span=min(n+1, 12))
-        put(W2, 3, 2, "앞 열에서 한 칸씩 쌓아 온다. q 는 **직전 열**의 위험중립가중치이고 "
-            "(① 16행), 이 격자는 구간마다 q 가 다르므로 이항계수 한 방으로 셀 수 없다 — "
-            "COMBIN(i,r)×q^(i−r)×(1−q)^r 는 q 가 모든 구간에서 같을 때만 맞는다. "
-            "r 은 하락 횟수이고, 위로 가면 r 이 그대로(q), 아래로 가면 r 이 하나 는다(1−q).",
+        put(W2, 3, 2, "구간별 상승확률이 달라 시점별 도달확률을 앞 시점부터 순차적으로 계산한다. q 는 **직전 시점**의 "
+            "위험중립 상승확률(① 16행)이다. 이항계수 식 COMBIN(i,r)×q^(i−r)×(1−q)^r 은 q 가 모든 구간에서 같을 "
+            "때만 쓸 수 있다. r 은 하락 횟수이고, 상승하면 r 이 그대로(q), 하락하면 r 이 하나 늘어난다(1−q).",
             color=GREY, size=9)
-        put(W2, 4, 2, "r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
+        put(W2, 4, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
         for i in range(n+1):
             L = gl(3+i)
             W2.column_dimensions[L].width = 9
@@ -7855,8 +8100,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     if not _kconst:
         if _ipo_on:
             W = newsheet(S2, "② 전환가격트리  = 상장 조정 ∘ 02b 정기 조정 ∘ 02a 이월",
-                         "상장 스텝이고 그 주가가 최소공모가격을 넘으면 공모가 × 배수로 자른다. "
-                         "아니면 02b 와 같다. 조정일 열은 주황색이다.", f"{S2B} · {S1}")
+                         "상장 스텝에서 그 노드 주가가 최소공모가격을 넘으면 기존 전환가격과 공모가격 × 조정비율 중 낮은 금액을 적용한다 "
+                         "(최저 조정가액·액면가 이상, 상한 이하). 아니면 02b 와 같다. 조정일 열은 주황색이다.", f"{S2B} · {S1}")
             def kf(i, r, L, Lp, Ln):
                 if i == 0: return f"={K['K0']}"
                 nrm = f"{Q(S2B)}!{L}{R0+r}"
@@ -7869,8 +8114,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             fill(W, kf, N2)
         else:
             W = newsheet(S2, "② 전환가격트리  = 정기 조정 ∘ 02a 이월",
-                         "조정일이면 주가로 자르고 최저 조정가액·액면가·상한을 건다. 상향 조정(가정)이면 "
-                         "주가 그대로, 하향만이면 MIN(이월값, 주가). 조정일이 아니면 02a 와 같다. "
+                         "조정일에는 그날 주가를 기준으로 새 전환가격을 정하되 최저 조정가액·액면가 이상, 상한 이하로 제한한다. "
+                         "상향 조정을 허용하면 주가 그대로, 하향만이면 MIN(직전 전환가격, 주가). 조정일이 아니면 02a 와 같다. "
                          "조정일 열은 주황색이다.", f"{S2A} · {S1}")
             fill(W, bf, N2)
 
@@ -7896,19 +8141,19 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         fill(W, cf, N2)
 
         if _ipo_on:
-            W = newsheet(S2B, "②b 정기 조정 반영  조정일이면 주가로 자르고 하한·상한을 건다",
+            W = newsheet(S2B, "②b 정기 조정 반영  조정일에는 주가 기준 새 전환가격, 하한·상한 적용",
                          "리픽싱이 없거나 조정일이 아니면 02a 와 같다. 상향 조정(가정)이면 주가 그대로, "
-                         "하향만이면 MIN(이월값, 주가). 그다음 최저 조정가액·액면가 아래로, 상한 위로 못 간다.",
+                         "하향만이면 MIN(직전 전환가격, 주가). 그다음 최저 조정가액·액면가 이상, 상한 이하로 제한한다.",
                          f"{S2A} · {S1}")
             fill(W, bf, N2)
 
-        W = newsheet(S3, "③ 전환비율트리  100 ÷ 전환가격", "받게 될 주식 수다.", S2)
+        W = newsheet(S3, "③ 전환주식수트리  (액면 100당) 100 ÷ 전환가격", "액면 100 당 받을 주식 수(100 ÷ 전환가격)다.", S2)
         fill(W, lambda i, r, L, Lp, Ln: f"=100/{Q(S2)}!{L}{R0+r}", N4)
 
     # 전환가치 = 주가 × 전환비율. 전환가격이 바뀌지 않으면 100 × 주가 ÷ 현재 전환가액.
     _CVX = ((lambda L, r: f"{Q(S1)}!{L}{R0+r}*100/{K['K0']}") if _kconst else
             (lambda L, r: f"{Q(S1)}!{L}{R0+r}*{Q(S3)}!{L}{R0+r}"))
-    W = newsheet(S4, "④ 전환가치트리  주가 × 전환비율",
+    W = newsheet(S4, "④ 즉시전환가치트리  주가 × 전환주식수",
                  ("전환청구기간 밖이면 0이다. 전환가격이 바뀌는 조항이 없어 전환비율은 "
                   "100 ÷ 현재 전환가액(가정)으로 모든 노드가 같다." if _kconst else
                   "전환청구기간 밖이면 0이다."),
@@ -7964,8 +8209,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
 
         W = newsheet(S5, "⑤ 신주인수권가치트리",
                      "행사가치는 «행사가치트리 − 100» 이다 — 권면액 100 만큼 현금을 내고 "
-                     "그 값어치 주식을 받는다. 지금 행사와 계속 보유 중 큰 쪽을 고르고, "
-                     "계속 보유는 다음 열을 무위험이자율로 할인한다."
+                     "그 가치의 주식을 받는다. 즉시 행사와 계속보유 가운데 큰 값이고, "
+                     "계속보유가치는 다음 시점 값을 무위험 이자율로 할인한다."
                      + ("  분리형이라 사채가 소멸해도 남는다."
                         if _det else
                         "  비분리형이라 사채가 소멸하는 노드에서는 그 자리의 행사가치로 끝난다."),
@@ -7979,8 +8224,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             f"MAX({WV(L, r)},{CE(L, r, Ln)}))"))
 
         W = newsheet(S6, "⑥ 사채가치트리",
-                     "신주인수권과 무관하게 남는 사채다. 조기상환금액과 계속보유를 견주고, "
-                     "매도청구가 걸리면 그 금액에서 잘린다.",
+                     "신주인수권 행사와 관계없이 남는 사채의 가치다. 조기상환금액과 계속보유가치를 비교하고, "
+                     "매도청구가 행사되면 매도청구금액으로 제한된다.",
                      f"다음 열 {S6}" + (f" · {S9}" if not _det else ""), call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
             f"=MAX({L}$7,{L}$10)+{L}$9" if i == n else
@@ -7988,21 +8233,21 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             f'=IF({DEC(L, r)}="상환P",{L}$7,IF({DEC(L, r)}="상환C",{L}$8,'
             f"{CB(L, r, Ln)}))"))
 
-        W = newsheet(S7, "⑦ 보유가치트리",
+        W = newsheet(S7, "⑦ 계속보유가치트리",
                      "신주인수권은 무위험, 사채는 위험 선도이자율로 따로 할인해 더한다.",
                      f"다음 열 {S5} · {S6}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
             f"={L}$10" if i == n else f"={CE(L, r, Ln)}+{CB(L, r, Ln)}"))
 
-        W = newsheet(S8, "⑧ 금융상품가치트리 = 신주인수권 + 사채",
-                     f"{KW0} 트랜치 — 매도청구권이 걸리지 않는다. 콜은 ⑮에서만 반영한다.",
+        W = newsheet(S8, "⑧ 콜 반영 전 가치트리 = 신주인수권 + 사채",
+                     f"{_NONCALL}의 가치다(콜 없음). 콜은 ⑮ 시트({_CALLED})에서만 반영한다.",
                      f"{S5} · {S6}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln:
              f"={Q(S5)}!{L}{R0+r}+{Q(S6)}!{L}{R0+r}")
 
         W = newsheet(S9, "⑨ 의사결정트리  상환P · 상환C · 보유",
-                     "**사채**가 어떻게 끝나는지다. 신주인수권 행사 여부는 ⑤ 를 보라 — "
-                     "그 칸이 «행사가치 − 100» 과 같으면 그 노드에서 행사한다."
+                     "사채가 어떻게 끝나는지(조기상환·매도청구·계속보유)를 표시한다. 신주인수권 행사 여부는 ⑤ 에서 "
+                     "확인한다 — 그 칸이 «행사가치 − 100» 과 같으면 그 노드에서 행사한 것이다."
                      + ("  분리형이라 사채가 소멸해도 신주인수권은 남으므로 두 판단이 "
                         "서로를 건드리지 않는다."
                         if _det else
@@ -8030,7 +8275,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
 
     elif _needTF:
         W = newsheet(S5, "⑤ 지분가치트리",
-                     "전환이면 전환가치, 상환이면 0, 보유면 다음 열을 무위험이자율로 할인.",
+                     "전환하면 전환가치, 상환하면 0, 계속보유하면 다음 시점 값을 무위험 이자율로 할인한 값이다.",
                      f"{S4} · {S9} · 다음 열 {S5}", call_on=False)
         # 만기 노드에서 자동전환(가정 auto=1)이면 주식을 받는다. 상환청구가 만기에
         # 열려 있으면 그 금액(+배당)과 견줘 큰 쪽이다. CASH 는 그 상환 갈래다.
@@ -8045,7 +8290,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             f'({Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17)*EXP(-{L}$11*{K["dt"]})))'))
 
         W = newsheet(S6, "⑥ 부채가치트리",
-                     "전환이면 0, 상환이면 그 금액, 보유면 다음 열을 위험 선도이자율로 할인.",
+                     "전환하면 0, 상환하면 그 금액, 계속보유하면 다음 시점 값을 위험 선도이자율로 할인한 값이다.",
                      f"{S9} · 다음 열 {S6}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
             f'=IF({_CV(L, r)},0,IF({AU}=1,{L}$7+{L}$9,MAX({L}$7,{L}$10)+{L}$9))' if i == n else
@@ -8053,8 +8298,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             f'IF({_CV(L, r)},0,'
             f'({Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17)*EXP(-{L}$12*{K["dt"]})+{L}$9)))'))
 
-        W = newsheet(S7, "⑦ 보유가치트리",
-                     "지분은 무위험, 부채는 위험 선도이자율로 따로 할인해 더한다. 이것이 TF다.",
+        W = newsheet(S7, "⑦ 계속보유가치트리",
+                     "주식결제분은 무위험, 현금결제분은 위험 선도이자율로 따로 할인해 더한다 (TF 모형).",
                      f"다음 열 {S5} · {S6}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
              f"=IF({AU}=1,{Q(S4)}!{L}{R0+r},{L}$10+{L}$9)" if i == n else
@@ -8064,7 +8309,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
              f"*EXP(-{L}$12*{K['dt']})+{L}$9"))
 
         W = newsheet(S8, "⑧ 금융상품가치트리",
-                     f"{KW0} 트랜치 — 매도청구권이 걸리지 않는다. 콜은 ⑮에서만 반영한다.",
+                     f"{_NONCALL}의 가치다(콜 없음). 콜은 ⑮ 시트({_CALLED})에서만 반영한다.",
                      f"{S4} · {S7}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
              f"=IF({AU}=1,MAX({Q(S4)}!{L}{R0+r},{CASH(L)}),"
@@ -8073,9 +8318,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                            f"MAX({Q(S7)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7)")))
 
         W = newsheet(S9, "⑨ 의사결정트리",
-                     f"전환가치·조기상환금액·보유가치를 직접 견준다. {KW0} 트랜치라 "
-                     "상환C 는 없다. 리픽싱 조정일에는 전환가치가 정확히 100 이 되어 상환금액과 동점이 되므로 "
-                     "전환은 허용오차만큼 앞설 때만 이긴다. 동점이면 현금이다.",
+                     f"전환가치·조기상환금액·계속보유가치를 비교한다. {_NONCALL}라 "
+                     "상환C(매도청구)는 없다. 전환가치가 상환 금액보다 1e-9 넘게 클 때만 전환을 고르고, "
+                     "같으면 상환을 고른다(전환가격 조정일에는 전환가치가 정확히 100 이 되어 같아질 수 있다).",
                      f"{S4} · {S7}", call_on=False)
         _DEC = lambda L, r: (
              f'IF({Q(S4)}!{L}{R0+r}>=MAX({L}$7,{Q(S7)}!{L}{R0+r})+{TOLX},"전환",'
@@ -8085,17 +8330,17 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
              f'{_DEC(L, r)})' if i == n else
              "=" + _ipo_if(L, r, '"상장전환"', _DEC(L, r))), txt=True)
 
-    W = newsheet(S10, "⑩ 주계약가치트리  옵션이 전혀 없는 순수 사채",
-                 "주가와 무관하므로 같은 열의 값이 모두 같다.", "가정")
+    W = newsheet(S10, "⑩ 옵션 제외 사채가치트리  전환·조기상환·매도청구가 없는 사채",
+                 "주가와 관계없으므로 같은 시점의 값이 모두 같다.", "가정")
     fill(W, lambda i, r, L, Lp, Ln: (f"={L}$10+{L}$9" if i == n else
          f"=({Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17)*EXP(-{L}$12*{K['dt']})"
          f"+{L}$9+{L}$10"))
 
     if _gs or _ksplit:
         W = newsheet(S11, "⑪ [GS] 전환확률트리",
-                     ("전환 1, 현금 0, 보유면 다음 두 칸의 평균." if _gs else
-                      "전환 1, 현금 0, 보유면 다음 두 칸의 평균. TF 평가에서는 콜 행사가액을 지분·채권 몫으로 "
-                      "나누는 데만 쓴다(한공회 본문 4.3.3) — ⑪~⑭ 는 그 확률을 세는 보조 계산이다."),
+                     ("전환하면 1, 상환(현금)이면 0, 계속보유하면 다음 시점의 상승·하락 상태별 전환확률을 위험중립확률(q, 1−q)로 가중평균한다." if _gs else
+                      "전환하면 1, 상환(현금)이면 0, 계속보유하면 다음 시점의 상승·하락 상태별 전환확률을 위험중립확률(q, 1−q)로 "
+                      "가중평균한다. TF 평가에서는 매도청구 행사가격을 주식결제·현금결제 성분으로 배분하는 데에만 쓴다(한공회 실무사례 4.3.3) — ⑪~⑭ 는 그 확률을 구하는 보조 계산이다."),
                      f"{S14} · 다음 열 {S11}")
         # 현금(상환P·상환C)이 동점이면 0 이다. 전환은 허용오차만큼 앞설 때만 1 이다.
         _cash = lambda L, r: (f'OR(ABS({Q(S14)}!{L}{R0+r}-{L}$7)<{TOLX},'
@@ -8106,28 +8351,27 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             + ('0))' if i == n else
                f'{Ln}{R0+r}*{L}$16+{Ln}{R0+r+1}*{L}$17))')), N4)
 
-        W = newsheet(S11B, "⑪b 채권확률트리  1 − 전환확률",
-                     "cash-or-nothing 풋옵션의 위험중립확률이다 (본문 4.3.3). "
-                     "⑪ 과 더하면 언제나 1 이다 — 전환사채 만기까지 둘 중 하나가 행사되고 "
-                     "하나가 행사되면 다른 하나는 사라지기 때문이다.", S11, call_on=False)
+        W = newsheet(S11B, "⑪b 비전환확률트리  1 − 전환확률",
+                     "GS 모형에서 전환하지 않고 현금(상환·만기상환)으로 끝날 위험중립확률이다 (한공회 실무사례 4.3.3). "
+                     "⑪ 과 더하면 1 이다. 부도확률이나 실제 상환 가능성의 예측치가 아니다.", S11, call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: f"=1-{Q(S11)}!{L}{R0+r}", N4)
 
         W = newsheet(S12, "⑫ [GS] 위험조정할인율트리",
                      "이 칸을 직전 시점으로 할인할 때 쓰는 이자율이다. "
-                     "전환확률로 무위험과 위험을 섞되 직전 구간의 선도이자율을 쓴다.", S11)
+                     "전환확률로 무위험·위험 선도이자율을 가중하되, 직전 구간의 선도이자율을 쓴다.", S11)
         fill(W, lambda i, r, L, Lp, Ln:
              (f"={Q(S11)}!{L}{R0+r}*{Lp}$11+(1-{Q(S11)}!{L}{R0+r})*{Lp}$12"
               if i > 0 else "=0"), P2)
 
         W = newsheet(S13, "⑬ [GS] 보유가치트리",
-                     "다음 두 칸을 각 칸의 할인율로 따로 할인한다.", f"다음 열 {S12} · {S14}", call_on=False)
+                     "다음 시점의 상승·하락 노드 값을 각 노드의 할인율로 할인해 위험중립확률로 가중한다.", f"다음 열 {S12} · {S14}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
              f"=IF({K['auto']}=1,{Q(S4)}!{L}{R0+r},{L}$10+{L}$9)" if i == n else
              f"={Q(S14)}!{Ln}{R0+r}*{L}$16*EXP(-{Q(S12)}!{Ln}{R0+r}*{K['dt']})"
              f"+{Q(S14)}!{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S12)}!{Ln}{R0+r+1}*{K['dt']})+{L}$9"))
 
         W = newsheet(S14, "⑭ [GS] 금융상품가치트리",
-                     "⑧과 같은 칸을 비교하면 모형 차이가 보인다.", f"{S4} · {S13}", call_on=False)
+                     "전환·상환·계속보유 가운데 선택한 결과의 값이다.", f"{S4} · {S13}", call_on=False)
         fill(W, lambda i, r, L, Lp, Ln: (
              f"=IF({K['auto']}=1,MAX({Q(S4)}!{L}{R0+r},IF({L}$7>0,{L}$7+{L}$9,0)),"
              f"MAX({Q(S13)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7+{L}$9))" if i == n else
@@ -8138,12 +8382,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         # ── 15 트랜치 ──
         # 고른 모형의 블록만 담는다. GS 블록은 TF 다섯 블록을 참조하지 않으므로
         # 어느 쪽을 골라도 나머지 절반은 만들 필요가 없다.
-        W = newsheet(S15, f"⑮ {KW} 트랜치  매도청구권이 걸리는 부분",
-                     f"의무보유 때문에 전환{'·조기상환' if tm.k_lock_put else ''} 시작이 늦다. "
-                     f"{KW0}와의 차이가 매도청구권의 가치다. "
-                     + ("전환가치 뒤에 GS 네 블록을 둔다. 고른 모형이 GS 이기 때문이다."
+        W = newsheet(S15, f"⑮ {_CALLED}  콜이 반영되는 부분",
+                     f"콜 대상 물량은 의무보유로 전환{'·조기상환' if tm.k_lock_put else ''} 시작이 늦다. "
+                     f"{_NONCALL}{'와' if issuer_redeem(tm) else '과'}의 가치 차이가 콜의 가치다(유무가치비교법). "
+                     + ("전환가치 다음에 GS 계산 블록(전환확률·할인율·계속보유·가치)을 둔다 — 이 조서의 모형이 GS 다."
                         if _gs else
-                        "전환가치 뒤에 TF 다섯 블록을 둔다. 고른 모형이 TF 이기 때문이다."),
+                        "전환가치 다음에 TF 계산 블록(주식결제분·현금결제분·계속보유·가치·의사결정)을 둔다 — 이 조서의 모형이 TF 다."),
                      "가정", conv_cell=K["cv30"], put_cell=K["pt30"])
         HH = n+3
         _bs = {"row": R0, "i": 0}
@@ -8152,7 +8396,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             row = _bs["row"]
             sec(W, row-1, f"{'가나다라마바'[_bs['i']]}  {t}", span=min(n+1, 14))
             _bs["i"] += 1
-            put(W, row, 2, "r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
+            put(W, row, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
             for i in range(n+1):
                 put(W, row, 3+i, i, bold=True, size=8, fmt=N0, align="center",
                     fill=LIGHT, border=True)
@@ -8317,7 +8561,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         # 오므로 last 를 그대로 쓰면 그 위에 겹쳐 쓰게 된다.
         RT = _bs["row"] + n + 3
         sec(W, RT, "결과", span=6)
-        put(W, RT+1, 2, f"{KW} 트랜치 금융상품가치 · {tm.model} (t=0)", bold=True)
+        put(W, RT+1, 2, f"{_CALLED} 가치 · {tm.model} (t=0)", bold=True)
         put(W, RT+1, 3, f"=C{last+1}", bold=True, fmt=N2, align="right")
 
     # ── 16 부채요소 ──
@@ -8327,7 +8571,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     title(D, 2, "⑯ 부채요소  전환권이 없는 사채에 조기상환권만 붙인 값", span=min(n+1, 14))
     put(D, 3, 2, "전환이 없으면 주가와 무관하므로 한 줄로 끝난다. "
         "만기부터 왼쪽으로 오며 MAX(조기상환금액, 계속보유)를 고른다.", color=GREY, size=9)
-    for r, nm in enumerate(["Date", "time-step", "Flag(조기상환)", "조기상환금액", "쿠폰",
+    for r, nm in enumerate(["날짜", "스텝(노드 번호)", "조기상환 가능 (1=예)", "조기상환금액", "쿠폰",
                             "만기상환", "위험 선도이자율", "부채요소"], start=4):
         put(D, r, 2, nm, bold=True, size=8, fill=LIGHT, border=True)
     for i in range(n+1):
@@ -8359,13 +8603,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         Dc = wb.create_sheet(S16C); Dc.sheet_view.showGridLines = False
         Dc.column_dimensions["B"].width = 22
         for i in range(n+1): Dc.column_dimensions[gl(3+i)].width = 9
-        title(Dc, 2, "⑯c 부채요소 + 발행자 상환권  전환권 없는 부채에 상환청구권과 발행자 상환권을 함께 붙인 값",
+        title(Dc, 2, "⑯c 전환권 제외 우선주부채 + 발행자 상환권  상환청구권과 발행자 상환권을 함께 반영한 값",
               span=min(n+1, 14))
-        put(Dc, 3, 2, "MAX(상환청구금액, MIN(계속보유, 발행자 상환가액)). 전환권이 없으니 발행자가 "
-            "되사올 이유가 거의 없어 ⑯ 과 비슷하다 — 그 차이가 부채 격자에서 잰 발행자 상환권이다.",
+        put(Dc, 3, 2, "MAX(상환청구금액, MIN(계속보유가치, 발행자 상환금액)). 전환권이 없으면 발행자가 "
+            "상환할 유인이 작아 ⑯ 과 비슷하다 — ⑯ 과의 차이가 전환권을 제외한 격자에서 계산한 발행자 상환권 가치다.",
             color=GREY, size=9)
-        for r, nm in enumerate(["Date", "time-step", "Flag(조기상환)", "조기상환금액", "쿠폰",
-                                "만기상환", "위험 선도이자율", "Flag(매도청구)", "매도청구금액",
+        for r, nm in enumerate(["날짜", "스텝(노드 번호)", "조기상환 가능 (1=예)", "조기상환금액", "쿠폰",
+                                "만기상환", "위험 선도이자율", "매도청구 가능 (1=예)", "매도청구금액",
                                 "부채요소 (콜 포함)"], start=4):
             put(Dc, r, 2, nm, bold=True, size=8, fill=LIGHT, border=True)
         for i in range(n+1):
@@ -8406,7 +8650,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             for i in range(n+1): W.column_dimensions[gl(3+i)].width = 9
             title(W, 2, ttl, span=min(n+1, 14))
             put(W, 3, 2, note, color=GREY, size=9)
-            for r, nm in enumerate(["Date", "time-step", "Flag(조기상환)", "조기상환금액",
+            for r, nm in enumerate(["날짜", "스텝(노드 번호)", "조기상환 가능 (1=예)", "조기상환금액",
                                     "쿠폰", "만기상환", "기준금리 a", "확정 스프레드"],
                                    start=4):
                 put(W, r, 2, nm, bold=True, size=8, fill=LIGHT, border=True)
@@ -8439,10 +8683,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
 
         W = wb.create_sheet(SB1)
         bhead(W, "BDT 단기이자율격자  r(i,j) = a · exp(2σ·j·√Δt)",
-              "로그정규라 이자율이 음수가 되지 않는다. j 는 상승 횟수이고 클수록 "
-              "금리가 높다 — 주가 트리와 달리 위로 갈수록 낮다. 기준금리 a 는 곡선을 "
-              "정확히 되돌리도록 역산한 값이라 주황색이다. σ 를 바꾸시려면 앱에서 "
-              "조서를 다시 만드셔야 한다.")
+              "로그정규 분포를 따르므로 단기이자율이 음수가 되지 않는다. j 는 금리 상승 횟수이고 클수록 금리가 높다(주가 트리와 달리 표의 아래쪽이 높은 금리). 기준금리 a 는 이 격자로 계산한 할인계수가 적용 금리곡선의 할인계수와 같아지도록 앱이 역산한 값이다. 역산한 값이라 주황색이다 — BDT 변동성 σ 나 금리곡선을 바꾸려면 앱에서 "
+              "다시 계산해 조서를 새로 만든다.")
         for i in range(n):
             L = gl(3+i)
             for j in range(i+1):
@@ -8450,64 +8692,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                     f"={L}$10*EXP(2*{K['bsig']}*$B{RB+j}*SQRT({K['dt']}))",
                     fmt=P2, size=8, align="right")
 
-        # ── 캘리브레이션 검산 ──
-        # 기준금리 a 만 값이라 조서만 보면 근거 없는 상수처럼 보인다. 그래서
-        # 도달가격 Q 를 수식으로 쌓아 보인다. Σ_j Q(k,j) 가 시장 할인계수와
-        # 같아야 하고, a 를 바로 그 조건에 맞춰 역산했다 — 무차익거래 조건이다.
-        QR = RB+n+3
-        sec(W, QR-2, f"캘리브레이션 검산 — 격자가 {BP['base_nm']}을 되돌리는가",
-            span=min(n+1, 14))
-        put(W, QR-1, 2, "j ＼ 스텝", bold=True, size=8, fill=LIGHT,
-            border=True, align="center")
-        for i in range(n+1):
-            put(W, QR-1, 3+i, i, bold=True, size=8, fmt=N0, align="center",
-                fill=LIGHT, border=True)
-        for j in range(n+1):
-            put(W, QR+j, 2, j, bold=True, size=8, fmt=N0, align="center",
-                fill=LIGHT, border=True)
-        for i in range(n+1):
-            L, Lp = gl(3+i), (gl(2+i) if i > 0 else None)
-            for j in range(i+1):
-                if i == 0:
-                    v = 1
-                else:
-                    # 아래에서 올라온 몫 + 위에서 내려온 몫. 삼각형 밖은 비어
-                    # 있으므로 엑셀에서 0 으로 읽힌다.
-                    up = (f"0.5*{Lp}{QR+j-1}*EXP(-{Lp}{RB+j-1}*{K['dt']})"
-                          if j > 0 else "")
-                    dn = (f"0.5*{Lp}{QR+j}*EXP(-{Lp}{RB+j}*{K['dt']})"
-                          if j <= i-1 else "")
-                    v = "=" + "+".join(x for x in (up, dn) if x)
-                put(W, QR+j, 3+i, v, fmt=N6, size=8, align="right")
-        # 시장 할인계수 exp(−r(kΔt)·kΔt) 는 구간 선도이자율의 합으로 정확히 되돌아온다 —
-        # Σ_{i<k} f_i·Δt = r(kΔt)·kΔt. 트리 11행(무위험)·12행(위험)이 그 선도이자율이므로
-        # 수식으로 쓴다. 기준금리 a 만 값(이분법)이라, 엑셀에서 σ·곡선을 바꾸면 «차이» 가
-        # 0 을 벗어나는 것이 곧 캘리브레이션 검산이다.
-        _rowb = 12 if int(tm.bdt_base) == 0 else 11
-        for k2, nm in enumerate(("모형 무이표채  Σ Q", "시장 할인계수", "차이")):
-            r2 = QR+n+1+k2
-            put(W, r2, 2, nm, bold=True, size=8, fill=LIGHT, border=True)
-            for i in range(n+1):
-                L = gl(3+i)
-                v = (f"=SUM({L}{QR}:{L}{QR+n})" if k2 == 0 else
-                     (("=1" if i == 0 else
-                       f"=EXP(-SUM({Q(S1)}!$C${_rowb}:{gl(2+i)}${_rowb})*{K['dt']})") if k2 == 1
-                      else f"={L}{r2-2}-{L}{r2-1}"))
-                put(W, r2, 3+i, v, fmt=N6, size=8, align="right", bold=(k2 == 2))
-        put(W, QR+n+5, 2,
-            "도달가격 Q(i,j) 는 그 칸에 이르는 경로의 확률을 그 경로의 할인율로 "
-            "할인해 더한 값이다. 스텝별로 모두 더하면 그 만기의 무이표채 가격이 "
-            "되고, 그것이 시장 할인계수와 같아야 한다 — 무차익거래 조건이다. 시장 할인계수는 "
-            "「01 주가」 시트 선도이자율의 합 exp(−Σf·Δt) 로 만든 수식이다. "
-            "기준금리 a(주황)만 이 조건에 맞춰 이분법으로 역산한 값이라, σ 나 곡선을 이 파일에서 "
-            "바꾸면 a 가 따라오지 않아 차이가 0 에서 벗어난다 — 그때는 앱에서 조서를 다시 만든다.",
-            color=GREY, size=9)
+        # 기준금리 a 가 곡선을 맞추는지(도달가격 Σ Q = 할인계수)는 앱이 평가할 때 확인한다.
 
         W = wb.create_sheet(SB2)
-        bhead(W, "BDT 부채요소  전환 없는 사채 + 조기상환권",
+        bhead(W, "BDT 부채요소  전환권 제외 사채 + 조기상환청구권 (금리격자)",
               "MAX(조기상환금액, 계속보유) 를 고른다. 계속보유는 다음 두 칸을 "
-              "0.5 씩 섞어 그 칸의 단기이자율로 할인한 값이다. 확정 격자와의 차이가 "
-              "곧 금리에서 나오는 옵션의 시간가치다.")
+              "0.5 씩 가중해 그 노드의 단기이자율로 할인한 값이다. 확정금리 격자(⑯)와의 차이는 "
+              "금리변동성 반영에 따른 평가금액 차이다 — 현금흐름·행사조건이 같을 때만 이렇게 읽는다.")
         for i in range(n, -1, -1):
             L = gl(3+i); Ln = gl(4+i) if i < n else None
             for j in range(i+1):
@@ -8519,9 +8710,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 put(W, RB+j, 3+i, v, fmt=N2, size=8, align="right")
         put(W, RB+n+2, 2, "부채요소 (t=0)", bold=True)
         put(W, RB+n+2, 3, f"=C{RB}", bold=True, fmt=N2, align="right")
-        put(W, RB+n+3, 2, "금리 고정 격자 (⑯)", bold=True)
+        put(W, RB+n+3, 2, "확정금리 격자 (⑯)", bold=True)
         put(W, RB+n+3, 3, f"={Q(S16)}!C13", fmt=N2, align="right")
-        put(W, RB+n+4, 2, "차이 = 금리에서 나온 옵션가치", bold=True)
+        put(W, RB+n+4, 2, "차이 = 금리변동성 반영에 따른 평가금액 차이", bold=True)
         put(W, RB+n+4, 3, f"=C{RB+n+2}-C{RB+n+3}", bold=True, fmt=N2, align="right")
 
     if _need1 or _need2:
@@ -8571,8 +8762,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             gone = f"IF({_PRE(L, r)},{pre},0)" if _kfirst else "0"
             return f"=IF({_GONE(L, r)},{gone},{body[1:]})"
 
-        W = newsheet(S19, "⑲ 콜 페이오프트리  MAX(전환사채 가치 − 매도청구금액, 0)",
-                     "매도청구 행사기간에만 값이 생긴다. 기초자산은 ⑧ 이다.", S8)
+        W = newsheet(S19, "⑲ 콜 즉시행사가치트리  MAX(콜 반영 전 전환사채 가치 − 매도청구금액, 0)",
+                     "매도청구 행사기간에만 값이 있다. 기초자산은 ⑧(콜 반영 전 가치)이다.", S8)
         fill(W, lambda i, r, L, Lp, Ln:
              f"=IF({L}$5=1,MAX({Q(S8)}!{L}{R0+r}-{L}$8,0),0)")
 
@@ -8596,14 +8787,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         # 그것이 1−⑪(⑪b)이므로 행사가를 그 확률로 나눈다. 두 몫의 합은 언제나 ⑲ 다.
         # 각 몫은 «확률 × (그 시나리오 현가 − 행사가)» 라 상환 시나리오에서 음수가 될 수
         # 있다 — 콜이 주식으로 갈 시나리오에서만 이득이라는 뜻이지 오류가 아니다.
-        W = newsheet(S17A, "⑰a 행사 지분몫  ⑤ − ⑪ × 매도청구금액",
-                     "행사할 때 페이오프의 지분 성격 몫이다. 행사기간이 아니면 0 이다.",
+        W = newsheet(S17A, "⑰a 콜 행사 시 주식결제 성분  ⑤ − ⑪ × 매도청구금액",
+                     "콜을 즉시 행사할 때의 가치 가운데 GS 전환확률에 따라 배분한 주식결제 성분이다. 분해 계산상 성분이라 음수가 될 수 있으며 실제 현금 수령액이나 독립 옵션가격이 아니다. 행사기간이 아니면 0 이다.",
                      f"{S5} · {S11}")
         fill(W, lambda i, r, L, Lp, Ln:
              f"=IF({L}$5=1,{Q(S5)}!{L}{R0+r}-{Q(S11)}!{L}{R0+r}*{L}$8,0)", N4)
 
-        W = newsheet(S17B, "⑰b 행사 채권몫  ⑥ − (1−⑪) × 매도청구금액",
-                     "행사할 때 페이오프의 채권 성격 몫이다. ⑰a 와 더하면 ⑲ 가 된다.",
+        W = newsheet(S17B, "⑰b 콜 행사 시 현금결제 성분  ⑥ − (1−⑪) × 매도청구금액",
+                     "콜을 즉시 행사할 때의 가치 가운데 현금결제 성분이다. ⑰a 와 더하면 ⑲ 가 된다. 분해 계산상 성분이라 음수가 될 수 있다.",
                      f"{S6} · {S11B}")
         fill(W, lambda i, r, L, Lp, Ln:
              f"=IF({L}$5=1,{Q(S6)}!{L}{R0+r}-{Q(S11B)}!{L}{R0+r}*{L}$8,0)", N4)
@@ -8612,15 +8803,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         # ── 21~24 옵션차익혼합할인법 · 방법 2 (지분·부채 분리) ──
         # 값 하나를 섞은 할인율로 할인하는 대신, 콜옵션 가치를 지분 몫과 부채 몫으로
         # 쪼개 각각 무위험·위험 선도이자율로 할인한다 (책 4.4.3, 부속예제 4-4 방법2).
-        W = newsheet(S21, "㉑ [방법2] 지분 몫 보유가치",
-                     "다음 두 칸의 지분 몫을 무위험 선도이자율로 할인한다.",
+        W = newsheet(S21, "㉑ 콜 계속보유가치 · 주식결제 성분 (옵션차익법 · 주식결제·현금결제 분리)",
+                     "다음 시점 두 노드의 주식결제 성분을 무위험 선도이자율로 할인한다.",
                      f"다음 열 {S23}")
         fill(W, lambda i, r, L, Lp, Ln: ("=0" if i == n else
              f"=({Q(S23)}!{Ln}{R0+r}*{L}$16+{Q(S23)}!{Ln}{R0+r+1}*{L}$17)"
              f"*EXP(-{L}$11*{K['dt']})"), N4)
 
-        W = newsheet(S22, "㉒ [방법2] 부채 몫 보유가치",
-                     "다음 두 칸의 부채 몫을 위험 선도이자율로 할인한다.",
+        W = newsheet(S22, "㉒ 콜 계속보유가치 · 현금결제 성분 (옵션차익법 · 주식결제·현금결제 분리)",
+                     "다음 시점 두 노드의 현금결제 성분을 위험 선도이자율로 할인한다.",
                      f"다음 열 {S24}")
         fill(W, lambda i, r, L, Lp, Ln: ("=0" if i == n else
              f"=({Q(S24)}!{Ln}{R0+r}*{L}$16+{Q(S24)}!{Ln}{R0+r+1}*{L}$17)"
@@ -8635,24 +8826,24 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         _db = ((lambda L, r: f"{Q(S17B)}!{L}{R0+r}") if _ksplit else
                (lambda L, r: f"{Q(S19)}!{L}{R0+r}*(1-{Q(S17)}!{L}{R0+r})"))
         _src = (f"{S17A} · {S17B}" if _ksplit else S17) + f" · {S19} · {S21} · {S22}"
-        _how = ("행사가를 GS 전환확률로 나눈 ⑰a" if _ksplit else "페이오프에 구성비율을 곱한 몫")
-        W = newsheet(S23, "㉓ [방법2] 매도청구권 · 지분 몫",
-                     f"행사하면 {_how}, 아니면 보유가치의 지분 몫이다. "
-                     "만기에는 보유가치가 0 이라 언제나 페이오프를 쪼갠다.", _src)
+        _how = ("GS 전환확률에 따라 배분한 행사가격을 반영한 ⑰a(주식결제 성분)" if _ksplit else "즉시행사가치에 구성비율을 곱한 주식결제 성분")
+        W = newsheet(S23, "㉓ 콜 가치 · 주식결제 성분 (옵션차익법 · 주식결제·현금결제 분리)",
+                     f"행사하면 {_how}, 아니면 ㉑ 계속보유가치의 주식결제 성분이다. "
+                     "만기에는 계속보유가치가 0 이므로 즉시행사가치를 성분별로 나눈다.", _src)
         fill(W, lambda i, r, L, Lp, Ln: _kill(L, r,
              f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})",
              _eq(L, r)) if i < n else
              f"=IF({ex2(L, r)},{_eq(L, r)},{Q(S21)}!{L}{R0+r})", N4)
 
-        W = newsheet(S24, "㉔ [방법2] 매도청구권 · 부채 몫",
+        W = newsheet(S24, "㉔ 콜 가치 · 현금결제 성분 (옵션차익법 · 주식결제·현금결제 분리)",
                      "행사 판단은 ㉓ 과 같다. "
-                     + ("행사가의 채권 몫을 뺀 ⑰b 다." if _ksplit else "지분 몫의 나머지가 부채 몫이다."),
+                     + ("행사하면 ⑰b(현금결제 성분), 아니면 ㉒ 다." if _ksplit else "즉시행사가치에서 주식결제 성분을 뺀 나머지가 현금결제 성분이다."),
                      _src)
         fill(W, lambda i, r, L, Lp, Ln: _kill(L, r,
              f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})",
              _db(L, r)) if i < n else
              f"=IF({ex2(L, r)},{_db(L, r)},{Q(S22)}!{L}{R0+r})", N4)
-        put(W, R0+n+3, 2, "매도청구권 · 방법2 (한도 반영 전, t=0)", bold=True)
+        put(W, R0+n+3, 2, "매도청구권 · 옵션차익법 주식결제·현금결제 분리 (한도 반영 전, t=0)", bold=True)
         put(W, R0+n+3, 3, f"={Q(S23)}!C{R0}+C{R0}", bold=True, fmt=N2, align="right")
 
     # ── 결과 ──
@@ -8661,7 +8852,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         R.column_dimensions[cc].width = w
     title(R, 2, "평가결과", span=5)
     put(R, 3, 2, "모든 값이 앞의 트리 시트에서 수식으로 넘어온다.", color=GREY, size=9)
-    sec(R, 5, "1. 트랜치", span=5)
+    sec(R, 5, "1. 물량별 가치 (액면 100 기준)", span=5)
     # 주계약과 부채요소에는 전환이 없어 TF 와 GS 가 항상 같다. 모형 선택이
     # 갈라지는 곳은 트랜치 둘뿐이므로 여기서 한 번만 고른다.
     # 앱에서 고른 것만 값이 든다. 행 자리는 그대로 두어 아래 참조가 깨지지 않게 한다.
@@ -8670,8 +8861,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _t30 = f"={Q(S15)}!C{RT+1}" if _need15 else B_
     # 유무가치비교법일 때만 콜이 걸리는 몫과 안 걸리는 몫(트랜치)으로 나눈다. 다른 방법이면
     # 08 은 콜을 반영하기 전 전환사채 «전체» 의 값이다 — 트랜치라고 부르면 대상을 오해한다.
-    _N0 = f"{KW0} 트랜치" if _need15 else "전환사채 전체 (콜 반영 전)"
-    _N1 = f"{KW} 트랜치" if _need15 else "— (트랜치 없음)"
+    _N0 = _NONCALL if _need15 else "전환사채 전체 (콜 반영 전)"
+    _N1 = _CALLED if _need15 else "— (물량 구분 없음)"
     for i, (nm, fx) in enumerate([
             (f"{_N0} · TF", B_ if _gs else _t70),
             (f"{_N0} · GS", _t70 if _gs else B_),
@@ -8700,7 +8891,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
              ("매도청구권자산 (적용값)", f"=C{19+_km}" if _hascall else "=0"),
              # 제3자 기특정 콜은 발행자가 자산으로 인식하지 않으므로 배분에서 빠진다
              # (본문 4.5.1 주주간 분배). 잔여인 전환권대가·주계약이 그만큼 작아진다.
-             ("전환권대가 (자본일 때)",
+             ("전환권대가 — 자본 배분액 (자본일 때)",
               f'=IF({K["eqcls"]}=1,100-C17+IF({K["kkind"]}=1,0,{CAE}),"")'),
              ("복합내재파생상품 (부채일 때)", f'=IF({K["eqcls"]}=0,C10-C16,"")'),
              ("주계약 잔여 (부채일 때)",
@@ -8715,24 +8906,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(R, r, 3, fx, bold=True, fmt=N2, align="right", border=True)
         put(R, r, 4, f'=IF(ISNUMBER(C{r}),C{r}/100*{K["face"]},"")',
             fmt=N0, align="right", border=True)
-    # 계산이 고장 나지 않았는지 보는 개발용 점검(q 범위·마팅게일·노드 배정 등)은 조서에 싣지
-    # 않는다 — 앱이 조서를 만들 때 뒤에서 돌리고, 걸리면 조서를 만들지 않는다(service).
-    # 여기에는 검토자가 읽고 판단할 두 줄만 둔다.
-    sec(R, 27, "3. 확인", span=5)
-    for i, (nm, fx, jd) in enumerate([
-            ("구성요소를 더하면 발행금액 100",
-             f'=IF({K["eqcls"]}=1,C16+C18-IF({K["kkind"]}=1,0,{CAE})+C23,'
-             f'C25+C24-IF({K["kkind"]}=1,0,C22))',
-             '=IF(ABS(C28-100)<0.01,"맞음","다름 — 배분을 확인하십시오")'),
-            # 상각표의 유효이자율은 앱이 역산해 **값으로** 박은 것이라, 배분을 움직이는
-            # 인풋이 하나라도 바뀌면 트리와 어긋난다.
-            ("상각표가 이 조서와 같은 조건으로 만들어졌는가",
-             (f"=상각표!D{15+len(eir[1])+1}" if eir is not None else "상각표 없음"),
-             ('=IF(ABS(C29)<0.0001,"같음","다름 — 앱에서 조서를 다시 만드십시오")'
-              if eir is not None else "해당 없음"))]):
-        put(R, 28+i, 2, nm, border=True)
-        put(R, 28+i, 3, fx, fmt=N4, align="right", border=True)
-        put(R, 28+i, 5, jd, align="center", border=True)
+    # 숫자가 맞는지 보는 확인(배분 합계·상각표 조건 등)은 앱이 평가할 때 수행하고 조서에는
+    # 싣지 않는다 — 이상이 있으면 조서를 만들지 않는다(service).
     put(R, 31, 2, "이 조서에는 앱에서 고른 방법만 들어 있습니다. 다른 신용위험 처리나 "
         "다른 매도청구권 평가방법의 값은 이 조서에 없습니다.", color=GREY, size=9)
     put(R, 32, 2, ("선도이자율은 IR 시트에서 수식으로 계산된다. 값으로 들어간 것은 상각표 유효이자율"
@@ -8850,17 +9025,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(M, r, 7, "=$C$8", fmt=N2, align="right", border=True, bold=last, fill=fl)
             put(M, r, 8, f"=E{r}+F{r}-G{r}", fmt=N2, align="right",
                 border=True, bold=last, fill=fl)
-        lr = 15+len(rows_eir)
-        put(M, lr, 2, "검산 · 기말 잔액 = 만기상환금액", bold=True, border=True)
-        put(M, lr, 4, f"=H{lr-1}-$C$7", fmt=N2, align="right", border=True)
-        put(M, lr, 6, f'=IF(ABS(H{lr-1}-$C$7)<0.01,"적합","확인 필요")',
-            align="center", border=True)
-        # 유효이자율은 값이라, 가정을 고쳐 인식액이 움직이면 표가 닫히지 않는다.
-        put(M, lr+1, 2, "검산 · 인식액이 역산 당시와 같은가", bold=True, border=True)
-        put(M, lr+1, 4, f"=C6-{rows_eir[0][2] if rows_eir else 0!r}", fmt=N2,
-            align="right", border=True)
-        put(M, lr+1, 6, f'=IF(ABS(C6-{rows_eir[0][2] if rows_eir else 0!r})<0.0001,'
-            f'"적합","앱에서 다시 만드십시오")', align="center", border=True)
+        # 기말 잔액이 만기상환금액과 맞는지는 앱이 평가할 때 확인한다 — 조서에 싣지 않는다.
 
     # ── 회계처리 ──
     # 복합계약 전체를 당기손익-공정가치로 지정했는가. 이 시트가 통째로 갈리므로
@@ -8981,12 +9146,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     for j2, col in enumerate("CDEF"):
         put(E, 25, 3+j2, f"=SUM({col}18:{col}24)", bold=True, fill=BAND,
             fmt=(N2 if j2 < 2 else N0), align="right", border=True)
-    put(E, 26, 2, "차변과 대변이 일치해야 한다", bold=True, border=True)
-    put(E, 26, 3, '=IF(ABS(C25-D25)<0.01,"적합","오류")', align="center", border=True)
-    put(E, 28, 2, "최초 인식에는 어떠한 손익도 생기지 않는다.", color=GREY, size=9)
+    put(E, 27, 2, "부채·자본 구성요소를 나누는 배분 자체로는 손익이 생기지 않는다. 거래원가와, 거래가격이 "
+        "공정가치와 다를 때의 차이(최초 인식 손익)는 아래 3번과 별도 검토 대상이다.", color=GREY, size=9)
     # ── 거래원가 배분 (1032 문단 38) ── 가정의 거래원가 셀을 바꾸면 따라온다
     sec(E, 30, "3. 거래원가 배분 (1032 문단 38)", span=6)
-    for i, h in enumerate(["요소", "배분액 (100)", "거래원가 몫 (100)", "몫 (원)", "처리"]):
+    for i, h in enumerate(["요소", "배분액 (100)", "거래원가 배분액 (100)", "거래원가 배분액 (원)", "처리"]):
         put(E, 31, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
     _C100 = f'{K["cost"]}/{K["face"]}*100'
     # 분모는 복합금융상품에 배분된 양수 줄의 합이다 (매도청구권 자산은 별도 금융상품).
@@ -9014,7 +9178,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                    "없고 상각표도 없다."
                    if _FVROW else
                    "배분된 발행금액에 비례해 나눈다. 매도청구권 자산은 별도의 금융상품이라 "
-                   "(문단 4.3.1) 분모에서 뺐다. 상각표는 주계약에서 이 몫을 뺀 금액에서 "
+                   "(문단 4.3.1) 분모에서 뺐다. 상각표는 주계약에서 이 배분액을 뺀 금액에서 "
                    "출발한다."), color=GREY, size=9)
 
     # ── 기말 재평가 — 전기말 장부금액이 있을 때만 값이 찬다 (수식은 늘 산다) ──
@@ -9102,6 +9266,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         for _a, _v in _d["지표"].items():
             put(J, _r, 2, _a, border=True)
             put(J, _r, 3, (f"{_v*100:.1f}%" if _a in ("차이", "가장 큰 차이") else
+                           f"{_v*100:g}%" if _a.startswith("비교기준") else
+                           _v if isinstance(_v, str) else
                            ("예" if _v is True else "아니오" if _v is False
                             else f"{_v:,.4f}")), border=True); _r += 1
         if _k == "put" and _d["지표"] and tm.p_s <= tm.p_e:
@@ -9110,10 +9276,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             # 거래가격)을 계약만기까지 굴린 표에서 «t ≥ 행사 시점» 인 첫 회차의 기말이다.
             # 유효이자율만 값(이분법)이다. 행사일마다 견주고 가장 큰 차이로 판정한다.
             _e0r, _e0rows, _, _e0n = eir_table(tm, split_base(tm, ca))
-            _b0x = f"100+결과!{CAE}" if split_call_separate(tm) else "100"
+            _b0x = (repr(float(tm.split_base_in)) if float(getattr(tm, "split_base_in", -1.0)) > 0
+                    else f"100+결과!{CAE}" if split_call_separate(tm) else "100")
             _pms = sorted(exercise_amounts(tm, n, dt_)["p_dates"].values()) or [tm.p_s]
             _r += 1
-            sec(J, _r, "B4.3.5(5)(가) 10% 검토 — 수식 (가정 시트를 바꾸면 따라온다)", span=6); _r += 1
+            sec(J, _r, "B4.3.5(5)(가) 행사금액과 상각후원가 비교 — 수식 (가정 시트의 비교기준을 바꾸면 판정이 따라온다)", span=6); _r += 1
             _rs = _r + 8                               # 미니 상각표 첫 자료행
             _re = _rs + len(_e0rows) - 1
             _rpv, _rbv, _rt, _rg, _rv, _rr = _r, _r+1, _r+2, _r+3, _r+4, _r+6
@@ -9134,7 +9301,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(J, _rg, 5, "← 첫 조기상환일", color=GREY, size=9)
             put(J, _rv, 2, "판정 (수식)", bold=True, border=True)
             put(J, _rv, 3, f'=IF({K["fvpl"]}=1,"분리하지 않음",IF({K["eqcls"]}=0,"묶어서 분리",'
-                           f'IF({K["plost"]}=1,"분리하지 않음",IF(C{_rg}<=0.1,"분리하지 않을 여지","분리"))))',
+                           f'IF({K["plost"]}=1,"분리하지 않음",IF(C{_rg}<={K["stol"]},"분리하지 않을 여지","분리"))))',
                 bold=True, border=True)
             put(J, _rr, 2, "유효이자율 (자본요소 분리 전 · 계약만기 · 값)", border=True)
             put(J, _rr, 3, _e0r, fmt=P2, align="right", border=True, color=AMB)
@@ -9188,10 +9355,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _r += 1
     put(J, _r, 2, "이 시트는 앱의 「분리 판단」 화면과 같은 함수가 만든다. 계약 조항 "
                   "확인 항목을 **앱에서** 바꾸면 결론과 문안이 함께 바뀐다. "
-                  "결론·근거 문장은 그 결과를 옮겨 적은 것이고, 조기상환권의 10% 검토(행사금액 · "
-                  "상각후원가 · 차이 · 판정)는 가정 시트를 참조하는 **수식**으로도 한 번 더 있다 — 두 값이 "
-                  "같아야 한다. 판정에 쓰는 상각후원가는 문단 B4.3.5(5) 말미대로 **자본요소를 분리하기 "
-                  "전** 금액(전환사채에 배분된 거래가격)에서 출발하므로 분리 여부 설정과 무관하다.",
+                  "결론·근거 문장은 그 결과를 옮겨 적은 것이고, 조기상환권의 행사금액·상각후원가 비교(행사일별 "
+                  "표 · 가장 큰 차이 · 판정)는 가정 시트를 참조하는 **수식**으로도 계산한다 — 비교기준은 가정 시트의 "
+                  "평가자 설정 칸이며 기준서가 정한 수치가 아니다. 판정에 쓰는 상각후원가는 문단 B4.3.5(5) 말미대로 "
+                  "**자본요소를 분리하기 전** 금액(전환사채에 배분된 거래가격)에서 출발하므로 분리 여부 설정과 무관하다. "
+                  "이 판정은 수치 비교 결과이며, 분리 여부는 계약 조건과 함께 평가자가 판단한다.",
         color=GREY, size=9)
     for _row in J.iter_rows(min_row=5, max_row=_r, min_col=3, max_col=3):
         for _c in _row: _c.alignment = Alignment(wrap_text=True, vertical="top")
@@ -9223,102 +9391,98 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     H = wb.create_sheet("해설", 0); H.sheet_view.showGridLines = False
     H.column_dimensions["B"].width = 22; H.column_dimensions["C"].width = 96
     title(H, 2, "수식 조서 사용 안내", span=2)
-    ex = [("성격", ""),
-      ("살아 있는 수식", "가정 시트의 노란 셀을 바꾸면 모든 트리가 다시 계산된다."),
-      ("값으로 들어간 것", ("앱이 역산한 값 두 가지 — 상각표의 유효이자율"
-                         + (", BDT 기준금리 a" if _bdt else "") + ". 선도이자율은 IR 시트(입력곡선 → "
-                         "부트스트래핑 → 현물 → 선도)에서 수식으로 계산되어 00 격자 공통 11·12행으로 온다."
-                         if _irref else
-                         "00 격자 공통 11·12행의 선도이자율 — 부트스트래핑 결과를 값으로 넣었다.")),
+    _tf = tm.model == "TF"
+    _aux = _tf and int(getattr(tm, "k_split", 0)) == 1 and tm.k_w > 0 and tm.k_method in (1, 2)
+    ex = [("재계산 범위", ""),
+      ("입력 변경에 따라 재계산되는 항목", "가정 시트의 노란 칸(계약 금액·비율, 주가, 주가변동성, 금리곡선 수익률 등)을 "
+                     "바꾸면 그 값을 쓰는 모든 계산 시트가 엑셀 안에서 다시 계산됩니다."),
+      ("앱에서 다시 만들어야 하는 항목", "노드 수·계산 간격, 행사일·이자 지급일(계약 날짜를 노드에 배정한 결과), "
+                     "전환가격 조정 주기, 평가모형(TF/GS)·매도청구권 평가방법, 금리곡선의 만기 칸 수"
+                     + (", BDT 금리변동성 σ" if _bdt else "")
+                     + ". 이 파일에서 바꾸면 결과가 따라오지 않거나 틀린 값이 나오므로 앱에서 바꾸고 조서를 새로 만듭니다."),
+      ("고정 산출값 (주황색)", ("앱이 역산해 값으로 넣은 것 — 상각표 유효이자율"
+                         + (", BDT 기준금리 a" if _bdt else "")
+                         + (". 선도이자율은 IR 시트(입력곡선 → 부트스트래핑 → 현물 → 선도)에서 수식으로 계산되어 "
+                            "00 격자 공통 11·12행으로 옵니다" if _irref else
+                            ", 00 격자 공통 11·12행의 선도이자율(부트스트래핑 결과)")
+                         + ". 관련 입력을 이 파일에서 바꾸면 고정 산출값은 따라오지 않으므로 앱에서 다시 계산합니다.")),
       ("앱이 정한 날짜", "조기상환·매도청구 행사일(00 격자 공통 20·27행)과 이자 지급일(9행)은 "
-                     "계약서의 날짜를 앱이 «계약일 이후 첫 노드» 에 배정한 것이다. 같은 날의 권리는 "
-                     "같은 노드에 온다. 행사금액은 노드가 아니라 계약일의 경과기간으로 계산한다. "
-                     "그래서 가정 시트의 이자 지급주기·조기상환 시작은 노란 입력칸이 아니다 — "
-                     "엑셀에서 바꾸면 금액만 바뀌고 날짜는 그대로라 틀린 값이 나온다. 바꾸려면 앱에서 다시 계산한다."),
-      ("머리 17행", "날짜·스텝·행사 가능 표시·행사금액·쿠폰·만기상환·선도이자율·σ·u·d·q 는 "
-                   "「00 격자 공통」에서 한 번만 계산하고, 트리 시트의 1~17행은 그 칸을 가리킨다. "
-                   "행사 시작일이 다른 트리(0% 트랜치 등)만 행사 가능 표시(3~5행)를 따로 계산한다."),
+                     "계약서의 날짜를 앱이 «그 날짜 이후 첫 노드» 에 배정한 것입니다. 같은 날의 권리는 "
+                     "같은 노드에 배정됩니다. 행사금액은 노드 날짜가 아니라 계약일의 경과기간으로 계산합니다. "
+                     "그래서 가정 시트의 이자 지급주기·조기상환 시작은 입력칸(노란색)이 아닙니다."),
+      ("각 계산 시트의 공통조건 1~17행", "날짜·스텝·행사 가능 표시·행사금액·이자·만기상환금액·선도이자율·σ·u·d·q 는 "
+                   "「00 격자 공통」에서 한 번 계산하고, 각 계산 시트의 1~17행은 그 칸을 참조합니다. "
+                   "행사 시작일이 다른 시트(매도청구 대상 물량 등)만 행사 가능 표시(3~5행)를 따로 계산합니다."),
       ("행사금액 계산 과정", "00 격자 공통 20~26행(조기상환)·27~33행(매도청구) — 계약 행사월 → "
-                          "경과연수 → 할증률 → 기지급 공제 → 금액. 행사일인 칸에만 있다. "
-                          "트리 7·8행은 이 금액을 그 시트의 행사 가능 표시(4·5행)로 켠다."),
-      ("바꿀 수 없는 것", "노드 수와 리픽싱 주기는 격자 구조를 정하므로 앱에서 다시 만들어야 한다."),
+                          "경과연수 → 할증률 → 기지급 이자 공제 → 행사금액 순서입니다. 행사일인 칸에만 값이 있습니다. "
+                          "각 계산 시트 7·8행은 이 금액을 그 시트의 행사 가능 표시(4·5행)에 따라 적용합니다."),
       ("", ""),
       ("시트 순서", ""),
       # 시트는 앱에서 고른 방법만 만든다. 안내도 실제로 만들어진 시트만
       # 적어야 한다 — 없는 시트를 가리키면 조서를 읽는 사람이 헤맨다.
       ("흐름", " → ".join(["가정"] + [x for x in wb.sheetnames
                                     if x not in ("가정", "해설")])),
-      ("담긴 것", "앱에서 고른 방법의 트리만 들어 있다. 고르지 않은 방법 "
-                "(다른 신용위험 처리, 다른 매도청구권 평가방법)의 시트는 "
-                "아예 만들지 않는다."),
-      ("전환가격", ("전환가격을 바꾸는 조항(리픽싱·상장 조정)이 없어 02·03 트리를 싣지 않았다. "
-                  "04 전환가치 = 100 × 주가 ÷ 가정의 현재 전환가액." if _kconst else
-                  "도달확률 시트는 02a 이월 전환가격이 경로가중치 방법을 쓸 때 참조한다. "
-                  "앞 열에서 한 칸씩 쌓는 재귀식이다 — 구간마다 q 가 달라 "
-                  "이항계수 한 방으로는 셀 수 없다.")),
-      ("16 부채요소", "전환이 없으면 주가와 무관해 한 줄로 끝난다. 결과 시트가 이 값을 쓴다."),
+      ("담긴 것", "앱에서 고른 평가모형과 매도청구권 평가방법의 계산 시트만 싣습니다."
+                + (" 11~14 전환확률 시트는 TF 평가에서 매도청구 행사가격을 주식결제·현금결제 성분으로 "
+                   "배분하는 데에만 쓰는 보조 계산입니다(한공회 실무사례 4.3.3)." if _aux else "")),
+      ("전환가격", ("전환가격을 바꾸는 조항(리픽싱·상장 조정)이 없어 02·03 시트를 싣지 않았습니다. "
+                  "04 전환가치 = 100 × 주가 ÷ 가정의 현재 전환가액입니다." if _kconst else
+                  "도달확률 시트는 02a 이월 전환가격이 경로가중치 방법을 쓸 때 참조합니다. "
+                  "구간별 상승확률이 달라 시점별 도달확률을 앞 시점부터 순차적으로 계산합니다.")),
+      ("16 부채요소", "전환권이 없으면 가치가 주가와 무관하므로 한 줄로 계산합니다. 결과 시트가 이 값을 씁니다. "
+                    "회계상 부채요소 배분액과 금액이 다를 수 있습니다."),
       ("", ""),
       ("계산 방향", ""),
       ("앞으로 (왼쪽 → 오른쪽)", ("01 주가 → 04 전환가치" if _kconst else
                                 "01 주가 → 도달확률 → 02a 이월 → " + ("02b 정기 조정 → " if _ipo_on else "")
                                 + "02 전환가격 → 03 전환비율 → 04 전환가치")
-                               + ". 오늘에서 만기 쪽으로 쌓는다. 각 칸은 같은 열이나 왼쪽 열만 본다."),
-      ("뒤로 (오른쪽 → 왼쪽)", "만기 열에서 시작해 07 보유가치(다음 열의 05·06 할인) → 09 의사결정(04·07·7·8행 비교) → "
-                             "05 지분가치·06 부채가치(결정대로 받는 것) → 08 금융상품가치. 10 주계약가치·16 부채요소도 "
-                             "같은 방향이다. 각 칸은 같은 열이나 오른쪽 열만 본다."),
-      ("노드 식", "보유가치 = (위 노드 × q + 아래 노드 × (1 − q)) × 할인. 지분 몫은 무위험 선도이자율, "
-                 "부채 몫은 위험 선도이자율로 할인하고 그 사이 쿠폰(9행)을 더한다."),
-      ("", ""),
-      ("05~09가 순환처럼 보이는 이유", ""),
-      ("사실", "05·06은 같은 열의 09를 보지만, 07은 다음 열의 05·06을 본다."),
-      ("결과", "오른쪽 열이 먼저 확정되고 왼쪽으로 오므로 고리가 닫히지 않는다."),
-      ("확인", "아무 칸에서 F2를 누르면 참조 테두리가 오른쪽이나 같은 열에만 생긴다."),
+                               + ". 평가기준일에서 만기 쪽으로 계산합니다. 각 칸은 같은 열이나 왼쪽 열만 참조합니다."),
+      ("뒤로 (오른쪽 → 왼쪽)", ("만기 열에서 시작해 07 보유가치(다음 시점의 05·06 할인) → 09 의사결정(04·07 과 7·8행 비교) → "
+                             "05 지분가치·06 부채가치(결정에 따라 받는 금액) → 08 금융상품가치 순서입니다. "
+                             if _tf else
+                             "만기 열에서 시작해 13 GS 보유가치(다음 시점 값을 12 GS 할인율로 할인) → "
+                             "14 GS 금융상품가치(전환·상환·계속보유 중 선택) → 11 GS 전환확률 순서입니다. ")
+                             + "10 주계약가치·16 부채요소도 같은 방향입니다. 각 칸은 같은 열이나 오른쪽 열만 참조합니다."),
+      ("노드 식", ("계속보유가치 = (다음 시점 상승 노드 × q + 하락 노드 × (1 − q)) × 할인계수. 주식결제분은 무위험 "
+                  "선도이자율, 현금결제분은 위험 선도이자율로 할인하고 그 구간의 이자(9행)를 더합니다."
+                  if _tf else
+                  "계속보유가치 = 다음 시점 상승 노드 × q × 상승 노드 할인계수 + 하락 노드 × (1 − q) × 하락 노드 할인계수. "
+                  "할인율은 각 노드의 전환확률로 무위험·위험 선도이자율을 가중한 값입니다.")),
+      ("순환참조가 없는 이유", ("05·06 은 같은 시점의 09 의사결정을 참조하고, 07 보유가치는 다음 시점의 05·06 을 참조합니다. "
+                            if _tf else "") + "다음 시점의 계산 결과를 참조하므로 순환참조가 발생하지 않습니다."),
+      ("확인 방법", "아무 칸에서 F2 를 누르면 참조 테두리가 같은 열이나 오른쪽 열에만 생깁니다."),
       ("", ""),
       ("노드에서 무엇을 고르는가", ""),
-      ("투자자 권리", "전환 · 조기상환청구 · 보유. 셋 중 자기에게 가장 유리한 것을 고른다."),
-      ("발행자 권리", "매도청구. 투자자 가치를 눌러 내리는 쪽으로만 쓴다."),
-      ("적용한 식", "MAX(전환, MIN(MAX(보유, 조기상환), 매도청구))　— 발행자 매도청구 우선" if int(tm.pc_order) == 1 else "MAX(전환, 조기상환, MIN(보유, 매도청구))　— 투자자 조기상환 우선"),
-      ("우선순위", "두 권리가 같은 노드에서 함께 열릴 때 누가 먼저 움직이는지는 "
-              "계약이 정한다 — 수식이 정하는 것이 아니다. 두 행사금액이 다르고 "
-              "행사기간이 겹치는 자리에서만 값이 갈린다. 「분리 판단」 시트의 "
-              "「계약상 권리」 표에 고른 근거를 남겨야 한다."),
-      ("만기 노드", "매도청구는 없다. 전환가치와 현금(MAX(조기상환금액, 만기상환금액) + 이자) "
-              "둘만 견준다."),
-      ("두 모형이 한 노드에", "한 노드가 **두 모형을 함께 담는다** — 지분·부채 두 줄은 "
-              "TF(Tsiveriotis–Fernandes) 이고, 금융상품가치 한 줄은 GS(Goldman Sachs) 다. "
-              "그래서 «금융상품가치 ≠ 지분 + 부채» 인 것이 정상이다. 결함이 아니라 두 "
-              "모형이 같은 계약을 다르게 재는 것이다 — 지분+부채는 TF 결과와, "
-              "금융상품가치는 GS 결과와 각각 정확히 맞는다."),
-      ("결정은 한 곳에서", "전환사채·우선주와 신주인수권부사채가 **같은 판정 함수**를 "
-              "쓴다. 상품마다 다른 것은 「이겼을 때 무엇을 받는가」뿐이다 — 예전에는 "
-              "판정까지 복제되어 있어 한쪽만 고쳐지는 일이 있었다."),
+      ("투자자 권리", "전환 · 조기상환청구 · 계속보유 가운데 투자자에게 가장 유리한 것을 고릅니다."),
+      ("발행자 권리", ("발행자 상환권 — 발행회사가 정한 금액으로 상환할 수 있는 권리. 행사되면 투자자가 받는 금액이 "
+                     "발행자 상환금액으로 제한됩니다." if issuer_redeem(tm) else
+                     "매도청구(발행회사 또는 지정 제3자의 매수청구). 행사되면 투자자가 받는 금액이 매도청구금액으로 제한됩니다.")),
+      ("적용한 식", "MAX(전환, MIN(MAX(보유, 조기상환), 매도청구))　— 동시 행사 시 발행자 매도청구 우선" if int(tm.pc_order) == 1 else "MAX(전환, 조기상환, MIN(보유, 매도청구))　— 동시 행사 시 투자자 조기상환 우선"),
+      ("우선순위", "두 권리가 같은 시점에 함께 행사될 수 있을 때 어느 쪽이 우선하는지는 계약이 정합니다. "
+              "두 행사금액이 다르고 행사기간이 겹치는 시점에서만 결과가 달라집니다. "
+              "적용한 우선순위와 근거는 「분리 판단」 시트의 「계약상 권리」 표에 남깁니다."),
+      ("만기 시점", "매도청구는 없습니다. 전환가치와 현금(MAX(조기상환금액, 만기상환금액) + 이자) 두 가지만 비교합니다."),
+      ] + ([("TF 시트의 합계 관계", "TF 계산 시트에서는 08 금융상품가치 = 05 지분가치 + 06 부채가치가 모든 노드에서 "
+                                "성립합니다. 주식결제분·현금결제분은 모형의 할인 구분이며 회계상 자본요소·부채요소 "
+                                "배분액과 금액이 다를 수 있습니다.")] if _tf else []) + [
       ("", ""),
-      ("동점을 어떻게 깨는가", ""),
-      ("언제 생기나", "리픽싱이 주가로 재설정되는 날에는 전환가액 = 주가이므로 "
-                  "전환가치가 정확히 100 이 된다. 같은 날 조기상환금액도 100 이면 값이 같다."),
-      ("규칙", "전환은 허용오차(1e-9)만큼 앞설 때만 이긴다. 동점이면 현금(상환)이다. "
-             "지분으로 보면 무위험이자율로 할인되어 값이 올라가므로 현금 쪽이 보수적이다."),
-      ("왜 정해야 하나", "정해 두지 않으면 부동소수 잡음이 갈라 놓는다. "
-                    "TF 는 지분과 부채를 다른 이자율로 할인하므로 한 노드의 판정이 "
-                    "전체 값을 몇 포인트씩 움직인다."),
+      ("전환·상환·계속보유 가치가 같은 경우의 선택 기준", ""),
+      ("언제 생기나", "전환가격이 그날 주가로 조정되는 날에는 전환가치가 정확히 100 이 됩니다. "
+                  "같은 날 조기상환금액도 100 이면 두 가치가 같습니다."),
+      ("기준", "전환가치가 상환 금액보다 1e-9(10억분의 1) 넘게 클 때만 전환을 고르고, 같으면 상환을 고릅니다."),
+      ("정해 두는 이유", "기준이 없으면 계산 오차가 선택을 가르고, TF 는 주식결제분과 현금결제분을 다른 이자율로 "
+                    "할인하므로 한 노드의 선택이 전체 가치를 움직입니다."),
       ("", ""),
-      ("주의", ""),
-      ("매도청구권", "이 조서는 "
-                    + ["유무가치비교법(⑮ 트랜치 두 개의 차이)",
-                       "옵션차익 · 혼합할인율(⑰~⑳)",
-                       "옵션차익 · 지분·부채 분리(⑰⑲㉑~㉔)"][tm.k_method]
-                    + " 으로 잰다. 가정 시트의 평가방법 줄은 그 사실을 적어 둔 "
-                      "것이지 고르는 칸이 아니다 — 다른 방법의 트리는 이 조서에 "
-                      "없다."),
-      ("신용위험 처리", ("이 조서는 TF 로 잰다. " if tm.model == "TF"
-                       else "이 조서는 GS 로 잰다. ")
-                     + "고르지 않은 쪽의 트리는 만들지 않았으므로 가정 시트의 "
-                       "TF/GS 줄을 바꿔도 값이 따라오지 않는다. 주계약과 "
-                       "부채요소는 전환이 없어 두 모형이 같다."),
-      ("이자율곡선", "각 트리 11·12행 선도이자율의 출처다. 부트스트래핑 표까지 남긴다."),
-      ("상각표", "유효이자율만 역산 결과라 값이고, 상각 내역은 수식이다. "
-                "기말 잔액이 만기상환금액과 맞는지 마지막 줄에서 검산한다."),
-      ("검산", "결과 시트 3번과 상각표 마지막 줄을 먼저 보고 모두 적합인지 확인한다.")]
+      ("유의사항", ""),
+      ("매도청구권 평가방법", "이 조서는 「"
+                    + ["유무가치비교법 — 매도청구 대상 물량과 비대상 물량의 가치 차이",
+                       "옵션차익법 · 혼합할인율 — 매도청구 행사가격을 전환확률로 배분하고 혼합할인율로 할인",
+                       "옵션차익법 · 주식결제·현금결제 분리 — 매도청구 행사가격을 전환확률로 배분하고 성분별로 할인"][tm.k_method]
+                    + "」 방법으로 계산했습니다. 가정 시트의 평가방법 줄은 적용한 방법을 적어 둔 것이며 선택 칸이 아닙니다."),
+      ("신용위험 처리", ("이 조서는 TF 로 계산했습니다. " if _tf else "이 조서는 GS 로 계산했습니다. ")
+                     + "가정 시트의 TF/GS 줄을 바꿔도 결과가 따라오지 않습니다. 10 주계약가치와 16 부채요소는 "
+                       "전환이 없어 두 모형의 결과가 같습니다."),
+      ("상각표", "유효이자율만 앱의 역산 결과(값)이고, 상각 내역은 수식입니다.")]
     r = 4
     for a2, b3 in ex:
         if a2 and not b3: sec(H, r, a2, span=2)
@@ -9333,6 +9497,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         _rest = [w for w in wb._sheets if w.title not in _attached]
         _tail = [w for w in wb._sheets if w.title in _attached]
         wb._sheets = _rest + _tail
+    rename_sheets(wb, sheet_display_names(tm), _BW_WORDS if is_bw(tm) else ())
     polish_wb(wb)
     relabel_inst(wb, tm)
     if as_workbook: return wb
@@ -9424,7 +9589,7 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
 
     # ── 가정 ──
     A = sheet("가정", widths=[34, 18, 14, 60])
-    head(A, 2, "가정", ("노란 셀을 바꾸면 모든 트리가 다시 계산된다."
+    head(A, 2, "가정", ("노란 칸을 바꾸면 그 값을 쓰는 계산 시트가 다시 계산된다. 행사일·노드 수는 앱에서 바꾼다."
                       if formula else
                       "앱이 계산한 값을 그대로 담았다."), span=4)
     K_ = {}
@@ -9495,9 +9660,9 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
          "않게 한다.", span=4)
 
     # ── 트리 시트 ──
-    HEAD = ["Date", "time-step", "Flag(풋)", "Flag(콜)", "적격상장 스텝",
+    HEAD = ["날짜", "스텝(노드 번호)", "풋 행사 가능 (1=예)", "콜 행사 가능 (1=예)", "적격상장 스텝",
             "풋 행사금액", "콜 행사금액", "풋 선도할인율", "무위험 선도이자율",
-            "σ", "u", "d", "q", "1−q"]
+            "주가변동성 σ", "상승계수 u", "하락계수 d", "위험중립 상승확률 q", "하락확률 1−q"]
 
     def newsheet(name, ttl, memo, refs):
         W = sheet(name, widths=[15] + [9]*(n+1))
@@ -9543,7 +9708,7 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
             g(11, V(R["u"], f"={K_['u']}"), N4)
             g(12, V(R["d"], f"={K_['dd']}"), N4)
         put(W, 15, 2, ttl, bold=True, size=11)
-        put(W, 16, 2, "r ＼ 스텝", bold=True, size=8, fill=RPT["tint"],
+        put(W, 16, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=RPT["tint"],
             border=True, align="center")
         for i in range(n+1):
             put(W, 16, 3+i, i, bold=True, size=8, fmt=N0, align="center",
@@ -9552,7 +9717,7 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
             put(W, R0+r, 2, r, bold=True, size=8, fmt=N0, align="center",
                 fill=RPT["tint"], border=True)
         put(W, R0+n+2, 2, memo, size=9, color=RPT["grey"])
-        put(W, R0+n+3, 2, "참조: " + refs, size=9, color=RPT["green"])
+        put(W, R0+n+3, 2, "이 시트가 참조하는 시트: " + refs, size=9, color=RPT["green"])
         put(W, R0+n+4, 2, "r 은 하락 횟수. 위로 갈수록 주가가 높다."
             + ("  8·9행 선도이자율만 값이다." if formula else ""),
             size=9, color=RPT["grey"])
@@ -9567,7 +9732,7 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
                 put(W, R0+r, 3+i, fn(i, r, L, Lp, Ln), fmt=fmt, size=8, align="right")
 
     W = newsheet(S1, "① 주가트리  S = S0 × u^(스텝−r) × d^r",
-                 "맨 위는 직전 열 맨 위 × u, 나머지는 직전 열 한 칸 위 × d.", "가정")
+                 "맨 위 노드는 직전 시점 맨 위 × u, 나머지는 직전 시점 한 칸 위 노드 × d.", "가정")
     fill(W, lambda i, r, L, Lp, Ln: V(
         round(R["S"](i, i-r), 4),
         f"={K_['S0']}" if i == 0 else
@@ -9670,7 +9835,7 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
         ("최대주주 콜옵션", R["call"], f"={Q(S4)}!C{R0}",
          "지분을 사 갈 권리. 콜이 없으면 0"),
         ("지분 + 풋 − 콜", _eqv + R["put"] - R["call"], "=C6+C7-C8",
-         "투자자가 쥔 것의 합. 투자 시점이면 투자원금과 견준다"),
+         "투자자가 보유한 권리의 합. 투자 시점이면 투자원금과 비교한다"),
     ]
     for i, (nm, val, fx, memo) in enumerate(_items):
         r = 6+i
@@ -9701,27 +9866,8 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
         put(RS, r, 3, fx, fmt=fm, align="right", bold=True, border=True)
         put(RS, r, 4, memo, size=9, color=RPT["grey"], wrap=True)
 
-    sec(RS, 18, "3. 검산", span=4)
-    _LN = gl(3+n)
-    _grw = (f"EXP(SUM({Q(S1)}!{gl(3)}$9:{gl(2+n)}$9)*{K_['dt']})" if n > 0 else "1")
-    _chk = [
-        ("위험중립가중치 q", V(round(R["q"], 6), f"={Q(S1)}!C$13"), N4,
-         '=IF(AND(C19>0,C19<1),"적합","확인 필요")'),
-        ("풋 − 지금 행사했을 때의 값 (≥ 0)",
-         V(round(R["put"] - (max(R["pk"](0) - 100*tm.S0/tm.K0, 0.0)
-                             if R["p_on"](0) else 0.0), 6),
-           f'=C7-IF({Q(S3)}!C$3=1,MAX({Q(S3)}!C$6-C6,0),0)'), N4,
-         '=IF(C20>=-0.000001,"적합","확인 필요")'),
-        ("풋·콜이 모두 0 이상",
-         V(round(min(R["put"], R["call"]), 6), "=MIN(C7,C8)"), N4,
-         '=IF(C21>=-0.000001,"적합","확인 필요")'),
-    ]
-    for i, (nm, fx, fm, jd) in enumerate(_chk):
-        r = 19+i
-        put(RS, r, 2, nm, bold=True, border=True)
-        put(RS, r, 3, fx, fmt=fm, align="right", border=True)
-        put(RS, r, 4, jd, align="center", border=True)
-    note(RS, 23, "적격상장을 켜면 풋이 그 노드에서 소멸하므로 값이 뚝 떨어진다. "
+    # q 범위·풋 하한·옵션 ≥ 0 확인은 앱이 평가할 때 한다(sha_integrity) — 조서에 싣지 않는다.
+    note(RS, 18, "적격상장을 켜면 풋이 그 노드에서 소멸하므로 값이 뚝 떨어진다. "
          "최소 주가 기준이 계약의 「적격상장」 정의와 맞는지 반드시 확인하라.", span=4)
 
     # ── 회계처리 ──

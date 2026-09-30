@@ -1,14 +1,23 @@
-"""근거 원문 — 판단 항목별 기준서 문단·질의회신·한공회 실무사례 쪽.
+"""근거 — 판단 항목별 기준서 문단·질의회신·한공회 실무사례 쪽.
 
-원문은 참고용이다. 앱의 판정은 초안이며 결론은 평가자가 적는다.
-- 기준서·질의회신: 회계위키 수록 본문 대조(valuation/refdata/kifrs.json)
-- 실무사례: 한공회 Series 11 해당 쪽 발췌(valuation/refdata/book_pages.json)
+배포본은 **출처(자료명·문단·쪽)만** 보인다. 원문(기준서 본문·책 발췌)은 저작권·이용 권한이
+확인되지 않았으므로 조서에 싣지 않고, 화면에서도 내부 사용본(환경변수
+VAL_INTERNAL_SOURCES=1)에서만 펼친다. 원문 파일이 없어도 출처 표기는 동작한다.
+- 기준서·질의회신: 회계위키 수록 본문 대조(valuation/refdata/kifrs.json) — 내부용
+- 실무사례: 한공회 Series 11 해당 쪽 발췌(valuation/refdata/book_pages.json) — 내부용
 """
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 
 DIR = Path(__file__).with_name('refdata')
+BOOK = '한국공인회계사회 『K-IFRS 실무사례와 해설 Series 11 — 복합금융상품』(2023)'
+
+
+def internal():
+    """원문을 펼쳐도 되는 내부 사용본인가 (VAL_INTERNAL_SOURCES=1). 배포본은 출처만."""
+    return os.environ.get('VAL_INTERNAL_SOURCES', '') == '1'
 
 # 판단 항목 → 근거 키. 'book:26-32' 는 인쇄 쪽 범위.
 REFS = {
@@ -79,6 +88,7 @@ def lookup(key):
 
 
 def label(key):
+    """짧은 표기. 기준서는 「1109 B4.3.5」(문단), 책은 「실무사례 26-32쪽」 — 둘이 섞여 보이지 않게."""
     if key.startswith('book:'):
         return f"실무사례 {key[5:]}쪽"
     std, para = key.split(':', 1)
@@ -87,6 +97,18 @@ def label(key):
     if std.startswith('KGAAP'):
         return f"일반기준 {para}"
     return f"{std} {para}"
+
+
+def citation(key):
+    """출처 한 줄 — 자료명과 문단·쪽을 풀어 쓴다. 원문 파일 없이 만든다."""
+    if key.startswith('book:'):
+        return f"{BOOK} {key[5:].replace('-', '~')}쪽"
+    std, para = key.split(':', 1)
+    if std == 'QNA':
+        return f"회계기준원·금융감독원 질의회신 {para}"
+    if std.startswith('KGAAP'):
+        return f"일반기업회계기준 제{std[5:]}장 문단 {para}"
+    return f"K-IFRS 제{std}호 문단 {para}"
 
 
 def refs(topic):

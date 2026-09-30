@@ -219,11 +219,10 @@ INFO_SHEET = '조서 정보'
 
 
 def info_sheet(wb, run, *, formula=False):
-    """몇 줄짜리 기록을 한 장에 모은다 — 계산 정보 · 자료 출처 · 행사방식 · 확인할 사항 ·
-    (수식 조서면) 엑셀 수식으로 다시 계산한 값과 앱 결과의 대조.
+    """몇 줄짜리 기록을 한 장에 모은다 — 계산 정보 · 자료 출처 · 행사방식 · 확인할 사항.
 
-    계산이 고장 나지 않았는지 보는 개발용 점검(산술검산·모형검증)은 조서에 싣지 않는다 —
-    service.export_bundle 이 조서를 만들 때 돌리고, 걸리면 조서를 만들지 않는다.
+    숫자가 맞는지 보는 확인(산술검산·모형검증·엑셀 재계산 대조)은 조서에 싣지 않는다 —
+    앱이 평가할 때 돌리고, 걸리면 조서를 만들지 않는다.
     """
     s, t = run.summary, run.terms
     for old in ('계산정보', '확인사항', '산술검산', '출처기록', '행사방식', '수식대사', '변동성조회조건', INFO_SHEET):
@@ -289,17 +288,7 @@ def info_sheet(wb, run, *, formula=False):
     if not warnings:
         row(['—', '없음'])
     r[0] += 1
-    if formula and '결과' in wb and t.inst != 'SHA':
-        title('엑셀 수식으로 다시 계산한 값 = 앱 결과')
-        head(['항목', '앱 계산값(100)', '엑셀 수식 값(100)', '차이', '일치 여부'])
-        refs = [('주계약', '결과!C16', run.raw['b0']), ('부채요소', '결과!C17', run.raw['b1']),
-                ('전체 가치', '결과!C10', run.raw['b2']), ('콜옵션', '결과!C22', run.raw['ca']),
-                ('순포지션', '결과!C10-결과!C22', run.raw['b2']-run.raw['ca'])]
-        for name, ref, value in refs:
-            i = row([name, value])
-            ws.cell(i, 3, '=' + ref).number_format = '#,##0.000000'
-            ws.cell(i, 4, f'=C{i}-B{i}').number_format = '#,##0.000000'
-            ws.cell(i, 5, f'=IF(ABS(D{i})<=MAX(0.00000001,ABS(B{i})*0.0000000001),"일치","차이 발생")')
+    # 엑셀로 다시 계산한 값이 앱과 같은지는 앱이 조서를 만들 때 확인한다 — 조서에는 싣지 않는다.
     return ws
 
 
@@ -382,7 +371,7 @@ def judgment_rows(run):
             if not d or not d['있음']:
                 continue
             ind = d['지표']
-            nums = (f"행사금액 {ind['첫 조기상환일 행사금액']:,.4f} / 상각후원가 {ind['같은 시점 상각후원가']:,.4f} / 차이 {ind['차이']:.2%} (기준 {legacy.SPLIT_TOL:.0%})"
+            nums = (f"행사금액 {ind['첫 조기상환일 행사금액']:,.4f} / 상각후원가 {ind['같은 시점 상각후원가']:,.4f} / 차이 {ind['차이']:.2%} (비교기준 {ind.get('비교기준 (평가자 설정)', legacy.SPLIT_TOL):.0%} · 평가자 설정)"
                     if '첫 조기상환일 행사금액' in ind else '')
             add('분리 판정', nm, legacy.inst_text(t, d['결론'] + ' — ' + ' '.join(d['이유'])), nums, f'split_{key}', topic)
         if t.k_w > 0:
@@ -403,15 +392,8 @@ def judgment_rows(run):
         if abs(day1['diff']) >= 0.005:
             for key, label_ in DAY1_TOPICS:
                 add('최초 인식 · 원인 점검', label_, '', '', key, 'day1')
-    seen, quotes = set(), [[], ['근거 원문 발췌', '', '', '', '', '', ''], ['근거', '제목', '위치', '본문', '출처', '', '']]
-    for topic in used:
-        for key in sources.refs(topic):
-            if key in seen:
-                continue
-            seen.add(key)
-            for row in sources.lookup(key):
-                quotes.append([sources.label(key), row['title'], row['location'], row['text'], row['url'] or row['source'], '', ''])
-    return head + rows + quotes
+    # 근거는 출처(자료명·문단·쪽)만 적는다 — 기준서·실무사례 원문은 조서에 싣지 않는다.
+    return head + rows
 
 
 DAY1_TOPICS = [('day1_rights', '모형이 빠뜨린 권리가 있나요?'), ('day1_inputs', '입력값이 거래 당시와 맞나요?'),

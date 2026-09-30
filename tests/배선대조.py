@@ -285,7 +285,7 @@ def main():
         wbf = formula_wb(G, t, full, b0, b1, b2, ca, conv)
         names = set(wbf.sheetnames)
         labels = {wbf["가정"].cell(r, 2).value for r in range(1, 150)}
-        has = {"02 전환가격", "03 전환비율"} <= names
+        has = {"02 전환가격", "03 전환주식수 (액면 100당)"} <= names
         ok = (not has and "최저 조정가액" not in labels) if rfx == 0 else (has and "최저 조정가액" in labels)
         if not ok: bad += 1
         print("   %-10s 02·03 트리 %s · 최저 조정가액 줄 %s  %s"

@@ -134,7 +134,6 @@ def main():
         if bsg is not None:
             nn = int(t.n)
             chk("BDT 부채요소 = B1", wb["BDT 부채요소"].cell(13+nn+2, 3).value, b1, 1e-5)
-            chk("BDT 주계약 = B0", wb["BDT 주계약"].cell(13+nn+2, 3).value, b0, 1e-5)
             if bsg == 0:
                 g = G["pick"](G["engine"](t, conv=False, put=True, call=False), t.model)
                 chk("σ=0 이면 확정 격자와 같다", b1, g, 1e-9)

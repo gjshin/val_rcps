@@ -277,6 +277,11 @@ def input_editor(case, autosave=False):
     with st.expander('분해방법·기간 기준'):
         st.caption('회계분류는 사용자의 가정입니다. 구성요소 차액은 회계상 인식액과 구분하십시오.')
         fields(['acc_basis', 'conv_class', 'p_sep', 'k_sep', 'p_lost_int', 'fvpl_whole'], edited, case)
+        if inst != 'SHA':
+            st.caption('풋 분리 판단 — 조기상환 행사금액을 자본요소 분리 전 상각후원가와 비교합니다. 비교기준(기본 10%)은 '
+                       '기준서가 정한 수치가 아니므로 평가자가 정합니다. 출발 금액은 0 이하로 두면 앱 자동값(발행금액 100, '
+                       '발행회사가 별개 콜을 함께 샀으면 + 콜 가치)을 쓰고, 실제 회계상 배분액이 다르면 그 금액과 근거를 넣습니다.')
+            fields(['split_tol', 'split_base_in', 'split_base_why'], edited, case)
     with st.expander('후속평가·역산·기타 상세 입력'):
         st.caption('기존 모형의 전체 입력항목을 같은 평가파일에서 관리합니다. 여기서 변경한 값도 평가·분석에 직접 적용됩니다.')
         remaining = sorted(FIELDS - st.session_state._rendered_fields - {'inst'})

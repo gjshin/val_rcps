@@ -2695,6 +2695,21 @@ if _detail_section == _detail_sections[2]:
                  "때문입니다. 거래원가는 전액 즉시 비용입니다. 전환권이 자본이면 "
                  "지정할 수 없어(문단 4.2.2) 형태가 바뀌지 않고 경고만 뜹니다. "
                  "실무에서 드뭅니다.") else 0
+        f5, f6, f7 = st.columns([1, 1, 2])
+        t.split_tol = f5.number_input(
+            "풋 분리 판단 비교기준 (%)", min_value=0.1, max_value=99.0,
+            value=float(split_tol(t))*100, step=1.0,
+            help="행사금액이 상각후원가와 「거의 같은가」를 볼 기준입니다. 기준서는 수치를 "
+                 "정하지 않으므로 평가자가 정합니다. 기본 10%.")/100
+        _auto = split_base_auto(t, ca)
+        t.split_base_in = f6.number_input(
+            "분리 판단 출발 금액 (0 이하면 자동)", value=float(t.split_base_in),
+            help=f"자본요소를 분리하기 전 금액에서 상각을 시작합니다. 자동값은 {_auto:,.4f} "
+                 "(발행금액 100, 발행회사가 별개 콜을 함께 샀으면 + 콜 가치). 실제 회계상 "
+                 "배분액이 다르면 그 금액을 넣으십시오.")
+        t.split_base_why = f7.text_input(
+            "출발 금액을 직접 넣은 근거", value=t.split_base_why,
+            disabled=t.split_base_in <= 0)
 
     import judgment_ui
     judgment_ui.render(t, full, b0, b1, b2, ca, conv, LB, _shared_run)
@@ -3247,8 +3262,8 @@ if _detail_section == _detail_sections[9]:
     st.divider()
     st.caption(
         "**산출내역은 이 조서 안에 함께 들어갑니다.** 따로 내려받아 철하실 것이 "
-        "없습니다. 조서 뒤쪽에 「σ 표지 · σ 회사별」(변동성), 「σr …」(금리변동성), "
-        "「IR 표지 · IR 입력곡선 · IR 곡선별 산출 · IR 선도이자율」(이자율) 시트가 "
+        "없습니다. 조서 뒤쪽에 「σ 주가변동성 산출요약 · σ 회사별」(변동성), 「σr …」(금리변동성), "
+        "「IR 이자율 산출요약 · IR 입력곡선 · IR 곡선별 산출 · IR 선도이자율」(이자율) 시트가 "
         "붙습니다. 수식 조서에서는 트리 11·12행이 「IR 선도이자율」 표를 참조하므로, "
         "고시 수익률을 고치면 부트스트래핑 → 선도이자율 → 트리 → 배분까지 한 파일 "
         "안에서 따라 움직입니다. 변동성은 산출값과 적용값이 같을 때만 이어 붙입니다 "
