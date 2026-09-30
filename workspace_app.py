@@ -68,6 +68,13 @@ def field(key, edited, case, prefix='input'):
         if selected == 'any':
             st.caption('행사기간 내 모든 계산시점에서 행사합니다. 계산 간격 변경 시에도 유지됩니다.')
             return
+    if key == 'p_sep' and not (edited.get('conv_class', 'equity') == 'equity' and int(edited.get('k_sep', 1)) != 0):
+        # 전환권이 부채이거나 콜을 내재파생에 넣으면 조기상환권은 그 파생과 묶여 분리된다 (1109 B4.3.4).
+        st.selectbox(title, [1], format_func=lambda v: CHOICES['p_sep'][v], key=widget_key + '_locked', disabled=True)
+        st.caption('전환권이 부채이거나 매도청구권을 내재파생에 포함하면 조기상환권은 그 파생과 묶어 하나의 '
+                   '복합내재파생상품으로 분리합니다 (1109 B4.3.4). «주계약에 포함» 은 고를 수 없습니다.')
+        edited[key] = 1
+        return
     if key in CHOICES:
         options = CHOICES[key]
         keys = list(options)
