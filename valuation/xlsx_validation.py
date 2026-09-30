@@ -30,8 +30,30 @@ def inspect_workbook(data):
     return {'errors': errors, 'max_formula_length': longest}
 
 
-def recalculate_and_compare(data, executable=None):
-    """Recalculate the ACTUAL export, without changing inputs or step count."""
+def compare_cells(wb, expected, tol=1e-6):
+    """재계산한 통합문서에서 앱 값과 같아야 하는 칸을 견준다 — [(항목, 칸, 앱, 수식, 판정)].
+
+    ``expected`` 는 (항목, 시트, 칸, 앱 값) 목록이다(legacy.formula_key_cells). 허용오차는
+    금액 크기에 비례한다(1 이하 1e-6).
+    """
+    rows = []
+    for label, sheet, cell, want in expected:
+        have = None
+        if sheet in wb.sheetnames:
+            v = wb[sheet][cell].value
+            have = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+        ok = isinstance(have, float) and abs(have - want) <= tol*max(1.0, abs(want))
+        rows.append((label, f"{sheet}!{cell}", want, have, "일치" if ok else "불일치"))
+    return rows
+
+
+def recalculate_and_compare(data, executable=None, expected=None):
+    """Recalculate the ACTUAL export, without changing inputs or step count.
+
+    ``expected`` — 앱 값과 같아야 하는 칸(legacy.formula_key_cells). 주면 그 칸들을 견준다.
+    예전에는 조서 안의 «수식대사» 시트를 읽었는데 그 시트를 조서에서 뺀 뒤로 검사가 늘
+    실패했다. 이제 검사하는 쪽이 앱 값을 들고 온다. 옛 조서에 수식대사 시트가 있으면 그것도 읽는다.
+    """
     import openpyxl
     exe = executable or os.environ.get('VALUATION_SOFFICE') or shutil.which('libreoffice') or shutil.which('soffice')
     if not exe:
@@ -49,11 +71,16 @@ def recalculate_and_compare(data, executable=None):
         if result.returncode or not target.exists():
             raise ValueError('엑셀 재계산 실패: '+(result.stderr or result.stdout)[-2000:])
         wb = openpyxl.load_workbook(target, data_only=True, read_only=True)
-        if '수식대사' not in wb:
+        rows = []
+        if expected:
+            rows = compare_cells(wb, expected)
+        elif '수식대사' in wb.sheetnames:
+            rows = list(wb['수식대사'].values)[1:]
+        else:
             wb.close()
-            raise ValueError('수식대사 시트가 없는 출력입니다. 상세 수식 조서로 검사하십시오.')
-        rows = list(wb['수식대사'].values)[1:]
-        errors = [f'{r[0]}: 앱 {r[1]} / 수식 {r[2]}' for r in rows if r[4] != '일치']
+            raise ValueError('견줄 앱 값이 없습니다 — expected(legacy.formula_key_cells)를 넘겨 주십시오.')
+        errors = [f'{r[0]}: 앱 {r[2] if expected else r[1]} / 수식 {r[3] if expected else r[2]}'
+                  for r in rows if r[4] != '일치']
         for sheet in wb:
             for row in sheet:
                 for cell in row:

@@ -94,8 +94,13 @@ def main(argv=None, *, legacy_cli=False):
             extras['민감도.csv'] = stream.getvalue().encode('utf-8-sig')
         if a.check_formulas:
             from valuation.xlsx_validation import recalculate_and_compare
+            from valuation import legacy as _lg
+            _r = run.raw
+            _eir = (_lg.eir_or_none(run.terms, _r["full"], _r["b0"], _r["b1"], _r["b2"], _r["ca"])
+                    if (a.accounting and not _lg.is_sha(run.terms)) else None)
             with zipfile.ZipFile(io.BytesIO(data)) as bundle:
-                checked = recalculate_and_compare(bundle.read('formula_review.xlsx'))
+                checked = recalculate_and_compare(bundle.read('formula_review.xlsx'),
+                                                  expected=_lg.formula_key_cells(run.terms, _r, _eir))
             extras['수식재계산검사.json'] = json.dumps(checked, ensure_ascii=False, indent=2).encode()
         if a.vol:
             extras['변동성.xlsx'] = export_volatility_workbook(pack)

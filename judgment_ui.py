@@ -93,6 +93,13 @@ def split_section(t, full, b0, b1, b2, ca, LB, run):
             if d['근거']:
                 st.caption('근거 · ' + ' · '.join(d['근거']))
             st.write('평가방법 — ' + L.inst_text(t, d['평가']))
+            if key == 'put' and d['지표'] and d.get('회차'):
+                # 행사일마다 견준 표 — 조서 «분리 판단» 시트의 행사일별 표와 같은 값이다.
+                st.dataframe(pd.DataFrame([[round(m, 2), max(0.0, (m - t.elapsed_m)/12), pv, bv, f'{g*100:.1f}%']
+                                           for m, pv, bv, g in d['회차']], columns=L.SPLIT_DATE_COLS),
+                             hide_index=True, use_container_width=True)
+                st.caption('행사일마다 행사금액과 같은 시점 상각후원가를 견주고, 가장 큰 차이로 판정합니다. '
+                           '조서 «분리 판단» 시트의 행사일별 표와 같은 값입니다.')
         with c2:
             source(topic)
         memo(f'split_{key}', run)

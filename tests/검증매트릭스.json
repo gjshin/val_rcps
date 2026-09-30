@@ -1,6 +1,6 @@
 {
- "generated": "2026-09-30T08:37:25",
- "head": "bc9cdb8",
+ "generated": "2026-09-30T09:39:46",
+ "head": "0920b64",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -3410,8 +3410,8 @@
    "meaning": "조기상환 행사금액표",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/값조서대조.py::equity·0·TF·1",
     "tests/값조서대조.py::equity·0·TF·0",
@@ -3426,7 +3426,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 158
+   "n_tests": 159
   },
   {
    "case_id": "CB-p_sched-24 104_0000",
@@ -4305,7 +4305,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 154
+   "n_tests": 155
   },
   {
    "case_id": "CB-pc_order-1",
@@ -4332,7 +4332,7 @@
     "tests/손계산대조.py::test_decision_table",
     "tests/손계산대조.py::test_decision_matches_old_chains"
    ],
-   "n_tests": 15
+   "n_tests": 16
   },
   {
    "case_id": "RCPS-pc_order-0",
@@ -7831,7 +7831,7 @@
     "tests/값조서대조.py::equity·2·GS·1",
     "tests/값조서대조.py::equity·2·GS·0"
    ],
-   "n_tests": 154
+   "n_tests": 155
   },
   {
    "case_id": "RCPS-mid-ON",

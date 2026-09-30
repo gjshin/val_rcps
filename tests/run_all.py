@@ -23,6 +23,7 @@ SUITES = [
     ("검산수식대조", ["python3", "tests/검산수식대조.py", "--quick"], True, "3분"),
     ("배선대조",     ["python3", "tests/배선대조.py"],            True,  "수 초"),
     ("리포트대조",   ["python3", "tests/리포트대조.py"],          True,  "2분"),
+    ("엑셀입력변경", ["python3", "tests/엑셀입력변경.py"],        True,  "2분"),
     ("값조서대조",   ["python3", "tests/값조서대조.py"],          False, "4분"),
     ("주주간계약대조", ["python3", "tests/주주간계약대조.py"],      False, "4분"),
     ("조합시험 전체", ["python3", "tests/조합시험.py"],           False, "15분"),

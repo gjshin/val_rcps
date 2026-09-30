@@ -365,6 +365,10 @@ def collect_coverage(G):
                                          ("RCPS", "emb_approach", 1), ("RCPS", "emb_approach", 2),
                                          ("BW", "emb_approach", 1), ("BW", "emb_approach", 2),
                                          ("CB", "p_sep", 0), ("CB", "conv_class", "liability")],
+        # 동점 허용오차 — 금액 크기에 비례 (엔진 tie_tol · 엑셀 xl_tol), 두 우선순위 갈래
+        "test_tie_tolerance": [("CB", "pc_order", 0), ("CB", "pc_order", 1)],
+        # 행사일 대조표 — 손으로 센 노드 날짜 · 격자가 여는 노드와 같은가 · 2주 격자 규칙
+        "test_exercise_date_table": [("CB", "mid", False), ("CB", "p_sched", "")],
         # 이미 지급한 이자·배당의 공제 방식 — 세 권리 · 세 상품 · 세 방식을 독립 산식과 대조
         "test_deduction_methods": [("CB", "p_less_cpn", 0), ("CB", "p_less_cpn", 1), ("CB", "p_less_cpn", 2), ("CB", "k_less_cpn", 0), ("CB", "k_less_cpn", 1), ("CB", "k_less_cpn", 2), ("CB", "m_less_cpn", 0), ("CB", "m_less_cpn", 1), ("CB", "m_less_cpn", 2), ("RCPS", "p_less_cpn", 0), ("RCPS", "p_less_cpn", 1), ("RCPS", "p_less_cpn", 2), ("RCPS", "k_less_cpn", 0), ("RCPS", "k_less_cpn", 1), ("RCPS", "k_less_cpn", 2), ("RCPS", "m_less_cpn", 0), ("RCPS", "m_less_cpn", 1), ("RCPS", "m_less_cpn", 2), ("BW", "p_less_cpn", 0), ("BW", "p_less_cpn", 1), ("BW", "p_less_cpn", 2), ("BW", "k_less_cpn", 0), ("BW", "k_less_cpn", 1), ("BW", "k_less_cpn", 2), ("BW", "m_less_cpn", 0), ("BW", "m_less_cpn", 1), ("BW", "m_less_cpn", 2)],
         "test_div_basis": [("RCPS", "div_basis", 0), ("RCPS", "div_basis", 1), ("RCPS", "div_mode", 1)],

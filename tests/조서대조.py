@@ -363,12 +363,18 @@ def build(G, over, path):
                                conv_start=_cs, put_start=_ps), t.model)
     ctp1 = G["call_third_party"](t, full, 1)
     ctp2 = G["call_third_party"](t, full, 2)
+    eir = G["eir_or_none"](t, full, b0, b1, b2, ca)
     open(path, "wb").write(
-        G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv,
-                                G["eir_or_none"](t, full, b0, b1, b2, ca)))
+        G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv, eir))
 
     import openpyxl
     wb = openpyxl.load_workbook(path)
+    # 분리 판단의 유효이자율 칸은 라벨로 찾는다 — 시트 이름을 바꾸기 전에.
+    split_r = None
+    if "분리 판단" in wb.sheetnames:
+        for (c,) in wb["분리 판단"].iter_rows(min_col=2, max_col=2):
+            if isinstance(c.value, str) and c.value.startswith("유효이자율 (자본요소 분리 전"):
+                split_r = c.row
     mp = {nm: f"S{i:02d}" for i, nm in enumerate(wb.sheetnames)}
     for ws in wb.worksheets:
         for row in ws.iter_rows():
@@ -390,7 +396,11 @@ def build(G, over, path):
                 al=al, eq=(t.conv_class == "equity"), sep=(t.k_sep != 0),
                 fvpl=G["fvpl_on"](t),
                 nosep=(t.conv_class == "equity" and t.k_sep != 0
-                       and int(t.p_sep) == 0)), \
+                       and int(t.p_sep) == 0),
+                # 유효이자율 — 상각표(인식한 주계약)와 분리 판단(자본요소 분리 전 금액)
+                eir=eir, sh_m=mp.get("상각표"),
+                eir0=(G["eir_table"](t, G["split_base"](t, ca))[0] if split_r else None),
+                split_r=split_r, sh_j=mp.get("분리 판단")), \
         mp["결과"], mp["회계처리"]
 
 
@@ -434,7 +444,7 @@ def main():
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "wb.xlsx")
             eng, res, acc = build(G, over, path)
-            got = solve(path, (res, acc))
+            got = solve(path, tuple(x for x in (res, acc, eng["sh_m"], eng["sh_j"]) if x))
         print(f"\n[{lbl}]")
         for nm, cell, key in ROWS:
             want = eng[key] if key else eng["b1"] - eng["b0"]
@@ -514,6 +524,29 @@ def main():
                 print("   %-22s 조서 %11s · 배분표 %9s  %s"
                       % (f"배분 · {r}행", f"{have:.4f}" if have is not None else "없음",
                          f"{want:.4f}" if want is not None else "없음", "" if ok else "★"))
+        # 유효이자율도 엑셀 수식(이분법)으로 구한다 — 엔진과 같은 값이어야 하고,
+        # 그 이자율로 돈 상각표의 마지막 기말이 상환금액과 맞아야 한다.
+        if eng["eir"] is not None and eng["sh_m"]:
+            r_e, rows_e, red_e, _ = eng["eir"]
+            M = got[eng["sh_m"]]
+            have, last = M.get("C10"), M.get(f"H{15 + len(rows_e) - 1}")
+            ok = have is not None and abs(have - r_e) <= 1e-9*max(1.0, abs(r_e))
+            okl = last is not None and abs(last - red_e) < 1e-6
+            bad += (not ok) + (not okl)
+            print("   %-22s 조서 %11s · 엔진 %10.6f%%  %s"
+                  % ("상각표 유효이자율", f"{have*100:.6f}%" if have is not None else "없음",
+                     r_e*100, "" if ok else "★"))
+            print("   %-22s 조서 %11s · 상환 %11.4f  %s"
+                  % ("상각표 마지막 기말", f"{last:.4f}" if last is not None else "없음",
+                     red_e, "" if okl else "★"))
+        if eng["split_r"]:
+            have = got[eng["sh_j"]].get(f"C{eng['split_r']}")
+            want = eng["eir0"]
+            ok = have is not None and abs(have - want) <= 1e-9*max(1.0, abs(want))
+            bad += not ok
+            print("   %-22s 조서 %11s · 엔진 %10.6f%%  %s"
+                  % ("분리 판단 유효이자율", f"{have*100:.6f}%" if have is not None else "없음",
+                     want*100, "" if ok else "★"))
     print("\n" + ("모든 항목 일치" if bad == 0 else f"★ {bad}건 불일치"))
     return 0 if bad == 0 else 1
 
