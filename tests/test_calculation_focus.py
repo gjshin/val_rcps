@@ -14,7 +14,7 @@ from streamlit.testing.v1 import AppTest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from valuation import legacy
-from valuation.case import inspect_case
+from valuation.case import Case, inspect_case
 from valuation.market_data import query_spec, make_pack, validate_pack, parse_price_table, export_volatility_workbook
 from valuation.service import calculate, export_bundle
 from valuation.xlsx_validation import inspect_workbook, compare_cells
@@ -261,3 +261,48 @@ def test_future_date_with_all_prices_missing_is_still_rejected():
     series, notes = parse_price_table('date,A\n2025-01-01,100\n2025-01-02,\n', allow_missing=True, return_exclusions=True)
     with pytest.raises(ValueError, match='기준일 이후'):
         select_price_window(series, notes, 10, '2025-01-01')
+
+
+
+def test_sha_tranche_table_screen_to_excel():
+    """주주간계약 회차별 표 — 입력 화면 · 평가 · 회차별 결과 · 상세 화면 전 항목 · 세 조서가 오류 없이 돈다.
+
+    회차 둘(고정 가격 · 가산 2% 정기 행사, 풋·콜 수량이 다름). 가상 수치다."""
+    rows = [dict(name='1차', start='2026-01-01', end='2026-12-31', style='any', price=900., rate=0.,
+                 put_q=30000., call_q=30000., rf=.021, pdisc=.061),
+            dict(name='2차', start='2027-01-01', end='2027-12-31', style='periodic', freq=3., price=1600.,
+                 rate=.02, put_q=30000., call_q=20000.)]
+    case = Case(name='회차 시험', contract=dict(inst='SHA', d_issue='2021-11-15', d_mat='2027-12-31', K0=900.,
+                face_total=900.*30000+1600.*30000, rfx_mode=0, cpn=0., cv_s=99., cv_e=0., p_s=99., p_e=0., k_w=0.,
+                sha_put_s=99., sha_put_e=0., sha_call_s=99., sha_call_e=0., sha_rows=rows),
+                market=dict(S0=1000., sig=.6, rf_curve=[[1, .0226], [3, .024]], cr_curve=[[1, .05], [3, .055]]),
+                method=dict(d_base='2025-09-30', model='TF', view='issuer', gap_m=1., grid_days=14.))
+    app = AppTest.from_file(str(ROOT/'app.py'), default_timeout=300)
+    app.session_state.case = case; app.run()
+    assert not app.exception and not app.error
+    assert len(app.session_state.case.contract['sha_rows']) == 2
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
+    next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
+    assert not app.exception
+    run = app.session_state.run
+    ref = calculate(app.session_state.case)
+    assert run.summary['amounts_total'] == ref.summary['amounts_total']
+    assert [r['회차'] for r in run.summary['sha_rows']] == ['1차', '2차']
+    assert abs(sum(r['풋 전액'] for r in run.summary['sha_rows']) - run.summary['amounts_total']['put']) < 1e-6
+    assert any('순액' in m.label for m in app.metric)
+    next(w for w in app.selectbox if w.label == '분석 도구').set_value('상세 계산·회계 참고표').run()
+    for section in next(w for w in app.selectbox if w.label == '상세 분석 항목').options:
+        next(w for w in app.selectbox if w.label == '상세 분석 항목').set_value(section).run()
+        assert not app.exception, section
+    app.radio(key='_workflow_stage').set_value('조서 출력').run()
+    for option, want in [('기본 값 조서', {'회차별 결과', '회차별 입력'}),
+                         ('상세 계산 값 조서', {'1·결과', '2·결과', '회차 합계', '회계처리'}),
+                         ('상세 계산 수식 조서', {'1·결과', '2·결과', '회차 합계', '회계처리'})]:
+        next(w for w in app.radio if w.label == '조서 구성').set_value(option).run()
+        next(w for w in app.checkbox if w.label.startswith('회계처리')).check().run()
+        next(b for b in app.button if b.label == '조서 생성').click().run()
+        assert not app.exception and not app.error
+        with zipfile.ZipFile(io.BytesIO(app.session_state.bundle)) as z:
+            name = next(n for n in z.namelist() if n.endswith('.xlsx'))
+            wb = load_workbook(io.BytesIO(z.read(name)))
+            assert want <= set(wb.sheetnames), (option, wb.sheetnames)

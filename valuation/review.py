@@ -120,7 +120,10 @@ def _split_sentence(text):
 def input_warnings(tm, px_last=None):
     """옛 입력 경고를 확인할 사항으로 — 계산을 다시 돌지 않는 검사만(BDT 비교는 BDT 를 켰을 때만)."""
     out = []
-    for msg in legacy.validate(copy.deepcopy(tm), px_last):
+    # 주주간계약은 사채 경고(전환기간·만기상환 등)가 뜻이 없다 — 주주간계약 경고만 싣는다.
+    msgs = (legacy.sha_validate(copy.deepcopy(tm)) if legacy.is_sha(tm)
+            else legacy.validate(copy.deepcopy(tm), px_last))
+    for msg in msgs:
         if any(k in msg for k in _DUPLICATE):
             continue
         head, rest = _split_sentence(msg)

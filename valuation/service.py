@@ -115,8 +115,9 @@ def calculate(case: Case) -> Run:
     started = time.perf_counter()
     case, terms, issues, normalized = _prepare(case)
     if legacy.is_sha(terms):
-        raw = legacy.sha_engine(terms)
-        raw["integrity"] = legacy.sha_integrity(terms, raw)
+        # 회차별 표가 있으면 회차마다 따로 재어 더한다 (sha_portfolio). 없으면 단일 계약.
+        raw = legacy.sha_portfolio(terms)
+        raw["integrity"] = legacy.sha_portfolio_integrity(terms, raw)
     else:
         full, b0, b1, b2, ca, conv = legacy.decompose(terms)
         raw = dict(full=full, b0=b0, b1=b1, b2=b2, ca=ca, conv=conv)
@@ -147,6 +148,8 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
     from .review import review_issues, arithmetic_checks, input_warnings
     from .evidence import evidence_cards
     if legacy.is_sha(terms):
+        # 100 기준 = 계산기준금액(회차마다 주당 기준가격 × 대상 주식수의 합) 100. 원 단위는
+        # 풋·콜 수량을 각각 곱한 값이다 — 두 권리의 수량이 달라도 된다.
         amounts = {"put": float(raw["put"]), "call": float(raw["call"])}
         full = raw
     else:
@@ -179,10 +182,19 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
         "case_sha256": case.fingerprint(), "code_sha256": code_fingerprint(),
         "generated_at": now, "calculated_at": now,
         "calculation_key": calculation_key(case), "checks": checks,
-        "basis": "발행금액 또는 투자원금 100 기준", "amounts_100": amounts,
-        "amounts_total": {k: v * terms.face_total / 100 for k, v in amounts.items()},
-        "amounts_per_share": {k: v * terms.issue_px / 100 for k, v in amounts.items()}
-                             if legacy.is_rcps(terms) else None,
+        "basis": ("계산기준금액(주당 기준가격 × 대상 주식수) 100 기준" if legacy.is_sha(terms)
+                  else "발행금액 또는 투자원금 100 기준"), "amounts_100": amounts,
+        "amounts_total": ({"put": float(raw["put_krw"]), "call": float(raw["call_krw"])}
+                          if legacy.is_sha(terms) else
+                          {k: v * terms.face_total / 100 for k, v in amounts.items()}),
+        "amounts_per_share": ({k: v * terms.issue_px / 100 for k, v in amounts.items()}
+                              if legacy.is_rcps(terms) else
+                              {k: v * terms.K0 / 100 for k, v in amounts.items()}
+                              if legacy.is_sha(terms) and not raw.get("portfolio") else None),
+        "sha_rows": ([{"회차": x["name"], "행사기간": x["window"], "주당 기준가격": x["K"],
+                       "풋 수량": x["qp"], "콜 수량": x["qc"], "풋 1주당": x["put_ps"],
+                       "콜 1주당": x["call_ps"], "풋 전액": x["put_krw"], "콜 전액": x["call_krw"]}
+                      for x in raw["rows"]] if legacy.is_sha(terms) and raw.get("portfolio") else None),
         "grid": {"intervals": terms.n, "average_days": terms.T*365/terms.n,
                  "requested_months": terms.gap_m, "requested_days": terms.grid_days,
                  "type": "day_target_equal_time" if terms.grid_days else "legacy_equal_time"},

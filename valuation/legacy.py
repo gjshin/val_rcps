@@ -57,6 +57,18 @@ class Terms:
     sha_disc: int = 1               # 풋 할인 0 무위험 / 1 위험 곡선 / 2 무위험+스프레드
     sha_spread: float = 0.03        # 위 2 를 골랐을 때 더할 스프레드
     sha_qipo_kill: int = 1          # 적격상장 시 0 풋만 소멸 / 1 풋·콜 모두 소멸
+    # 콜 주당 기준가격(원). −1 이면 풋과 같은 주당 기준가격(K0)이다. 콜 행사금액은
+    # 이 가격에 콜 가산율을 붙인 값이고, 100 기준으로는 100 × (이 가격 ÷ K0) 에서 출발한다.
+    sha_call_k: float = -1.0
+    # 풋·콜 대상 주식수. −1 이면 «계산기준금액 ÷ 주당 기준가격» (종전 투자원금 100 기준과 같다).
+    sha_put_q: float = -1.0
+    sha_call_q: float = -1.0
+    # 순액을 누구 입장에서 보나 — 0 콜 권리자(풋이 행사되면 주식을 사 주는 쪽) · 콜 − 풋
+    #                           1 풋 권리자(주식 보유자) · 풋 − 콜
+    sha_side: int = 0
+    # 회차별 표 — 계약·연도·물량별로 행사기간·주당 기준가격·가산율·풋·콜 수량을 한 줄씩.
+    # 비어 있으면 위의 풋·콜 칸 한 벌(단일 계약)을 쓴다. 줄의 모양은 SHA_ROW_KEYS.
+    sha_rows: list = field(default_factory=list)
     mat_mode: int = 0               # RCPS 존속기간 만료 시 0 보통주 자동전환 / 1 상환
     issuer_call: int = 0            # RCPS 콜 — 0 없음 / 1 발행자 상환권 / 2 제3자 지정 매도청구권
     div_mode: int = 0               # RCPS 우선배당 0 상환가액에 가산(전체 부채) / 1 재량(부채 현금흐름 제외)
@@ -472,9 +484,8 @@ def exercise_date_rows(tm: "Terms") -> list:
     줄 = (권리, 구분, 계약일, 적용 노드, 노드 날짜, 차이 일수, 비고). 차이 = 노드 날짜 − 계약일.
     음수면 노드가 계약일보다 앞선다(허용 일수 안이라 같은 날로 본 것). 기간 중 언제든지 행사하는
     권리는 기간의 첫 노드와 마지막 노드만 싣는다. 격자가 성겨 앞 회차와 같은 노드에 떨어진 회차는
-    «격자에서 빠짐» 으로 적는다. 주주간계약은 권리 구조가 달라 싣지 않는다(빈 목록).
+    «격자에서 빠짐» 으로 적는다. 주주간계약은 풋·콜 두 권리를 같은 규칙으로 싣는다.
     """
-    if is_sha(tm): return []
     n = max(1, int(tm.n)); dt_ = tm.T/n
     nd = node_dates(tm, n, dt_)
     tol = date_tol_days(dt_)
@@ -510,12 +521,12 @@ def exercise_date_rows(tm: "Terms") -> list:
         put_row(right, "기간 시작", s_, i0, "lo")
         put_row(right, "기간 종료", e_, i1, "hi")
 
-    def dated(right, dates, drop, cont, s_, e_, rows_):
+    def dated(right, dates, drop, cont, s_, e_, rows_, f=None):
         if cont:
             window(right, s_, e_); return
         ms = [m for m, _ in rows_] if rows_ else []
         if not ms and s_ <= e_:
-            f = float(tm.p_f if right.startswith("조기") else tm.k_f)
+            f = float(f if f is not None else (tm.p_f if right.startswith("조기") else tm.k_f))
             k = 0
             while f > 0 and s_ + k*f <= e_ + 1e-6:
                 ms.append(s_ + k*f); k += 1
@@ -532,6 +543,15 @@ def exercise_date_rows(tm: "Terms") -> list:
             rows.append((right, "격자에서 빠짐", cd.isoformat(), None, "—", None,
                          "노드가 성겨 앞 회차와 같은 노드에 떨어졌다 — 노드를 촘촘히 하면 담긴다"))
 
+    if is_sha(tm):
+        for right, s_, e_, f_, on in (("풋", tm.sha_put_s, tm.sha_put_e, tm.sha_put_f,
+                                       tm.sha_put_s <= tm.sha_put_e),
+                                      ("콜", tm.sha_call_s, tm.sha_call_e, tm.sha_call_f,
+                                       tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e)):
+            if not on: continue
+            d_, dr_, c_ = exercise_dates(tm, n, dt_, float(s_), float(e_), float(f_))
+            dated(right, d_, dr_, c_, float(s_), float(e_), [], f=float(f_))
+        return rows
     # 전환권(신주인수권) — 기간 중 언제든지
     if tm.cv_s <= tm.cv_e:
         window("신주인수권 행사" if is_bw(tm) else "전환권", float(tm.cv_s), float(tm.cv_e))
@@ -715,9 +735,15 @@ MODEL_LIMITS = (
     ('SHA: 상대방 신용은 할인율로만',
      '부도 손실률·회수율 구조 없음',
      ('화면 풋 할인율 캡션', 'docs/입력안내_주주간계약.md')),
-    ('SHA: Drag/Tag/ROFR·다단계 strike 미지원',
-     '',
+    ('SHA: Drag/Tag/ROFR 미지원',
+     '동반매도·우선매수권은 모형에 넣지 않는다. 연도·물량·가격이 다른 회차는 회차별 표로 한 줄씩 넣는다',
      ('docs/입력안내_주주간계약.md',)),
+    ('SHA: 상호소멸은 같은 회차 안에서만',
+     '회차 사이의 소멸·우선순위·미행사 물량 이월, 행사일부터 대금 지급일까지의 시차는 반영하지 않는다. 풋·콜 수량이 다른 회차의 상호소멸은 겹치는 수량과 남는 수량을 두 회차로 나눠 넣어야 한다',
+     ('화면 «이 모델이 다루지 않는 계약 조건»', 'docs/입력안내_주주간계약.md')),
+    ('SHA: 실적 연동 행사가격은 고정값으로',
+     '추정 재무수치로 계산한 가격을 회차 표에 고정해 평가한다 — 미래 실적의 불확실성은 반영하지 않는다',
+     ('화면 실적 연동 행사가격 계산', 'docs/의사결정규칙.md §45')),
     ('역산이 목표를 정확히 못 맞힐 수 있다',
      '격자 값의 계단 (0.19 등)',
      ('화면 역산 경고', 'docs/의사결정규칙.md §10-1')),
@@ -904,6 +930,19 @@ def bw_cash(tm: Terms) -> bool:
 def is_sha(tm: Terms) -> bool:
     """주주간계약인가. 사채가 없어 격자와 조서가 통째로 갈린다."""
     return (tm.inst or "CB").upper() == "SHA"
+
+
+def sha_call_ratio(tm: Terms) -> float:
+    """콜 주당 기준가격 ÷ 풋 주당 기준가격(K0). 콜 기준가격을 따로 넣지 않았으면 1."""
+    kc = float(getattr(tm, "sha_call_k", -1.0))
+    return kc/tm.K0 if kc > 0 and tm.K0 > 0 else 1.0
+
+
+def sha_qty(tm: Terms):
+    """(풋 대상 주식수, 콜 대상 주식수). 넣지 않았으면 계산기준금액 ÷ 주당 기준가격."""
+    base = tm.face_total/tm.K0 if tm.K0 > 0 else 0.0
+    qp, qc = float(getattr(tm, "sha_put_q", -1.0)), float(getattr(tm, "sha_call_q", -1.0))
+    return (qp if qp >= 0 else base), (qc if qc >= 0 else base)
 
 
 def bw_alive(tm: Terms) -> bool:
@@ -1805,6 +1844,45 @@ def sched_steps(rows: list, cmonth, n: int) -> dict:
     return out
 
 
+def exercise_dates(tm: Terms, n: int, dt_: float, s: float, e: float, f: float, rows=None):
+    """행사일 목록 {스텝: 계약 행사월(발행일부터 개월)} · 격자에서 빠진 회차 · 상시행사 여부.
+
+    조기상환·매도청구·주주간계약 풋·콜이 모두 이 함수 «하나» 로 행사일을 정한다.
+    계약서의 행사일(표가 있으면 표의 회차, 없으면 시작일부터 주기마다)을 하나씩 만들고,
+    날짜마다 **계약일 이후 첫 노드**(허용 일수 안에서 앞선 노드는 같은 날 — EXDATE_RULE)에
+    배정한다. 기간 중 언제든지(주기가 격자 한 칸의 1.5배보다 짧다)면 기간 안의 모든 노드가
+    행사일이고, 그 노드의 계약 행사월은 평가기준일까지의 개월 + 이후 구간을 잔존 개월로
+    균등하게 나눈 값이다(``cmonth``). 평가기준일 전에 지난 회차는 싣지 않는다.
+    """
+    rem_m = float(getattr(tm, "rem_m", 0.0) or tm.T*12)
+    cmonth = lambda i: tm.elapsed_m + i*rem_m/max(1, n)
+    st_lo, st_hi = step_mapper(tm, n, dt_)
+    gapm = rem_m/max(1, n)
+    out, dropped = {}, []
+    if rows:
+        ms = [m for m, _ in rows]
+    elif s > e:
+        return out, dropped, False
+    elif f < gapm*1.5:
+        for i in range(max(st_lo(s), 0), min(st_hi(e), n) + 1):
+            out[i] = cmonth(i)
+        return out, dropped, True
+    else:
+        ms, k = [], 0
+        while s + k*f <= e + 1e-6:
+            ms.append(s + k*f); k += 1
+    for m in ms:
+        if m < tm.elapsed_m - 1e-6:          # 평가기준일 전에 지난 회차
+            continue
+        i = st_lo(m)
+        if i > n:
+            continue
+        if i in out:                          # 격자가 성겨 두 회차가 한 노드에 — 앞 회차가 남는다
+            dropped.append(m); continue
+        out[i] = m
+    return out, dropped, False
+
+
 def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
     """조기상환·매도청구·만기 **행사금액** 을 한 곳에서 만든다.
 
@@ -1849,36 +1927,8 @@ def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
     # 노드로 갈라져 우선순위가 작동할 자리가 사라진다. 행사금액은 옮겨진 노드가
     # 아니라 **계약일의 경과기간** 으로 계산한다 — 공시 표의 확정 금액과 같아진다.
     # 기간 중 언제든지(주기가 격자 간격 수준)면 창 안의 모든 노드가 행사일이다.
-    st_lo, st_hi = step_mapper(tm, n, dt_)
-    gapm = rem_m/max(1, n)
-
-    def _dates(s, e, f, rows):
-        out, dropped = {}, []
-        if rows:
-            ms = [m for m, _ in rows]
-        elif s > e:
-            return out, dropped, False
-        elif f < gapm*1.5:
-            for i in range(max(st_lo(s), 0), min(st_hi(e), n) + 1):
-                out[i] = cmonth(i)
-            return out, dropped, True
-        else:
-            ms, k = [], 0
-            while s + k*f <= e + 1e-6:
-                ms.append(s + k*f); k += 1
-        for m in ms:
-            if m < tm.elapsed_m - 1e-6:          # 평가기준일 전에 지난 회차
-                continue
-            i = st_lo(m)
-            if i > n:
-                continue
-            if i in out:                          # 격자가 성겨 두 회차가 한 노드에 — 앞 회차가 남는다
-                dropped.append(m); continue
-            out[i] = m
-        return out, dropped, False
-
-    p_dates, p_drop, p_cont = _dates(tm.p_s, tm.p_e, tm.p_f, p_rows)
-    k_dates, k_drop, k_cont = _dates(tm.k_s, tm.k_e, tm.k_f, k_rows)
+    p_dates, p_drop, p_cont = exercise_dates(tm, n, dt_, tm.p_s, tm.p_e, tm.p_f, p_rows)
+    k_dates, k_drop, k_cont = exercise_dates(tm, n, dt_, tm.k_s, tm.k_e, tm.k_f, k_rows)
     _pt, _kt = dict(p_rows), dict(k_rows)
     # 표가 준 확정 금액 {스텝: (개월, 금액)} — 00 행사금액표가 그대로 싣는다.
     p_steps = {i: (m, _pt[m]) for i, m in p_dates.items() if m in _pt}
@@ -1942,11 +1992,11 @@ def lbl(tm: Terms) -> dict:
                     callamt=("매도청구금액" if _th else "발행자 상환가액"),
                     unit="1주 발행가 100 기준")
     if is_sha(tm):
-        return dict(inst="주주간계약", short="SHA", face="투자원금",
-                    cpn="—", ipay="—", put="투자자 풋옵션", call="최대주주 콜옵션",
+        return dict(inst="주주간계약", short="SHA", face="주당 기준가격",
+                    cpn="—", ipay="—", put="풋옵션 (주식 보유자)", call="콜옵션 (상대방)",
                     host="—", liab="—", red="—", ytm="풋 보장수익률",
                     bond="주주간계약", callamt="콜 행사금액",
-                    unit="투자원금 100 기준")
+                    unit="주당 기준가격 100 기준")
     if is_bw(tm):
         # 신주인수권부사채. 사채는 CB 와 같고 갈리는 것은 지분요소의 이름과
         # 행사대금 납입 방식이다. 대용납입이면 사채가 소멸해 전환사채와 같고,
@@ -2608,21 +2658,21 @@ def sha_integrity(tm: Terms, R: dict) -> list:
 def sha_engine(tm: Terms):
     """주주간계약을 지분가치 격자에서 잰다.
 
-    사채가 없다. 투자자가 **이미 가진 지분**에 풋(투자자가 최대주주·발행회사에
-    되팔 권리)과 콜(최대주주가 되사 갈 권리)이 붙어 있을 뿐이다. 그래서
+    사채가 없다. 주식 보유자가 **이미 가진 지분**에 풋(보유자가 상대방에게 사 달라고
+    요구할 권리)과 콜(상대방이 팔라고 요구할 권리)이 붙어 있을 뿐이다. 그래서
     「B0 → B1 → B2」 같은 순차 차감이 아니라 두 옵션을 **따로** 잰다.
 
-    보유자가 서로 다르기 때문이다 — 풋은 투자자가, 콜은 최대주주가 고른다.
+    보유자가 서로 다르기 때문이다 — 풋은 주식 보유자가, 콜은 상대방이 고른다.
     한 격자에서 함께 최적화하면 두 사람이 한 사람인 것처럼 재게 된다. 실무에서
     풋과 콜을 각각 평가해 각자의 재무제표에 총액으로 싣는 것도 같은 이유다.
 
-    금액 기준은 **투자원금 100** 이다.
+    금액 기준은 **주당 기준가격 100** 이다 (원 단위 = 결과 × 기준가격 ÷ 100 × 주식수).
 
         지분가치(t) = 100 × 주가(t) ÷ 주당 인수가액
         풋 행사가치 = MAX(풋 행사금액 − 지분가치, 0)
         콜 행사가치 = MAX(지분가치 − 콜 행사금액, 0)
 
-    풋 행사금액은 투자원금에 보장수익률을 붙인 값이라 사채의 조기상환금액과
+    풋 행사금액은 기준가격에 가산율을 붙인 값이라 사채의 조기상환금액과
     같은 산식(``accrue_rate``)을 쓴다.
 
     적격상장(Q-IPO)이 이루어지면 투자자가 시장에서 팔 수 있으므로 풋이
@@ -2639,7 +2689,6 @@ def sha_engine(tm: Terms):
     n, T = int(tm.n), tm.T
     dt_ = T/n
     mper = n/(T*12)
-    ey = tm.elapsed_m/12                     # 발행일 → 평가기준일 경과 연수
     st_lo, st_hi = step_mapper(tm, n, dt_)
     u, d = lattice_ud(tm, dt_)
     fwd = lambda F, i: (F((i+1)*dt_)*(i+1)*dt_ - F(i*dt_)*i*dt_)/dt_
@@ -2654,23 +2703,40 @@ def sha_engine(tm: Terms):
     elif int(tm.sha_disc) == 2: pdisc = lambda i: fwd(RF, i) + tm.sha_spread
     else:                       pdisc = lambda i: fwd(CR, i)
 
-    def in_set(i, a, b, fr):
-        lo, hi = st_lo(a), st_hi(b)
-        if i < max(lo, 0) or i > hi: return False
-        per = max(1, int(round(fr*mper)))
-        return (i-lo) % per == 0
+    # 행사일은 전환사채의 조기상환·매도청구와 «같은 목록» 규칙으로 정한다(exercise_dates) —
+    # 정기 행사는 계약일마다 그날 이후 첫 노드, 기간 중 언제든지는 기간 안의 모든 노드.
+    # 한때 「주기(개월) × 월당 노드 수」 를 반올림한 칸 간격으로 열어, 주 격자에서 매월 행사가
+    # 4노드마다(= 28일마다) 열리며 계약일에서 조금씩 밀렸다.
+    _has_put = tm.sha_put_s <= tm.sha_put_e
+    # 종료가 0 이하면 콜이 없는 계약이다. 한 시점만 열리는 계약(시작 = 종료)은 그대로 살린다.
+    _has_call = tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e
+    p_dates, p_drop, p_cont = (exercise_dates(tm, n, dt_, tm.sha_put_s, tm.sha_put_e, tm.sha_put_f)
+                               if _has_put else ({}, [], False))
+    c_dates, c_drop, c_cont = (exercise_dates(tm, n, dt_, tm.sha_call_s, tm.sha_call_e, tm.sha_call_f)
+                               if _has_call else ({}, [], False))
+    rem_m = float(getattr(tm, "rem_m", 0.0) or tm.T*12)
+    cmonth = lambda i: tm.elapsed_m + i*rem_m/max(1, n)
 
     S = lambda i, j: tm.S0 * u**j * d**(i-j)
     eq = lambda i, j: 100*S(i, j)/tm.K0                      # 지분가치
-    pk = lambda i: 100*(1 + accrue_rate(i*dt_ + ey, tm.sha_put_yield, 0.0,
-                                        tm.sha_put_cmp))
-    ck = lambda i: 100*(1 + accrue_rate(i*dt_ + ey, tm.sha_call_prem, 0.0,
-                                        tm.sha_call_cmp))
-    p_on = lambda i: in_set(i, tm.sha_put_s, tm.sha_put_e, tm.sha_put_f)
-    # 종료가 0 이하면 콜이 없는 계약이다. 한 시점만 열리는 계약(시작 = 종료)은
-    # 그대로 살린다.
-    c_on = lambda i: (tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e
-                      and in_set(i, tm.sha_call_s, tm.sha_call_e, tm.sha_call_f))
+    # 행사금액은 노드 날짜가 아니라 **계약 행사월** 의 경과기간으로 붙인다 — 경과기간의 잣대는
+    # 가정 「행사금액 경과기간」(acc_basis) 이고 전환사채와 같은 함수(yr_of_month)다.
+    kc = sha_call_ratio(tm)                                  # 콜 기준가격 ÷ 풋 기준가격
+    pmo = lambda i: p_dates.get(i, cmonth(i))
+    cmo = lambda i: c_dates.get(i, cmonth(i))
+    # 가격 가산 경과기간 — 계약 개월 ÷ 12 (acc_basis 1) 또는 가산 기산일부터 행사일까지 실제 일수 ÷ 365
+    # (0). 행사일은 정기 행사면 계약일, 기간 중 언제든지면 그 노드의 날짜다.
+    _di = dt.date.fromisoformat(tm.d_issue)
+    _nd = node_dates(tm, n, dt_)
+    _acc = int(getattr(tm, "acc_basis", 1))
+    pday = lambda i: (months_to_date(_di, p_dates[i]) if (i in p_dates and not p_cont) else _nd[i])
+    cday = lambda i: (months_to_date(_di, c_dates[i]) if (i in c_dates and not c_cont) else _nd[i])
+    pyr = lambda i: (pmo(i)/12 if _acc else (pday(i) - _di).days/365)
+    cyr = lambda i: (cmo(i)/12 if _acc else (cday(i) - _di).days/365)
+    pk = lambda i: 100*(1 + accrue_rate(pyr(i), tm.sha_put_yield, 0.0, tm.sha_put_cmp))
+    ck = lambda i: 100*kc*(1 + accrue_rate(cyr(i), tm.sha_call_prem, 0.0, tm.sha_call_cmp))
+    p_on = lambda i: i in p_dates
+    c_on = lambda i: i in c_dates
     # 적격상장 — 그 스텝의 주가가 최소 기준을 넘으면 성공이다.
     qi_step = st_lo(tm.ipo_m) if (int(tm.ipo_on) and tm.ipo_m > 0) else -1
     qipo = lambda i, j: (i == qi_step and 0 < i <= n and S(i, j) > tm.ipo_min)
@@ -2786,7 +2852,223 @@ def sha_engine(tm: Terms):
                 qi_step=qi_step, n=n, dt=dt_, mper=mper, u=u, d=d,
                 q=qi(0), qs=qs, qbad=qbad, qmin=min(qs), qmax=max(qs),
                 qi=qi, rf=rf, pdisc=pdisc, gross=gross,
-                dist_put=pw, dist_call=cw)
+                dist_put=pw, dist_call=cw,
+                p_dates=p_dates, c_dates=c_dates, p_drop=p_drop, c_drop=c_drop,
+                p_cont=p_cont, c_cont=c_cont, pmo=pmo, cmo=cmo, cmonth=cmonth, kc=kc,
+                pday=pday, cday=cday, pyr=pyr, cyr=cyr,
+                has_put=_has_put, has_call=_has_call)
+
+
+# 회차별 표 한 줄의 모양. 필수 — name · start · end · style · price · put_q · call_q.
+# 나머지는 비우면(None · "") 공통 설정이나 풋 쪽 값을 쓴다.
+SHA_ROW_KEYS = ("name", "start", "end", "style", "freq", "price", "rate", "acc_from",
+                "put_q", "call_q", "kill", "call_start", "call_end", "call_price", "call_rate",
+                "sig", "rf", "pdisc", "price_note")
+SHA_ROW_STYLES = {"any": "기간 중 언제든지", "periodic": "정기 (주기마다)", "single": "특정일 1회"}
+SHA_ROW_MAX_N = 1200          # 회차 격자 한도 — service._prepare 의 계산 한도와 같다
+
+
+def sha_row_defaults(row: dict) -> dict:
+    """비운 칸을 채운 회차 줄. 저장 파일의 모양은 바꾸지 않는다(읽을 때만 채운다)."""
+    r = {k: None for k in SHA_ROW_KEYS}
+    r.update({k: v for k, v in (row or {}).items() if k in SHA_ROW_KEYS})
+    r["name"] = str(r["name"] or "").strip() or "회차"
+    # 비운 칸만 기본값(언제든지)이다. 알 수 없는 값은 그대로 두어 sha_row_issues 가 막는다 —
+    # 오타를 «언제든지» 로 읽으면 정기·1회 권리가 모든 노드에서 열려 값이 부풀려진다.
+    r["style"] = r["style"] or "any"
+    for k in ("freq", "price", "rate", "put_q", "call_q", "call_price", "call_rate", "sig", "rf", "pdisc"):
+        v = r[k]
+        r[k] = None if v in (None, "") else float(v)
+    r["rate"] = r["rate"] or 0.0
+    r["put_q"] = r["put_q"] or 0.0
+    r["call_q"] = r["call_q"] or 0.0
+    r["kill"] = int(bool(r["kill"]))
+    for k in ("start", "end", "acc_from", "call_start", "call_end", "price_note"):
+        r[k] = str(r[k] or "").strip()
+    return r
+
+
+def sha_perf_price(revenue: float, deduct: float, loss_rate: float, threshold: float,
+                   mult_over: float, mult_else: float, shares: float):
+    """실적 연동 주당 행사가격 = (매출액 − 차감액) × 적용 배수 ÷ 발행주식 총수 → (가격, 배수).
+
+    영업손실률이 기준을 **초과**하면 ``mult_over``, 아니면(같거나 낮으면) ``mult_else``. 추정 재무수치로
+    계산한 값을 회차 표에 **고정해** 쓴다 — 미래 실적의 불확실성은 반영하지 않는다.
+    """
+    if not shares > 0:
+        raise ValueError("발행주식 총수를 0 보다 크게 입력하십시오.")
+    mult = mult_over if loss_rate > threshold else mult_else
+    return (revenue - deduct)*mult/shares, mult
+
+
+def sha_row_issues(tm: Terms) -> list:
+    """회차별 표에서 계산을 막아야 하는 입력 — (회차 번호, 문장). 비어 있으면 계산할 수 있다."""
+    out = []
+    try:
+        db = dt.date.fromisoformat(tm.d_base)
+    except (TypeError, ValueError):
+        return [(0, "평가기준일을 먼저 입력하십시오.")]
+    names = set()
+    for k, raw in enumerate(tm.sha_rows or [], 1):
+        if not isinstance(raw, dict):
+            out.append((k, "회차 줄의 형식이 올바르지 않습니다.")); continue
+        r = sha_row_defaults(raw)
+        if r["style"] not in SHA_ROW_STYLES:
+            out.append((k, f"행사 방식 «{r['style']}» 을 알 수 없습니다 — 기간 중 언제든지(any) · 정기(periodic) · "
+                           "특정일 1회(single) 가운데 고르십시오."))
+            continue
+        if r["name"] in names:
+            out.append((k, f"회차 이름 «{r['name']}» 이 겹칩니다 — 회차마다 다른 이름을 적으십시오."))
+        names.add(r["name"])
+        try:
+            ds = dt.date.fromisoformat(r["start"]); de = dt.date.fromisoformat(r["end"])
+            cs = dt.date.fromisoformat(r["call_start"] or r["start"])
+            ce = dt.date.fromisoformat(r["call_end"] or r["end"])
+            da = dt.date.fromisoformat(r["acc_from"] or tm.d_issue)
+        except (TypeError, ValueError):
+            out.append((k, "행사 시작일·종료일(·가격 가산 기산일)을 YYYY-MM-DD 로 입력하십시오.")); continue
+        if ds > de or cs > ce:
+            out.append((k, "행사 시작일이 종료일보다 늦습니다."))
+        if r["put_q"] <= 0 and r["call_q"] <= 0:
+            out.append((k, "풋 수량과 콜 수량이 모두 0 입니다 — 평가할 권리가 없습니다."))
+        if min(r["put_q"], r["call_q"]) < 0:
+            out.append((k, "수량은 0 이상이어야 합니다."))
+        if not (r["price"] or 0) > 0:
+            out.append((k, "주당 기준가격(원)을 0 보다 크게 입력하십시오."))
+        if r["call_price"] is not None and r["call_price"] <= 0:
+            out.append((k, "콜 주당 기준가격은 비우거나 0 보다 크게 입력하십시오."))
+        last = max(de if r["put_q"] > 0 else dt.date.min, ce if r["call_q"] > 0 else dt.date.min)
+        if last < db:
+            out.append((k, f"행사기간이 평가기준일({db}) 전에 끝났습니다 — 이미 행사·소멸했는지 확인하고, "
+                           "남은 권리가 없으면 줄을 지우십시오. 행사됐다고 앱이 가정하지 않습니다."))
+        if da > min(ds, cs):
+            out.append((k, "가격 가산 기산일이 행사 시작일보다 늦습니다."))
+        if da > db:
+            out.append((k, "가격 가산 기산일이 평가기준일보다 늦습니다 — 계약일(기산일)은 평가기준일 이전이어야 합니다."))
+        if r["style"] == "periodic" and not (r["freq"] or 0) > 0:
+            out.append((k, "정기 행사면 주기(개월)를 0 보다 크게 입력하십시오."))
+        if not out or out[-1][0] != k:
+            # 회차마다 격자를 따로 세우므로 계산 한도(1,200구간)도 회차마다 본다.
+            try:
+                _n = sha_row_terms(tm, raw).n
+                if _n > SHA_ROW_MAX_N:
+                    out.append((k, f"이 회차의 격자가 {_n:,}구간으로 계산 한도({SHA_ROW_MAX_N:,}구간)를 넘습니다 — "
+                                   "행사 종료일을 확인하거나 계산 간격을 늘리십시오."))
+            except (ValueError, TypeError) as ex:
+                out.append((k, f"회차 조건을 읽지 못했습니다 — {ex}"))
+        if r["kill"] and r["put_q"] > 0 and r["call_q"] > 0 and abs(r["put_q"] - r["call_q"]) > 1e-9:
+            out.append((k, "풋·콜 수량이 다른 회차에는 상호소멸을 적용할 수 없습니다 — 같은 주식에 붙은 "
+                           "수량(겹치는 수량)과 남는 수량을 두 회차로 나눠 입력하십시오 (겹치는 회차는 "
+                           "상호소멸, 남는 회차는 한쪽 권리만)."))
+        if r["sig"] is not None and not r["sig"] > 0:
+            out.append((k, "회차 변동성은 비우거나 0 보다 크게 입력하십시오."))
+    return out
+
+
+def sha_row_terms(tm: Terms, raw: dict) -> Terms:
+    """회차 한 줄 → 그 회차만 재는 Terms. 격자는 평가기준일부터 그 회차의 마지막 행사일까지다.
+
+    주당 기준가격을 K0 로, 가격 가산 기산일을 d_issue 로 두면 엔진(sha_engine)을 그대로 쓴다 —
+    지분가치 = 100 × 주가 ÷ 기준가격, 행사금액 = 100 × (1 + 가산율 누적). 결과 × 기준가격 ÷ 100
+    이 1주당 금액(원)이다.
+    """
+    r = sha_row_defaults(raw)
+    t = Terms(**asdict(tm))
+    t.sha_rows = []
+    t.tranche = r["name"]
+    d0 = r["acc_from"] or tm.d_issue
+    t.d_issue = d0
+    ps, pe = r["start"], r["end"]
+    cs, ce = r["call_start"] or ps, r["call_end"] or pe
+    if r["style"] == "single":
+        pe, ce = ps, cs
+    f = 0.0 if r["style"] == "any" else float(r["freq"] or 12.0)
+    if r["put_q"] > 0:
+        t.sha_put_s, t.sha_put_e = date_to_months(d0, ps), date_to_months(d0, pe)
+    else:
+        t.sha_put_s, t.sha_put_e = 99.0, 0.0
+    if r["call_q"] > 0:
+        t.sha_call_s, t.sha_call_e = date_to_months(d0, cs), date_to_months(d0, ce)
+        # 종료 0 은 «콜 없음» 표지다 — 기산일 당일 1회만 여는 콜은 아주 작은 양수로 살린다.
+        if t.sha_call_e <= 0: t.sha_call_e = 1e-9
+    else:
+        t.sha_call_s, t.sha_call_e = 0.0, 0.0
+    t.sha_put_f = t.sha_call_f = f
+    t.K0 = float(r["price"])
+    t.sha_call_k = float(r["call_price"]) if r["call_price"] else -1.0
+    t.sha_put_yield = float(r["rate"])
+    t.sha_call_prem = float(r["call_rate"]) if r["call_rate"] is not None else float(r["rate"])
+    t.sha_put_q, t.sha_call_q = float(r["put_q"]), float(r["call_q"])
+    t.face_total = t.K0*max(t.sha_put_q, t.sha_call_q)
+    t.sha_kill = r["kill"]
+    t._price_note = r["price_note"]          # 실적 연동 가격이면 산식 기록 (조서 가정 시트에 싣는다)
+    ends = ([pe] if r["put_q"] > 0 else []) + ([ce] if r["call_q"] > 0 else [])
+    t.d_mat = max(ends)
+    if int(tm.ipo_on) and tm.ipo_m > 0:
+        # 적격상장 기한은 공통 계약일 기준 개월로 저장돼 있다 — 이 회차의 기산일 기준으로 옮긴다.
+        t.ipo_m = date_to_months(d0, months_to_date(tm.d_issue, tm.ipo_m))
+    if r["sig"] is not None: t.sig = float(r["sig"])
+    if r["rf"] is not None:
+        t.rf_curve = [(0.25, float(r["rf"])), (30.0, float(r["rf"]))]
+    if r["pdisc"] is not None:
+        t.sha_disc = 1; t.rate_mode = "direct"
+        t.cr_curve = [(0.25, float(r["pdisc"])), (30.0, float(r["pdisc"]))]
+    derive(t)
+    return t
+
+
+def sha_row_window(t: Terms) -> str:
+    """회차 행사기간 한 줄 — 합계표·화면이 쓴다."""
+    parts = []
+    if t.sha_put_s <= t.sha_put_e:
+        parts.append(f"풋 {months_to_date(t.d_issue, t.sha_put_s)}~{months_to_date(t.d_issue, t.sha_put_e)}")
+    if t.sha_call_e > 0 and t.sha_call_s <= t.sha_call_e:
+        parts.append(f"콜 {months_to_date(t.d_issue, t.sha_call_s)}~{months_to_date(t.d_issue, t.sha_call_e)}")
+    return " · ".join(parts)
+
+
+def sha_portfolio(tm: Terms):
+    """주주간계약 평가의 입구. 회차별 표가 없으면 단일 계약 그대로(엔진 결과에 원 단위를 붙인다).
+
+    회차가 있으면 회차마다 따로 잰다 — 연도별 물량·행사기간·행사가격이 다른 계약을 한 물량으로
+    합쳐 모든 기간에 행사할 수 있게 재지 않는다. 연도별 미행사 물량을 다음 회차로 넘기지 않는다.
+    """
+    derive(tm)
+    if not tm.sha_rows:
+        R = sha_engine(tm)
+        qp, qc = sha_qty(tm)
+        ck = sha_components_krw(tm, R)
+        R.update(portfolio=False, put_krw=ck["put"], call_krw=ck["call"],
+                 base_amount=tm.K0*max(qp, qc))
+        return R
+    bad = sha_row_issues(tm)
+    if bad:
+        raise ValueError(" / ".join(f"{k}회차: {m}" for k, m in bad))
+    rows = []
+    for raw in tm.sha_rows:
+        t = sha_row_terms(tm, raw)
+        if t.n > SHA_ROW_MAX_N:
+            raise ValueError(f"{t.tranche}: 격자 {t.n:,}구간 — 계산 한도 {SHA_ROW_MAX_N:,}구간을 넘습니다.")
+        R = sha_engine(t)
+        qp, qc = sha_qty(t)
+        ps, cs = R["put"]/100*t.K0, R["call"]/100*t.K0
+        rows.append(dict(name=t.tranche, tm=t, R=R, qp=qp, qc=qc, K=t.K0,
+                         put_ps=ps, call_ps=cs, put_krw=ps*qp, call_krw=cs*qc,
+                         window=sha_row_window(t)))
+    put_k = sum(x["put_krw"] for x in rows); call_k = sum(x["call_krw"] for x in rows)
+    base = sum(x["K"]*max(x["qp"], x["qc"]) for x in rows)
+    qbad = [q for x in rows for q in x["R"]["qbad"]]
+    return dict(portfolio=True, rows=rows, put_krw=put_k, call_krw=call_k, base_amount=base,
+                put=(put_k*100/base if base else 0.0), call=(call_k*100/base if base else 0.0),
+                qbad=qbad, qmin=min(x["R"]["qmin"] for x in rows), qmax=max(x["R"]["qmax"] for x in rows),
+                n=max(x["R"]["n"] for x in rows), kill=any(x["R"]["kill"] for x in rows))
+
+
+def sha_portfolio_integrity(tm: Terms, P) -> list:
+    """회차마다 sha_integrity — 회차 이름을 붙여 돌려준다."""
+    if not P.get("portfolio"):
+        return sha_integrity(tm, P)
+    return [f"{x['name']}: {m}" for x in P["rows"] for m in sha_integrity(x["tm"], x["R"])]
 
 
 def sha_backsolve(tm: Terms, target: float = None):
@@ -3324,51 +3606,34 @@ def call_method_rows(tm: Terms) -> list:
     return rows
 
 
-def sha_accounts(tm: Terms, R):
-    """주주간계약을 세 당사자의 재무제표로 옮긴다.
+def sha_account_lines(tm: Terms, R, has_call=None, gross=None):
+    """주주간계약 회계 참고표의 줄 — (항목, 구성) 목록. 구성은 {성분: 계수} 다.
 
-    같은 계약인데 실리는 것이 완전히 다르다.
-
-    **발행회사** — 계약 당사자가 최대주주뿐이면 발행회사 재무제표에는 아무것도
-    실리지 않는다. 발행회사가 풋 의무자면 이야기가 뒤바뀐다. 자기지분상품을
-    매입할 의무이므로 기업회계기준서 제1032호 문단 23 이 걸린다.
-
-    > 자기지분상품을 매입해야 하는 의무가 포함된 계약의 경우, 그 의무에 대하여
-    > 인식하는 금융부채는 **상환금액의 현재가치**이다.
-
-    옵션 공정가치가 아니라 **총액**이다. 상대 계정은 자본이다. 조건부 결제라도
-    문단 25 에 따라 원칙적으로 금융부채다 — 결제 요구 조항이 진성이 아니거나
-    발행자가 청산되는 경우에만 결제되는 것이 아니라면 그렇다.
-
-    **최대주주** — 자기지분상품이 아니라 남의 주식이므로 문단 23 이 걸리지
-    않는다. 매도한 풋은 파생상품부채, 매수한 콜은 파생상품자산이고 둘 다
-    공정가치로 재평가한다.
-
-    **투자자** — 매수한 풋은 파생상품자산, 매도한 콜은 파생상품부채다. 보유
-    지분은 별도의 지분상품이다. 상계 요건을 못 채우면 총액으로 표시한다.
+    성분은 네 가지다 — ``eq`` 보유 주식 공정가치 · ``put`` 풋옵션 · ``call`` 콜옵션 ·
+    ``gpv`` 풋 행사금액의 현재가치(1032 문단 23 총액 부채). 값 조서는 성분 값을 넣어 숫자로,
+    수식 조서는 결과 시트의 성분 칸을 넣어 **수식으로** 만든다 — 엑셀에서 주가·변동성을 바꾸면
+    회계 참고표도 따라 움직인다(예전에는 숫자로 굳어 남았다).
     """
-    put_, call_ = R["put"], R["call"]
-    g = R["gross"]
+    g = R.get("gross") if gross is None else (gross or None)
     w = int(tm.sha_writer)
-    has_call = tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e
-    gpv = (g["pv"] if g else 0.0)
+    if has_call is None:
+        has_call = tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e
     out = {}
-
     if w == 0:
-        out["발행회사"] = ([("인식할 것이 없다 — 계약 당사자가 아니다", 0.0)],
-            "풋 의무자가 최대주주뿐이므로 발행회사의 자기지분상품 매입의무가 "
+        out["발행회사"] = ([("인식할 것이 없다 — 계약 당사자가 아니다", {})],
+            "풋 의무자가 대상회사가 아니라 다른 주주이므로 발행회사의 자기지분상품 매입의무가 "
             "아니다. 발행회사 재무제표에는 실리지 않는다. 다만 주주간계약의 "
             "존재와 조건은 특수관계자 거래·우발상황 주석에서 다룰 수 있다.")
     else:
         out["발행회사"] = ([
-            ("금융부채 — 자기지분상품 매입의무 (상환금액의 현재가치)", gpv),
-            ("자본 (기타자본 차감)", -gpv),
-            ("합계", 0.0)],
+            ("금융부채 — 자기지분상품 매입의무 (상환금액의 현재가치)", {"gpv": 1}),
+            ("자본 (기타자본 차감)", {"gpv": -1}),
+            ("합계", {})],
             "기업회계기준서 제1032호 문단 23 — 자기지분상품을 매입해야 하는 의무는 "
             "**옵션 공정가치가 아니라 상환금액의 현재가치**를 총액으로 부채에 싣고 "
             "같은 금액을 자본에서 뺀다. "
             + (f"첫 행사 가능일의 행사금액 {g['strike']:,.4f} 를 그날까지 할인한 "
-               f"{gpv:,.4f} 이다. " if g else "")
+               f"{g['pv']:,.4f} 이다 (100 기준). " if g else "")
             + "이후 부채는 유효이자율법으로 상환금액까지 늘려 가고, 그 증가액은 "
               "이자비용이다. 풋이 행사되지 않고 소멸하면 부채를 제거하고 자본으로 "
               "되돌린다 (문단 23 후단). 조건부 결제조항이라도 결제 요구가 진성이 "
@@ -3378,28 +3643,34 @@ def sha_accounts(tm: Terms, R):
                "계약상 1차 의무자 기준으로 **한 곳에서만** 인식하십시오."
                if w == 2 else ""))
 
+    def _total(rows, name="합계 (순액)"):
+        tot = {}
+        for _, c in rows:
+            for k, v in c.items(): tot[k] = tot.get(k, 0) + v
+        return rows + [(name, tot)]
+
     if w in (0, 2):
-        rows = [("파생상품부채 — 매도한 풋옵션", put_)]
-        if has_call: rows.append(("파생상품자산 — 매수한 콜옵션", -call_))
-        rows.append(("합계 (순액)", sum(v for _, v in rows)))
-        note = ("최대주주에게 대상회사 주식은 **자기지분상품이 아니므로** 문단 23 이 "
-                "걸리지 않는다. 매도한 풋은 파생상품부채, 매수한 콜은 파생상품자산이고 "
-                "매기 공정가치로 재평가해 당기손익에 반영한다. 상계 요건(제1032호 "
+        rows = [("파생상품부채 — 매도한 풋옵션", {"put": 1})]
+        if has_call: rows.append(("파생상품자산 — 매수한 콜옵션", {"call": -1}))
+        rows = _total(rows)
+        note = ("콜 권리자(풋이 행사되면 주식을 사 주는 쪽)에게 대상회사 주식은 **자기지분상품이 "
+                "아니므로** 문단 23 이 걸리지 않는다. 매도한 풋은 파생상품부채, 매수한 콜은 "
+                "파생상품자산이고 매기 공정가치로 재평가해 당기손익에 반영한다. 상계 요건(제1032호 "
                 "문단 42)을 못 채우면 재무상태표에는 총액으로 표시한다.")
     else:
-        rows = [("인식할 것이 없다 — 풋 의무자가 발행회사다", 0.0)]
-        note = ("풋 의무자를 발행회사로 두셨습니다. 최대주주가 콜만 가지고 있다면 "
+        rows = [("인식할 것이 없다 — 풋 의무자가 발행회사다", {})]
+        note = ("풋 의무자를 발행회사로 두셨습니다. 상대 주주가 콜만 가지고 있다면 "
                 "그 콜은 파생상품자산입니다.")
         if has_call:
-            rows = [("파생상품자산 — 매수한 콜옵션", -call_), ("합계", -call_)]
-    out["최대주주"] = (rows, note)
+            rows = [("파생상품자산 — 매수한 콜옵션", {"call": -1}), ("합계", {"call": -1})]
+    out["콜 권리자"] = (rows, note)
 
-    rows = [("지분상품 — 보유 주식 (공정가치)", 100*tm.S0/tm.K0),
-            ("파생상품자산 — 매수한 풋옵션", put_)]
-    if has_call: rows.append(("파생상품부채 — 매도한 콜옵션", -call_))
-    rows.append(("합계", sum(v for _, v in rows)))
-    out["투자자"] = (rows, (
-        "투자자는 주식과 파생을 따로 인식한다. 풋은 파생상품자산, 매도한 콜은 "
+    rows = [("지분상품 — 보유 주식 (공정가치)", {"eq": 1}),
+            ("파생상품자산 — 매수한 풋옵션", {"put": 1})]
+    if has_call: rows.append(("파생상품부채 — 매도한 콜옵션", {"call": -1}))
+    rows = _total(rows, "합계")
+    out["풋 권리자"] = (rows, (
+        "풋 권리자(주식 보유자)는 주식과 파생을 따로 인식한다. 풋은 파생상품자산, 매도한 콜은 "
         "파생상품부채이고 둘 다 당기손익-공정가치다. 보유 주식은 지분상품이라 "
         "당기손익-공정가치 또는 (선택 시) 기타포괄손익-공정가치로 잰다 — "
         "제1109호 문단 4.1.4·5.7.5. "
@@ -3410,9 +3681,85 @@ def sha_accounts(tm: Terms, R):
     return out
 
 
+SHA_PARTIES = ("발행회사", "콜 권리자", "풋 권리자")
+
+
+def sha_components(tm: Terms, R) -> dict:
+    """회계 참고표 성분의 100 기준 값."""
+    g = R.get("gross")
+    return {"eq": 100*tm.S0/tm.K0, "put": R["put"], "call": R["call"],
+            "gpv": (g["pv"] if g else 0.0)}
+
+
+def sha_components_krw(tm: Terms, R) -> dict:
+    """회계 참고표 성분의 원 단위 값 — 풋·지분·총액 부채는 풋 수량, 콜은 콜 수량으로 곱한다."""
+    qp, qc = sha_qty(tm)
+    c = sha_components(tm, R)
+    # 조서와 같은 순서로 곱한다 — (100 기준 ÷ 100 × 기준가격) × 주식수
+    f = lambda v, q: v/100*tm.K0*q
+    return {"eq": f(c["eq"], max(qp, qc)), "put": f(c["put"], qp), "call": f(c["call"], qc),
+            "gpv": f(c["gpv"], qp)}
+
+
+def sha_eval(comb: dict, vals: dict) -> float:
+    return float(sum(v*vals[k] for k, v in comb.items()))
+
+
+def sha_formula(comb: dict, refs: dict) -> str:
+    """구성 → 엑셀 식. 성분이 없으면 0."""
+    if not comb: return "=0"
+    parts = []
+    for k, v in comb.items():
+        if v == 0: continue
+        sgn = "-" if v < 0 else "+"
+        mag = "" if abs(v) == 1 else f"{abs(v):g}*"
+        parts.append(f"{sgn}{mag}{refs[k]}")
+    txt = "".join(parts).lstrip("+")
+    return "=" + (txt or "0")
+
+
+def sha_accounts(tm: Terms, R, krw: bool = False):
+    """주주간계약을 세 당사자의 재무제표로 옮긴다 — {당사자: ([(항목, 값)], 설명)}.
+
+    같은 계약인데 실리는 것이 완전히 다르다. **누가 풋 의무자인가**가 가른다.
+
+    **발행회사** — 풋 의무자가 아니면 아무것도 실리지 않는다. 발행회사가 풋 의무자면
+    자기지분상품을 매입할 의무이므로 기업회계기준서 제1032호 문단 23 이 걸린다 —
+    옵션 공정가치가 아니라 **상환금액의 현재가치**를 총액으로 부채에 싣는다.
+
+    **콜 권리자**(풋이 행사되면 주식을 사 주는 쪽) — 자기지분상품이 아니라 남의 주식이므로
+    문단 23 이 걸리지 않는다. 매도한 풋은 파생상품부채, 매수한 콜은 파생상품자산이다.
+
+    **풋 권리자**(주식 보유자) — 매수한 풋은 파생상품자산, 매도한 콜은 파생상품부채다.
+
+    ``krw`` 가 참이면 원 단위(풋 수량·콜 수량을 곱한 값), 아니면 100 기준이다.
+    """
+    vals = sha_components_krw(tm, R) if krw else sha_components(tm, R)
+    return {who: ([(nm, sha_eval(c, vals)) for nm, c in rows], memo)
+            for who, (rows, memo) in sha_account_lines(tm, R).items()}
+
+
 def sha_validate(tm: Terms):
     """주주간계약 인풋에서 계약과 어긋나는 것을 잡는다."""
     w = []
+    if tm.sha_rows:
+        # 회차별 표 — 계산을 막는 입력은 sha_row_issues(평가 입력 오류)가 잡는다. 여기서는 확인할 점만.
+        rows = [sha_row_defaults(r) for r in tm.sha_rows]
+        if any(r["put_q"] > 0 and r["call_q"] > 0 and not r["kill"] for r in rows):
+            w.append("풋·콜을 **독립**으로 잽니다(상호소멸 끔). 같은 주식에 붙은 풋·콜이고 한쪽 행사로 다른 쪽이 "
+                     "소멸하는 계약이면 그 회차의 «상호소멸» 을 켜십시오 — 계약서의 소멸·우선순위 조항을 확인하십시오.")
+        if len({(r["start"], r["end"]) for r in rows}) < len(rows):
+            w.append("행사기간이 같은 회차가 둘 이상입니다. 같은 물량을 두 번 넣지 않았는지 확인하십시오.")
+        if int(tm.sha_writer) in (1, 2):
+            w.append("풋 행사 시 주식매수 의무자를 **발행회사**로 두셨습니다. 발행회사 재무제표에는 옵션 공정가치가 "
+                     "아니라 **상환금액의 현재가치를 총액으로** 싣습니다 (1032 문단 23).")
+        if int(tm.sha_disc) == 0 and not all(r["pdisc"] is not None for r in rows):
+            w.append("풋을 **무위험**으로 할인하는 회차가 있습니다. 풋은 현금을 받을 권리라 의무자의 신용위험이 "
+                     "붙습니다 — 의무자의 신용을 반영했는지 확인하십시오.")
+        if any(r["price_note"] for r in rows):
+            w.append("실적 연동 행사가격을 추정 재무수치로 계산해 **고정**했습니다 — 미래 실적의 불확실성은 "
+                     "반영하지 않았습니다. 산식의 재무제표 연도(보통 행사연도의 직전 연도)를 확인하십시오.")
+        return w
     if tm.sha_put_s > tm.sha_put_e:
         w.append("풋 행사 시작이 종료보다 늦습니다. 풋이 없는 것으로 계산됩니다.")
     horizon = tm.T*12 + tm.elapsed_m + 0.5
@@ -3431,7 +3778,7 @@ def sha_validate(tm: Terms):
                  "보시고, 어느 것을 인식하는지 조서에 밝히십시오.")
     if int(tm.sha_disc) == 0 and tm.sha_put_yield > 0:
         w.append("풋을 **무위험**으로 할인하고 있습니다. 풋은 현금을 받을 권리라 "
-                 "의무자의 신용위험이 붙습니다 — 최대주주 개인이 의무자면 그 신용을 "
+                 "의무자의 신용위험이 붙습니다 — 상대 주주(개인·회사)가 의무자면 그 신용을 "
                  "반영하지 않은 값은 과대평가입니다. 할인율 칸을 확인하십시오.")
     try:
         _RF, _CR = curves(tm)
@@ -4147,18 +4494,18 @@ def rights_table(tm: Terms):
     if is_sha(tm):
         _pk = 100*(1 + accrue_rate(tm.sha_put_s/12, tm.sha_put_yield, 0.0,
                                    tm.sha_put_cmp))
-        rows.append(("투자자 풋옵션", "투자자",
+        rows.append(("풋옵션", "풋 권리자 (주식 보유자)",
                      _mo(tm.sha_put_s, tm.sha_put_e, tm.sha_put_f),
                      ("적격상장하면 소멸" if int(tm.ipo_on) else "—"),
                      f"MAX(행사금액 − 지분가치, 0) · 첫날 {_pk:,.2f}",
                      "—"))
         if tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e:
-            rows.append(("최대주주 콜옵션", "최대주주",
+            rows.append(("콜옵션", "콜 권리자 (상대방)",
                          _mo(tm.sha_call_s, tm.sha_call_e, tm.sha_call_f),
                          ("적격상장하면 소멸" if (int(tm.ipo_on)
                                             and int(tm.sha_qipo_kill)) else "—"),
                          "MAX(지분가치 − 행사금액, 0)", "—"))
-        rows.append(("풋 의무자", ["최대주주", "발행회사", "최대주주 · 발행회사 연대"]
+        rows.append(("풋 행사 시 주식매수 의무자", ["콜 권리자 (상대 주주)", "발행회사", "상대 주주 · 발행회사 연대"]
                      [int(tm.sha_writer)], "—", "—",
                      ("상환금액의 현재가치를 총액으로 (1032 문단 23)"
                       if int(tm.sha_writer) else "옵션 공정가치"), "—"))
@@ -10645,194 +10992,237 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
     언젠가 어긋난다. 그래서 칸마다 「값」과 「수식」을 나란히 주고 스위치 하나로
     고른다 — 구조가 하나뿐이니 갈라질 자리가 없다.
 
-    시트는 여덟 장이다.
-        해설 · 가정 · 01 주가 · 02 지분가치 · 03 풋가치 · 04 콜가치 ·
-        결과 · 회계처리
+    회차가 하나면(단일 계약) 시트는
+        해설 · 가정 · 01 주가 · 02 지분가치 · 03 풋가치 · 04 콜가치 · 결과 · 회계처리
+    회차가 여럿이면 회차마다 「1·가정 … 1·결과」 한 벌씩 만들고, 「회차 합계」 가 각 회차
+    결과 시트의 금액을 수식으로 모아 더한다. 회계처리는 합계를 본다.
     """
     from openpyxl import Workbook
-    from openpyxl.utils import get_column_letter as gl
-
-    derive(tm)
-    n, dt_ = int(tm.n), tm.T/int(tm.n)
-    mper = n/(tm.T*12)
-    R0 = 17                                   # 트리 첫 자료행
-    N2, N0, P2, N4, N6 = '#,##0.00', '#,##0', '0.00%', '0.0000', '0.000000'
-    DATE = 'yyyy-mm-dd'
-    YEL = "FFF6D8"                            # 수식 조서의 입력 셀
-    st_lo, st_hi = step_mapper(tm, n, dt_)
-    per_ = lambda fr: max(1, int(round(fr*mper)))
 
     wb = Workbook(); wb.remove(wb.active)
-    _volref = _rvolref = _irref = None
     if attach:
-        _volref, _rvolref, _irref = attach_reports(wb, tm, **attach)
+        attach_reports(wb, tm, **attach)
         _order = list(wb.sheetnames)
     K = report_kit(wb)
-    put, head, sec, cols, note, sheet = (K[x] for x in
-        ("put", "head", "sec", "cols", "note", "sheet"))
-    Q = lambda nm: f"'{nm}'"
-    V = lambda val, fx: (fx if formula else val)
+    multi = bool(R.get("portfolio"))
+    entries = R["rows"] if multi else [dict(name=(tm.tranche or "단일 계약"), tm=tm, R=R)]
+    _sha_intro(wb, K, tm, formula, multi, entries)
+    refs = []
+    for k, e in enumerate(entries, 1):
+        refs.append(_sha_block(wb, K, e["tm"], e["R"], formula, f"{k}·" if multi else "", e["name"]))
+    tot = _sha_total(wb, K, tm, entries, refs, formula) if multi else None
+    _sha_accounting(wb, K, tm, R, entries, refs, tot, formula)
+    if attach:
+        # 산출내역은 뒤로 보낸다. 앞의 시트가 조서의 본문이다.
+        for nm in _order:
+            wb.move_sheet(nm, offset=len(wb.sheetnames))
+    polish_wb(wb)
+    return wb if as_workbook else _save(wb)
 
-    S1, S2, S3, S4 = "01 주가", "02 지분가치", "03 풋가치", "04 콜가치"
 
-    # ── 해설 ──
+def _sha_intro(wb, K, tm, formula, multi, entries):
+    put, head, cols, sheet = (K[x] for x in ("put", "head", "cols", "sheet"))
     H = sheet("해설", widths=[22, 96])
     head(H, 2, "주주간계약 평가 조서 — 읽는 법",
-         "사채가 없는 계약이다. 투자자가 이미 가진 지분에 풋과 콜이 붙어 있을 뿐이라 "
+         "사채가 없는 계약이다. 주식 보유자가 이미 가진 지분에 풋과 콜이 붙어 있을 뿐이라 "
          "순차 차감이 아니라 두 옵션을 따로 잰다.", span=2)
     _rows = [
-        ("무엇을 재나", "투자자 풋옵션(지분을 되팔 권리)과 최대주주 콜옵션(지분을 "
-                     "사 갈 권리)을 각각 미국형으로 잰다. 기초자산은 대상회사 "
-                     "지분이고 금액 기준은 투자원금 100 이다."),
-        ("왜 따로 재나", "풋은 투자자가, 콜은 최대주주가 고른다. 보유자가 다르므로 "
-                      "한 격자에서 함께 최적화하면 두 사람을 한 사람으로 만드는 "
-                      "셈이 된다. 각자의 재무제표에 총액으로 싣는 것도 같은 이유다."),
-        ("지분가치", "100 × 주가 ÷ 주당 인수가액. 평가기준일 주가가 인수가액과 "
-                  "같으면 100 이다."),
-        ("풋 행사가치", "MAX(풋 행사금액 − 지분가치, 0). 행사금액은 투자원금에 "
-                     "보장수익률을 복리로 붙인 값이다."),
-        ("콜 행사가치", "MAX(지분가치 − 콜 행사금액, 0)."),
-        ("적격상장", "그 노드의 주가가 최소 기준을 넘으면 상장이 이루어진 것으로 "
-                  "본다. 투자자가 시장에서 팔 수 있게 되므로 풋이 소멸한다. "
-                  "콜도 함께 끝나는지는 계약에서 고른다."),
-        ("할인율", "풋은 현금을 받을 권리라 의무자의 신용위험이 붙는다 (8행). "
-                 "콜은 주식을 받을 권리라 인도 위험이 사실상 없어 무위험으로 "
-                 "잰다 (9행)."),
-        ("총액 부채", "발행회사가 풋 의무자면 기준서 1032 문단 23 에 따라 옵션 "
-                   "공정가치가 아니라 **상환금액의 현재가치**를 총액으로 싣는다. "
-                   "결과 시트에 함께 낸다."),
-        ("이 파일", "값 조서는 계산 결과를 담은 스냅샷이고, 수식 조서는 노란 셀을 "
-                 "바꾸면 엑셀 안에서 다시 계산된다. 둘은 같은 자리에 같은 값을 "
-                 "낸다."),
+        ("무엇을 재나", "풋(주식 보유자가 상대방에게 주식을 사 달라고 요구할 권리)과 콜(상대방이 주식 "
+                     "보유자에게 주식을 팔라고 요구할 권리)을 각각 미국형으로 잰다. 계약서의 "
+                     "「매수청구권·매도청구권」 명칭이 아니라 **누가 누구에게 어떤 거래를 요구하는가**로 "
+                     "풋·콜을 가른다."),
+        ("금액 단위", "트리는 주당 기준가격 100 기준으로 계산하고, 결과 시트에서 1주당 금액(원)과 "
+                   "대상 주식수를 곱해 원 단위로 바꾼다. 풋과 콜의 대상 주식수가 다르면 각각 곱한다."),
+        ("지분가치", "100 × 주가 ÷ 풋 주당 기준가격."),
+        ("풋 행사가치", "MAX(풋 행사금액 − 지분가치, 0). 행사금액 = 100 × (1 + 가격 가산율의 누적) — "
+                     "가산율 0% 이면 고정 행사가격이다."),
+        ("콜 행사가치", "MAX(지분가치 − 콜 행사금액, 0). 콜 행사금액 = 100 × (콜 기준가격 ÷ 풋 기준가격) "
+                     "× (1 + 콜 가산율의 누적)."),
+        ("행사일", "계약상 행사일은 그날 이후 첫 노드에 배정한다(전환사채와 같은 규칙). 기간 중 "
+                "언제든지면 기간 안의 모든 노드에서 행사할 수 있다. 가정 시트 아래 «행사일 대조» "
+                "표가 계약일과 실제로 쓴 노드를 나란히 싣는다."),
+        ("가격 가산기간", "노드 날짜가 아니라 계약 행사월(가격 가산 기산일부터 개월)로 센다. «계약 개월 ÷ "
+                     "12» 또는 «평가기준일까지 개월 ÷ 12 + 이후 실제 일수 ÷ 365» — 가정 시트에서 고른다."),
+        ("적격상장", "그 노드의 주가가 최소 기준을 넘으면 상장이 이루어진 것으로 본다. 풋이 소멸하고, "
+                  "콜도 함께 끝나는지는 가정에서 고른다."),
+        ("할인율", "풋은 현금을 받을 권리라 의무자의 신용위험이 붙는다 (트리 8행). 콜은 주식을 받을 "
+                 "권리라 무위험으로 잰다 (9행). 위험중립확률은 무위험 선도이자율에서 배당수익률을 "
+                 "뺀 드리프트로 잰다 (13행)."),
+        ("총액 부채", "발행회사가 풋 의무자면 기준서 1032 문단 23 에 따라 옵션 공정가치가 아니라 "
+                   "**상환금액의 현재가치**를 총액으로 싣는다. 결과 시트에 함께 낸다."),
+        ("이 파일", ("수식 조서다 — 노란 칸(주가·변동성·배당수익률·가산율·수량 등)을 바꾸면 트리·결과·"
+                   + ("회차 합계·" if multi else "") + "회계처리까지 다시 계산된다. 행사일 배정·노드 수·"
+                   "선도이자율은 앱에서 정한 값이다 — 날짜를 바꾸려면 앱에서 조서를 다시 만든다.")
+                  if formula else
+                  "값 조서다 — 앱이 계산한 값을 담은 스냅샷이다. 수식 조서와 같은 자리에 같은 값을 낸다."),
     ]
+    if multi:
+        _rows.insert(1, ("회차", f"{len(entries)}개 회차를 따로 잰다 — 회차마다 행사기간·기준가격·가산율·"
+                              "수량(과 필요하면 금리·변동성)이 다르다. 연도별 미행사 물량을 다음 회차로 "
+                              "넘기지 않는다. 「회차 합계」 시트가 각 회차 결과를 더한다."))
     cols(H, 5, ["항목", "설명"], widths=[22, 96])
     for i, (a, b) in enumerate(_rows):
         put(H, 6+i, 2, a, bold=True, size=9, border=True)
         put(H, 6+i, 3, b, size=9, border=True, wrap=True)
         H.row_dimensions[6+i].height = max(16, 14*(1 + len(b)//80))
-    # ── 재현 기록 ──
-    # 몇 달 뒤 같은 계약을 다시 재서 값이 다르면 앱이 바뀐 것인지 인풋이 바뀐 것인지
-    # 가려야 한다. 앱 판·소스 판·인풋 지문을 조서에 남겨 둔다.
     _hr = 6 + len(_rows) + 1
     put(H, _hr, 2, "재현 기록", bold=True, size=9.5)
     for i, (_l, _v) in enumerate(stamp_rows(tm, "수식" if formula else "값")):
         put(H, _hr+1+i, 2, _l, size=9, border=True)
         put(H, _hr+1+i, 3, _v, size=9, border=True)
 
+
+def _sha_block(wb, K, tm, R, formula, pre, name):
+    """한 회차의 가정 · 01~04 트리 · 결과 시트. 돌려주는 것은 결과 시트 칸 주소(합계·회계가 쓴다)."""
+    from openpyxl.utils import get_column_letter as gl
+
+    derive(tm)
+    n, dt_ = int(tm.n), tm.T/int(tm.n)
+    R0 = 24                                   # 트리 첫 자료행
+    N2, N0, P2, N4, N6 = '#,##0.00', '#,##0', '0.00%', '0.0000', '0.000000'
+    DATE = 'yyyy-mm-dd'
+    YEL = "FFF6D8"                            # 수식 조서의 입력 셀
+    put, head, sec, cols, note, sheet = (K[x] for x in
+        ("put", "head", "sec", "cols", "note", "sheet"))
+    Q = lambda nm: f"'{nm}'"
+    V = lambda val, fx: (fx if formula else val)
+    SA, S1, S2, S3, S4, SR = (pre + x for x in ("가정", "01 주가", "02 지분가치", "03 풋가치",
+                                                "04 콜가치", "결과"))
+    qp, qc = sha_qty(tm)
+    kck = tm.K0*R.get("kc", 1.0)
+    _price_note = getattr(tm, "_price_note", "")
+    _nd = node_dates(tm, n, dt_)
+    _dd = lambda m: months_to_date(tm.d_issue, m).isoformat()
+
+    def _sched_txt(s_, e_, f_, dates, cont, on):
+        if not on: return "없음"
+        body = f"{_dd(s_)} ~ {_dd(e_)}"
+        if cont: return body + f" · 기간 중 언제든지 (노드 {len(dates)}개)"
+        if abs(e_ - s_) < 1e-9: return body.split(" ~ ")[0] + " 1회"
+        return body + f" · {f_:g}개월마다 · 격자에 {len(dates)}회"
+
     # ── 가정 ──
-    A = sheet("가정", widths=[34, 18, 14, 60])
-    head(A, 2, "가정", ("노란 칸을 바꾸면 그 값을 쓰는 계산 시트가 다시 계산된다. 행사일·노드 수는 앱에서 바꾼다."
-                      if formula else
-                      "앱이 계산한 값을 그대로 담았다."), span=4)
+    A = sheet(SA, widths=[36, 18, 14, 60])
+    head(A, 2, "가정" + (f" — {name}" if pre else ""),
+         ("노란 칸을 바꾸면 그 값을 쓰는 계산 시트가 다시 계산된다. 행사일·노드 수는 앱에서 바꾼다."
+          if formula else "앱이 계산한 값을 그대로 담았다."), span=4)
     K_ = {}
 
-    def kv(r, name, val, fmt=None, memo="", key=None, yellow=True):
-        put(A, r, 2, name, bold=True, size=9.5, border=True)
+    def kv(r, nm, val, fmt=None, memo="", key=None, yellow=True):
+        put(A, r, 2, nm, bold=True, size=9.5, border=True)
         put(A, r, 3, val, fmt=fmt, size=9.5, align="right", border=True,
             fill=(YEL if (formula and yellow) else None))
         if memo: put(A, r, 4, memo, size=9, color=RPT["grey"], wrap=True)
-        if key: K_[key] = f"{Q('가정')}!$C${r}"
+        if key: K_[key] = f"{Q(SA)}!$C${r}"
 
-    sec(A, 4, "1. 대상 지분", span=4)
+    sec(A, 4, "1. 대상 지분 · 격자", span=4)
     kv(5, "평가기준일 주가 (원)", tm.S0, N2,
        " · ".join(f"{_l} {_v}" for _l, _v in px_trace(tm)), "S0")
-    kv(6, "주당 인수가액 (원)", tm.K0, N2, "지분가치 = 100 × 주가 ÷ 이 값", "K0")
-    kv(7, "평가기준일", dt.date.fromisoformat(tm.d_base), DATE, "", "d_base")
-    kv(8, "투자일 → 평가기준일 경과 (개월)", tm.elapsed_m, N2, "", "elm")
-    kv(9, "노드 수", n, N0, "", "n")
-    kv(10, "Δt (년)", dt_, N6, "", "dt")
-    kv(11, "변동성 σ (연)", tm.sig, P2, "", "sig")
-    kv(12, "u = EXP(σ√Δt)", V(R["u"], f"=EXP({K_['sig']}*SQRT({K_['dt']}))"),
+    kv(6, "풋 주당 기준가격 (원)", tm.K0, N2,
+       _price_note or "지분가치 = 100 × 주가 ÷ 이 값 · 풋 행사금액의 출발점", "K0")
+    kv(7, "평가기준일", dt.date.fromisoformat(tm.d_base), DATE, "", "d_base", yellow=False)
+    kv(8, "가격 가산 기산일 → 평가기준일 (계약 개월)", tm.elapsed_m, N4,
+       f"기산일 {tm.d_issue}", "elm", yellow=False)
+    kv(9, "평가기준일 → 격자 끝 (계약 개월)", tm.rem_m, N4, f"격자 끝 {tm.d_mat}", "remm", yellow=False)
+    kv(10, "평가기준일 → 격자 끝 (년, 실제 일수 ÷ 365)", tm.T, N6, "", "T", yellow=False)
+    kv(11, "노드 수", n, N0, "", "n", yellow=False)
+    kv(12, "Δt (년)", dt_, N6, "", "dt", yellow=False)
+    kv(13, "변동성 σ (연)", tm.sig, P2, "", "sig")
+    kv(14, "보통주 배당수익률 (연, 연속)", tm.div_y, P2, "위험중립 드리프트에서 뺀다", "divy")
+    kv(15, "u = EXP(σ√Δt)", V(R["u"], f"=EXP({K_['sig']}*SQRT({K_['dt']}))"),
        N4, "", "u", yellow=False)
-    kv(13, "d = 1 ÷ u", V(R["d"], f"=1/{K_['u']}"), N4, "", "dd", yellow=False)
-    kv(14, "q (첫 구간)", R["q"], N4, "각 구간의 q 는 트리 13행에서 다시 잰다", "q",
+    kv(16, "d = 1 ÷ u", V(R["d"], f"=1/{K_['u']}"), N4, "", "dd", yellow=False)
+    kv(17, "q (첫 구간)", R["q"], N4, "각 구간의 q 는 트리 13행에서 다시 잰다 (마지막 열만 이 값)", "q",
        yellow=False)
-    kv(15, "1 − q", 1-R["q"], N4, "", "q1", yellow=False)
+    kv(18, "1 − q", 1-R["q"], N4, "", "q1", yellow=False)
+    kv(19, "가격 가산 기산일", dt.date.fromisoformat(tm.d_issue), DATE,
+       "실제 일수 기준이면 이날부터 행사일까지 일수 ÷ 365", "d0", yellow=False)
 
-    sec(A, 17, "2. 투자자 풋옵션", span=4)
-    kv(18, "행사 시작 (스텝)", st_lo(tm.sha_put_s), N0,
-       f"계약 {tm.sha_put_s:,.0f}개월", "pst")
-    kv(19, "행사 종료 (스텝)", st_hi(tm.sha_put_e), N0,
-       f"계약 {tm.sha_put_e:,.0f}개월", "pen")
-    kv(20, "행사 주기 (스텝)", per_(tm.sha_put_f), N0,
-       f"계약 {tm.sha_put_f:,.0f}개월", "pfrq")
-    kv(21, "보장수익률 (연)", tm.sha_put_yield, P2, "", "pyld")
-    kv(22, "보장 복리 횟수", tm.sha_put_cmp, N0, "0 이면 단리", "pcmp")
+    sec(A, 20, "2. 풋 — 주식 보유자가 상대방에게 주식을 사 달라고 요구할 권리", span=4)
+    kv(21, "풋 행사일", _sched_txt(tm.sha_put_s, tm.sha_put_e, tm.sha_put_f, R["p_dates"],
+                                  R["p_cont"], R["has_put"]), None, "앱이 노드에 배정했다", yellow=False)
+    kv(22, "풋 가격 가산율 (연)", tm.sha_put_yield, P2, "0% 이면 고정 행사가격", "pyld")
+    kv(23, "풋 가산 복리 횟수 (연)", tm.sha_put_cmp, N0, "0 이면 단리", "pcmp")
+    kv(24, "풋 대상 주식수", qp, N0, "", "qp")
 
-    sec(A, 24, "3. 최대주주 콜옵션", span=4)
-    _hascall = tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e
-    kv(25, "콜 있음 (1) / 없음 (0)", 1 if _hascall else 0, N0, "", "con")
-    kv(26, "행사 시작 (스텝)", st_lo(tm.sha_call_s), N0,
-       f"계약 {tm.sha_call_s:,.0f}개월", "kst")
-    kv(27, "행사 종료 (스텝)", st_hi(tm.sha_call_e), N0,
-       f"계약 {tm.sha_call_e:,.0f}개월", "ken")
-    kv(28, "행사 주기 (스텝)", per_(tm.sha_call_f), N0,
-       f"계약 {tm.sha_call_f:,.0f}개월", "kfrq")
-    kv(29, "행사금액 가산율 (연)", tm.sha_call_prem, P2, "", "cprem")
-    kv(30, "가산 복리 횟수", tm.sha_call_cmp, N0, "0 이면 단리", "ccmp")
+    sec(A, 26, "3. 콜 — 상대방이 주식 보유자에게 주식을 팔라고 요구할 권리", span=4)
+    kv(27, "콜 행사일", _sched_txt(tm.sha_call_s, tm.sha_call_e, tm.sha_call_f, R["c_dates"],
+                                  R["c_cont"], R["has_call"]), None, "앱이 노드에 배정했다", yellow=False)
+    kv(28, "콜 주당 기준가격 (원)", kck, N2, "콜 행사금액의 출발점", "kck")
+    kv(29, "콜 가격 가산율 (연)", tm.sha_call_prem, P2, "0% 이면 고정 행사가격", "cprem")
+    kv(30, "콜 가산 복리 횟수 (연)", tm.sha_call_cmp, N0, "0 이면 단리", "ccmp")
+    kv(31, "콜 대상 주식수", qc, N0, "", "qc")
 
-    sec(A, 32, "4. 적격상장 · 할인", span=4)
-    kv(33, "적격상장 조항 (1 반영)", int(tm.ipo_on), N0, "", "ipoon")
-    kv(34, "적격상장 스텝", R["qi_step"], N0,
-       f"계약 {tm.ipo_m:,.0f}개월", "ipos")
-    kv(35, "적격 판정 최소 주가 (원)", tm.ipo_min, N2,
+    sec(A, 33, "4. 적격상장 · 상호소멸 · 할인 · 가산기간", span=4)
+    kv(34, "적격상장 조항 (1 반영)", int(tm.ipo_on), N0, "", "ipoon")
+    kv(35, "적격상장 스텝", R["qi_step"], N0,
+       (f"계약 {_dd(tm.ipo_m)}" if int(tm.ipo_on) else "반영하지 않음"), "ipos", yellow=False)
+    kv(36, "적격 판정 최소 주가 (원)", tm.ipo_min, N2,
        "그 노드 주가가 이 값을 넘으면 상장 성공", "ipomin")
-    kv(36, "상장 시 콜도 소멸 (1)", int(tm.sha_qipo_kill), N0, "", "qkill")
-    kv(37, "한쪽 행사 시 상대 권리 (0 존속 / 1 소멸)", int(tm.sha_kill), N0,
-       ("한 격자에서 함께 푼다 — 행사확률 합이 1 이다" if int(tm.sha_kill)
-        else "두 권리를 따로 잰다 — 행사확률 합이 1 을 넘을 수 있다"),
-       yellow=False)
-    kv(38, "풋 할인 기준", ["무위험", "위험 곡선", "무위험 + 스프레드"][int(tm.sha_disc)],
+    kv(37, "상장 시 콜도 소멸 (1)", int(tm.sha_qipo_kill), N0, "", "qkill")
+    kv(38, "한쪽 행사 시 상대 권리 (0 존속 / 1 소멸)", int(tm.sha_kill), N0,
+       ("같은 주식의 풋·콜 — 한 격자에서 함께 푼다" if int(tm.sha_kill)
+        else "두 권리를 따로 잰다 — 행사확률 합이 1 을 넘을 수 있다"), yellow=False)
+    kv(39, "풋 할인 기준", ["무위험", "위험 곡선", "무위험 + 스프레드"][int(tm.sha_disc)],
        None, "선도이자율은 트리 8행에 값으로 들어 있다", yellow=False)
-    kv(39, "풋 의무자", ["최대주주", "발행회사", "최대주주 · 발행회사 연대"][int(tm.sha_writer)],
+    kv(40, "풋 행사 시 주식매수 의무자", ["콜 권리자(상대 주주)", "발행회사", "상대 주주 · 발행회사 연대"][int(tm.sha_writer)],
        None, "발행회사면 1032 문단 23 총액 부채", yellow=False)
-    kv(40, "투자원금 총액 (원)", tm.face_total, N0, "", "face")
-    note(A, 42, "스텝은 계약상 개월을 노드 번호로 옮긴 것이다. 시작은 계약일 이후 첫 노드, "
-         "종료는 그 이전 마지막 노드다. 다만 노드 날짜는 한 달을 30.4일로 잡아 달력과 하루이틀 "
-         f"어긋나므로 허용 일수({date_tol_days(tm.T/max(1, int(tm.n)))}일) 안의 노드는 같은 날로 본다 — "
-         "그보다 앞선 노드에서는 행사가 열리지 않는다.", span=4)
+    kv(41, "가격 가산기간 (1 계약 개월 ÷ 12 / 0 실제 일수)", int(getattr(tm, "acc_basis", 1)), N0,
+       "1 이면 기산일부터 계약 행사월 ÷ 12, 0 이면 기산일부터 행사일까지 실제 일수 ÷ 365", "accb")
+    note(A, 43, EXDATE_RULE, span=4)
+    # ── 행사일 대조 — 계약일과 실제로 쓴 노드 ──
+    _xr = exercise_date_rows(tm)
+    r = 45
+    if _xr:
+        sec(A, r, "5. 행사일 대조 — 계약상 행사일과 적용 노드", span=4); r += 1
+        for c_, h in enumerate(EXDATE_COLS):
+            put(A, r, 2+c_, h, bold=True, size=8.5, fill=RPT["tint"], border=True)
+        r += 1
+        for row in _xr:
+            for c_, v in enumerate(row):
+                put(A, r, 2+c_, v, size=8.5, border=True)
+            r += 1
 
     # ── 트리 시트 ──
     HEAD = ["날짜", "스텝(노드 번호)", "풋 행사 가능 (1=예)", "콜 행사 가능 (1=예)", "적격상장 스텝",
             "풋 행사금액", "콜 행사금액", "풋 선도할인율", "무위험 선도이자율",
-            "주가변동성 σ", "상승계수 u", "하락계수 d", "위험중립 상승확률 q", "하락확률 1−q"]
+            "주가변동성 σ", "상승계수 u", "하락계수 d", "위험중립 상승확률 q", "하락확률 1−q",
+            "풋 계약 행사월 (기산일부터)", "풋 행사일", "풋 가산 경과연수",
+            "콜 계약 행사월 (기산일부터)", "콜 행사일", "콜 가산 경과연수"]
+    # 가산 경과연수 — 계약 개월 ÷ 12 또는 기산일부터 행사일까지 실제 일수 ÷ 365 (엔진 pyr·cyr 와 같다)
+    _xyr = lambda mo, day: f"IF({K_['accb']}=1,({mo})/12,(({day})-{K_['d0']})/365)"
+    _MO = lambda st: f"({K_['elm']}+{st}*{K_['remm']}/{K_['n']})"
 
-    def newsheet(name, ttl, memo, refs):
-        W = sheet(name, widths=[15] + [9]*(n+1))
-        for r, nm in enumerate(HEAD, start=1):
-            put(W, r, 2, nm, bold=True, size=8, fill=RPT["tint"], border=True)
+    def newsheet(nm, ttl, memo, refs):
+        W = sheet(nm, widths=[15] + [9]*(n+1))
+        for r_, h in enumerate(HEAD, start=1):
+            put(W, r_, 2, h, bold=True, size=8, fill=RPT["tint"], border=True)
         d0 = dt.date.fromisoformat(tm.d_base)
         for i in range(n+1):
             L = gl(3+i); Lp = gl(2+i) if i > 0 else None
-            g = lambda r, v, fm=None, col=None: put(W, r, 3+i, v, fmt=fm,
-                                                    align="center", size=8, color=col)
+            g = lambda r_, v, fm=None, col=None: put(W, r_, 3+i, v, fmt=fm,
+                                                     align="center", size=8, color=col)
             stp = f"{L}$2"
-            yr = f"({stp}*{K_['dt']}+{K_['elm']}/12)"
-            g(1, V(d0 + dt.timedelta(days=round(i*dt_*365)),
-                   f"={K_['d_base']}+{stp}*{K_['dt']}*365"), DATE, RPT["grey"])
+            # 노드 날짜는 앱이 정한 값이다 (행사일 배정과 같은 날짜) — 엑셀 ROUND 는 반올림 방식이 달라
+            # 0.5일에서 하루가 갈린다. 두 조서 모두 같은 날짜 값을 싣는다.
+            g(1, _nd[i], DATE, RPT["grey"])
             g(2, V(i, (0 if i == 0 else f"={Lp}$2+1")), N0)
-            _pf = (1 if (st_lo(tm.sha_put_s) <= i <= st_hi(tm.sha_put_e)
-                         and (i-st_lo(tm.sha_put_s)) % per_(tm.sha_put_f) == 0) else 0)
-            g(3, V(_pf, f"=IF(AND({stp}>={K_['pst']},{stp}<={K_['pen']},"
-                        f"MOD({stp}-{K_['pst']},{K_['pfrq']})=0),1,0)"), N0)
-            _cf = (1 if (_hascall and st_lo(tm.sha_call_s) <= i <= st_hi(tm.sha_call_e)
-                         and (i-st_lo(tm.sha_call_s)) % per_(tm.sha_call_f) == 0) else 0)
-            g(4, V(_cf, f"=IF(AND({K_['con']}=1,{stp}>={K_['kst']},{stp}<={K_['ken']},"
-                        f"MOD({stp}-{K_['kst']},{K_['kfrq']})=0),1,0)"), N0)
+            # 행사 가능 표시는 15·17행(계약 행사월)에 숫자가 있는가로 정한다 — 앱이 배정한 행사일.
+            g(3, V(1 if i in R["p_dates"] else 0, f"=IF(ISNUMBER({L}$15),1,0)"), N0)
+            g(4, V(1 if i in R["c_dates"] else 0, f"=IF(ISNUMBER({L}$18),1,0)"), N0)
             _qf = 1 if (int(tm.ipo_on) and i == R["qi_step"] and i > 0) else 0
             g(5, V(_qf, f"=IF(AND({K_['ipoon']}=1,{stp}={K_['ipos']},{stp}>0),1,0)"),
               N0, RPT["grey"])
-            g(6, V(round(R["pk"](i), 6) if _pf else 0.0,
-                   f"=IF({L}$3=1,100*(1+"
-                   + xl_prem(K_['pyld'], "0", K_['pcmp'], yr) + "),0)"), N2)
-            g(7, V(round(R["ck"](i), 6) if _cf else 0.0,
-                   f"=IF({L}$4=1,100*(1+"
-                   + xl_prem(K_['cprem'], "0", K_['ccmp'], yr) + "),0)"), N2)
+            g(6, V(round(R["pk"](i), 6) if i in R["p_dates"] else 0.0,
+                   f"=IF({L}$3=1,100*(1+" + xl_prem(K_['pyld'], "0", K_['pcmp'], f"{L}$17") + "),0)"), N2)
+            g(7, V(round(R["ck"](i), 6) if i in R["c_dates"] else 0.0,
+                   f"=IF({L}$4=1,100*{K_['kck']}/{K_['K0']}*(1+"
+                   + xl_prem(K_['cprem'], "0", K_['ccmp'], f"{L}$20") + "),0)"), N2)
             if i < n:
                 g(8, R["pdisc"](i), P2)
                 g(9, R["rf"](i), P2)
                 g(13, V(R["qi"](i),
-                        f"=(EXP({L}$9*{K_['dt']})-{L}$12)/({L}$11-{L}$12)"), N4)
+                        f"=(EXP(({L}$9-{K_['divy']})*{K_['dt']})-{L}$12)/({L}$11-{L}$12)"), N4)
                 g(14, V(1-R["qi"](i), f"=1-{L}$13"), N4)
             else:
                 g(13, V(R["q"], f"={K_['q']}"), N4)
@@ -10840,195 +11230,285 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
             g(10, V(tm.sig, f"={K_['sig']}"), P2)
             g(11, V(R["u"], f"={K_['u']}"), N4)
             g(12, V(R["d"], f"={K_['dd']}"), N4)
-        put(W, 15, 2, ttl, bold=True, size=11)
-        put(W, 16, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=RPT["tint"],
+            # 계약 행사월·행사일 — 정기 행사는 계약일(빨간 숫자, 앱이 배정), 언제든지는 노드의 개월·날짜.
+            for (rm, rd, ry, dates, cont, yrf, dayf) in (
+                    (15, 16, 17, R["p_dates"], R["p_cont"], R["pyr"], R["pday"]),
+                    (18, 19, 20, R["c_dates"], R["c_cont"], R["cyr"], R["cday"])):
+                if i in dates:
+                    g(rm, (V(round(dates[i], 6), "=" + _MO(stp)) if cont else round(dates[i], 6)),
+                      N4, (None if cont else RPT["red"]))
+                    g(rd, (V(dayf(i), f"={L}$1") if cont else dayf(i)), DATE, (None if cont else RPT["red"]))
+                    g(ry, V(round(yrf(i), 10), "=" + _xyr(f"{L}${rm}", f"{L}${rd}")), N6)
+        put(W, R0-2, 2, ttl, bold=True, size=11)
+        put(W, R0-1, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=RPT["tint"],
             border=True, align="center")
         for i in range(n+1):
-            put(W, 16, 3+i, i, bold=True, size=8, fmt=N0, align="center",
+            put(W, R0-1, 3+i, i, bold=True, size=8, fmt=N0, align="center",
                 fill=RPT["tint"], border=True)
-        for r in range(n+1):
-            put(W, R0+r, 2, r, bold=True, size=8, fmt=N0, align="center",
+        for r_ in range(n+1):
+            put(W, R0+r_, 2, r_, bold=True, size=8, fmt=N0, align="center",
                 fill=RPT["tint"], border=True)
         put(W, R0+n+2, 2, memo, size=9, color=RPT["grey"])
         put(W, R0+n+3, 2, "이 시트가 참조하는 시트: " + refs, size=9, color=RPT["green"])
         put(W, R0+n+4, 2, "r 은 하락 횟수. 위로 갈수록 주가가 높다."
-            + ("  8·9행 선도이자율만 값이다." if formula else ""),
+            + ("  8·9행 선도이자율과 15·16·18·19행 계약 행사월·행사일(빨간 숫자)은 앱이 정한 값이다." if formula else ""),
             size=9, color=RPT["grey"])
-        W.freeze_panes = "C17"
+        W.freeze_panes = f"C{R0}"
         return W
 
     def fill(W, fn, fmt=N2):
         for i in range(n+1):
             L = gl(3+i); Lp = gl(2+i) if i > 0 else None
             Ln = gl(4+i) if i < n else None
-            for r in range(i+1):
-                put(W, R0+r, 3+i, fn(i, r, L, Lp, Ln), fmt=fmt, size=8, align="right")
+            for r_ in range(i+1):
+                put(W, R0+r_, 3+i, fn(i, r_, L, Lp, Ln), fmt=fmt, size=8, align="right")
 
     W = newsheet(S1, "① 주가트리  S = S0 × u^(스텝−r) × d^r",
-                 "맨 위 노드는 직전 시점 맨 위 × u, 나머지는 직전 시점 한 칸 위 노드 × d.", "가정")
-    fill(W, lambda i, r, L, Lp, Ln: V(
-        round(R["S"](i, i-r), 4),
+                 "맨 위 노드는 직전 시점 맨 위 × u, 나머지는 직전 시점 한 칸 위 노드 × d.", SA)
+    fill(W, lambda i, r_, L, Lp, Ln: V(
+        round(R["S"](i, i-r_), 4),
         f"={K_['S0']}" if i == 0 else
-        (f"={Lp}{R0}*{L}$11" if r == 0 else f"={Lp}{R0+r-1}*{L}$12")))
+        (f"={Lp}{R0}*{L}$11" if r_ == 0 else f"={Lp}{R0+r_-1}*{L}$12")))
 
-    W = newsheet(S2, "② 지분가치트리  100 × 주가 ÷ 주당 인수가액",
-                 "투자원금 100 과 견줄 수 있게 옮긴 값이다.", f"{S1} · 가정")
-    fill(W, lambda i, r, L, Lp, Ln: V(
-        round(R["eq"](i, i-r), 6), f"=100*{Q(S1)}!{L}{R0+r}/{K_['K0']}"))
+    W = newsheet(S2, "② 지분가치트리  100 × 주가 ÷ 풋 주당 기준가격",
+                 "풋·콜 행사금액(100 기준)과 견줄 수 있게 옮긴 값이다.", f"{S1} · {SA}")
+    fill(W, lambda i, r_, L, Lp, Ln: V(
+        round(R["eq"](i, i-r_), 6), f"=100*{Q(S1)}!{L}{R0+r_}/{K_['K0']}"))
 
-    _QI = lambda L, r: f"AND({L}$5=1,{Q(S1)}!{L}{R0+r}>{K_['ipomin']})"
-    _PEX = lambda L, r: f"IF({L}$3=1,MAX({L}$6-{Q(S2)}!{L}{R0+r},0),0)"
-    _CEX = lambda L, r: f"IF({L}$4=1,MAX({Q(S2)}!{L}{R0+r}-{L}$7,0),0)"
-
+    _QI = lambda L, r_: f"AND({L}$5=1,{Q(S1)}!{L}{R0+r_}>{K_['ipomin']})"
+    _PEX = lambda L, r_: f"IF({L}$3=1,MAX({L}$6-{Q(S2)}!{L}{R0+r_},0),0)"
+    _CEX = lambda L, r_: f"IF({L}$4=1,MAX({Q(S2)}!{L}{R0+r_}-{L}$7,0),0)"
     # 상호소멸 계약이면 한 노드에서 **누가 먼저 행사하는가**를 정하고, 진 쪽은
-    # 그 자리에서 0 이 된다. 엔진 settle() 과 같은 판정을 엑셀로 옮긴다.
-    #
-    # 엔진의 허용오차가 TOL(1e-9) 이 아니라 1e-12 라 여기서도 같은 값을 쓴다 —
-    # 두 곳이 다른 값을 쓰면 조서가 엔진을 못 따라온다.
+    # 그 자리에서 0 이 된다. 엔진 settle() 과 같은 판정·같은 허용오차를 엑셀로 옮긴다.
     _kill = R.get("kill", False)
     _TS = repr(SHA_SETTLE_TOL)
-    _pfx = int(tm.pc_order) == 0            # 겹치면 투자자 풋이 먼저인가
-    _pc = lambda L, r, Ln: (f"({Q(S3)}!{Ln}{R0+r}*{L}$13+{Q(S3)}!{Ln}{R0+r+1}*{L}$14)"
-                            f"*EXP(-{L}$8*{K_['dt']})")
-    _cc = lambda L, r, Ln: (f"({Q(S4)}!{Ln}{R0+r}*{L}$13+{Q(S4)}!{Ln}{R0+r+1}*{L}$14)"
-                            f"*EXP(-{L}$9*{K_['dt']})")
+    _pfx = int(tm.pc_order) == 0            # 겹치면 풋이 먼저인가
+    _pc = lambda L, r_, Ln: (f"({Q(S3)}!{Ln}{R0+r_}*{L}$13+{Q(S3)}!{Ln}{R0+r_+1}*{L}$14)"
+                             f"*EXP(-{L}$8*{K_['dt']})")
+    _cc = lambda L, r_, Ln: (f"({Q(S4)}!{Ln}{R0+r_}*{L}$13+{Q(S4)}!{Ln}{R0+r_+1}*{L}$14)"
+                             f"*EXP(-{L}$9*{K_['dt']})")
 
-    def _wins(L, r, Ln):
+    def _wins(L, r_, Ln):
         """(풋이 이기는 조건, 콜이 이기는 조건). 둘 다면 우선순위가 가른다."""
-        pe, ce = _PEX(L, r), _CEX(L, r)
-        pc = "0" if Ln is None else _pc(L, r, Ln)
-        cc = "0" if Ln is None else _cc(L, r, Ln)
+        pe, ce = _PEX(L, r_), _CEX(L, r_)
+        pc = "0" if Ln is None else _pc(L, r_, Ln)
+        cc = "0" if Ln is None else _cc(L, r_, Ln)
         pw = f"AND({pe}>{_TS},{pe}>={pc}-{_TS})"
         cw = f"AND({ce}>{_TS},{ce}>={cc}-{_TS})"
         if _pfx:  return pw, f"AND({cw},NOT({pw}))"
         return f"AND({pw},NOT({cw}))", cw
 
-    W = newsheet(S3, "③ 투자자 풋가치트리",
-                 ("한 노드에서 누가 먼저 행사하는지를 먼저 정한다 — 최대주주가 "
-                  "콜을 행사하면 계약이 끝나 **풋이 그 자리에서 소멸**한다 "
-                  "(가정 37행). 아무도 행사하지 않으면 다음 열을 **풋 선도할인율**"
-                  "(8행)로 할인한다."
+    W = newsheet(S3, "③ 풋가치트리 (주식 보유자의 풋)",
+                 ("한 노드에서 누가 먼저 행사하는지를 먼저 정한다 — 콜이 행사되면 주식이 넘어가 "
+                  "**풋이 그 자리에서 소멸**한다 (가정 38행). 아무도 행사하지 않으면 다음 열을 "
+                  "**풋 선도할인율**(8행)로 할인한다."
                   if _kill else
                   "지금 행사(행사금액 − 지분가치)와 계속 보유 중 큰 쪽. 계속 보유는 "
                   "다음 열을 **풋 선도할인율**(8행)로 할인한다.")
-                 + "  적격상장 노드에서는 0 이다 — 시장에서 팔 수 있게 되어 풋이 "
-                   "소멸한다.",
+                 + "  적격상장 노드에서는 0 이다 — 시장에서 팔 수 있게 되어 풋이 소멸한다.",
                  f"{S2} · 다음 열 {S3}" + (f" · {S4}" if _kill else ""))
 
-    def _pfx_fx(i, r, L, Lp, Ln):
-        _cont = "0" if i == n else _pc(L, r, Ln)
+    def _pfx_fx(i, r_, L, Lp, Ln):
+        _cont = "0" if i == n else _pc(L, r_, Ln)
         if not _kill:
-            body = (_PEX(L, r) if i == n else f"MAX({_PEX(L, r)},{_cont})")
+            body = (_PEX(L, r_) if i == n else f"MAX({_PEX(L, r_)},{_cont})")
         else:
-            pw, cw = _wins(L, r, None if i == n else Ln)
-            body = f'IF({pw},{_PEX(L, r)},IF({cw},0,{_cont}))'
-        return V(round(R["P"][i][i-r], 6), f"=IF({_QI(L, r)},0,{body})")
+            pw, cw = _wins(L, r_, None if i == n else Ln)
+            body = f'IF({pw},{_PEX(L, r_)},IF({cw},0,{_cont}))'
+        return V(round(R["P"][i][i-r_], 6), f"=IF({_QI(L, r_)},0,{body})")
     fill(W, _pfx_fx)
 
-    W = newsheet(S4, "④ 최대주주 콜가치트리",
-                 ("한 노드에서 투자자가 풋을 행사하면 계약이 끝나 **콜이 그 자리에서 "
-                  "소멸**한다 (가정 37행). 아무도 행사하지 않으면 다음 열을 "
-                  "**무위험**(9행)으로 할인한다."
+    W = newsheet(S4, "④ 콜가치트리 (상대방의 콜)",
+                 ("한 노드에서 풋이 행사되면 주식이 넘어가 **콜이 그 자리에서 소멸**한다 "
+                  "(가정 38행). 아무도 행사하지 않으면 다음 열을 **무위험**(9행)으로 할인한다."
                   if _kill else
                   "지금 행사(지분가치 − 행사금액)와 계속 보유 중 큰 쪽. 주식을 받을 "
                   "권리라 **무위험**(9행)으로 할인한다.")
                  + "  적격상장 시 소멸 여부는 가정에서 고른다.",
                  f"{S2} · 다음 열 {S4}" + (f" · {S3}" if _kill else ""))
 
-    def _cfx_fx(i, r, L, Lp, Ln):
-        _cont = "0" if i == n else _cc(L, r, Ln)
+    def _cfx_fx(i, r_, L, Lp, Ln):
+        _cont = "0" if i == n else _cc(L, r_, Ln)
         if not _kill:
-            body = (_CEX(L, r) if i == n else f"MAX({_CEX(L, r)},{_cont})")
+            body = (_CEX(L, r_) if i == n else f"MAX({_CEX(L, r_)},{_cont})")
         else:
-            pw, cw = _wins(L, r, None if i == n else Ln)
-            body = f'IF({cw},{_CEX(L, r)},IF({pw},0,{_cont}))'
-        return V(round(R["C"][i][i-r], 6),
-                 f"=IF(AND({_QI(L, r)},{K_['qkill']}=1),0,{body})")
+            pw, cw = _wins(L, r_, None if i == n else Ln)
+            body = f'IF({cw},{_CEX(L, r_)},IF({pw},0,{_cont}))'
+        return V(round(R["C"][i][i-r_], 6),
+                 f"=IF(AND({_QI(L, r_)},{K_['qkill']}=1),0,{body})")
     fill(W, _cfx_fx)
 
     # ── 결과 ──
-    RS = sheet("결과", widths=[42, 16, 18, 46], tab=RPT["green"])
-    head(RS, 2, "평가결과",
+    RS = sheet(SR, widths=[42, 14, 14, 14, 18, 44], tab=RPT["green"])
+    head(RS, 2, "평가결과" + (f" — {name}" if pre else ""),
          ("모든 값이 앞의 트리에서 수식으로 넘어온다." if formula else
-          "앱이 계산한 값을 그대로 담았다."), span=4)
+          "앱이 계산한 값을 그대로 담았다."), span=6)
     _g = R["gross"]
     _fp = _g["step"] if _g else 0
     _LF = gl(3+_fp)
     # 노드마다 EXP 를 곱하지 않고 합을 한 번에 — 엑셀 한 칸 수식 한도(8,192자) 때문이다
     _dfx = (f"EXP(-SUM({Q(S3)}!{gl(3)}$8:{gl(2+_fp)}$8)*{K_['dt']})" if _fp > 0 else "1")
-    sec(RS, 4, "1. 옵션가치 (투자원금 100 기준)", span=4)
-    cols(RS, 5, ["항목", "100 기준", "전액 기준 (원)", "설명"],
-         widths=[42, 16, 18, 46])
+    sec(RS, 4, "1. 옵션가치", span=6)
+    cols(RS, 5, ["항목", "100 기준", "1주당 (원)", "대상 주식수", "전액 (원)", "설명"],
+         widths=[42, 14, 14, 14, 18, 44])
     _eqv = 100*tm.S0/tm.K0
+    _side = int(getattr(tm, "sha_side", 0))
+    kp = tm.K0/100.0
     _items = [
-        ("지분가치 (평가기준일)", _eqv, f"={Q(S2)}!C{R0}",
-         "100 × 주가 ÷ 주당 인수가액"),
-        ("투자자 풋옵션", R["put"], f"={Q(S3)}!C{R0}",
-         "지분을 보장수익률로 되팔 권리"),
-        ("최대주주 콜옵션", R["call"], f"={Q(S4)}!C{R0}",
-         "지분을 사 갈 권리. 콜이 없으면 0"),
-        ("지분 + 풋 − 콜", _eqv + R["put"] - R["call"], "=C6+C7-C8",
-         "투자자가 보유한 권리의 합. 투자 시점이면 투자원금과 비교한다"),
+        ("지분가치 (평가기준일)", _eqv, f"={Q(S2)}!C{R0}", max(qp, qc), f"MAX({K_['qp']},{K_['qc']})",
+         "100 × 주가 ÷ 풋 주당 기준가격"),
+        ("풋옵션", R["put"], f"={Q(S3)}!C{R0}", qp, K_['qp'], "주식 보유자가 되팔 권리"),
+        ("콜옵션", R["call"], f"={Q(S4)}!C{R0}", qc, K_['qc'], "상대방이 사 갈 권리. 콜이 없으면 0"),
     ]
-    for i, (nm, val, fx, memo) in enumerate(_items):
-        r = 6+i
-        put(RS, r, 2, nm, bold=True, border=True)
-        put(RS, r, 3, V(round(val, 6), fx), fmt=N4, align="right", bold=True,
-            border=True)
-        put(RS, r, 4, V(round(val*tm.face_total/100, 0),
-                        f"=C{r}/100*{K_['face']}"), fmt=N0, align="right", border=True)
-        put(RS, r, 5, memo, size=9, color=RPT["grey"], wrap=True)
+    for i, (nm, val, fx, qv, qfx, memo) in enumerate(_items):
+        r_ = 6+i
+        put(RS, r_, 2, nm, bold=True, border=True)
+        put(RS, r_, 3, V(val, fx), fmt=N4, align="right", bold=True, border=True)
+        put(RS, r_, 4, V(val/100*tm.K0, f"=C{r_}/100*{K_['K0']}"), fmt=N2, align="right", border=True)
+        put(RS, r_, 5, V(qv, f"={qfx}"), fmt=N0, align="right", border=True)
+        put(RS, r_, 6, V(val/100*tm.K0*qv, f"=D{r_}*E{r_}"), fmt=N0, align="right", border=True)
+        put(RS, r_, 7, memo, size=9, color=RPT["grey"], wrap=True)
+    _tot9 = _eqv + R["put"] - R["call"]
+    put(RS, 9, 2, "지분 + 풋 − 콜 (주식 보유자 쪽 합)", bold=True, border=True)
+    _F = lambda v, q: v/100*tm.K0*q                     # 결과 시트 D·F 열과 같은 순서로 곱한다
+    put(RS, 9, 3, V(_tot9, "=C6+C7-C8"), fmt=N4, align="right", bold=True, border=True)
+    put(RS, 9, 6, V(_F(_eqv, max(qp, qc)) + _F(R["put"], qp) - _F(R["call"], qc), "=F6+F7-F8"),
+        fmt=N0, align="right", border=True)
+    put(RS, 9, 7, "참고 합계. 하나의 금융상품 가치가 아니다", size=9, color=RPT["grey"], wrap=True)
+    _net = (_F(R["call"], qc) - _F(R["put"], qp)) if _side == 0 else (_F(R["put"], qp) - _F(R["call"], qc))
+    put(RS, 10, 2, ("순액 — 콜 권리자 관점 (콜 − 풋)" if _side == 0 else "순액 — 풋 권리자 관점 (풋 − 콜)"),
+        bold=True, border=True)
+    put(RS, 10, 6, V(_net, "=F8-F7" if _side == 0 else "=F7-F8"), fmt=N0, align="right",
+        bold=True, border=True)
+    put(RS, 10, 7, "두 권리를 각자 총액으로 싣는다 — 순액은 참고값", size=9, color=RPT["grey"], wrap=True)
 
-    sec(RS, 11, "2. 발행회사가 풋 의무자일 때 — 1032 문단 23 총액 부채", span=4)
+    sec(RS, 11, "2. 발행회사가 풋 의무자일 때 — 1032 문단 23 총액 부채", span=6)
     _rows2 = [
-        ("첫 행사 가능일 (스텝)", V(_fp, f"={Q(S3)}!{_LF}$2"), N0,
-         "가장 이른 행사 가능 시점"),
-        ("그날 행사금액", V(round(_g["strike"], 6) if _g else 0.0,
-                       f"={Q(S3)}!{_LF}$6"), N4, "상환금액"),
-        ("할인계수", V(round(_g["df"], 8) if _g else 1.0, f"={_dfx}"), N6,
+        ("첫 행사 가능일 (스텝)", V(_fp, f"={Q(S3)}!{_LF}$2"), N0, None, "가장 이른 행사 가능 시점"),
+        ("그날 행사금액", V(_g["strike"] if _g else 0.0, f"={Q(S3)}!{_LF}$6"), N4, None,
+         "상환금액 (100 기준)"),
+        ("할인계수", V(_g["df"] if _g else 1.0, f"={_dfx}"), N6, None,
          "격자와 같은 구간 선도이자율로 할인"),
-        ("금융부채 (상환금액의 현재가치)", V(round(_g["pv"], 6) if _g else 0.0,
-                                "=C13*C14"), N4,
-         "옵션 공정가치가 아니라 **총액**이다"),
-        ("참고 — 풋옵션 공정가치", V(round(R["put"], 6), "=C7"), N4,
-         "최대주주가 의무자면 이쪽을 쓴다"),
+        ("금융부채 (상환금액의 현재가치)", V(_g["pv"] if _g else 0.0, "=C13*C14"), N4,
+         (_g["pv"] if _g else 0.0), "옵션 공정가치가 아니라 **총액**이다"),
+        ("참고 — 풋옵션 공정가치", V(R["put"], "=C7"), N4, R["put"],
+         "콜 권리자가 의무자면 이쪽을 쓴다"),
     ]
-    for i, (nm, fx, fm, memo) in enumerate(_rows2):
-        r = 12+i
-        put(RS, r, 2, nm, bold=True, border=True)
-        put(RS, r, 3, fx, fmt=fm, align="right", bold=True, border=True)
-        put(RS, r, 4, memo, size=9, color=RPT["grey"], wrap=True)
-
+    for i, (nm, fx, fm, v100, memo) in enumerate(_rows2):
+        r_ = 12+i
+        put(RS, r_, 2, nm, bold=True, border=True)
+        put(RS, r_, 3, fx, fmt=fm, align="right", bold=True, border=True)
+        if v100 is not None:
+            put(RS, r_, 6, V(v100/100*tm.K0*qp, f"=C{r_}/100*{K_['K0']}*{K_['qp']}"),
+                fmt=N0, align="right", border=True)
+        put(RS, r_, 7, memo, size=9, color=RPT["grey"], wrap=True)
     # q 범위·풋 하한·옵션 ≥ 0 확인은 앱이 평가할 때 한다(sha_integrity) — 조서에 싣지 않는다.
     note(RS, 18, "적격상장을 켜면 풋이 그 노드에서 소멸하므로 값이 뚝 떨어진다. "
-         "최소 주가 기준이 계약의 「적격상장」 정의와 맞는지 반드시 확인하라.", span=4)
+         "최소 주가 기준이 계약의 「적격상장」 정의와 맞는지 반드시 확인하라.", span=6)
+    q = Q(SR)
+    return dict(sheet=SR, eq=f"{q}!$C$6", put=f"{q}!$C$7", call=f"{q}!$C$8", gpv=f"{q}!$C$15",
+                eq_krw=f"{q}!$F$6", put_krw=f"{q}!$F$7", call_krw=f"{q}!$F$8", gpv_krw=f"{q}!$F$15",
+                put_ps=f"{q}!$D$7", call_ps=f"{q}!$D$8", qp=f"{q}!$E$7", qc=f"{q}!$E$8",
+                K0=K_['K0'], kck=K_['kck'], pyld=K_['pyld'], cprem=K_['cprem'])
 
-    # ── 회계처리 ──
-    AC = sheet("회계처리", widths=[46, 16, 18, 60], tab=RPT["red"])
-    head(AC, 2, "회계처리 — 세 관점",
-         "같은 계약인데 실리는 것이 완전히 다르다. 누가 풋 의무자인지가 가른다.",
-         span=4)
-    acc = sha_accounts(tm, R)
-    r = 4
-    for who in ("발행회사", "최대주주", "투자자"):
-        rows, memo = acc[who]
-        sec(AC, r, who, span=4); r += 1
-        cols(AC, r, ["항목", "100 기준", "전액 기준 (원)", ""], widths=[46, 16, 18, 60])
+
+def _sha_total(wb, K, tm, entries, refs, formula):
+    """회차 합계 — 각 회차 결과 시트의 금액을 수식으로 모아 더한다."""
+    put, head, sec, cols, note, sheet = (K[x] for x in ("put", "head", "sec", "cols", "note", "sheet"))
+    N0, N2, P2 = '#,##0', '#,##0.00', '0.00%'
+    V = lambda val, fx: (fx if formula else val)
+    T = sheet("회차 합계", widths=[26, 30, 13, 9, 12, 12, 12, 12, 16, 16, 16], tab=RPT["green"])
+    head(T, 2, "회차 합계", "회차마다 따로 잰 풋·콜을 더한다. 연도별 미행사 물량은 다음 회차로 넘기지 않는다.",
+         span=11)
+    hdr = ["회차", "행사기간", "주당 기준가격", "가산율", "풋 수량", "콜 수량", "풋 1주당", "콜 1주당",
+           "풋 전액 (원)", "콜 전액 (원)", "순액 (원)"]
+    cols(T, 4, hdr)
+    _side = int(getattr(tm, "sha_side", 0))
+    r = 5
+    for e, f in zip(entries, refs):
+        t, R_ = e["tm"], e["R"]
+        qp, qc = sha_qty(t)
+        pk, ck = R_["put"]/100*t.K0, R_["call"]/100*t.K0
+        put(T, r, 2, e["name"], border=True)
+        put(T, r, 3, e.get("window", ""), border=True, size=9)
+        put(T, r, 4, V(t.K0, f"={f['K0']}"), fmt=N2, align="right", border=True)
+        put(T, r, 5, V(t.sha_put_yield, f"={f['pyld']}"), fmt=P2, align="right", border=True)
+        put(T, r, 6, V(qp, f"={f['qp']}"), fmt=N0, align="right", border=True)
+        put(T, r, 7, V(qc, f"={f['qc']}"), fmt=N0, align="right", border=True)
+        put(T, r, 8, V(pk, f"={f['put_ps']}"), fmt=N2, align="right", border=True)
+        put(T, r, 9, V(ck, f"={f['call_ps']}"), fmt=N2, align="right", border=True)
+        put(T, r, 10, V(pk*qp, f"={f['put_krw']}"), fmt=N0, align="right", border=True)
+        put(T, r, 11, V(ck*qc, f"={f['call_krw']}"), fmt=N0, align="right", border=True)
+        put(T, r, 12, V(((ck*qc - pk*qp) if _side == 0 else (pk*qp - ck*qc)),
+                        f"=K{r}-J{r}" if _side == 0 else f"=J{r}-K{r}"),
+            fmt=N0, align="right", border=True)
         r += 1
-        for nm, v in rows:
+    first, last = 5, r-1
+    put(T, r, 2, "합계", bold=True, border=True)
+    for c_, L in ((6, "F"), (7, "G"), (10, "J"), (11, "K"), (12, "L")):
+        vals = [T.cell(rr, c_).value for rr in range(first, last+1)]
+        tot = sum(v for v in vals if isinstance(v, (int, float))) if not formula else None
+        put(T, r, c_, V(tot, f"=SUM({L}{first}:{L}{last})"), fmt=N0, align="right", bold=True, border=True)
+    tr = r
+    note(T, r+2, ("순액은 콜 권리자 관점(콜 − 풋)" if _side == 0 else "순액은 풋 권리자 관점(풋 − 콜)")
+         + "이다. 두 권리는 보유자가 달라 각자 총액으로 싣는다 — 순액은 참고값이다.", span=11)
+    # 회계처리가 쓰는 성분 합계(원) — 지분·풋·콜·총액 부채
+    put(T, r+4, 2, "회계 참고표 성분 (원)", bold=True, size=9.5)
+    comp = {}
+    for k_, (key, nm) in enumerate((("eq_krw", "보유 주식 공정가치"), ("put_krw", "풋옵션"),
+                                    ("call_krw", "콜옵션"), ("gpv_krw", "풋 행사금액 현재가치 (총액 부채)"))):
+        rr = r+5+k_
+        put(T, rr, 2, nm, border=True, size=9)
+        val = sum(sha_components_krw(e["tm"], e["R"])[key[:-4]] for e in entries)
+        put(T, rr, 3, V(val, "=" + "+".join(f[key] for f in refs)), fmt=N0, align="right",
+            border=True)
+        comp[key[:-4]] = f"'회차 합계'!$C${rr}"
+    return dict(row=tr, comp=comp)
+
+
+def _sha_accounting(wb, K, tm, R, entries, refs, tot, formula):
+    """회계처리 — 세 당사자. 수식 조서는 결과(회차 합계) 칸을 가리키는 식이다."""
+    put, head, sec, cols, note, sheet = (K[x] for x in ("put", "head", "sec", "cols", "note", "sheet"))
+    N4, N0 = '0.0000', '#,##0'
+    multi = tot is not None
+    AC = sheet("회계처리", widths=[50, 16, 20, 56], tab=RPT["red"])
+    head(AC, 2, "회계처리 — 세 관점",
+         "같은 계약인데 실리는 것이 완전히 다르다. 누가 풋 의무자인지가 가른다."
+         + (" 수식 조서에서는 결과 시트를 가리키는 식이라 주가·변동성을 바꾸면 함께 움직인다."
+            if formula else ""), span=4)
+    has_call = any(e["R"].get("has_call") for e in entries)
+    g0 = entries[0]["R"].get("gross") if len(entries) == 1 else None
+    lines = sha_account_lines(entries[0]["tm"] if len(entries) == 1 else tm, entries[0]["R"],
+                              has_call=has_call, gross=(g0 if not multi else False))
+    if multi:
+        vals_k = {k: sum(sha_components_krw(e["tm"], e["R"])[k] for e in entries)
+                  for k in ("eq", "put", "call", "gpv")}
+        refs_k = tot["comp"]
+        vals_1, refs_1 = None, None
+    else:
+        t0, R0_ = entries[0]["tm"], entries[0]["R"]
+        vals_1, vals_k = sha_components(t0, R0_), sha_components_krw(t0, R0_)
+        f = refs[0]
+        refs_1 = {k: f[k] for k in ("eq", "put", "call", "gpv")}
+        refs_k = {k: f[k + "_krw"] for k in ("eq", "put", "call", "gpv")}
+    r = 4
+    for who in SHA_PARTIES:
+        rows, memo = lines[who]
+        sec(AC, r, who, span=4); r += 1
+        cols(AC, r, ["항목", "100 기준" if not multi else "", "전액 (원)", ""], widths=[50, 16, 20, 56])
+        r += 1
+        for nm, comb in rows:
             put(AC, r, 2, nm, bold=nm.startswith("합계"), border=True)
-            put(AC, r, 3, v, fmt=N4, align="right", border=True)
-            put(AC, r, 4, v*tm.face_total/100, fmt=N0, align="right", border=True)
+            if not multi:
+                put(AC, r, 3, (sha_formula(comb, refs_1) if formula else sha_eval(comb, vals_1)),
+                    fmt=N4, align="right", border=True)
+            put(AC, r, 4, (sha_formula(comb, refs_k) if formula else sha_eval(comb, vals_k)),
+                fmt=N0, align="right", border=True)
             r += 1
         note(AC, r, memo, span=4); r += 2
-
-
-    if attach:
-        # 산출내역은 뒤로 보낸다. 앞 여섯 장이 조서의 본문이다.
-        for nm in _order:
-            wb.move_sheet(nm, offset=len(wb.sheetnames))
-    polish_wb(wb)
-    return wb if as_workbook else _save(wb)
+    if multi:
+        note(AC, r, "회차가 여럿이라 100 기준 칸은 비운다 — 회차마다 기준가격이 다르다. 총액 부채(발행회사)는 "
+             "회차마다 첫 행사 가능일의 행사금액을 할인해 더한 값이다.", span=4)
 
 
 # ══════════════════════════════════════════════════════════
