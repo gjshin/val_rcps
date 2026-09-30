@@ -2328,6 +2328,17 @@ def test_sha_rows_block_and_isolate():
              any("상호소멸" in m for _, m in G["sha_row_issues"](bad)))
     bad.sha_rows = [dict(r1), dict(r1)]
     chk_bool("회차 이름이 겹치면 → 막음", any("겹칩니다" in m for _, m in G["sha_row_issues"](bad)))
+    bad.sha_rows = [dict(r1, style="anytime")]
+    chk_bool("알 수 없는 행사 방식(오타) → 막음 (언제든지로 넓혀 읽지 않는다)",
+             any("행사 방식" in m for _, m in G["sha_row_issues"](bad)))
+    far = Terms(inst="SHA", d_issue="2024-01-01", d_base="2025-01-01", d_mat="2026-01-01", grid_days=7.,
+                sha_rows=[dict(r1, start="2025-02-01", end="2060-01-01")])
+    chk_bool("회차 격자가 계산 한도(1,200구간)를 넘으면 → 막음",
+             any("계산 한도" in m for _, m in G["sha_row_issues"](far)))
+    # 평가기준일에 끝나는 회차는 막지 않는다 — 그날 행사할 수 있으므로 내재가치다
+    t0, P0 = _sha_row_case([dict(r1, name="오늘", start="2024-12-01", end="2025-01-01"), r2],
+                           d_issue="2024-06-01", S0=800.)
+    chk("평가기준일에 끝나는 풋 = 내재가치 1000 − 800", P0["rows"][0]["put_ps"], 200., 1e-9)
     # 실적 연동 행사가격 — (매출 − 차감) × 배수 ÷ 발행주식 총수, 손실률이 기준을 «초과» 하면 낮은 배수
     px, m = G["sha_perf_price"](10_000e6, 1_500e6, 12., 10., 1.0, 1.5, 200_000)
     chk("실적 연동 가격 · 손실률 12% > 10% → 1.0배", px, 8_500e6/200_000, 1e-9)

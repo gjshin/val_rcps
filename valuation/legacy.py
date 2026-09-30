@@ -2865,6 +2865,7 @@ SHA_ROW_KEYS = ("name", "start", "end", "style", "freq", "price", "rate", "acc_f
                 "put_q", "call_q", "kill", "call_start", "call_end", "call_price", "call_rate",
                 "sig", "rf", "pdisc", "price_note")
 SHA_ROW_STYLES = {"any": "기간 중 언제든지", "periodic": "정기 (주기마다)", "single": "특정일 1회"}
+SHA_ROW_MAX_N = 1200          # 회차 격자 한도 — service._prepare 의 계산 한도와 같다
 
 
 def sha_row_defaults(row: dict) -> dict:
@@ -2872,7 +2873,9 @@ def sha_row_defaults(row: dict) -> dict:
     r = {k: None for k in SHA_ROW_KEYS}
     r.update({k: v for k, v in (row or {}).items() if k in SHA_ROW_KEYS})
     r["name"] = str(r["name"] or "").strip() or "회차"
-    r["style"] = r["style"] if r["style"] in SHA_ROW_STYLES else "any"
+    # 비운 칸만 기본값(언제든지)이다. 알 수 없는 값은 그대로 두어 sha_row_issues 가 막는다 —
+    # 오타를 «언제든지» 로 읽으면 정기·1회 권리가 모든 노드에서 열려 값이 부풀려진다.
+    r["style"] = r["style"] or "any"
     for k in ("freq", "price", "rate", "put_q", "call_q", "call_price", "call_rate", "sig", "rf", "pdisc"):
         v = r[k]
         r[k] = None if v in (None, "") else float(v)
@@ -2910,6 +2913,10 @@ def sha_row_issues(tm: Terms) -> list:
         if not isinstance(raw, dict):
             out.append((k, "회차 줄의 형식이 올바르지 않습니다.")); continue
         r = sha_row_defaults(raw)
+        if r["style"] not in SHA_ROW_STYLES:
+            out.append((k, f"행사 방식 «{r['style']}» 을 알 수 없습니다 — 기간 중 언제든지(any) · 정기(periodic) · "
+                           "특정일 1회(single) 가운데 고르십시오."))
+            continue
         if r["name"] in names:
             out.append((k, f"회차 이름 «{r['name']}» 이 겹칩니다 — 회차마다 다른 이름을 적으십시오."))
         names.add(r["name"])
@@ -2931,7 +2938,7 @@ def sha_row_issues(tm: Terms) -> list:
         if r["call_price"] is not None and r["call_price"] <= 0:
             out.append((k, "콜 주당 기준가격은 비우거나 0 보다 크게 입력하십시오."))
         last = max(de if r["put_q"] > 0 else dt.date.min, ce if r["call_q"] > 0 else dt.date.min)
-        if last <= db:
+        if last < db:
             out.append((k, f"행사기간이 평가기준일({db}) 전에 끝났습니다 — 이미 행사·소멸했는지 확인하고, "
                            "남은 권리가 없으면 줄을 지우십시오. 행사됐다고 앱이 가정하지 않습니다."))
         if da > min(ds, cs):
@@ -2940,6 +2947,15 @@ def sha_row_issues(tm: Terms) -> list:
             out.append((k, "가격 가산 기산일이 평가기준일보다 늦습니다 — 계약일(기산일)은 평가기준일 이전이어야 합니다."))
         if r["style"] == "periodic" and not (r["freq"] or 0) > 0:
             out.append((k, "정기 행사면 주기(개월)를 0 보다 크게 입력하십시오."))
+        if not out or out[-1][0] != k:
+            # 회차마다 격자를 따로 세우므로 계산 한도(1,200구간)도 회차마다 본다.
+            try:
+                _n = sha_row_terms(tm, raw).n
+                if _n > SHA_ROW_MAX_N:
+                    out.append((k, f"이 회차의 격자가 {_n:,}구간으로 계산 한도({SHA_ROW_MAX_N:,}구간)를 넘습니다 — "
+                                   "행사 종료일을 확인하거나 계산 간격을 늘리십시오."))
+            except (ValueError, TypeError) as ex:
+                out.append((k, f"회차 조건을 읽지 못했습니다 — {ex}"))
         if r["kill"] and r["put_q"] > 0 and r["call_q"] > 0 and abs(r["put_q"] - r["call_q"]) > 1e-9:
             out.append((k, "풋·콜 수량이 다른 회차에는 상호소멸을 적용할 수 없습니다 — 같은 주식에 붙은 "
                            "수량(겹치는 수량)과 남는 수량을 두 회차로 나눠 입력하십시오 (겹치는 회차는 "
@@ -3031,6 +3047,8 @@ def sha_portfolio(tm: Terms):
     rows = []
     for raw in tm.sha_rows:
         t = sha_row_terms(tm, raw)
+        if t.n > SHA_ROW_MAX_N:
+            raise ValueError(f"{t.tranche}: 격자 {t.n:,}구간 — 계산 한도 {SHA_ROW_MAX_N:,}구간을 넘습니다.")
         R = sha_engine(t)
         qp, qc = sha_qty(t)
         ps, cs = R["put"]/100*t.K0, R["call"]/100*t.K0
