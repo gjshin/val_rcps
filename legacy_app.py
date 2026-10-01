@@ -2129,6 +2129,10 @@ if is_sha(t):
     _sw = sha_validate(t)
     if _sw:
         st.warning("확인이 필요합니다\n\n" + "\n".join(f"- {w}" for w in _sw))
+    _si = sha_contract_issues(t)
+    if _si:
+        st.error("계약조건을 확인하십시오 — 이 상태로는 평가하지 않습니다.\n\n" + "\n".join(f"- {m}" for m in _si))
+        st.stop()
     if st.session_state.get("_legacy_price_key") != _detail_key:
         with st.spinner("계산 중"):
             st.session_state._legacy_price = sha_portfolio(t)

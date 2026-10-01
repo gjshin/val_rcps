@@ -343,6 +343,10 @@ def inspect_case(case: Case) -> list[Issue]:
         elif not any(i.severity == 'error' for i in issues):
             for k, message in sha_row_issues(Terms(**values)):
                 add('error', 'sha_rows', 'sha_rows', f'{k}회차: {message}')
+    if values.get('inst') == 'SHA' and not values.get('sha_rows') and not any(i.severity == 'error' for i in issues):
+        from .legacy import sha_contract_issues
+        for message in sha_contract_issues(Terms(**values)):
+            add('error', 'sha_link', 'sha_link_q', message)
     if not any(i.severity == 'error' for i in issues):
         from .legacy import parse_sched
         terms = Terms(**values)

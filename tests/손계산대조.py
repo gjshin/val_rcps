@@ -2305,7 +2305,7 @@ def test_sha_rows_block_and_isolate():
     """회차별 표 — 계산을 막는 입력과, 회차끼리 섞이지 않는지.
 
     · 평가기준일 전에 끝난 회차는 막는다 (이미 행사됐다고 가정하지 않는다).
-    · 풋·콜 수량이 다른 회차에 상호소멸을 켜면 막는다 (겹치는 수량을 나눠 넣으라고 안내).
+    · 풋·콜 수량이 다른 회차에 상호소멸을 켜면 같은 주식에 붙은 물량을 넣어야 한다 (넣으면 엔진이 나눠 잰다).
     · 회차 둘의 합계 = 회차 하나씩 따로 잰 값의 합 — 다음 회차로 물량을 넘기지 않는다.
     · 한 회차의 행사기간·가격을 바꿔도 다른 회차 값은 그대로다.
     """
@@ -2325,8 +2325,10 @@ def test_sha_rows_block_and_isolate():
     chk_bool("평가기준일 전에 끝난 회차 → 막음",
              any("이미 행사" in m for _, m in G["sha_row_issues"](bad)))
     bad.sha_rows = [dict(r2, kill=1)]
-    chk_bool("수량이 다른 회차의 상호소멸 → 막음",
-             any("상호소멸" in m for _, m in G["sha_row_issues"](bad)))
+    chk_bool("수량이 다른 회차의 상호소멸 · 같은 주식 물량 없음 → 막음 (수량만 보고 잇지 않는다)",
+             any("같은 주식에 붙은" in m for _, m in G["sha_row_issues"](bad)))
+    bad.sha_rows = [dict(r2, kill=1, link_q=60.)]
+    chk_bool("같은 주식 물량을 넣으면 계산한다 (나머지 풋은 엔진이 따로)", not G["sha_row_issues"](bad))
     bad.sha_rows = [dict(r1), dict(r1)]
     chk_bool("회차 이름이 겹치면 → 막음", any("겹칩니다" in m for _, m in G["sha_row_issues"](bad)))
     bad.sha_rows = [dict(r1, style="anytime")]

@@ -56,6 +56,13 @@ CASES = [
     # 풋·콜 대상 주식수가 다르고 콜 기준가격이 다른 계약
     ("풋·콜 수량 다름 · 풋 권리자 관점", dict(sha_put_q=6_190_690., sha_call_q=4_643_000., sha_side=1)),
     ("콜 기준가격 다름", dict(sha_call_k=1100., sha_call_prem=.05)),
+    # 같은 주식 물량의 연계 판단 — 수량이 달라 풋만·콜만 물량이 따로 남는 계약 (가상 수치)
+    ("연계 · 풋 많음 · 콜 권리자 우선", dict(sha_kill=1, sha_put_q=600_000., sha_call_q=450_000., sha_link_q=450_000.,
+                                    pc_order=1)),
+    ("연계 · 콜 많음 · 풋 권리자 우선", dict(sha_kill=1, sha_put_q=300_000., sha_call_q=500_000., sha_link_q=300_000.)),
+    ("연계 · 같은 가격 7% · 같은 기간", dict(sha_kill=1, sha_put_yield=.07, sha_call_prem=.07, sha_call_s=36.,
+                                     sha_call_e=60., pc_order=1)),
+    ("연계 · 풋 의무자 = 발행회사", dict(sha_kill=1, sha_writer=1)),
 ]
 BASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2025-03-31",
             d_base="2025-03-31", d_mat="2030-03-31", gap_m=6.0, sig=0.40,
@@ -81,6 +88,8 @@ PCASES = [
           d_mat="2029-06-10", S0=960., sig=.30, grid_days=14.)),
     ("회차 둘 · 상호소멸 · 정기",
      dict(sha_rows=[dict(ROWS[0], kill=1), dict(ROWS[1], style="periodic", freq=3., kill=1, rate=.03)])),
+    ("회차 하나 · 수량 다름 · 같은 주식 물량 연계",
+     dict(sha_rows=[dict(ROWS[0], put_q=60_000., call_q=45_000., kill=1, link_q=45_000.)])),
 ]
 PBASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2021-11-15", d_base="2025-09-30",
              d_mat="2027-12-31", sig=.60, gap_m=1.0, grid_days=7., sha_disc=1,
@@ -182,7 +191,7 @@ def main():
         rows = [("지분가치", "C6", 6, 3, eqv),
                 ("풋", "C7", 7, 3, R["put"]),
                 ("콜", "C8", 8, 3, R["call"]),
-                ("지분+풋−콜", "C9", 9, 3, eqv + R["put"] - R["call"]),
+                ("지분+풋−콜 원", "F9", 9, 6, eqv*kp*G["sha_contract_shares"](t) + R["put"]*kp*qp - R["call"]*kp*qc),
                 ("총액 부채", "C15", 15, 3, gp["pv"] if gp else 0.0),
                 ("풋 원", "F7", 7, 6, R["put"]*kp*qp),
                 ("콜 원", "F8", 8, 6, R["call"]*kp*qc)]
