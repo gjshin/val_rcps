@@ -2174,8 +2174,13 @@ if is_sha(t):
             {"주당 기준가격": "{:,.2f}", "풋 수량": "{:,.0f}", "콜 수량": "{:,.0f}", "풋 1주당": "{:,.2f}",
              "콜 1주당": "{:,.2f}", "풋 전액 (원)": "{:,.0f}", "콜 전액 (원)": "{:,.0f}"}, na_rep=""),
             use_container_width=True, hide_index=True)
-        _names = [x["name"] for x in R["rows"]]
-        _x = R["rows"][_names.index(st.selectbox("아래 상세를 볼 회차", _names, key="_legacy_sha_row"))]
+        # 확정 거래 회차는 선택권 트리가 없다 — 결과 표와 조서의 확정 거래 시트에서 본다
+        _lat = [x for x in R["rows"] if not x["R"].get("deal")]
+        if not _lat:
+            st.info("모든 회차가 확정 거래(결제만 남은 물량)라 선택권 트리 상세가 없습니다. 조서의 확정 거래 시트를 보십시오.")
+            st.stop()
+        _names = [x["name"] for x in _lat]
+        _x = _lat[_names.index(st.selectbox("아래 상세를 볼 회차 (선택권이 남은 회차)", _names, key="_legacy_sha_row"))]
         t, R = _x["tm"], _x["R"]
         st.caption("아래 표는 고른 회차 하나의 계산입니다 — 100 기준은 그 회차의 주당 기준가격 100 입니다.")
     if R["qbad"]:

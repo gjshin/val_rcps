@@ -54,6 +54,7 @@ LABELS = {
     'sha_writer': '풋 행사 시 주식매수 의무자', 'sha_disc': '주주간계약 풋 할인 방식', 'sha_spread': '주주간계약 신용스프레드(%p)',
     'sha_qipo_kill': '적격상장 시 소멸 권리', 'sha_kill': '한쪽 행사 시 같은 주식의 상대 권리',
     'sha_link_q': '같은 주식에 붙은 풋·콜 물량(주, -1은 미입력)',
+    'sha_hold_q': '평가기준일 보유주식수(주, -1은 미입력 — 넣으면 회차 합계를 점검)',
     'bs_target': '역산 목표(원금 100 기준)', 'bs_net': '역산 목표금액 기준',
     'prev_hold': '투자자 전기 장부금액(원금 100 기준, -1은 없음)',
     'd1_pl': '최초 인식 차이 처리', 'd1_reason': '최초 인식 차이를 당기손익으로 처리한 근거',
@@ -147,7 +148,7 @@ def display_value(key, value, issue_date=None, inst=None):
         return '미입력'
     if key in CHOICES:
         return choices(key, inst).get(value, str(value))
-    if key == 'sha_link_q' and value is not None and value < 0:
+    if key in ('sha_link_q', 'sha_hold_q') and value is not None and value < 0:
         return '미입력 (풋·콜 수량이 같으면 전부)'
     if key == 'k_lock_w' and value < 0:
         return '콜 대상 비율과 같음'

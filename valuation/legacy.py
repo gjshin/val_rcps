@@ -11643,7 +11643,7 @@ def build_xlsx_sha(tm: Terms, R, formula: bool = False, attach=None, *, as_workb
             continue
         refs.append(_sha_block(wb, K, e["tm"], e["R"], formula, f"{k}·" if multi else "", e["name"],
                                links=_sha_links(tm, e["tm"], _links) if formula else None))
-    tot = _sha_total(wb, K, tm, entries, refs, formula) if multi else None
+    tot = _sha_total(wb, K, tm, entries, refs, formula, recon=R.get("recon")) if multi else None
     _sha_accounting(wb, K, tm, R, entries, refs, tot, formula)
     if attach:
         # 산출내역은 뒤로 보낸다. 앞의 시트가 조서의 본문이다.
@@ -12253,7 +12253,7 @@ def _sha_deal_block(wb, K, tm, R, formula, pre, name):
                 K0=f"{q}!$C$21", kck=f"{q}!$C$21", pyld=None, cprem=None)
 
 
-def _sha_total(wb, K, tm, entries, refs, formula):
+def _sha_total(wb, K, tm, entries, refs, formula, recon=None):
     """회차 합계 — 각 회차 결과 시트의 금액을 수식으로 모아 더한다."""
     put, head, sec, cols, note, sheet = (K[x] for x in ("put", "head", "sec", "cols", "note", "sheet"))
     N0, N2, P2 = '#,##0', '#,##0.00', '0.00%'
@@ -12317,6 +12317,23 @@ def _sha_total(wb, K, tm, entries, refs, formula):
         put(T, rr, 3, V(val, "=" + "+".join(f"$M${5+i}*{f[key]}" for i, f in enumerate(refs))), fmt=N0,
             align="right", border=True)
         comp[key[:-4]] = f"'회차 합계'!$C${rr}"
+    if recon:
+        # 평가 대상 수량과 제외 수량의 대사 — 결제 완료 물량도 여기에 남는다
+        r0 = r + 11
+        put(T, r0, 2, "수량 대사 — 평가 대상과 제외 물량", bold=True, size=9.5)
+        cols(T, r0+1, ["회차", "평가 대상 상태", "풋 주식수", "콜 주식수", "계약 대상 주식", "평가 반영", "같은 주식 묶음"])
+        for i, row in enumerate(recon):
+            for c_, v in enumerate(row):
+                put(T, r0+2+i, 2+c_, v, fmt=(N0 if isinstance(v, float) else None), size=9, border=True,
+                    align=("right" if isinstance(v, float) else None))
+        _h = float(getattr(tm, "sha_hold_q", -1.0))
+        if _h >= 0:
+            rr = r0 + 2 + len(recon)
+            put(T, rr, 2, "평가기준일 보유주식", bold=True, size=9, border=True)
+            put(T, rr, 6, _h, fmt=N0, align="right", size=9, border=True)
+            put(T, rr+1, 2, "이 계약 밖 보유주식 (보유 − 계약 대상 합)", bold=True, size=9, border=True)
+            put(T, rr+1, 6, V(_h - sum(x[4] for x in recon), f"=F{rr}-SUM(F{r0+2}:F{r0+1+len(recon)})"), fmt=N0,
+                align="right", size=9, border=True)
     return dict(row=tr, comp=comp)
 
 

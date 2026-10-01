@@ -168,8 +168,16 @@ SHA_COLS_CALL = [('call_start', '콜 시작일'), ('call_end', '콜 종료일'),
                  ('call_rate', '콜 가산율(연 %)')]
 SHA_COLS_MKT = [('sig', '변동성(연 %)'), ('rf', '무위험 금리(연 %)'), ('pdisc', '풋 할인율(연 %)')]
 SHA_COLS_ACC = [('acc_from', '가격 가산 기산일')]
+# 평가 대상 상태 · 확정 거래 · 추가 조건 · 같은 주식 묶음 — 해당하는 계약에만 켠다
+SHA_COLS_STATE = [('status', '평가 대상 상태'), ('side', '확정된 거래'), ('deal_px', '확정 주당 매매대금(원)'),
+                  ('settle', '결제 예정일'), ('cond_basis', '조건부 물량 평가 가정'), ('cond_note', '추가 조건 내용'),
+                  ('pool', '같은 주식 묶음'), ('pool_cap', '묶음 공통 한도(주)')]
+SHA_STATUS = {'open': '미행사', 'agreed': '행사·매매 확정 (미결제)', 'settled': '결제 완료', 'cond': '추가 조건부'}
+SHA_SIDE = {'': '', 'put': '풋 행사 확정 (주식 보유자가 판다)', 'call': '콜 행사 확정 (상대가 산다)'}
+SHA_COND = {'': '', 'met': '조건 충족 가정 (반영)', 'unmet': '조건 미충족 가정 (제외)'}
+SHA_PICK = {'status': SHA_STATUS, 'side': SHA_SIDE, 'cond_basis': SHA_COND}
 SHA_PCT = {'rate', 'call_rate', 'sig', 'rf', 'pdisc'}
-SHA_DATES = {'start', 'end', 'call_start', 'call_end', 'acc_from'}
+SHA_DATES = {'start', 'end', 'call_start', 'call_end', 'acc_from', 'settle'}
 SHA_STYLE = {'any': '기간 중 언제든지', 'periodic': '정기', 'single': '특정일 1회'}
 
 
@@ -189,6 +197,8 @@ def _sha_frame(rows, cols):
                     v = None
             elif k == 'style':
                 v = SHA_STYLE.get(v or 'any', SHA_STYLE['any'])
+            elif k in SHA_PICK:
+                v = SHA_PICK[k].get(v or ('open' if k == 'status' else ''), '')
             elif k == 'kill':
                 v = bool(v)
             row[title] = v
@@ -218,9 +228,11 @@ def _sha_rows_from(frame, cols, old):
                 v = v.isoformat() if hasattr(v, 'isoformat') else (str(v) if v else '')
             elif k == 'style':
                 v = back.get(v, 'any')
+            elif k in SHA_PICK:
+                v = {t: c for c, t in SHA_PICK[k].items()}.get(v, '') or (None if k != 'status' else 'open')
             elif k == 'kill':
                 v = int(bool(v))
-            elif k in ('freq', 'price', 'put_q', 'call_q', 'call_price', 'link_q') and v is not None:
+            elif k in ('freq', 'price', 'put_q', 'call_q', 'call_price', 'link_q', 'deal_px', 'pool_cap') and v is not None:
                 v = float(v)
             elif k == 'name':
                 v = str(v or '').strip()
@@ -271,7 +283,15 @@ def sha_editor(edited, case, errors):
                                                          '금리를 평평하게 씁니다(무위험은 콜·확률, 풋 할인율은 풋 할인).')
     show_acc = c3.checkbox('가격 가산 기산일이 계약일과 다른 회차', value=any(r.get('acc_from') for r in rows),
                            key=f'sha_acccols_{rev}')
-    cols = SHA_COLS + (SHA_COLS_CALL if show_call else []) + (SHA_COLS_MKT if show_mkt else []) + (SHA_COLS_ACC if show_acc else [])
+    show_state = st.checkbox('행사·매매가 확정됐거나 결제를 마친 물량, 추가 조건이 있는 물량, 같은 주식·공통 한도를 쓰는 회차가 있다',
+                             value=any(r.get(k) not in (None, '', 'open') for r in rows for k, _ in SHA_COLS_STATE),
+                             key=f'sha_statecols_{rev}',
+                             help='평가기준일 현재 선택권이 남아 있는지를 회차마다 정합니다 — 미행사 / 행사·매매 확정(미결제: 확정 '
+                                  '거래만 평가) / 결제 완료(평가 제외) / 추가 조건부(조건 충족·미충족 가정을 직접 고름). 같은 '
+                                  '보유주식이나 공통 한도를 쓰는 회차는 묶음 이름과 한도를 넣으면 합계를 점검합니다. 계약 해석은 '
+                                  '직접 입력하십시오 — 앱이 정하지 않습니다.')
+    cols = (SHA_COLS + (SHA_COLS_CALL if show_call else []) + (SHA_COLS_MKT if show_mkt else [])
+            + (SHA_COLS_ACC if show_acc else []) + (SHA_COLS_STATE if show_state else []))
     cfg = {'행사 방식': st.column_config.SelectboxColumn(options=list(SHA_STYLE.values()), required=True),
            '행사 시작일': st.column_config.DateColumn(format='YYYY-MM-DD'),
            '행사 종료일': st.column_config.DateColumn(format='YYYY-MM-DD'),
@@ -284,6 +304,14 @@ def sha_editor(edited, case, errors):
            '콜 수량(주)': st.column_config.NumberColumn(min_value=0., format='%.0f'),
            '주기(개월)': st.column_config.NumberColumn(min_value=0., format='%.2f', help='정기 행사일 때만 씁니다.'),
            '가격 가산율(연 %)': st.column_config.NumberColumn(format='%.4f', help='0 이면 고정 행사가격입니다.'),
+           '평가 대상 상태': st.column_config.SelectboxColumn(options=list(SHA_STATUS.values())),
+           '확정된 거래': st.column_config.SelectboxColumn(options=[v for v in SHA_SIDE.values() if v]),
+           '조건부 물량 평가 가정': st.column_config.SelectboxColumn(
+               options=[v for v in SHA_COND.values() if v],
+               help='근거 없는 확률을 넣지 않습니다. 고른 가정만 평가금액에 들어가고, 조건 충족 시 금액은 차이로 함께 보입니다.'),
+           '결제 예정일': st.column_config.DateColumn(format='YYYY-MM-DD'),
+           '확정 주당 매매대금(원)': st.column_config.NumberColumn(min_value=0., format='%.2f'),
+           '묶음 공통 한도(주)': st.column_config.NumberColumn(min_value=0., format='%.0f'),
            '한쪽 행사 시 상대 권리 소멸': st.column_config.CheckboxColumn(
                help='계약상 한쪽이 행사하면 같은 주식에 붙은 상대 권리가 끝나면 켭니다. 그 물량은 두 권리자가 끝나는 '
                     '상대 권리까지 보고 행사 여부를 정합니다(연계 판단).'),
@@ -303,6 +331,10 @@ def sha_editor(edited, case, errors):
         for k in ('end', 'call_end'):
             if r.get(k): ends.append(r[k])
         _qp, _qc = float(r.get('put_q') or 0), float(r.get('call_q') or 0)
+        if r.get('status') == 'settled':
+            continue                                   # 결제 완료 — 평가 대상이 아니다
+        if r.get('status') == 'agreed':
+            _qp, _qc = (_qp, 0.) if r.get('side') == 'put' else (0., _qc)
         _lq = r.get('link_q')
         # 같은 주식 물량 — 넣은 값, 아니면 (상대 권리 소멸이고 수량이 같을 때) 전부, 아니면 겹침 없음으로 보지 않고
         # 계약 대상 주식수는 작은 쪽을 한 번만 센다 (엔진 sha_contract_shares 와 같다).
@@ -314,10 +346,11 @@ def sha_editor(edited, case, errors):
                       '콜만': (_qc - _lk) if _lk is not None else None, '계약 대상 주식': _qp + _qc - _ov})
     if ends:
         edited['d_mat'] = max(ends)
-    if new_rows and new_rows[0].get('price'):
-        edited['K0'] = float(new_rows[0]['price'])
+    _priced = [r for r in new_rows if r.get('price') and r.get('status', 'open') in ('open', 'cond')]
+    if _priced:
+        edited['K0'] = float(_priced[0]['price'])
     for r in new_rows:
-        if not r.get('price'):
+        if not r.get('price') and r.get('status', 'open') in ('open', 'cond'):
             errors.append(f"{r.get('name')}의 주당 기준가격을 입력하십시오.")
     if qrows:
         _qt = pd.DataFrame(qrows)
@@ -332,7 +365,7 @@ def sha_editor(edited, case, errors):
                f'{edited.get("d_mat", "—")}. 가격 가산 기산일은 비우면 계약일입니다. 가산율 0% 는 고정 행사가격입니다.')
     st.markdown('**권리 관계** — 풋 권리자는 주식 보유자, 콜 권리자는 상대방입니다. 풋이 행사되면 주식을 사 주는 쪽과 '
                 '같은 날 두 권리자가 모두 행사하려 할 때의 우선권을 넣으십시오.')
-    fields(['sha_writer', 'pc_order', 'sha_disc', 'sha_side', 'sha_put_cmp', 'acc_basis'], edited, case)
+    fields(['sha_writer', 'pc_order', 'sha_disc', 'sha_side', 'sha_put_cmp', 'acc_basis', 'sha_hold_q'], edited, case)
     if edited.get('sha_disc') == 2:
         field('sha_spread', edited, case)
     st.caption('가산 복리 횟수는 풋·콜 모든 회차에 씁니다. 풋 할인 방식은 회차별 풋 할인율을 비운 회차에 적용합니다.')
@@ -633,6 +666,26 @@ def sha_result_panel(run):
         st.caption('회차마다 따로 계산해 더했습니다. 연도별 미행사 물량을 다음 회차로 넘기지 않습니다. 같은 주식 물량은 '
                    '두 권리자가 끝나는 상대 권리까지 보고 행사 여부를 정했고, 나머지 풋·콜 물량은 따로 평가했습니다. '
                    '1주당 금액은 풋·콜 각자의 수량으로 나눈 값입니다.')
+        _cond = [r for r in rows if r.get('평가 대상 상태') == '추가 조건부']
+        if _cond:
+            st.markdown('**추가 조건부 물량 — 조건 충족 전·후 차이 (평가금액에는 고른 가정만 들어 있음)**')
+            st.dataframe(pd.DataFrame([{'회차': r['회차'], '반영한 가정': '조건 충족' if r['반영'] else '조건 미충족',
+                                        '평가금액 풋': r['풋 전액'], '평가금액 콜': r['콜 전액'],
+                                        '조건 충족 시 풋': r['조건 충족 시 풋 전액'], '조건 충족 시 콜': r['조건 충족 시 콜 전액'],
+                                        '차이 풋': r['조건 충족 시 풋 전액'] - r['풋 전액'],
+                                        '차이 콜': r['조건 충족 시 콜 전액'] - r['콜 전액']} for r in _cond]).style.format(
+                {c: '{:,.0f}' for c in ['평가금액 풋', '평가금액 콜', '조건 충족 시 풋', '조건 충족 시 콜', '차이 풋', '차이 콜']}),
+                hide_index=True, use_container_width=True)
+            st.caption('조건 충족 가능성을 확률로 반영한 값이 아닙니다. 충족 가정과 미충족 가정의 차이를 보여 줄 뿐입니다.')
+    recon = run.summary.get('sha_recon')
+    if recon:
+        st.markdown('**수량 대사 — 평가 대상과 제외 물량**')
+        st.dataframe(pd.DataFrame(recon).style.format({'풋 주식수': '{:,.0f}', '콜 주식수': '{:,.0f}', '계약 대상 주식': '{:,.0f}'}),
+                     hide_index=True, use_container_width=True)
+        _h = float(getattr(t, 'sha_hold_q', -1.0))
+        if _h >= 0:
+            _used = sum(r['계약 대상 주식'] for r in recon)
+            st.caption(f'평가기준일 보유주식 {_h:,.0f}주 · 평가하는 회차의 대상 주식 {_used:,.0f}주 · 이 계약 밖 보유 {_h - _used:,.0f}주')
 
 
 def day1_panel(run, case):
