@@ -2738,6 +2738,34 @@ def test_lock_end_same_node_as_last_call():
     chk_bool("의무보유 없음 → −1", G["lock_end_step"](Terms(k_hold=0), 60, 5/60) == -1)
 
 
+def test_refix_won_rounding():
+    """조정 후 전환가격의 원 단위 미만 처리 (계약서 문구) — 전환사채·상환전환우선주·신주인수권부사채.
+
+    정기 조정일에는 그 노드 주가로 새 전환가격을 정하고 원 단위 미만을 절상(절사)한 뒤 하한·상한을 건다.
+    손으로: K(i,j) = MIN(MAX(올림(S − 1E-9) 또는 내림(S + 1E-9), 하한, 액면), 상한). 이월 노드는 직전 값 그대로.
+    """
+    print("\n[52] 리픽싱 — 조정 후 전환가격 원 단위 미만 절상·절사")
+    for inst, extra in (("CB", {}), ("RCPS", dict(issue_px=1000.)), ("BW", dict(bw_pay=1))):
+        for mode, nm, f in ((1, "절상", lambda x: math.ceil(x - 1e-9)), (2, "절사", lambda x: math.floor(x + 1e-9))):
+            t = Terms(inst=inst, d_issue="2025-01-01", d_base="2025-01-01", d_mat="2028-01-01", cpn=0., ytm=0.,
+                      ytm_cmp=0, gap_m=1., sig=.35, rfx_mode=2, rfx_cyc=3., carry=1, cv_s=1., cv_e=35.,
+                      p_s=99., p_e=0., k_w=0., K0=1000., floor=700., par=500., S0=987.65, rfx_round=mode,
+                      rf_curve=[(1, .03)], cr_curve=[(1, .08)], **extra)
+            derive(t)
+            r = engine(t, conv=True, put=False, call=False)
+            Kg, S, n = r["Kg"], r["S"], r["n"]
+            rfx = set(G["refix_steps"](t, n, t.T/n))
+            cap = G["k_cap"](t)
+            bad = hits = 0
+            for i in range(1, n+1):
+                if i not in rfx: continue
+                for j in range(i+1):
+                    want = min(max(f(S(i, j)), t.floor, t.par), cap)
+                    hits += 1
+                    if abs(Kg[i][j] - want) > 1e-9: bad += 1
+            chk_bool(f"{inst} · {nm} — 조정일 노드 {hits}개의 전환가격 = 손계산", hits > 0 and bad == 0)
+
+
 def test_lock_share_split():
     """콜 한도와 의무보유 물량이 다른 계약 — 콜 = 묶인 물량 × 묶인 1단위 + 나머지 × 묶이지 않은 1단위.
 
@@ -2817,6 +2845,7 @@ def main():
     test_refix_contract_dates()
     test_lock_end_same_node_as_last_call()
     test_lock_share_split()
+    test_refix_won_rounding()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

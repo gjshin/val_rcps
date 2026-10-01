@@ -827,6 +827,11 @@ if _shared_run is None:
                     t.rfx_first = 0.0
                 _v = st.number_input("최저 조정가액 (원)", value=bval("floor", float(t.floor)), step=1.0)
                 t.floor = bget("floor", _v, t.floor, "최저 조정가액", need=(t.rfx_mode > 0))
+                # 계약서의 «조정 후 전환가액 중 원 단위 미만은 절상(절사)한다» 문구를 그대로 고른다.
+                t.rfx_round = st.selectbox("조정 후 전환가액 원 단위 미만", [0, 1, 2], index=int(t.rfx_round),
+                                           format_func={0: "처리 없음 (계산값 그대로)", 1: "절상", 2: "절사"}.get,
+                                           help="정기 조정(주가로 새로 정한 가격)과 상장 조정(공모가 × 배수)에 적용하고, "
+                                                "그다음 최저 조정가액·상한을 겁니다.")
                 # 상향 재조정의 상한은 계약상 **최초** 전환가액이다. 현재 전환가액으로
                 # 상한을 겸하면 이미 하향된 상품이 계약상 회복 한도까지 못 올라간다.
                 _cap_on = st.checkbox(

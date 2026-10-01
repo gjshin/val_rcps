@@ -140,6 +140,9 @@ class Terms:
     rfx_first: float = 0.0
     floor: float = 598.0
     par: float = 500.0
+    # 조정 후 전환가격의 원 단위 미만 처리 — 계약서 문구대로. 0 처리 없음 / 1 절상 / 2 절사.
+    # 주가로 새로 정한 가격(정기 조정)과 공모가 × 배수(상장 조정)에 걸고, 그다음 하한·상한을 건다.
+    rfx_round: int = 0
     carry: int = 1              # 1 경로가중치 / 2 확률가중평균 / 3 특정노드선택 (상태확장은 없앴다)
     p_s: float = 24.0
     p_e: float = 57.0
@@ -1741,6 +1744,23 @@ def rfx_any(tm: Terms) -> bool:
     return float(tm.rfx_cyc) <= node_gap_m(tm) + 1e-9
 
 
+K_ROUND_EPS = 1e-9   # 원 단위 처리의 경계 허용오차 — 1,447.0000000001 을 1,448 로 올리지 않는다. 엑셀도 같은 값.
+
+
+def k_round(tm: Terms, x: float) -> float:
+    """조정 후 전환가격의 원 단위 미만 처리 (계약서 문구). 0 그대로 · 1 절상 · 2 절사."""
+    m = int(getattr(tm, "rfx_round", 0))
+    if m == 1: return float(math.ceil(x - K_ROUND_EPS))
+    if m == 2: return float(math.floor(x + K_ROUND_EPS))
+    return x
+
+
+def xl_k_round(x: str, mode_ref: str) -> str:
+    """k_round 의 엑셀 식 — 가정 시트의 처리 칸(mode_ref)을 본다."""
+    return (f"IF({mode_ref}=1,CEILING({x}-{K_ROUND_EPS:.0E},1),"
+            f"IF({mode_ref}=2,FLOOR({x}+{K_ROUND_EPS:.0E},1),{x}))")
+
+
 def refix_steps(tm: Terms, n: int, dt_: float) -> dict:
     """정기 전환가액 조정일 {스텝: 계약 조정월(발행일부터 개월)} — 엔진 · 값 조서 · 수식 조서가 함께 쓴다.
 
@@ -2392,6 +2412,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     S = lambda i, j: tm.S0 * u**j * d**(i-j)
     kcap = k_cap(tm)
     clip = lambda s: min(max(s, tm.floor, tm.par), kcap)
+    rnd = lambda s: k_round(tm, s)
     put_amt = EA["put"]
     # 계약서의 회차별 표를 넣었으면 그 회차가 곧 행사일이다. 의무보유(ps)는 그때도
     # 앞쪽 회차를 막는다 — 표에 있는 날이라도 묶여 있으면 청구할 수 없다.
@@ -2427,7 +2448,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     # 조정도 없다. 강제전환은 만기 자동전환과 같은 규칙으로 전환권이 있는 격자에서만
     # 탄다 (전환권을 뺀 부채는 주식이 될 수 없다).
     ipo_i = (st_lo(tm.ipo_m) if (int(tm.ipo_on) and tm.ipo_px > 0) else -1)
-    ipo_k = tm.ipo_px*tm.ipo_mult
+    ipo_k = rnd(tm.ipo_px*tm.ipo_mult)
     ipo_hit = lambda i, j: (i == ipo_i and 0 < i <= n and S(i, j) > tm.ipo_min)
     ipo_adj = lambda i, j, k: (clip(min(k, ipo_k)) if ipo_hit(i, j) else k)
 
@@ -2465,7 +2486,8 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
             if tm.rfx_mode == 0:
                 kv = prev                        # 주기 조정이 없으면 그대로 이월
             elif is_rfx(i):
-                kv = clip(S(i, j) if tm.rfx_mode == 2 else min(prev, S(i, j)))
+                # 원 단위 처리는 주가로 새로 정한 가격에만 건다 — 이월값(경로 가중 평균)은 그대로 둔다.
+                kv = clip(rnd(S(i, j)) if tm.rfx_mode == 2 else min(prev, rnd(S(i, j))))
             else:
                 kv = prev
             # 상장하면 공모가 × 배수로 자른다. 낮아질 때만 조정된다.
@@ -8627,7 +8649,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         + ([("IPO 조항", "반영" if tm.ipo_on and tm.ipo_px > 0 else "없음", None)]
            + ([("예상 상장 시점 (개월)", tm.ipo_m, N0),
                ("공모가액", tm.ipo_px, N2), ("공모가 배수", tm.ipo_mult, P2),
-               ("조정후 전환가격", tm.ipo_px*tm.ipo_mult, N2),
+               ("조정후 전환가격", k_round(tm, tm.ipo_px*tm.ipo_mult), N2),
                ("최소공모가격", tm.ipo_min, N2),
                ("상장 시 강제전환", "예" if tm.ipo_conv else "아니오", None)]
               if (tm.ipo_on and tm.ipo_px > 0) else [])
@@ -9528,6 +9550,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("만기 지급분 공제 (1 이자 붙여 / 2 받은 금액만 / 0 안 뺌)", "mless",
          ded_of(tm, "m"), N0, True),
         ("최저 조정가액", "flr", tm.floor, N2, True),
+        ("조정 후 전환가격 원 단위 미만 (0 처리 없음 / 1 절상 / 2 절사)", "rround", int(getattr(tm, "rfx_round", 0)), N0, True),
         ("액면가", "par", tm.par, N2, True),
         # 상향 재조정의 상한은 **최초** 전환가액이다. 이미 하향 조정된 상품을
         # 결산 평가하면 현재 전환가액과 갈리므로 따로 받는다.
@@ -9595,7 +9618,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("상장 스텝", "ipos", stp_lo(tm.ipo_m), N0, True),
         ("공모가액", "ipopx", tm.ipo_px, N2, True),
         ("공모가 배수", "ipomul", tm.ipo_mult, P2, True),
-        ("조정후 전환가격", "ipok", "@=C{ipopx}*C{ipomul}", N2, False),
+        ("조정후 전환가격", "ipok", "@=" + xl_k_round("C{ipopx}*C{ipomul}", "C{rround}"), N2, False),
         ("최소공모가격", "ipomin", tm.ipo_min, N2, True),
         ("상장 시 강제전환 (1/0)", "ipocv", int(tm.ipo_conv), N0, True),
         ("매도청구권 평가방법 (0 유무가치 / 1 GS식 전환가중확률할인 / 2 TF식 지분-채권 분리할인)",
@@ -9656,7 +9679,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     # 남아 있으면 K 에서 KeyError 가 나므로 조서가 조용히 틀어지지 않는다.
     _unused = {"ipay", "payoff"}           # 지급일은 계약일 목록(pay_steps)이 정한다
     if _kconst:
-        _unused |= {"flr", "cap", "rfxd", "rfx", "up", "mth"}
+        _unused |= {"flr", "cap", "rfxd", "rfx", "up", "mth", "rround"}
         if not is_rcps(tm):
             _unused.add("par")
     if not _ipo_on:
@@ -9692,7 +9715,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _SEC = [("1. 평가 대상 · 기준일", {"d_issue", "d_base", "d_mat", "elm", "T", "remm", "view", "face", "inst"}),
             ("2. 계약 조건 — 이자 · 만기", {"cpn", "cpnc", "dbas", "ipx", "dmode", "ipaym", "txpay", "ytm", "ycm",
                                         "matx", "red", "mless", "accb", "auto"}),
-            ("3. 계약 조건 — 전환", {"K0", "txcv", "cvs", "cve", "flr", "par", "cap", "rfxd", "rfx", "up", "mth",
+            ("3. 계약 조건 — 전환", {"K0", "txcv", "cvs", "cve", "flr", "rround", "par", "cap", "rfxd", "rfx", "up", "mth",
                                  "ipoon", "ipos", "ipopx", "ipomul", "ipok", "ipomin", "ipocv"}),
             ("4. 계약 조건 — 조기상환 (투자자 풋)", {"txput", "pst", "prate", "pcadd", "pmode", "psm", "pyld", "pcmp",
                                               "pless", "psch"}),
@@ -9730,6 +9753,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         "auto": {1: "만료 시 보통주 자동전환", 0: "없음"},
         "rfx": {1: "있음", 0: "없음"}, "up": {1: "하향·상향", 0: "하향만"},
         "mth": {1: "경로가중치", 2: "확률가중평균", 3: "특정노드 선택"},
+        "rround": {0: "처리 없음", 1: "원 단위 미만 절상", 2: "원 단위 미만 절사"},
         "eqcls": {1: "자본", 0: "파생상품부채"}, "inst": {0: "CB", 1: "RCPS", 2: "BW"},
         "kmeth": {0: "콜 유무 가치 비교", 1: "옵션차익 혼합할인율", 2: "옵션차익 성분 분리할인 (주식결제·현금결제)"},
         "ksplit": {0: "가치 구성비율", 1: "전환확률 (본문 4.3.3)"},
@@ -10165,8 +10189,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         if i == 0: return f"={K['K0']}"
         carry = f"{Q(S2A)}!{L}{R0+r}"
         # 조정일에도 **같은 이월값**을 쓴다 (엔진과 동일).
-        base = (f"IF({K['up']}=1,{Q(S1)}!{L}{R0+r},"
-                f"MIN({carry},{Q(S1)}!{L}{R0+r}))")
+        _px = xl_k_round(f"{Q(S1)}!{L}{R0+r}", K['rround'])
+        base = (f"IF({K['up']}=1,{_px},"
+                f"MIN({carry},{_px}))")
         clip = f"MIN(MAX({base},{K['flr']},{K['par']}),{K['cap']})"
         # 주기 조정이 없으면 이월만 한다 (IPO 조정은 02 에서 그 위에 걸린다).
         return f"=IF({K['rfx']}=0,{carry},IF({L}$6=1,{clip},{carry}))"

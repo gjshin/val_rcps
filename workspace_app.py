@@ -540,7 +540,7 @@ def input_editor(case, autosave=False):
             edited['k_w'] = 0.
         field('rfx_mode', edited, case)
         if edited.get('rfx_mode'):
-            fields(['rfx_cyc', 'rfx_first', 'floor', 'K_cap', 'carry'], edited, case)
+            fields(['rfx_cyc', 'rfx_first', 'floor', 'rfx_round', 'K_cap', 'carry'], edited, case)
     with st.expander('IPO 조건·미반영 권리 메모'):
         field('ipo_on', edited, case)
         if edited.get('ipo_on') and inst == 'SHA':

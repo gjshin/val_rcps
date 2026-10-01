@@ -19,6 +19,8 @@ CASES = [
     ("기본 (티사이언티픽)", {}),
     ("리픽싱 없음", dict(rfx_mode=0)),
     ("하향만 리픽싱", dict(rfx_mode=1)),
+    ("리픽싱 원 단위 미만 절상", dict(rfx_round=1)),
+    ("하향만 · 원 단위 미만 절사", dict(rfx_mode=1, rfx_round=2)),
     ("표면 3% · 보장 7%",
      dict(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07)),
     ("표면 8% · 매도청구 5%",
