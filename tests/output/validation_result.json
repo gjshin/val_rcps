@@ -1,61 +1,16 @@
 {
- "generated": "2026-09-30 23:28",
- "head": "719835e",
- "app_sha256_12": "9f1ec01c81f5",
- "quick": true,
+ "generated": "2026-10-01 05:14",
+ "head": "4ecbe7c",
+ "app_sha256_12": "ab247eabac9c",
+ "quick": false,
  "python": "3.11.15",
  "suites": [
-  {
-   "suite": "손계산대조",
-   "cmd": "python3 tests/손계산대조.py",
-   "ok": true,
-   "code": 0,
-   "sec": 85.3,
-   "last": "모두 통과",
-   "tail": []
-  },
-  {
-   "suite": "오라클",
-   "cmd": "python3 tests/오라클.py",
-   "ok": true,
-   "code": 0,
-   "sec": 1.2,
-   "last": "모두 통과",
-   "tail": []
-  },
-  {
-   "suite": "분기전수",
-   "cmd": "python3 tests/분기전수.py",
-   "ok": true,
-   "code": 0,
-   "sec": 5.6,
-   "last": "→ tests/output/분기전수.json 383 줄",
-   "tail": []
-  },
-  {
-   "suite": "기능목록",
-   "cmd": "python3 tests/기능목록.py --strict",
-   "ok": true,
-   "code": 0,
-   "sec": 0.6,
-   "last": "   → tests/검증매트릭스.json (412 행)",
-   "tail": []
-  },
-  {
-   "suite": "조합시험",
-   "cmd": "python3 tests/조합시험.py --quick",
-   "ok": true,
-   "code": 0,
-   "sec": 46.6,
-   "last": "→ tests/output/조합시험.json 1846 줄 · 실패 0 (tests/output/조합시험_실패.json) · 46초",
-   "tail": []
-  },
   {
    "suite": "검산수식대조",
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
    "code": 0,
-   "sec": 31.9,
+   "sec": 29.7,
    "last": "",
    "tail": []
   },
@@ -64,7 +19,7 @@
    "cmd": "python3 tests/배선대조.py",
    "ok": true,
    "code": 0,
-   "sec": 13.6,
+   "sec": 16.8,
    "last": "배선 이상 없음",
    "tail": []
   },
@@ -73,7 +28,7 @@
    "cmd": "python3 tests/리포트대조.py",
    "ok": true,
    "code": 0,
-   "sec": 34.0,
+   "sec": 34.7,
    "last": "",
    "tail": []
   },
@@ -82,22 +37,31 @@
    "cmd": "python3 tests/엑셀입력변경.py",
    "ok": true,
    "code": 0,
-   "sec": 218.6,
+   "sec": 211.4,
    "last": "",
+   "tail": []
+  },
+  {
+   "suite": "설정전수대조",
+   "cmd": "python3 tests/설정전수대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 1260.7,
+   "last": "전 설정 일치 · 모든 설정이 결과를 움직인다",
    "tail": []
   }
  ],
  "baseline": {
   "주계약": 37.5208,
   "부채요소": 73.1837,
-  "전체": 114.8781,
-  "매도청구권": 13.0762
+  "전체": 116.3743,
+  "매도청구권": 13.5251
  },
  "baseline_expected": {
   "주계약": 37.5208,
   "부채요소": 73.1837,
-  "전체": 114.8781,
-  "매도청구권": 13.0762
+  "전체": 116.3743,
+  "매도청구권": 13.5251
  },
  "baseline_ok": true,
  "matrix": {
@@ -138,5 +102,5 @@
   }
  },
  "all_ok": true,
- "sec": 437.8
+ "sec": 1553.8
 }

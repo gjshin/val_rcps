@@ -10750,9 +10750,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _JNM = (f'=IF({K["eqcls"]}=1,"　전환권대가 (자본)",IF({K["d1pl"]}=1,'
             f'IF({_D1}>0,"최초 인식 손실 (당기손익)","　최초 인식 이익 (당기손익)"),'
             f'"　최초 인식 손익 (고르지 않음)"))')
+    # 매도청구권이 음수(콜이 전환을 강제해 값이 오르는 모형 성질)면 자산이 아니라 부채다 — 배분표와
+    # 값 조서(alloc_journal)처럼 대변으로 간다. 종전에는 음수를 차변 자산에 그대로 실어 부호가 섞였다.
+    _CX = f'IF({K["kkind"]}=1,"",IF(OR({KS}=1,{NS}),IF({K["eqcls"]}=1,결과!{CAE},결과!C22),""))'
     je2 = [("현금", "=100", None),
-           ("파생상품자산 (매도청구권)",
-            f'=IF({K["kkind"]}=1,"",IF(OR({KS}=1,{NS}),IF({K["eqcls"]}=1,결과!{CAE},결과!C22),""))', None),
+           (f'=IF(AND(ISNUMBER({_CX}),N({_CX})<0),"　파생상품부채 (매도청구권)","파생상품자산 (매도청구권)")',
+            f'=IF(AND(ISNUMBER({_CX}),N({_CX})>0),{_CX},"")',
+            f'=IF(AND(ISNUMBER({_CX}),N({_CX})<0),-{_CX},"")'),
            (("　당기손익-공정가치 측정 금융부채 (복합계약 전체)" if _FVROW
              else "　전환사채 (주계약 · 조기상환권 포함)" if _ph_liab else "　전환사채 (주계약)"),
             None, _HOST),
