@@ -10060,8 +10060,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                           "노드 1 부터 · 만기 뒤 지급일은 만기 노드. 두 지급일이 한 노드에 오면 그 노드에서 회수만큼 지급"))
         for key, nm, cont, rows_, s_, e_, f_, on in (
                 ("put", "조기상환일", _EA["p_cont"], _EA["p_rows"], tm.p_s, tm.p_e, tm.p_f, bool(_EA["p_dates"])),
-                ("call", "매도청구일", _EA["k_cont"], _EA["k_rows"], tm.k_s, tm.k_e, tm.k_f,
-                 tm.k_w > 0 and bool(_EA["k_dates"]))):
+                ("call", "매도청구일", _EA["k_cont"], _EA["k_rows"], tm.k_s, tm.k_e, tm.k_f, bool(_EA["k_dates"]))):
             if cont or not on: continue
             if rows_:
                 ms = [m for m, _ in rows_]
@@ -10170,7 +10169,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                     ("call", CROW['kmo'], _EA["k_dates"], _EA["k_cont"], _EA["k_steps"], "k")):
                 live = (not cont) and key in DL
                 if not (i in dates or live): continue
-                if cont:
+                if cont or key not in DL:
                     mo_v = f"={_MO(st)}"
                 else:
                     mo_v = (f'=IFERROR(INDEX({_dl(key, "D")},MATCH({st},{_dl(key, "G")},0)),"")')
