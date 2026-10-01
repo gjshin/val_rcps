@@ -111,9 +111,13 @@ def field(key, edited, case, prefix='input'):
         new = int(st.checkbox(title, value=bool(value), key=widget_key))
     elif TYPES[key] in (float, int):
         scale = 100 if key in PERCENT else 1
-        displayed = float(value * scale) if value is not None else None
+        # 의무보유 물량 비율의 음수는 «콜 대상 비율과 같음» 이다 — 칸을 비워 보여 준다.
+        _same = key == 'k_lock_w' and value is not None and value < 0
+        displayed = float(value * scale) if value is not None and not _same else None
         number = st.number_input(title, value=displayed, format='%.8f' if key in PERCENT else '%.6f', key=widget_key)
         new = value if number == displayed else number / scale if number is not None else None
+        if key == 'k_lock_w' and new is None:
+            new = -1.0
         if new is not None and TYPES[key] is int:
             if float(new).is_integer():
                 new = int(new)
@@ -443,7 +447,7 @@ def input_editor(case, autosave=False):
             else:
                 fields(['k_w', 'k_hold'], edited, case)
                 if edited.get('k_hold'):
-                    fields(['k_lock', 'k_lock_put'], edited, case)
+                    fields(['k_lock', 'k_lock_put', 'k_lock_w'], edited, case)
                 fields(['k_method', 'k_split'], edited, case)
                 third_now = edited.get('issuer_call') == 2 if inst == 'RCPS' else bool(edited.get('k_third', DEFAULTS['k_third']))
                 policy = (2 if third_now and edited.get('model', 'TF') == 'TF' else 0, 1)

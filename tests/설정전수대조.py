@@ -178,8 +178,11 @@ def _combin(f):
 def build(G, over, path):
     t = terms(G, over)
     full, b0, b1, b2, ca, conv = G["decompose"](t)
+    # 앱이 매도청구권을 재는 With 격자와 같다 — 의무보유 시작 지연(lock_delay)과 의무보유가 걸린
+    # 마지막 노드(lock_end_step, 같은 계약일의 마지막 매도청구 노드까지)를 함께 넘긴다.
+    _cs, _ps = G["lock_delay"](t)
     b3 = G["pick"](G["engine"](t, conv=True, put=True, call=True,
-                               conv_start=max(t.cv_s, t.k_lock)), t.model)
+                               conv_start=_cs, put_start=_ps, lock_m=t.k_lock), t.model)
     open(path, "wb").write(
         G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv,
                                 G["eir_or_none"](t, full, b0, b1, b2, ca)))

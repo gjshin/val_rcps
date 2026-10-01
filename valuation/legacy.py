@@ -141,6 +141,10 @@ class Terms:
     k_cmp: int = 4
     k_w: float = 0.30
     k_lock: float = 25.0
+    # 의무보유 물량 비율 (발행총액 대비). 음수면 콜 대상비율(k_w)과 같다 — 콜 대상 전부가 묶인다.
+    # 「콜 한도 70% · 미전환 의무보유 30%」 처럼 다르면 콜 대상 70% 가운데 30% 만 묶이고
+    # 나머지 40% 는 처음부터 전환·조기상환할 수 있다 (lock_share · call_mix).
+    k_lock_w: float = -1.0
     k_split: int = 0              # 옵션차익혼합할인법의 행사가 분해 — 0 부속예제(가치 구성비율 E/(E+B)) / 1 한공회 본문 4.3.3(GS 전환확률)
     k_kind: int = 0               # 콜옵션 유형 — 0 제3자 지정 «가능» 콜(발행자 보유 · 파생상품자산) / 1 제3자 사전 «기특정» 콜(본문 4.5.4 접근법 2-2 · 주주간 분배)
     k_basis: str = ""             # 평가기법 선택 근거 (한공회 4.6.2 문서화) — 조서 문안에 실린다
@@ -701,11 +705,11 @@ MODEL_LIMITS = (
     ('복합내재파생이 음수',
      '발행자 상환권이 전환권보다 크면 부채 갈래 묶음이 음수 (대신증권 −9.0050)',
      ('화면 배분표 캡션', 'docs/사례_대신증권_RCPS.md', '조서 회계처리 시트')),
-    ('의무보유 물량 = 콜 대상비율',
-     '의무보유 물량을 k_w 와 같다고 본다. 「콜 한도 30%인데 의무보유는 20%」처럼 두 물량이 '
-     '다른 계약과 「30% → 20% → 10% 단계적 해제」처럼 물량이 시간에 따라 갈리는 계약은 '
-     '담지 못한다 — 사채를 물량별로 쪼개 격자를 따로 풀고 조서에도 트리를 벌수만큼 실어야 '
-     '한다. 기간(k_lock)과 제한 권리(k_lock_put)는 표현된다',
+    ('의무보유 물량은 한 번에 풀린다',
+     '콜 한도와 의무보유 물량이 다른 계약(「콜 한도 70% · 미전환 의무보유 30%」)은 콜 대상을 묶인 몫과 '
+     '묶이지 않은 몫으로 나눠 따로 잰다(k_lock_w). 「30% → 20% → 10% 단계적 해제」처럼 물량이 시간에 '
+     '따라 갈리는 계약과, 콜 대상 밖 물량의 의무보유는 담지 못한다. 기간(k_lock)과 제한 '
+     '권리(k_lock_put)는 표현된다',
      ('화면 매도청구권 캡션', 'README 「한계」', 'docs/의사결정규칙.md §29')),
     ('부분 매도청구는 뿌리에서 비율로만 반영',
      '뿌리값에 k_w 를 곱한다. 행사금액이 물량에 비례하고 한도가 전체 기간에 하나뿐이면 '
@@ -3189,13 +3193,43 @@ def lock_end_step(tm: Terms, n: int, dt_: float, lock=None) -> int:
     lk = tm.k_lock if lock is None else lock
     if not int(getattr(tm, "k_hold", 1)) or lk <= 0 or tm.k_w <= 0:
         return -1
+    kd = exercise_amounts(tm, n, dt_)["k_dates"]
+    # 의무보유는 매도청구에 딸린 약정이다. 격자 안에 남은 매도청구일이 없으면 지킬 매도청구가 없으므로
+    # 종료 노드를 따로 묶지 않는다 (시작 지연 lock_delay 만 남는다 — 종전과 같다).
+    if not kd:
+        return -1
     _, hi = step_mapper(tm, n, dt_)
     L = hi(lk)
-    kd = exercise_amounts(tm, n, dt_)["k_dates"]
     for i, m in kd.items():
         if m is not None and m <= lk + 1e-9:
             L = max(L, i)
     return min(L, n)
+
+
+def lock_share(tm: Terms) -> float:
+    """콜 대상 물량 가운데 의무보유로 묶인 물량 (발행총액 대비). 의무보유가 없으면 0.
+
+    의무보유 비율을 따로 넣지 않았으면(음수) 콜 대상 전부다 — 종전과 같다. 콜 한도보다 크게 넣어도
+    콜 대상 밖의 물량은 콜 값에 닿지 않으므로 콜 한도에서 자른다 (validate 가 알린다).
+    """
+    if not int(getattr(tm, "k_hold", 1)) or tm.k_w <= 0:
+        return 0.0
+    lw = float(getattr(tm, "k_lock_w", -1.0))
+    return float(tm.k_w) if lw < 0 else min(lw, float(tm.k_w))
+
+
+def call_mix(tm: Terms, unit_locked, unit_free) -> float:
+    """매도청구권 = 의무보유 물량 × 묶인 1단위 값 + (콜 한도 − 의무보유 물량) × 묶이지 않은 1단위 값.
+
+    콜 한도는 한 번만 걸린다 — 두 몫을 더하면 콜 대상 전체다. ``unit_*`` 는 값을 돌려주는 함수라
+    한쪽 몫이 0 이면 그 격자를 만들지 않는다 (의무보유 비율 = 콜 한도면 종전 계산 그대로)."""
+    w, L = float(tm.k_w), lock_share(tm)
+    v = 0.0
+    if L > 1e-12:
+        v += L*unit_locked()
+    if w - L > 1e-12:
+        v += (w - L)*unit_free()
+    return v
 
 
 # 기초 사채가 그 자리에서 정산되어 사라지는 결정들. 의무보유가 없을 때 콜도 함께 소멸한다.
@@ -3422,13 +3456,21 @@ def call_compare(tm: Terms, full, b2):
 
     def opt(method, split, hold):
         t2 = Terms(**asdict(tm)); t2.k_split = split; t2.k_hold = hold
-        return tm.k_w * call_third_party(t2, full, method)
+        t0 = Terms(**asdict(t2)); t0.k_hold = 0
+        if not hold:
+            return tm.k_w * call_third_party(t0, full, method)
+        return call_mix(tm, lambda: call_third_party(t2, full, method),
+                        lambda: call_third_party(t0, full, method))
+
+    def _wunit(lock):
+        cs, ps = lock_delay(tm, lock)
+        return b2 - pick(engine(tm, conv=True, put=True, call=True, conv_start=cs,
+                                put_start=ps, lock_m=lock), tm.model)
 
     def wow(lock):                      # 유무가치비교법 — 콜을 넣고 뺀 차액
-        cs, ps = lock_delay(tm, lock)
-        b3 = pick(engine(tm, conv=True, put=True, call=True, conv_start=cs,
-                         put_start=ps, lock_m=lock), tm.model)
-        return tm.k_w * (b2 - b3)
+        if lock <= 0:
+            return tm.k_w * _wunit(0.0)
+        return call_mix(tm, lambda: _wunit(lock), lambda: _wunit(0.0))
 
     km, kspl, khl = int(tm.k_method), int(tm.k_split), int(tm.k_hold)
     A, A0 = wow(tm.k_lock), wow(0.0)
@@ -3518,13 +3560,15 @@ def wow_trace(tm: Terms, full, b2):
     cs1, ps1 = lock_delay(tm, lk)
     _locked = ((cs1, ps1) != lock_delay(tm, 0.0)
                or lock_end_step(tm, int(full["n"]), full["dt"], lk) >= 0)
+    # 의무보유 물량과 콜 한도가 다르면 묶인 몫과 묶이지 않은 몫(= A0 의 1단위)을 나눠 더한다 (call_mix).
     A = (A0 if not _locked else
-         tm.k_w*(b2 - pick(engine(tm, conv=True, put=True, call=True, conv_start=cs1, put_start=ps1,
-                                  lock_m=lk), tm.model)))
+         call_mix(tm, lambda: b2 - pick(engine(tm, conv=True, put=True, call=True, conv_start=cs1,
+                                               put_start=ps1, lock_m=lk), tm.model),
+                  lambda: b2 - pick(w, tm.model)))
     # 참고 — 의무보유가 콜과 «별개» 약정이라면(콜이 없어도 적용) 콜만의 값은 의무보유를 둔 채 콜만 넣고 뺀
     # 차액이다. 앱은 딸린 약정으로 읽는다(4.4.2 · 4.4.3 «콜과 그 부속조항»). 두 읽기의 차이가 이 줄과 A 의 차이다.
     A_sep = (None if not _locked else
-             A - tm.k_w*(b2 - pick(engine(tm, conv=True, put=True, call=False, conv_start=cs1, put_start=ps1,
+             A - lock_share(tm)*(b2 - pick(engine(tm, conv=True, put=True, call=False, conv_start=cs1, put_start=ps1,
                                           lock_m=lk),
                                    tm.model)))
     return {"A": A, "A0": A0, "lock": A - A0, "A_sep": A_sep, "X": tm.k_w*X, "Y": tm.k_w*Y,
@@ -4057,13 +4101,16 @@ def decompose(tm: Terms):
         ca = 0.0
     elif tm.k_method:
         # 제3자 지정 가능 콜옵션 — 기초자산은 콜·의무보유를 뺀 full 그대로다
-        ca = tm.k_w*call_third_party(tm, full, tm.k_method)
+        _tf = Terms(**asdict(tm)); _tf.k_hold = 0
+        ca = call_mix(tm, lambda: call_third_party(tm, full, tm.k_method),
+                      lambda: call_third_party(_tf, full, tm.k_method))
     else:
         # 의무보유는 전환과 조기상환청구를 함께 늦춘다. 시작보다 이르면 아무 제약이 아니다.
-        cs, ps = lock_delay(tm)
-        b3 = pick(engine(tm, conv=True, put=True, call=True, conv_start=cs,
-                         put_start=ps, lock_m=tm.k_lock), tm.model)
-        ca = tm.k_w*(b2-b3)
+        def _unit(lk):
+            cs, ps = lock_delay(tm, lk)
+            return b2 - pick(engine(tm, conv=True, put=True, call=True, conv_start=cs,
+                                    put_start=ps, lock_m=lk), tm.model)
+        ca = call_mix(tm, lambda: _unit(tm.k_lock), lambda: _unit(0.0))
     # RCPS 의 발행자 상환권은 자본요소가 아닌 파생이라 **부채요소 안에서** 잰다
     # (1032 문단 31·32 — 비자본 파생 특성은 부채요소 장부금액에 포함). 전체 격자에서
     # 잰 콜(ca)은 전환 상승분을 자르는 값이라 부채에서 빼면 부채가 과소, 자본이
@@ -7434,6 +7481,18 @@ def sheet_display_names(tm: Terms) -> dict:
         "22 방법2 부채보유": "22 콜 계속보유 · 현금결제 성분",
         "23 방법2 지분몫": "23 콜 최종가치 · 주식결제 성분",
         "24 방법2 부채몫": "24 콜 최종가치 · 현금결제 성분",
+        # 의무보유가 없는 콜 대상 몫 (콜 한도 ≠ 의무보유 비율일 때만 생긴다)
+        "15n 무보유 트랜치": "15n 콜 대상 · 의무보유 없음",
+        "19n 콜 페이오프 무보유": "19n 콜 즉시행사가치 · 무보유",
+        "17an 행사 지분몫 무보유": "17an 행사 주식결제 · 무보유",
+        "17bn 행사 채권몫 무보유": "17bn 행사 현금결제 · 무보유",
+        "19an 콜 존속 무보유": "19an 콜 존속 · 의무보유 없음",
+        "20n 매도청구권 무보유": "20n 매도청구권 · 의무보유 없음",
+        "19bn 행사 판단 무보유": "19bn 행사 판단 · 의무보유 없음",
+        "21n 지분보유 무보유": "21n 계속보유 주식 · 무보유",
+        "22n 부채보유 무보유": "22n 계속보유 현금 · 무보유",
+        "23n 지분몫 무보유": "23n 최종가치 주식 · 무보유",
+        "24n 부채몫 무보유": "24n 최종가치 현금 · 무보유",
         "IR 표지": "IR 이자율 산출요약",
         "σ 표지": "σ 주가변동성 산출요약",
         "σr 표지": "σr 금리변동성 산출요약",
@@ -8003,6 +8062,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         ("매도청구 프리미엄", tm.k_prem, P2),
         ("매도청구 복리 횟수 (연)", tm.k_cmp, N0), ("매도청구 한도", tm.k_w, P2),
         ("의무보유 (개월)", _md(tm.k_lock), None),
+        ("의무보유 물량 (콜 대상 안)", (f"{lock_share(tm):.4g} — 콜 대상 {tm.k_w:.4g} 가운데 나머지는 의무보유 없음"
+                                    if lock_share(tm) < tm.k_w - 1e-12 else "콜 대상 전부"), None),
         ("매도청구권 평가방법", K_METHODS[tm.k_method], None),
         ("지분·채권 구분 기준", (K_SPLITS[int(tm.k_split)] if tm.k_method else "해당 없음 (유무가치비교법)"), None),
         ("콜 대상물량 의무보유", (K_HOLDS[int(tm.k_hold)] if tm.k_method else "유무가치비교법은 격자에서 직접 반영"), None),
@@ -8768,6 +8829,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     # 의무보유가 걸린 마지막 노드 — 엔진과 같은 값 (lock_end_step). 같은 계약일의 마지막
     # 매도청구 노드까지 묶이므로, 전환·조기상환 시작은 그 다음 노드보다 이를 수 없다.
     _LKEND = lock_end_step(tm, n, dt_)
+    # 콜 한도와 의무보유 비율이 다르면 의무보유가 없는 몫을 따로 잰다 (엔진 call_mix 와 같은 나눔).
+    _LKW = lock_share(tm)
+    _split_lock = (tm.k_w > 0 and not issuer_redeem(tm) and int(tm.k_hold) == 1
+                   and _LKW < tm.k_w - 1e-12)
     _lk_cs_st = max(stp_lo(_lk_cs), _LKEND + 1)
     _lk_ps_st = max(stp_lo(_lk_ps), _LKEND + 1) if int(tm.k_lock_put) else stp_lo(_lk_ps)
     RF, CR = curves(tm)
@@ -8899,6 +8964,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("매도청구 복리 횟수 (연)", "kcmp", tm.k_cmp, N0, True),
         ("매도청구 지급분 공제 (1 이자 붙여 / 2 받은 금액만 / 0 안 뺌)", "kless", ded_of(tm, "k"), N0, True),
         ("매도청구 한도", "cw", tm.k_w, P2, True),
+        # 콜 대상 가운데 의무보유로 묶인 물량 — 콜 한도와 같으면 콜 대상 전부다 (lock_share).
+        ("의무보유 물량 (콜 대상 안)", "lkw", lock_share(tm), P2, False),
         # 계약 우선순위는 트리 구조를 정한다. 엑셀에서 바꿔도 수식이 따라오지
         # 않으므로 흰 셀(입력 아님)로 두고 앱에서 고른 것을 적어만 둔다.
         ("풋·콜 우선순위 (조기상환과 매도청구 사이)", "pcord", pc_order_text(tm), None, False),
@@ -8999,6 +9066,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     # 행사기간의 끝·주기는 이제 00 격자 공통의 행사일 목록이 정한다 — 스텝 숫자 대신 계약서의
     # 말(날짜·주기·회차)로 한 줄씩 적는다. 식이 쓰는 시작 스텝(cvs·pst …)은 그대로 둔다.
     _unused |= {"pen", "frq", "kst", "ken", "kfrq", "ksch"}
+    if not _split_lock:
+        _unused.add("lkw")                 # 의무보유 물량 = 콜 한도 — 따로 적을 것이 없다
     _EA0 = exercise_amounts(tm, n, dt_)
     _dd = lambda m: months_to_date(tm.d_issue, m).isoformat()
 
@@ -9030,7 +9099,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             ("4. 계약 조건 — 조기상환 (투자자 풋)", {"txput", "pst", "prate", "pcadd", "pmode", "psm", "pyld", "pcmp",
                                               "pless", "psch"}),
             ("5. 계약 조건 — 매도청구 (콜)", {"txcall", "prem", "kcmp", "kless", "cw", "kcadd", "pcord", "kresp", "cv30", "pt30",
-                                        "khold", "lockend", "lkput"}),
+                                        "khold", "lockend", "lkput", "lkw"}),
             ("6. 시장자료", {"S0", "s0src", "sig", "divy", "crsrc", "rfc", "bsig", "rvhow", "bbase"}),
             ("7. 평가방법 (앱에서 고른 값 — 여기서 바꿔도 트리가 따라오지 않는다)",
              {"mdl", "eqcls", "kmeth", "ksplit", "kkind", "embap", "psep", "phost", "plost", "stol", "fvpl",
@@ -9435,6 +9504,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     S19A, S19B = "19a 콜 존속", "19b 행사 판단"
     S21, S22 = "21 방법2 지분보유", "22 방법2 부채보유"
     S23, S24 = "23 방법2 지분몫", "24 방법2 부채몫"
+    # 콜 한도와 의무보유 비율이 다르면(콜 70% · 의무보유 30%) 의무보유가 없는 몫을 따로 잰다 —
+    # 엔진 call_mix 와 같은 나눔. 같으면 종전 시트 그대로다.
+    S15B, S19AN, S20N = "15n 무보유 트랜치", "19an 콜 존속 무보유", "20n 매도청구권 무보유"
+    S19BN, S21N, S22N = "19bn 행사 판단 무보유", "21n 지분보유 무보유", "22n 부채보유 무보유"
+    S23N, S24N = "23n 지분몫 무보유", "24n 부채몫 무보유"
+    S19N, S17AN, S17BN = "19n 콜 페이오프 무보유", "17an 행사 지분몫 무보유", "17bn 행사 채권몫 무보유"
+    _CALLED_FREE = f"매도청구 대상 중 의무보유 없는 {(tm.k_w - _LKW)*100:,.4g}% 물량"
 
     # ── 01 주가 ──
     W = newsheet(S1, "① 주가트리",
@@ -9787,182 +9863,192 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                            f"MAX({Q(S13)}!{L}{R0+r},{Q(S4)}!{L}{R0+r},{L}$7)")))
 
     if _need15:
-        # ── 15 트랜치 ──
-        # 고른 모형의 블록만 담는다. GS 블록은 TF 다섯 블록을 참조하지 않으므로
-        # 어느 쪽을 골라도 나머지 절반은 만들 필요가 없다.
-        W = newsheet(S15, f"⑮ {_CALLED}  콜이 반영되는 부분",
-                     f"콜 대상 물량은 의무보유로 전환{'·조기상환' if tm.k_lock_put else ''} 시작이 늦다. "
-                     f"{_NONCALL}{'와' if issuer_redeem(tm) else '과'}의 가치 차이가 콜의 가치다(유무가치비교법). "
-                     + ("전환가치 다음에 GS 계산 블록(전환확률·할인율·계속보유·가치)을 둔다 — 이 조서의 모형이 GS 다."
-                        if _gs else
-                        "전환가치 다음에 TF 계산 블록(주식결제분·현금결제분·계속보유·가치·의사결정)을 둔다 — 이 조서의 모형이 TF 다."),
-                     "가정", conv_cell=K["cv30"], put_cell=K["pt30"])
-        HH = n+3
-        _bs = {"row": R0, "i": 0}
-        def blk(t):
-            _bs["row"] += HH
-            row = _bs["row"]
-            sec(W, row-1, f"{'가나다라마바'[_bs['i']]}  {t}", span=min(n+1, 14))
-            _bs["i"] += 1
-            put(W, row, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
-            for i in range(n+1):
-                put(W, row, 3+i, i, bold=True, size=8, fmt=N0, align="center",
-                    fill=LIGHT, border=True)
-            for r in range(n+1):
-                put(W, row+1+r, 2, r, bold=True, size=8, fmt=N0, align="center",
-                    fill=LIGHT, border=True)
-            return row+1
+        def _build15(_SN, _mk, _lab, _locked):
+            """⑮ 트랜치 한 장 — 콜을 넣은 격자. _locked 면 의무보유가 전환·조기상환 시작을 늦춘다.
 
-        # 전환가치는 두 모형이 함께 쓴다.
-        c1 = blk("전환가치")
-        for i in range(n+1):
-            L = gl(3+i)
-            for r in range(i+1):
-                put(W, c1+1+r, 3+i,
-                    f"=IF({L}$3=1,{_CVX(L, r)},0)",
-                    fmt=N2, size=8, align="right")
+            콜 한도와 의무보유 비율이 다르면(콜 70% · 의무보유 30%) 의무보유가 없는 몫을
+            ⑮b 로 한 장 더 만든다 — 엔진의 call_mix 와 같은 나눔이다."""
+            # ── 15 트랜치 ──
+            # 고른 모형의 블록만 담는다. GS 블록은 TF 다섯 블록을 참조하지 않으므로
+            # 어느 쪽을 골라도 나머지 절반은 만들 필요가 없다.
+            W = newsheet(_SN, f"{_mk} {_lab}  콜이 반영되는 부분",
+                         (f"콜 대상 물량은 의무보유로 전환{'·조기상환' if tm.k_lock_put else ''} 시작이 늦다. "
+                          if _locked else "콜 대상 물량 가운데 의무보유가 없는 몫 — 전환·조기상환이 처음부터 열려 있다. ")
+                         + f"{_NONCALL}{'와' if issuer_redeem(tm) else '과'}의 가치 차이가 콜의 가치다(유무가치비교법). "
+                         + ("전환가치 다음에 GS 계산 블록(전환확률·할인율·계속보유·가치)을 둔다 — 이 조서의 모형이 GS 다."
+                            if _gs else
+                            "전환가치 다음에 TF 계산 블록(주식결제분·현금결제분·계속보유·가치·의사결정)을 둔다 — 이 조서의 모형이 TF 다."),
+                         "가정", conv_cell=(K["cv30"] if _locked else None),
+                         put_cell=(K["pt30"] if _locked else None))
+            HH = n+3
+            _bs = {"row": R0, "i": 0}
+            def blk(t):
+                _bs["row"] += HH
+                row = _bs["row"]
+                sec(W, row-1, f"{'가나다라마바'[_bs['i']]}  {t}", span=min(n+1, 14))
+                _bs["i"] += 1
+                put(W, row, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
+                for i in range(n+1):
+                    put(W, row, 3+i, i, bold=True, size=8, fmt=N0, align="center",
+                        fill=LIGHT, border=True)
+                for r in range(n+1):
+                    put(W, row+1+r, 2, r, bold=True, size=8, fmt=N0, align="center",
+                        fill=LIGHT, border=True)
+                return row+1
 
-        if _bwc:
-            # 현금납입 BW 의 트랜치. ⑤~⑨ 와 같은 구조인데 매도청구권이 살아 있고
-            # (L$5 · L$8), 의무보유 때문에 행사 시작이 늦다 (L$3).
-            c2 = blk("신주인수권가치")
-            c3 = blk("사채가치")
-            c4 = blk("보유가치")
-            c5 = blk("금융상품가치")
-            c6 = blk("의사결정")
-            last = c5
-            _det = int(tm.bw_detach) == 1
+            # 전환가치는 두 모형이 함께 쓴다.
+            c1 = blk("전환가치")
             for i in range(n+1):
-                L = gl(3+i); Ln = gl(4+i) if i < n else None
+                L = gl(3+i)
                 for r in range(i+1):
-                    p = lambda base, v, fm=N2, tx=False: put(W, base+1+r, 3+i, v,
-                            fmt=(None if tx else fm), size=8,
-                            align=("center" if tx else "right"))
-                    wv = f"MAX({L}{c1+1+r}-100,0)"
-                    if i == n:
-                        p(c2, f"={wv}")
-                        p(c3, f"=MAX({L}$7,{L}$10)+{L}$9")
-                        p(c4, f"={L}$10")
+                    put(W, c1+1+r, 3+i,
+                        f"=IF({L}$3=1,{_CVX(L, r)},0)",
+                        fmt=N2, size=8, align="right")
+
+            if _bwc:
+                # 현금납입 BW 의 트랜치. ⑤~⑨ 와 같은 구조인데 매도청구권이 살아 있고
+                # (L$5 · L$8), 의무보유 때문에 행사 시작이 늦다 (L$3).
+                c2 = blk("신주인수권가치")
+                c3 = blk("사채가치")
+                c4 = blk("보유가치")
+                c5 = blk("금융상품가치")
+                c6 = blk("의사결정")
+                last = c5
+                _det = int(tm.bw_detach) == 1
+                for i in range(n+1):
+                    L = gl(3+i); Ln = gl(4+i) if i < n else None
+                    for r in range(i+1):
+                        p = lambda base, v, fm=N2, tx=False: put(W, base+1+r, 3+i, v,
+                                fmt=(None if tx else fm), size=8,
+                                align=("center" if tx else "right"))
+                        wv = f"MAX({L}{c1+1+r}-100,0)"
+                        if i == n:
+                            p(c2, f"={wv}")
+                            p(c3, f"=MAX({L}$7,{L}$10)+{L}$9")
+                            p(c4, f"={L}$10")
+                            p(c5, f"={L}{c2+1+r}+{L}{c3+1+r}")
+                            p(c6, f'=IF({L}$7>{L}$10+{xl_tol(f"{L}$7", f"{L}$10")},"상환P","만기상환")', tx=True)
+                            continue
+                        ce = (f"({Ln}{c2+1+r}*{L}$16+{Ln}{c2+2+r}*{L}$17)"
+                              f"*EXP(-{L}$11*{K['dt']})")
+                        cb = (f"({Ln}{c3+1+r}*{L}$16+{Ln}{c3+2+r}*{L}$17)"
+                              f"*EXP(-{L}$12*{K['dt']})+{L}$9")
+                        p(c4, f"={ce}+{cb}")
                         p(c5, f"={L}{c2+1+r}+{L}{c3+1+r}")
-                        p(c6, f'=IF({L}$7>{L}$10+{xl_tol(f"{L}$7", f"{L}$10")},"상환P","만기상환")', tx=True)
-                        continue
-                    ce = (f"({Ln}{c2+1+r}*{L}$16+{Ln}{c2+2+r}*{L}$17)"
-                          f"*EXP(-{L}$11*{K['dt']})")
-                    cb = (f"({Ln}{c3+1+r}*{L}$16+{Ln}{c3+2+r}*{L}$17)"
-                          f"*EXP(-{L}$12*{K['dt']})+{L}$9")
-                    p(c4, f"={ce}+{cb}")
-                    p(c5, f"={L}{c2+1+r}+{L}{c3+1+r}")
-                    # 사채 쪽 결정은 전환사채와 같은 규칙이라 xl_decide 가 만든다.
-                    # 전환은 이 결정에 들어가지 않으므로 cv=None 이다.
-                    #   분리형   — 사채만 견준다 (신주인수권은 따로 산다)
-                    #   비분리형 — 사채가 소멸하면 신주인수권도 소멸하되 상환 직전
-                    #              행사할 기회는 남으므로 세 후보에 행사가치를 얹는다
-                    _bwn = ("전환", "상환P", "상환C", "보유")
-                    if _det:
-                        _dec = xl_decide(None, f"{L}$7", f"{L}$8", cb, _kfirst, _bwn)
-                        p(c6, f"={_dec}", tx=True)
-                        p(c2, f"=MAX({wv},{ce})")
-                        p(c3, "=" + xl_pick(f"{L}{c6+1+r}", f"{L}$7", f"{L}$8", cb,
-                                            names=_bwn))
-                    else:
-                        _dec = xl_decide(None, f"{L}$7+{wv}", f"{L}$8+{wv}",
-                                         f"{cb}+{ce}", _kfirst, _bwn)
-                        p(c6, f"={_dec}", tx=True)
-                        p(c2, f'=IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),{wv},'
-                              f"MAX({wv},{ce}))")
-                        p(c3, "=" + xl_pick(f"{L}{c6+1+r}", f"{L}$7", f"{L}$8", cb,
-                                            names=_bwn))
-        elif not _gs:
-            c2 = blk("지분가치")
-            c3 = blk("부채가치")
-            c4 = blk("보유가치")
-            c5 = blk("금융상품가치")
-            c6 = blk("의사결정")
-            last = c5
-            for i in range(n+1):
-                L = gl(3+i); Ln = gl(4+i) if i < n else None
-                for r in range(i+1):
-                    p = lambda base, v, fm=N2, tx=False: put(W, base+1+r, 3+i, v,
-                            fmt=(None if tx else fm), size=8,
-                            align=("center" if tx else "right"))
-                    if i == n:
-                        _AU, _CS = K["auto"], f"IF({L}$7>0,{L}$7+{L}$9,0)"
-                        p(c5, f"=IF({_AU}=1,MAX({L}{c1+1+r},{_CS}),"
-                              f"MAX({L}{c1+1+r},MAX({L}$7,{L}$10)+{L}$9))")
-                        _cvm, _cmm = f"{L}{c1+1+r}", f"MAX({L}$7,{L}$10)+{L}$9"
-                        p(c6, f'=IF({_AU}=1,IF({_cvm}>={_CS}+{xl_tol(_cvm, _CS)},"자동전환","상환P"),'
-                              f'IF({_cvm}>={_cmm}+{xl_tol(_cvm, _cmm)},"전환",'
-                              f'IF({L}$7>={L}$10-{xl_tol(f"{L}$7", f"{L}$10")},"상환P","만기상환")))', tx=True)
-                        p(c2, f'=IF(OR({L}{c6+1+r}="전환",{L}{c6+1+r}="자동전환"),{L}{c1+1+r},0)')
-                        p(c3, f'=IF(OR({L}{c6+1+r}="전환",{L}{c6+1+r}="자동전환"),0,'
-                              f'IF({_AU}=1,{L}$7+{L}$9,MAX({L}$7,{L}$10)+{L}$9))')
-                        p(c4, f"=IF({_AU}=1,{L}{c1+1+r},{L}$10+{L}$9)")
-                        continue
-                    e = f"({Ln}{c2+1+r}*{L}$16+{Ln}{c2+2+r}*{L}$17)*EXP(-{L}$11*{K['dt']})"
-                    b = f"({Ln}{c3+1+r}*{L}$16+{Ln}{c3+2+r}*{L}$17)*EXP(-{L}$12*{K['dt']})"
-                    _cvx = f'OR({L}{c6+1+r}="전환",{L}{c6+1+r}="상장전환")'
-                    p(c4, f"={e}+{b}+{L}$9")
-                    # 계약 우선순위 (pc_order · k_conv_resp) 에 따라 네 갈래다. 엔진과 같다 —
-                    # 값은 xl_value, 결정은 xl_decide 가 만든다 (엔진의 node_decide 와 같은 식).
-                    _cvC, _pvC, _kvC = f"{L}{c1+1+r}", f"{L}$7", f"{L}$8"
-                    _hdC = f"{L}{c4+1+r}"
-                    _dec = xl_decide(_cvC, _pvC, _kvC, _hdC, _kfirst, cresp=_cresp)
-                    _val = xl_value(_cvC, _pvC, _kvC, _hdC, _kfirst, _cresp)
-                    p(c5, "=" + _ipo_if(L, r, _cvC,
-                                        f"IF({L}$5=1,{_val},MAX({_hdC},{_cvC},{_pvC}))"))
-                    p(c6, "=" + _ipo_if(L, r, '"상장전환"', _dec), tx=True)
-                    p(c2, f'=IF({_cvx},{L}{c1+1+r},'
-                          f'IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),0,{e}))')
-                    p(c3, f'=IF({L}{c6+1+r}="상환P",{L}$7,IF({L}{c6+1+r}="상환C",{L}$8,'
-                          f'IF({_cvx},0,{b}+{L}$9)))')
-        else:
-            # ⑪~⑭ 와 같은 순서지만 트랜치 자신의 헤더와 전환가치를 쓴다.
-            c7 = blk("[GS] 전환확률")
-            c8 = blk("[GS] 위험조정할인율")
-            c9 = blk("[GS] 보유가치")
-            c10 = blk("[GS] 금융상품가치")
-            last = c10
-            # 현금(상환P·상환C)이 동점이면 전환확률 0 이다 — ⑪ 과 같은 규칙이고
-            # 엔진(Pg)과도 같다. 종전에는 전환을 먼저 보고 등호로만 견주어서,
-            # 전환가치와 상환금액이 같아지는 자리(의무보유로 전환 시작과 조기상환
-            # 시작이 갈릴 때 생긴다)에서 GS 30% 트랜치가 엔진과 어긋났다.
-            _gcash = lambda L, r: (f"OR(ABS({L}{c10+1+r}-{L}$7)<{xl_tol(f'{L}{c10+1+r}', f'{L}$7')},"
-                                   f"ABS({L}{c10+1+r}-{L}$8)<{xl_tol(f'{L}{c10+1+r}', f'{L}$8')})")
-            for i in range(n+1):
-                L = gl(3+i); Lp = gl(2+i) if i > 0 else None; Ln = gl(4+i) if i < n else None
-                for r in range(i+1):
-                    p = lambda base, v, fm=N2: put(W, base+1+r, 3+i, v, fmt=fm,
-                                                   size=8, align="right")
-                    if i == n:
-                        # 만기에는 TF 와 GS 가 같다.
-                        _AU, _CS = K["auto"], f"IF({L}$7>0,{L}$7+{L}$9,0)"
-                        p(c9, f"=IF({_AU}=1,{L}{c1+1+r},{L}$10+{L}$9)")
-                        p(c10, f"=IF({_AU}=1,MAX({L}{c1+1+r},{_CS}),"
-                               f"MAX({L}{c1+1+r},MAX({L}$7,{L}$10)+{L}$9))")
-                        p(c7, f"=IF({_gcash(L, r)},0,"
-                              f"IF(ABS({L}{c10+1+r}-{L}{c1+1+r})<{xl_tol(f'{L}{c10+1+r}', f'{L}{c1+1+r}')},1,0))", N4)
-                    else:
-                        p(c9, f"={Ln}{c10+1+r}*{L}$16*EXP(-{Ln}{c8+1+r}*{K['dt']})"
-                              f"+{Ln}{c10+2+r}*{L}$17*EXP(-{Ln}{c8+2+r}*{K['dt']})+{L}$9")
-                        # ⑮ TF 와 같은 식을 GS 의 보유가치로 부른다. 한 격자에서
-                        # 두 모형이 다른 계약을 읽으면 안 된다.
-                        _gcall = xl_value(f"{L}{c1+1+r}", f"{L}$7", f"{L}$8",
-                                          f"{L}{c9+1+r}", _kfirst, _cresp)
-                        p(c10, "=" + _ipo_if(L, r, f"{L}{c1+1+r}",
-                                             f"IF({L}$5=1,{_gcall},"
-                                             f"MAX({L}{c9+1+r},{L}{c1+1+r},{L}$7))"))
-                        p(c7, f"=IF({_gcash(L, r)},0,"
-                              f"IF(ABS({L}{c10+1+r}-{L}{c1+1+r})<{xl_tol(f'{L}{c10+1+r}', f'{L}{c1+1+r}')},1,"
-                              f"{Ln}{c7+1+r}*{L}$16+{Ln}{c7+2+r}*{L}$17))", N4)
-                    p(c8, (f"={L}{c7+1+r}*{Lp}$11+(1-{L}{c7+1+r})*{Lp}$12"
-                           if i > 0 else "=0"), P2)
+                        # 사채 쪽 결정은 전환사채와 같은 규칙이라 xl_decide 가 만든다.
+                        # 전환은 이 결정에 들어가지 않으므로 cv=None 이다.
+                        #   분리형   — 사채만 견준다 (신주인수권은 따로 산다)
+                        #   비분리형 — 사채가 소멸하면 신주인수권도 소멸하되 상환 직전
+                        #              행사할 기회는 남으므로 세 후보에 행사가치를 얹는다
+                        _bwn = ("전환", "상환P", "상환C", "보유")
+                        if _det:
+                            _dec = xl_decide(None, f"{L}$7", f"{L}$8", cb, _kfirst, _bwn)
+                            p(c6, f"={_dec}", tx=True)
+                            p(c2, f"=MAX({wv},{ce})")
+                            p(c3, "=" + xl_pick(f"{L}{c6+1+r}", f"{L}$7", f"{L}$8", cb,
+                                                names=_bwn))
+                        else:
+                            _dec = xl_decide(None, f"{L}$7+{wv}", f"{L}$8+{wv}",
+                                             f"{cb}+{ce}", _kfirst, _bwn)
+                            p(c6, f"={_dec}", tx=True)
+                            p(c2, f'=IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),{wv},'
+                                  f"MAX({wv},{ce}))")
+                            p(c3, "=" + xl_pick(f"{L}{c6+1+r}", f"{L}$7", f"{L}$8", cb,
+                                                names=_bwn))
+            elif not _gs:
+                c2 = blk("지분가치")
+                c3 = blk("부채가치")
+                c4 = blk("보유가치")
+                c5 = blk("금융상품가치")
+                c6 = blk("의사결정")
+                last = c5
+                for i in range(n+1):
+                    L = gl(3+i); Ln = gl(4+i) if i < n else None
+                    for r in range(i+1):
+                        p = lambda base, v, fm=N2, tx=False: put(W, base+1+r, 3+i, v,
+                                fmt=(None if tx else fm), size=8,
+                                align=("center" if tx else "right"))
+                        if i == n:
+                            _AU, _CS = K["auto"], f"IF({L}$7>0,{L}$7+{L}$9,0)"
+                            p(c5, f"=IF({_AU}=1,MAX({L}{c1+1+r},{_CS}),"
+                                  f"MAX({L}{c1+1+r},MAX({L}$7,{L}$10)+{L}$9))")
+                            _cvm, _cmm = f"{L}{c1+1+r}", f"MAX({L}$7,{L}$10)+{L}$9"
+                            p(c6, f'=IF({_AU}=1,IF({_cvm}>={_CS}+{xl_tol(_cvm, _CS)},"자동전환","상환P"),'
+                                  f'IF({_cvm}>={_cmm}+{xl_tol(_cvm, _cmm)},"전환",'
+                                  f'IF({L}$7>={L}$10-{xl_tol(f"{L}$7", f"{L}$10")},"상환P","만기상환")))', tx=True)
+                            p(c2, f'=IF(OR({L}{c6+1+r}="전환",{L}{c6+1+r}="자동전환"),{L}{c1+1+r},0)')
+                            p(c3, f'=IF(OR({L}{c6+1+r}="전환",{L}{c6+1+r}="자동전환"),0,'
+                                  f'IF({_AU}=1,{L}$7+{L}$9,MAX({L}$7,{L}$10)+{L}$9))')
+                            p(c4, f"=IF({_AU}=1,{L}{c1+1+r},{L}$10+{L}$9)")
+                            continue
+                        e = f"({Ln}{c2+1+r}*{L}$16+{Ln}{c2+2+r}*{L}$17)*EXP(-{L}$11*{K['dt']})"
+                        b = f"({Ln}{c3+1+r}*{L}$16+{Ln}{c3+2+r}*{L}$17)*EXP(-{L}$12*{K['dt']})"
+                        _cvx = f'OR({L}{c6+1+r}="전환",{L}{c6+1+r}="상장전환")'
+                        p(c4, f"={e}+{b}+{L}$9")
+                        # 계약 우선순위 (pc_order · k_conv_resp) 에 따라 네 갈래다. 엔진과 같다 —
+                        # 값은 xl_value, 결정은 xl_decide 가 만든다 (엔진의 node_decide 와 같은 식).
+                        _cvC, _pvC, _kvC = f"{L}{c1+1+r}", f"{L}$7", f"{L}$8"
+                        _hdC = f"{L}{c4+1+r}"
+                        _dec = xl_decide(_cvC, _pvC, _kvC, _hdC, _kfirst, cresp=_cresp)
+                        _val = xl_value(_cvC, _pvC, _kvC, _hdC, _kfirst, _cresp)
+                        p(c5, "=" + _ipo_if(L, r, _cvC,
+                                            f"IF({L}$5=1,{_val},MAX({_hdC},{_cvC},{_pvC}))"))
+                        p(c6, "=" + _ipo_if(L, r, '"상장전환"', _dec), tx=True)
+                        p(c2, f'=IF({_cvx},{L}{c1+1+r},'
+                              f'IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),0,{e}))')
+                        p(c3, f'=IF({L}{c6+1+r}="상환P",{L}$7,IF({L}{c6+1+r}="상환C",{L}$8,'
+                              f'IF({_cvx},0,{b}+{L}$9)))')
+            else:
+                # ⑪~⑭ 와 같은 순서지만 트랜치 자신의 헤더와 전환가치를 쓴다.
+                c7 = blk("[GS] 전환확률")
+                c8 = blk("[GS] 위험조정할인율")
+                c9 = blk("[GS] 보유가치")
+                c10 = blk("[GS] 금융상품가치")
+                last = c10
+                # 현금(상환P·상환C)이 동점이면 전환확률 0 이다 — ⑪ 과 같은 규칙이고
+                # 엔진(Pg)과도 같다. 종전에는 전환을 먼저 보고 등호로만 견주어서,
+                # 전환가치와 상환금액이 같아지는 자리(의무보유로 전환 시작과 조기상환
+                # 시작이 갈릴 때 생긴다)에서 GS 30% 트랜치가 엔진과 어긋났다.
+                _gcash = lambda L, r: (f"OR(ABS({L}{c10+1+r}-{L}$7)<{xl_tol(f'{L}{c10+1+r}', f'{L}$7')},"
+                                       f"ABS({L}{c10+1+r}-{L}$8)<{xl_tol(f'{L}{c10+1+r}', f'{L}$8')})")
+                for i in range(n+1):
+                    L = gl(3+i); Lp = gl(2+i) if i > 0 else None; Ln = gl(4+i) if i < n else None
+                    for r in range(i+1):
+                        p = lambda base, v, fm=N2: put(W, base+1+r, 3+i, v, fmt=fm,
+                                                       size=8, align="right")
+                        if i == n:
+                            # 만기에는 TF 와 GS 가 같다.
+                            _AU, _CS = K["auto"], f"IF({L}$7>0,{L}$7+{L}$9,0)"
+                            p(c9, f"=IF({_AU}=1,{L}{c1+1+r},{L}$10+{L}$9)")
+                            p(c10, f"=IF({_AU}=1,MAX({L}{c1+1+r},{_CS}),"
+                                   f"MAX({L}{c1+1+r},MAX({L}$7,{L}$10)+{L}$9))")
+                            p(c7, f"=IF({_gcash(L, r)},0,"
+                                  f"IF(ABS({L}{c10+1+r}-{L}{c1+1+r})<{xl_tol(f'{L}{c10+1+r}', f'{L}{c1+1+r}')},1,0))", N4)
+                        else:
+                            p(c9, f"={Ln}{c10+1+r}*{L}$16*EXP(-{Ln}{c8+1+r}*{K['dt']})"
+                                  f"+{Ln}{c10+2+r}*{L}$17*EXP(-{Ln}{c8+2+r}*{K['dt']})+{L}$9")
+                            # ⑮ TF 와 같은 식을 GS 의 보유가치로 부른다. 한 격자에서
+                            # 두 모형이 다른 계약을 읽으면 안 된다.
+                            _gcall = xl_value(f"{L}{c1+1+r}", f"{L}$7", f"{L}$8",
+                                              f"{L}{c9+1+r}", _kfirst, _cresp)
+                            p(c10, "=" + _ipo_if(L, r, f"{L}{c1+1+r}",
+                                                 f"IF({L}$5=1,{_gcall},"
+                                                 f"MAX({L}{c9+1+r},{L}{c1+1+r},{L}$7))"))
+                            p(c7, f"=IF({_gcash(L, r)},0,"
+                                  f"IF(ABS({L}{c10+1+r}-{L}{c1+1+r})<{xl_tol(f'{L}{c10+1+r}', f'{L}{c1+1+r}')},1,"
+                                  f"{Ln}{c7+1+r}*{L}$16+{Ln}{c7+2+r}*{L}$17))", N4)
+                        p(c8, (f"={L}{c7+1+r}*{Lp}$11+(1-{L}{c7+1+r})*{Lp}$12"
+                               if i > 0 else "=0"), P2)
 
-        # 마지막으로 놓인 블록 아래에 둔다. TF 는 의사결정(바)이 값 블록(마) 뒤에
-        # 오므로 last 를 그대로 쓰면 그 위에 겹쳐 쓰게 된다.
-        RT = _bs["row"] + n + 3
-        sec(W, RT, "결과", span=6)
-        put(W, RT+1, 2, f"{_CALLED} 가치 · {tm.model} (t=0)", bold=True)
-        put(W, RT+1, 3, f"=C{last+1}", bold=True, fmt=N2, align="right")
+            # 마지막으로 놓인 블록 아래에 둔다. TF 는 의사결정(바)이 값 블록(마) 뒤에
+            # 오므로 last 를 그대로 쓰면 그 위에 겹쳐 쓰게 된다.
+            RT = _bs["row"] + n + 3
+            sec(W, RT, "결과", span=6)
+            put(W, RT+1, 2, f"{_lab} 가치 · {tm.model} (t=0)", bold=True)
+            put(W, RT+1, 3, f"=C{last+1}", bold=True, fmt=N2, align="right")
+            return RT
+        RT = _build15(S15, "⑮", _CALLED, True)
+        RTb = (_build15(S15B, "⑮b", _CALLED_FREE, False) if _split_lock else RT)
 
     # ── 16 부채요소 ──
     D = wb.create_sheet(S16); D.sheet_view.showGridLines = False
@@ -10155,13 +10241,17 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         _canp = lambda L, r: f"AND(OR({L}$2>{K['lockend']},{K['lkput']}=0),{L}$7>0)"
         _cresp_x = _cresp and not _bwc     # 현금납입 BW 는 행사해도 사채가 남아 전환으로 피할 수 없다
 
-        def _resp(L, r):
-            """콜을 행사당하는 순간 투자자가 대신 고르는 것 — 전환(대응 가능 계약) · 조기상환(풋 우선)."""
+        def _resp(L, r, lk=None):
+            """콜을 행사당하는 순간 투자자가 대신 고르는 것 — 전환(대응 가능 계약) · 조기상환(풋 우선).
+            lk 는 의무보유가 걸린 마지막 스텝 셀 (의무보유가 없는 몫은 −1)."""
+            lk = K['lockend'] if lk is None else lk
+            canc = f"AND({L}$2>{lk},{_cv4(L, r)}>0)"
+            canp = f"AND(OR({L}$2>{lk},{K['lkput']}=0),{L}$7>0)"
             parts = []
             if _cresp_x:
-                parts.append(f"AND({_canc(L, r)},{_cv4(L, r)}>={L}$8+{xl_tol(_cv4(L, r), f'{L}$8')})")
+                parts.append(f"AND({canc},{_cv4(L, r)}>={L}$8+{xl_tol(_cv4(L, r), f'{L}$8')})")
             if not _kfirst:
-                parts.append(f"AND({_canp(L, r)},{L}$7>={L}$8-{xl_tol(f'{L}$7', f'{L}$8')})")
+                parts.append(f"AND({canp},{L}$7>={L}$8-{xl_tol(f'{L}$7', f'{L}$8')})")
             return parts[0] if len(parts) == 1 else (f"OR({','.join(parts)})" if parts else "")
 
         _r19 = ["매도청구 행사기간에만 값이 있다. 기초자산은 ⑧(콜 반영 전 전환사채 가치)이다."]
@@ -10176,16 +10266,6 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         else:
             _r19.append("이 계약에서는 투자자가 콜 통지에 전환·조기상환으로 대응할 수 없다(콜이 두 권리보다 먼저).")
         _r19.append("만기일에는 만기상환·전환이 매도청구보다 먼저라 0 이다.")
-        W = newsheet(S19, "⑲ 콜 즉시행사가치트리  지금 행사하면 얻는 총이익 MAX(⑧ − 매도청구금액, 0)",
-                     " ".join(_r19), f"{S8} · {S4} · {S9}")
-
-        def _v19(i, r, L):
-            if i == n:
-                return "=0"
-            body = f"MAX({Q(S8)}!{L}{R0+r}-{L}$8,0)"
-            rs = _resp(L, r)
-            return (f"=IF(AND({L}$5=1,NOT({rs})),{body},0)" if rs else f"=IF({L}$5=1,{body},0)")
-        fill(W, lambda i, r, L, Lp, Ln: _v19(i, r, L))
 
         # 존속 여부 — 소멸 · 지금만 · 존속 · 만기. 투자자가 이 노드에서 스스로 전환·조기상환해 사채를
         # 끝내는 자리(⑨)에서, 그 권리가 콜보다 먼저면 콜도 사라지고(소멸), 콜이 먼저면 지금 행사하지
@@ -10199,33 +10279,56 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                    "행사하지 않으면 사라진다. 존속 — 콜이 다음 시점으로 이어진다(의무보유 기간 안의 "
                    "전환·조기상환 노드 포함 — 그 권리를 쓰지 못한다). 만기 — 만기일에는 만기상환·전환이 "
                    "먼저라 콜을 반영하지 않는다.")
-        W = newsheet(S19A, "⑲a 콜 존속 여부  소멸 · 지금만 · 존속 · 만기", _n19a, f"{S9} · {S4}")
+        def _build_opt_a(S19x, SA, SV, lk, tag):
+            """⑲ 즉시행사가치 · ⑲a 존속 여부 · (방법 1 이면) ⑳ 콜 가치 — lk 는 의무보유가 걸린 마지막 스텝 셀.
 
-        def _v19a(i, r, L):
-            if i == n:
-                return '="만기"'
-            d = _dec9(L, r)
-            out = f'IF(AND({d}="상환P",{_canp(L, r)}),"{_pfate}","존속")'
-            if not _bwc:
-                out = f'IF(AND({d}="전환",{_canc(L, r)}),"{_cfate}",{out})'
-            return f'=IF({d}="상장전환","소멸",{out})'
-        fill(W, lambda i, r, L, Lp, Ln: _v19a(i, r, L), txt=True)
-        _st = lambda L, r: f"{Q(S19A)}!{L}{R0+r}"
-        _x19 = lambda L, r: f"{Q(S19)}!{L}{R0+r}"
+            콜 한도와 의무보유 비율이 다르면 의무보유가 없는 몫(lk = −1)을 한 벌 더 만든다
+            — 엔진의 call_mix 와 같은 나눔이다. 의무보유는 투자자가 콜 통지에 전환·조기상환으로
+            대응하는 것(⑲)과 스스로 사채를 끝내는 것(⑲a)을 함께 막으므로 두 시트 모두 몫마다 다르다."""
+            W = newsheet(S19x, "⑲ 콜 즉시행사가치트리  지금 행사하면 얻는 총이익 MAX(⑧ − 매도청구금액, 0)" + tag,
+                         " ".join(_r19), f"{S8} · {S4} · {S9}")
 
-        if _need1:
-            W = newsheet(S20, "⑳ 매도청구권가치트리  미국형 복합옵션",
-                         "⑲a 가 소멸·만기면 0, 지금만이면 ⑲, 존속이면 MAX(⑲, 계속보유가치)다. 계속보유가치는 "
-                         "다음 시점 두 노드의 콜 가치를 각 노드의 혼합할인율(⑱)로 할인해 위험중립확률(q, 1−q)로 "
-                         "가중한다 — 두 할인계수를 평균금리 하나로 바꾸지 않는다.",
-                         f"{S18} · {S19} · {S19A} · 다음 열 {S20}")
-            fill(W, lambda i, r, L, Lp, Ln: ("=0" if i == n else
-                 f'=IF({_st(L, r)}="소멸",0,IF({_st(L, r)}="지금만",{_x19(L, r)},'
-                 f"MAX({_x19(L, r)},"
-                 f"{Ln}{R0+r}*{L}$16*EXP(-{Q(S18)}!{Ln}{R0+r}*{K['dt']})"
-                 f"+{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S18)}!{Ln}{R0+r+1}*{K['dt']}))))"))
-            put(W, R0+n+3, 2, "매도청구권 (한도 반영 전, t=0)", bold=True)
-            put(W, R0+n+3, 3, f"=C{R0}", bold=True, fmt=N2, align="right")
+            def _v19(i, r, L):
+                if i == n:
+                    return "=0"
+                body = f"MAX({Q(S8)}!{L}{R0+r}-{L}$8,0)"
+                rs = _resp(L, r, lk)
+                return (f"=IF(AND({L}$5=1,NOT({rs})),{body},0)" if rs else f"=IF({L}$5=1,{body},0)")
+            fill(W, lambda i, r, L, Lp, Ln: _v19(i, r, L))
+            x19 = lambda L, r: f"{Q(S19x)}!{L}{R0+r}"
+            canc = lambda L, r: f"AND({L}$2>{lk},{_cv4(L, r)}>0)"
+            canp = lambda L, r: f"AND(OR({L}$2>{lk},{K['lkput']}=0),{L}$7>0)"
+            W = newsheet(SA, "⑲a 콜 존속 여부  소멸 · 지금만 · 존속 · 만기" + tag, _n19a, f"{S9} · {S4}")
+
+            def _v19a(i, r, L):
+                if i == n:
+                    return '="만기"'
+                d = _dec9(L, r)
+                out = f'IF(AND({d}="상환P",{canp(L, r)}),"{_pfate}","존속")'
+                if not _bwc:
+                    out = f'IF(AND({d}="전환",{canc(L, r)}),"{_cfate}",{out})'
+                return f'=IF({d}="상장전환","소멸",{out})'
+            fill(W, lambda i, r, L, Lp, Ln: _v19a(i, r, L), txt=True)
+            st = lambda L, r: f"{Q(SA)}!{L}{R0+r}"
+
+            if _need1:
+                W = newsheet(SV, "⑳ 매도청구권가치트리  미국형 복합옵션" + tag,
+                             "⑲a 가 소멸·만기면 0, 지금만이면 ⑲, 존속이면 MAX(⑲, 계속보유가치)다. 계속보유가치는 "
+                             "다음 시점 두 노드의 콜 가치를 각 노드의 혼합할인율(⑱)로 할인해 위험중립확률(q, 1−q)로 "
+                             "가중한다 — 두 할인계수를 평균금리 하나로 바꾸지 않는다.",
+                             f"{S18} · {S19x} · {SA} · 다음 열 {SV}")
+                fill(W, lambda i, r, L, Lp, Ln: ("=0" if i == n else
+                     f'=IF({st(L, r)}="소멸",0,IF({st(L, r)}="지금만",{x19(L, r)},'
+                     f"MAX({x19(L, r)},"
+                     f"{Ln}{R0+r}*{L}$16*EXP(-{Q(S18)}!{Ln}{R0+r}*{K['dt']})"
+                     f"+{Ln}{R0+r+1}*{L}$17*EXP(-{Q(S18)}!{Ln}{R0+r+1}*{K['dt']}))))"))
+                put(W, R0+n+3, 2, "매도청구권 (한도 반영 전, t=0)", bold=True)
+                put(W, R0+n+3, 3, f"=C{R0}", bold=True, fmt=N2, align="right")
+            return st, x19
+
+        _st, _x19 = _build_opt_a(S19, S19A, S20, K['lockend'], "")
+        _stN, _x19N = (_build_opt_a(S19N, S19AN, S20N, "-1", "  · 의무보유 없는 몫") if _split_lock
+                       else (None, None))
 
     if _need2 and _ksplit:
         # ── 17a·17b 행사가를 GS 전환확률로 분해 (본문 4.3.3) ──
@@ -10233,74 +10336,86 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         # asset-or-nothing 콜의 위험중립확률이 GS 전환확률(⑪)이고 cash-or-nothing 풋의
         # 그것이 1−⑪(⑪b)이므로 행사가를 그 확률로 나눈다. ⑲ 이 0 보다 클 때만 싣는다 — 그래야
         # 두 성분의 합이 언제나 ⑲ 다. 한 성분은 음수일 수 있다(«확률 × (그 시나리오 현가 − 행사가)»).
-        W = newsheet(S17A, "⑰a 콜 행사 시 주식결제 성분  ⑤ − ⑪ × 매도청구금액",
-                     "콜을 즉시 행사할 때의 총이익(⑲) 가운데 GS 전환확률에 따라 배분한 주식결제 성분이다. "
-                     "⑲ 이 0 보다 클 때만 값이 있고(그 밖은 0), ⑰b 와 더하면 ⑲ 가 된다. 분해 계산상 성분이라 "
-                     "한 성분이 음수일 수 있으며 — 콜이 주식으로 갈 시나리오에서만 이득이라는 뜻 — 실제 현금 "
-                     "수령액이나 독립 옵션가격이 아니다.",
-                     f"{S5} · {S11} · {S19}")
-        fill(W, lambda i, r, L, Lp, Ln:
-             f"=IF({_x19(L, r)}>0,{Q(S5)}!{L}{R0+r}-{Q(S11)}!{L}{R0+r}*{L}$8,0)", N4)
+        def _build_17ab(_SA17, _SB17, _S19x, x19, tag):
+            """행사가를 GS 전환확률로 나눈 두 성분 — ⑲(몫마다 다르다)이 0 보다 클 때만 값이 있다."""
+            W = newsheet(_SA17, "⑰a 콜 행사 시 주식결제 성분  ⑤ − ⑪ × 매도청구금액" + tag,
+                         "콜을 즉시 행사할 때의 총이익(⑲) 가운데 GS 전환확률에 따라 배분한 주식결제 성분이다. "
+                         "⑲ 이 0 보다 클 때만 값이 있고(그 밖은 0), ⑰b 와 더하면 ⑲ 가 된다. 분해 계산상 성분이라 "
+                         "한 성분이 음수일 수 있으며 — 콜이 주식으로 갈 시나리오에서만 이득이라는 뜻 — 실제 현금 "
+                         "수령액이나 독립 옵션가격이 아니다.",
+                         f"{S5} · {S11} · {_S19x}")
+            fill(W, lambda i, r, L, Lp, Ln:
+                 f"=IF({x19(L, r)}>0,{Q(S5)}!{L}{R0+r}-{Q(S11)}!{L}{R0+r}*{L}$8,0)", N4)
 
-        W = newsheet(S17B, "⑰b 콜 행사 시 현금결제 성분  ⑥ − (1−⑪) × 매도청구금액",
-                     "콜을 즉시 행사할 때의 총이익(⑲) 가운데 현금결제 성분이다. ⑲ 이 0 보다 클 때만 값이 "
-                     "있고, ⑰a 와 더하면 ⑲ 가 된다. 한 성분이 음수일 수 있다.",
-                     f"{S6} · {S11B} · {S19}")
-        fill(W, lambda i, r, L, Lp, Ln:
-             f"=IF({_x19(L, r)}>0,{Q(S6)}!{L}{R0+r}-{Q(S11B)}!{L}{R0+r}*{L}$8,0)", N4)
+            W = newsheet(_SB17, "⑰b 콜 행사 시 현금결제 성분  ⑥ − (1−⑪) × 매도청구금액" + tag,
+                         "콜을 즉시 행사할 때의 총이익(⑲) 가운데 현금결제 성분이다. ⑲ 이 0 보다 클 때만 값이 "
+                         "있고, ⑰a 와 더하면 ⑲ 가 된다. 한 성분이 음수일 수 있다.",
+                         f"{S6} · {S11B} · {_S19x}")
+            fill(W, lambda i, r, L, Lp, Ln:
+                 f"=IF({x19(L, r)}>0,{Q(S6)}!{L}{R0+r}-{Q(S11B)}!{L}{R0+r}*{L}$8,0)", N4)
+
+        _build_17ab(S17A, S17B, S19, _x19, "")
+        if _split_lock:
+            _build_17ab(S17AN, S17BN, S19N, _x19N, "  · 의무보유 없는 몫")
 
     if _need2:
         # ── 21~24 옵션차익혼합할인법 · 방법 2 (지분·부채 분리) ──
         # 값 하나를 섞은 할인율로 할인하는 대신, 콜옵션 가치를 지분 몫과 부채 몫으로
         # 쪼개 각각 무위험·위험 선도이자율로 할인한다 (책 4.4.3, 부속예제 4-4 방법2).
-        W = newsheet(S21, "㉑ 콜 계속보유가치 · 주식결제 성분 (옵션차익법 · 주식결제·현금결제 분리)",
-                     "다음 시점 두 노드의 ㉓(주식결제 성분)을 위험중립확률로 가중해 무위험 선도이자율로 할인한다.",
-                     f"다음 열 {S23}")
-        fill(W, lambda i, r, L, Lp, Ln: ("=0" if i == n else
-             f"=({Q(S23)}!{Ln}{R0+r}*{L}$16+{Q(S23)}!{Ln}{R0+r+1}*{L}$17)"
-             f"*EXP(-{L}$11*{K['dt']})"), N4)
+        def _build_opt_b(_S21, _S22, _S19B, _S23, _S24, st, x19, _SA17, _SB17, _S19x, tag):
+            """방법 2 (주식결제·현금결제 분리) 의 ㉑~㉔ — st·x19 는 그 몫의 존속 여부(⑲a)·즉시행사가치(⑲)."""
+            W = newsheet(_S21, "㉑ 콜 계속보유가치 · 주식결제 성분 (옵션차익법 · 주식결제·현금결제 분리)" + tag,
+                         "다음 시점 두 노드의 ㉓(주식결제 성분)을 위험중립확률로 가중해 무위험 선도이자율로 할인한다.",
+                         f"다음 열 {_S23}")
+            fill(W, lambda i, r, L, Lp, Ln: ("=0" if i == n else
+                 f"=({Q(_S23)}!{Ln}{R0+r}*{L}$16+{Q(_S23)}!{Ln}{R0+r+1}*{L}$17)"
+                 f"*EXP(-{L}$11*{K['dt']})"), N4)
 
-        W = newsheet(S22, "㉒ 콜 계속보유가치 · 현금결제 성분 (옵션차익법 · 주식결제·현금결제 분리)",
-                     "다음 시점 두 노드의 ㉔(현금결제 성분)을 위험중립확률로 가중해 위험 선도이자율로 할인한다.",
-                     f"다음 열 {S24}")
-        fill(W, lambda i, r, L, Lp, Ln: ("=0" if i == n else
-             f"=({Q(S24)}!{Ln}{R0+r}*{L}$16+{Q(S24)}!{Ln}{R0+r+1}*{L}$17)"
-             f"*EXP(-{L}$12*{K['dt']})"), N4)
+            W = newsheet(_S22, "㉒ 콜 계속보유가치 · 현금결제 성분 (옵션차익법 · 주식결제·현금결제 분리)" + tag,
+                         "다음 시점 두 노드의 ㉔(현금결제 성분)을 위험중립확률로 가중해 위험 선도이자율로 할인한다.",
+                         f"다음 열 {_S24}")
+            fill(W, lambda i, r, L, Lp, Ln: ("=0" if i == n else
+                 f"=({Q(_S24)}!{Ln}{R0+r}*{L}$16+{Q(_S24)}!{Ln}{R0+r+1}*{L}$17)"
+                 f"*EXP(-{L}$12*{K['dt']})"), N4)
 
-        # 행사·보유 판단은 한 번만 한다 — ⑲ 과 ㉑ + ㉒ 를 견준다. 성분마다 따로 유리한 쪽을 고르지
-        # 않는다(성분별 MAX 없음). 행사이득이 0 이면 행사하지 않는다 — 계속보유 성분이 음수일 수
-        # 있어 «0 >= 음수» 로 잘못 행사 판정이 나는 것을 막는다.
-        W = newsheet(S19B, "⑲b 콜 행사·보유 판단  ⑲ 과 ㉑ + ㉒ 를 한 번 견준다",
-                     "행사 — 즉시행사가치(⑲)가 0 보다 크고 계속보유가치(㉑ + ㉒) 이상이다. 보유 — 그 밖의 "
-                     "존속 노드. 소멸 — 존속 여부(⑲a)가 소멸이거나, 지금만인데 행사이익이 없다. 만기 — "
-                     "만기일에는 콜을 반영하지 않는다. 주식결제·현금결제 성분마다 따로 고르지 않는다 — "
-                     "여기서 정한 판단을 ㉓·㉔ 가 함께 따른다.",
-                     f"{S19} · {S19A} · {S21} · {S22}")
-        fill(W, lambda i, r, L, Lp, Ln: ('="만기"' if i == n else
-             f'=IF({_st(L, r)}="소멸","소멸",IF({_st(L, r)}="지금만",IF({_x19(L, r)}>0,"행사","소멸"),'
-             f'IF(AND({_x19(L, r)}>0,{_x19(L, r)}>={Q(S21)}!{L}{R0+r}+{Q(S22)}!{L}{R0+r}),"행사","보유")))'),
-             txt=True)
-        _dx = lambda L, r: f"{Q(S19B)}!{L}{R0+r}"
-        _eq = ((lambda L, r: f"{Q(S17A)}!{L}{R0+r}") if _ksplit else
-               (lambda L, r: f"{_x19(L, r)}*{Q(S17)}!{L}{R0+r}"))
-        _db = ((lambda L, r: f"{Q(S17B)}!{L}{R0+r}") if _ksplit else
-               (lambda L, r: f"{_x19(L, r)}*(1-{Q(S17)}!{L}{R0+r})"))
-        _src = (f"{S17A} · {S17B}" if _ksplit else S17) + f" · {S19} · {S19B} · {S21} · {S22}"
-        _how = ("⑰a(GS 전환확률로 배분한 주식결제 성분)" if _ksplit else "⑲ × ⑰(가치 구성비율)")
-        W = newsheet(S23, "㉓ 콜 최종가치 · 주식결제 성분 (옵션차익법 · 주식결제·현금결제 분리)",
-                     f"⑲b 가 행사면 {_how}, 보유면 ㉑, 소멸·만기면 0 이다.", _src)
-        fill(W, lambda i, r, L, Lp, Ln:
-             f'=IF({_dx(L, r)}="행사",{_eq(L, r)},IF({_dx(L, r)}="보유",{Q(S21)}!{L}{R0+r},0))', N4)
+            # 행사·보유 판단은 한 번만 한다 — ⑲ 과 ㉑ + ㉒ 를 견준다. 성분마다 따로 유리한 쪽을 고르지
+            # 않는다(성분별 MAX 없음). 행사이득이 0 이면 행사하지 않는다 — 계속보유 성분이 음수일 수
+            # 있어 «0 >= 음수» 로 잘못 행사 판정이 나는 것을 막는다.
+            W = newsheet(_S19B, "⑲b 콜 행사·보유 판단  ⑲ 과 ㉑ + ㉒ 를 한 번 견준다" + tag,
+                         "행사 — 즉시행사가치(⑲)가 0 보다 크고 계속보유가치(㉑ + ㉒) 이상이다. 보유 — 그 밖의 "
+                         "존속 노드. 소멸 — 존속 여부(⑲a)가 소멸이거나, 지금만인데 행사이익이 없다. 만기 — "
+                         "만기일에는 콜을 반영하지 않는다. 주식결제·현금결제 성분마다 따로 고르지 않는다 — "
+                         "여기서 정한 판단을 ㉓·㉔ 가 함께 따른다.",
+                         f"{_S19x} · {_S19B} · {_S21} · {_S22}")
+            fill(W, lambda i, r, L, Lp, Ln: ('="만기"' if i == n else
+                 f'=IF({st(L, r)}="소멸","소멸",IF({st(L, r)}="지금만",IF({x19(L, r)}>0,"행사","소멸"),'
+                 f'IF(AND({x19(L, r)}>0,{x19(L, r)}>={Q(_S21)}!{L}{R0+r}+{Q(_S22)}!{L}{R0+r}),"행사","보유")))'),
+                 txt=True)
+            _dx = lambda L, r: f"{Q(_S19B)}!{L}{R0+r}"
+            _eq = ((lambda L, r: f"{Q(_SA17)}!{L}{R0+r}") if _ksplit else
+                   (lambda L, r: f"{x19(L, r)}*{Q(S17)}!{L}{R0+r}"))
+            _db = ((lambda L, r: f"{Q(_SB17)}!{L}{R0+r}") if _ksplit else
+                   (lambda L, r: f"{x19(L, r)}*(1-{Q(S17)}!{L}{R0+r})"))
+            _src = (f"{_SA17} · {_SB17}" if _ksplit else S17) + f" · {_S19x} · {_S19B} · {_S21} · {_S22}"
+            _how = ("⑰a(GS 전환확률로 배분한 주식결제 성분)" if _ksplit else "⑲ × ⑰(가치 구성비율)")
+            W = newsheet(_S23, "㉓ 콜 최종가치 · 주식결제 성분 (옵션차익법 · 주식결제·현금결제 분리)" + tag,
+                         f"⑲b 가 행사면 {_how}, 보유면 ㉑, 소멸·만기면 0 이다.", _src)
+            fill(W, lambda i, r, L, Lp, Ln:
+                 f'=IF({_dx(L, r)}="행사",{_eq(L, r)},IF({_dx(L, r)}="보유",{Q(_S21)}!{L}{R0+r},0))', N4)
 
-        W = newsheet(S24, "㉔ 콜 최종가치 · 현금결제 성분 (옵션차익법 · 주식결제·현금결제 분리)",
-                     "판단은 ⑲b 하나를 ㉓ 과 함께 따른다. "
-                     + ("행사면 ⑰b(현금결제 성분), 보유면 ㉒, 소멸·만기면 0 이다." if _ksplit else
-                        "행사면 ⑲ × (1 − ⑰), 보유면 ㉒, 소멸·만기면 0 이다."),
-                     _src)
-        fill(W, lambda i, r, L, Lp, Ln:
-             f'=IF({_dx(L, r)}="행사",{_db(L, r)},IF({_dx(L, r)}="보유",{Q(S22)}!{L}{R0+r},0))', N4)
-        put(W, R0+n+3, 2, "매도청구권 · 옵션차익법 주식결제·현금결제 분리 (한도 반영 전, t=0)", bold=True)
-        put(W, R0+n+3, 3, f"={Q(S23)}!C{R0}+C{R0}", bold=True, fmt=N2, align="right")
+            W = newsheet(_S24, "㉔ 콜 최종가치 · 현금결제 성분 (옵션차익법 · 주식결제·현금결제 분리)" + tag,
+                         "판단은 ⑲b 하나를 ㉓ 과 함께 따른다. "
+                         + ("행사면 ⑰b(현금결제 성분), 보유면 ㉒, 소멸·만기면 0 이다." if _ksplit else
+                            "행사면 ⑲ × (1 − ⑰), 보유면 ㉒, 소멸·만기면 0 이다."),
+                         _src)
+            fill(W, lambda i, r, L, Lp, Ln:
+                 f'=IF({_dx(L, r)}="행사",{_db(L, r)},IF({_dx(L, r)}="보유",{Q(_S22)}!{L}{R0+r},0))', N4)
+            put(W, R0+n+3, 2, "매도청구권 · 옵션차익법 주식결제·현금결제 분리 (한도 반영 전, t=0)", bold=True)
+            put(W, R0+n+3, 3, f"={Q(_S23)}!C{R0}+C{R0}", bold=True, fmt=N2, align="right")
+
+        _build_opt_b(S21, S22, S19B, S23, S24, _st, _x19, S17A, S17B, S19, "")
+        if _split_lock:
+            _build_opt_b(S21N, S22N, S19BN, S23N, S24N, _stN, _x19N, S17AN, S17BN, S19N, "  · 의무보유 없는 몫")
 
     # ── 결과 ──
     R = wb.create_sheet("결과"); R.sheet_view.showGridLines = False
@@ -10326,10 +10441,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             (f"{_N1} · GS", _t30 if _gs else B_),
             (f"적용 · {_N0}", _t70),
             (f"적용 · {_N1}", _t30),
-            ("가중 평균", f"=(1-{K['cw']})*C10+{K['cw']}*C11" if _need15 else B_)]):
+            ("가중 평균", (f"=(1-{K['cw']})*C10+{K['lkw']}*C11+({K['cw']}-{K['lkw']})*C13" if _split_lock
+                          else f"=(1-{K['cw']})*C10+{K['cw']}*C11") if _need15 else B_)]):
         bold = (i >= 4)
         put(R, 6+i, 2, nm, bold=bold, border=True)
         put(R, 6+i, 3, fx, bold=bold, fmt=N2, align="right", border=True)
+    if _need15 and _split_lock:
+        # 의무보유가 없는 콜 대상 몫 — ⑮n 시트 (전환·조기상환이 처음부터 열려 있다)
+        put(R, 13, 2, f"적용 · {_CALLED_FREE}", bold=True, border=True)
+        put(R, 13, 3, f"={Q(S15B)}!C{RTb+1}", bold=True, fmt=N2, align="right", border=True)
     sec(R, 14, "2. 구성요소", span=5)
     put(R, 15, 3, "100 기준", bold=True, fill=LIGHT, align="center", border=True)
     put(R, 15, 4, "전액 기준 (원)", bold=True, fill=LIGHT, align="center", border=True)
@@ -10338,12 +10458,16 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
              ("부채요소 (사채 + 조기상환권) — 조기상환권을 포함한 공정가치",
               f"='BDT 부채요소'!C{14+n+2}" if _bdt else f"={Q(S16)}!C13"),
              ("조기상환청구권 — 조기상환권의 증분가치 (C17 − C16)", "=C17-C16"),
+             # 의무보유 물량 × 묶인 1단위 + (콜 한도 − 의무보유 물량) × 묶이지 않은 1단위 (call_mix)
              ("매도청구권 · 유무가치비교법",
-              f"={K['cw']}*(C10-C11)" if _need15 else B_),
+              ((f"={K['lkw']}*(C10-C11)+({K['cw']}-{K['lkw']})*(C10-C13)" if _split_lock
+                else f"={K['cw']}*(C10-C11)") if _need15 else B_)),
              ("매도청구권 · 옵션차익 · 혼합할인율",
-              f"={K['cw']}*{Q(S20)}!C{R0+n+3}" if _need1 else B_),
+              ((f"={K['lkw']}*{Q(S20)}!C{R0+n+3}+({K['cw']}-{K['lkw']})*{Q(S20N)}!C{R0+n+3}" if _split_lock
+                else f"={K['cw']}*{Q(S20)}!C{R0+n+3}") if _need1 else B_)),
              ("매도청구권 · 옵션차익 · 지분·부채 분리",
-              f"={K['cw']}*{Q(S24)}!C{R0+n+3}" if _need2 else B_),
+              ((f"={K['lkw']}*{Q(S24)}!C{R0+n+3}+({K['cw']}-{K['lkw']})*{Q(S24N)}!C{R0+n+3}" if _split_lock
+                else f"={K['cw']}*{Q(S24)}!C{R0+n+3}") if _need2 else B_)),
              ("매도청구권자산 (적용값)", f"=C{19+_km}" if _hascall else "=0"),
              # 제3자 기특정 콜은 발행자가 자산으로 인식하지 않으므로 배분에서 빠진다
              # (본문 4.5.1 주주간 분배). 잔여인 전환권대가·주계약이 그만큼 작아진다.

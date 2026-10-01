@@ -304,6 +304,11 @@ def inspect_case(case: Case) -> list[Issue]:
                 add("error", "enum", key, "지원하지 않는 선택값입니다.")
     if not 0 <= values.get("k_w", 0) <= 1:
         add("error", "fraction", "k_w", "콜 대상 비율은 0~1이어야 합니다.")
+    _lw = values.get("k_lock_w", -1.0)
+    if _lw >= 0 and _lw > values.get("k_w", 0) + 1e-12:
+        add("error", "fraction", "k_lock_w",
+            "의무보유 물량 비율이 콜 대상 비율보다 큽니다. 콜 대상 밖 물량의 의무보유는 이 모형이 반영하지 않습니다 — "
+            "콜 대상 안에서 묶인 물량만 입력하십시오 (비우면 콜 대상 전부).")
     for key in ("S0", "K0", "sig", "gap_m", "face_total", "par", "cmp_rf", "cmp_cr"):
         if key in values and values[key] <= 0:
             add("error", "positive", key, "0보다 큰 값이 필요합니다.")

@@ -340,7 +340,7 @@ def monotone(G, product, over, rng):
     def forced_mass(o):
         t = BX.make_terms(G, product, o)
         _cs, _ps = G["lock_delay"](t)
-        r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=_cs, put_start=_ps)
+        r3 = G["engine"](t, conv=True, put=True, call=True, conv_start=_cs, put_start=_ps, lock_m=t.k_lock)
         return r3["dist"].get("conv_called", 0.0)
     base = D(over); TOL = 1e-7
     if base["t"].rfx_mode == 0 or base["t"].carry == 0:

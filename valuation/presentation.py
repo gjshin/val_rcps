@@ -14,7 +14,8 @@ LABELS = {
     'p_cmp': '상환청구 수익률 복리 횟수(연, 0은 단리)', 'p_cpn_add': '상환청구 행사일 이자 별도 지급',
     'k_s': '콜 행사 시작일', 'k_e': '콜 행사 종료일', 'k_f': '콜 행사 주기(개월)',
     'k_prem': '콜 행사가액 가산율(연, %)', 'k_cmp': '콜 가산율 복리 횟수(연, 0은 단리)',
-    'k_w': '콜 대상 비율(%)', 'k_lock': '콜 대상 의무보유 종료일', 'k_hold': '콜 대상물량 의무보유',
+    'k_w': '콜 대상 비율(%)', 'k_lock': '콜 대상 의무보유 종료일',
+    'k_lock_w': '의무보유 물량 비율(%, 비우면 콜 대상 비율과 같음)', 'k_hold': '콜 대상물량 의무보유',
     'k_lock_put': '의무보유 중 상환청구 제한', 'k_third': '콜 행사자에 제3자 지정 가능',
     'k_transfer': '콜 독립 양도 가능', 'k_kind': '제3자 콜 유형', 'k_basis': '콜 평가방법 선택 근거',
     'k_method': '콜 평가방법', 'k_split': '콜 행사가액 분해방법', 'k_cpn_add': '콜 행사일 이자 별도 지급',
@@ -66,7 +67,7 @@ LABELS = {
     'notes': '검토메모', 'market_date': '시장자료 기준일',
     'sources': '자료 출처', 'contract': '계약서',
 }
-PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'ytm', 'bdt_sig',
+PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'k_lock_w', 'ytm', 'bdt_sig',
                      'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue'})
 EVENT_DATES = frozenset({'cv_s', 'cv_e', 'p_s', 'p_e', 'k_s', 'k_e', 'k_lock', 'ipo_m', 'rfx_first',
                         'sha_put_s', 'sha_put_e', 'sha_call_s', 'sha_call_e'})
@@ -127,6 +128,8 @@ def display_value(key, value, issue_date=None):
         return '미입력'
     if key in CHOICES:
         return CHOICES[key].get(value, str(value))
+    if key == 'k_lock_w' and value < 0:
+        return '콜 대상 비율과 같음'
     if key == 'rfx_first' and not value:
         return '주기와 같음 (발행일 + 주기)'
     if key in EVENT_DATES and issue_date:

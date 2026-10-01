@@ -1923,7 +1923,8 @@ def _three(t):
     full = engine(t, call=False)
     b2 = G["pick"](full, t.model)
     cs, ps = G["lock_delay"](t)
-    b3 = G["pick"](engine(t, conv=True, put=True, call=True, conv_start=cs, put_start=ps), t.model)
+    b3 = G["pick"](engine(t, conv=True, put=True, call=True, conv_start=cs, put_start=ps,
+                              lock_m=t.k_lock), t.model)
     return (t.k_w*(b2 - b3), t.k_w*G["call_third_party"](t, full, 1), t.k_w*G["call_third_party"](t, full, 2))
 
 
@@ -2447,6 +2448,32 @@ def test_lock_end_same_node_as_last_call():
     chk_bool("의무보유 없음 → −1", G["lock_end_step"](Terms(k_hold=0), 60, 5/60) == -1)
 
 
+def test_lock_share_split():
+    """콜 한도와 의무보유 물량이 다른 계약 — 콜 = 묶인 물량 × 묶인 1단위 + 나머지 × 묶이지 않은 1단위.
+
+    기대값은 엔진의 다른 두 설정에서 나온다 (같은 값을 두 번 세지 않는다):
+      의무보유 = 콜 한도      → 콜 대상 전부 묶임 (종전)            A
+      의무보유 = 0            → 의무보유 없음 (k_hold = 0 과 같다)   B
+      의무보유 = 콜 한도 × ¼  → ¼·A + ¾·B  (콜 한도는 한 번만 걸린다)
+    세 평가방법(유무가치비교법 · 옵션차익 혼합할인율 · 성분 분리할인) 모두.
+    """
+    print("\n[49] 콜 한도 ≠ 의무보유 물량 — 묶인 몫과 묶이지 않은 몫")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    def callv(**kw):
+        t = Terms(gap_m=6., k_w=.40, rf_curve=RF, cr_curve=CR, **kw); derive(t)
+        return G["decompose"](t)[4]
+    for nm, m in (("유무가치비교법", dict()), ("옵션차익 혼합할인율", dict(k_third=1, k_method=1)),
+                  ("옵션차익 성분 분리할인", dict(k_third=1, k_method=2))):
+        A, B = callv(**m), callv(k_lock_w=0., **m)
+        chk(f"{nm} · 의무보유 비움 = 콜 한도 40% 입력", callv(k_lock_w=.40, **m), A, 1e-12)
+        chk(f"{nm} · 의무보유 0% = 의무보유 없음", B, callv(k_hold=0, **m), 1e-12)
+        chk(f"{nm} · 의무보유 10% = ¼·전부 + ¾·없음", callv(k_lock_w=.10, **m), .25*A + .75*B, 1e-9)
+        chk_bool(f"{nm} · 묶인 몫이 늘면 콜이 커진다 ({B:.4f} < {A:.4f})", A > B)
+    chk_bool("lock_share — 콜 한도보다 크게 넣으면 콜 한도에서 자른다",
+             G["lock_share"](Terms(k_w=.3, k_lock_w=.5)) == .3)
+    chk_bool("lock_share — 의무보유 없음이면 0", G["lock_share"](Terms(k_w=.3, k_hold=0)) == 0.)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -2497,6 +2524,7 @@ def main():
     test_sha_rows_block_and_isolate()
     test_refix_contract_dates()
     test_lock_end_same_node_as_last_call()
+    test_lock_share_split()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")
