@@ -9,7 +9,7 @@ from typing import get_type_hints
 import pandas as pd
 import streamlit as st
 from valuation.case import Case, SCHEMA, RIGHT_KINDS, FIELDS, REQUIRED, RCPS_REQUIRED, section_for, import_legacy, inspect_case, compare_cases
-from valuation.legacy import Terms, months_to_date
+from valuation.legacy import Terms, months_to_date, issuer_day1_cases, inst_text
 from valuation.presentation import CHOICES, PERCENT, EVENT_DATES, label, display_value, event_months, issue_rows, choices
 from valuation.service import AMOUNT_LABELS, calculate, calculation_key, refresh_run, export_bundle
 from valuation.analysis import sensitivity
@@ -738,10 +738,16 @@ def day1_panel(run, case):
                "(주가 역산 등 · 1113 문단 64). 보정하지 않으면 아래에서 차이 처리를 고릅니다.")
     with c2:
         source('day1')
+    if day1.get('view') == 'issuer':
+        # 세 갈래(자본 흡수 · 당기손익 · 이연)를 나란히 보이고 이 평가가 어느 쪽인지 표시한다.
+        _cases = issuer_day1_cases(dict(hybrid=bool(day1.get('choice')), pl=day1.get('mode') == '당기손익'))
+        st.dataframe(pd.DataFrame([[inst_text(run.terms, k), v, on] for k, v, on in _cases],
+                                  columns=['최초 인식 차이의 세 가지 구분', '처리', '이 평가']),
+                     use_container_width=True, hide_index=True)
     if not day1.get('choice', True):
         # 발행자 · 전환권 자본 — 차이는 잔여인 자본요소(전환권대가)에 흡수된다.
-        st.caption('전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수됩니다 (1032 문단 31). '
-                   '최초 인식 손익은 생기지 않습니다.')
+        st.caption(inst_text(run.terms, '전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수됩니다 (1032 문단 31). '
+                                    '최초 인식 손익은 생기지 않습니다.'))
         return
     rev = st.session_state.get('revision', 0)
     eff = case.effective()
