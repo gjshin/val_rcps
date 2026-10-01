@@ -242,6 +242,9 @@ def _sha_rows_from(frame, cols, old):
         p = prev.get(row['name'])
         if p and p.get('price_note') and p.get('price') == row.get('price'):
             row['price_note'] = p['price_note']
+        # 실적 연동 산식은 표에 칸이 없다 — 같은 회차·같은 가격이면 그대로 둔다 (가격을 손으로 바꾸면 산식 연결을 끊는다)
+        if p and p.get('perf') and p.get('price') == row.get('price'):
+            row['perf'] = p['perf']
         rows.append(row)
     return rows
 
@@ -393,40 +396,47 @@ def sha_price_helper(edited, rev):
                '회계연도입니다 — 두 연도를 따로 적으십시오. 추정 재무수치로 계산한 가격을 고정해 평가합니다 (미래 실적의 '
                '불확실성은 반영하지 않습니다).')
     rows = [r['name'] for r in edited.get('sha_rows') or []]
+    # 기준 손실률·배수·차감액은 계약 원문에서 읽어 넣는다 — 앱이 기본값을 두지 않는다.
     base = st.session_state.get('_sha_price_tbl') or [dict(회차=(rows[0] if rows else ''), 행사연도=None, 재무제표연도=None,
-                                                          **{'매출액(원)': None, '차감액(원)': 0., '영업손실률(%)': None,
-                                                             '기준 손실률(%)': 10., '초과 시 배수': 1.0, '이하 시 배수': 1.5,
-                                                             '발행주식 총수(주)': None})]
+                                                          **{'실적 구분': '추정', '매출액(원)': None, '차감액(원)': None,
+                                                             '영업손익(원, 손실은 음수)': None, '기준 손실률(%)': None,
+                                                             '초과 시 배수': None, '이하 시 배수': None,
+                                                             '계약상 발행주식 총수(주)': None})]
     tbl = st.data_editor(pd.DataFrame(base), num_rows='dynamic', hide_index=True, key=f'sha_price_{rev}',
-                         column_config={'회차': st.column_config.SelectboxColumn(options=rows)})
+                         column_config={'회차': st.column_config.SelectboxColumn(options=rows),
+                                        '실적 구분': st.column_config.SelectboxColumn(options=['확정', '추정'])})
     out, notes = [], {}
     for rec in tbl.to_dict('records'):
         try:
-            rev_, ded, loss, thr = (float(rec[k]) for k in ('매출액(원)', '차감액(원)', '영업손실률(%)', '기준 손실률(%)'))
-            hi, lo_, n_sh = float(rec['초과 시 배수']), float(rec['이하 시 배수']), float(rec['발행주식 총수(주)'])
+            rev_, ded, op, thr = (float(rec[k]) for k in ('매출액(원)', '차감액(원)', '영업손익(원, 손실은 음수)', '기준 손실률(%)'))
+            hi, lo_, n_sh = float(rec['초과 시 배수']), float(rec['이하 시 배수']), float(rec['계약상 발행주식 총수(주)'])
         except (TypeError, ValueError, KeyError):
             continue
-        if n_sh <= 0 or any(pd.isna(x) for x in (rev_, ded, loss, thr, hi, lo_, n_sh)):
+        if n_sh <= 0 or rev_ <= 0 or any(pd.isna(x) for x in (rev_, ded, op, thr, hi, lo_, n_sh)):
             continue
-        from valuation.legacy import sha_perf_price
-        px, mult = sha_perf_price(rev_, ded, loss, thr, hi, lo_, n_sh)
+        from valuation.legacy import sha_perf_calc
         fy, ey = rec.get('재무제표연도'), rec.get('행사연도')
-        note = (f"실적 연동 — ({rev_:,.0f} − {ded:,.0f}) × {mult:g}배 ÷ {n_sh:,.0f}주 = {px:,.2f}원 · 영업손실률 {loss:g}% "
-                f"{'>' if loss > thr else '≤'} {thr:g}% · 행사연도 {ey or '?'} · 재무제표 {fy or '?'}년 (추정치 고정)")
-        out.append({'회차': rec.get('회차'), '행사연도': ey, '재무제표 연도': fy, '적용 배수': mult, '주당 행사가격(원)': px})
+        pf = dict(rev=rev_, ded=ded, op=op, thr=thr/100, hi=hi, lo=lo_, sh=n_sh, fy=fy, ey=ey, kind=rec.get('실적 구분'))
+        px, mult, loss = sha_perf_calc(pf)
+        note = (f"실적 연동 — ({rev_:,.0f} − {ded:,.0f}) × {mult:g}배 ÷ {n_sh:,.0f}주 = {px:,.2f}원 · 영업손실률 {loss:.4%} "
+                f"{'>' if round(loss, 12) > round(thr/100, 12) else '≤'} {thr:g}% · 행사연도 {ey or '?'} · 실적 {fy or '?'}년 "
+                f"({rec.get('실적 구분') or '구분 미입력'})")
+        out.append({'회차': rec.get('회차'), '행사연도': ey, '실적연도': fy, '영업손실률': f'{loss:.4%}', '적용 배수': mult,
+                    '주당 행사가격(원)': px})
         if rec.get('회차'):
-            notes[rec['회차']] = (px, note)
+            notes[rec['회차']] = (px, note, pf)
         if ey and fy and str(ey).isdigit() and str(fy).isdigit() and int(fy) >= int(ey):
             st.warning(f'{rec.get("회차") or ey}: 재무제표 연도({fy})가 행사연도({ey})보다 늦지 않습니다 — 계약이 «직전 회계연도» '
                        '를 쓰는지 확인하십시오.')
     if out:
         st.dataframe(pd.DataFrame(out), hide_index=True)
     st.session_state['_sha_price_tbl'] = tbl.to_dict('records')
-    if notes and st.button('계산한 가격을 회차 표에 넣기', key=f'sha_price_apply_{rev}',
-                           help='같은 이름의 회차에 주당 기준가격을 넣고 가격 가산율을 0%(고정 가격)로 둡니다.'):
+    if notes and st.button('산식을 회차에 연결하기', key=f'sha_price_apply_{rev}',
+                           help='같은 이름의 회차에 산식 입력을 저장합니다 — 주당 기준가격은 산식이 정하고(엑셀 조서에도 '
+                                '수식으로 실림), 가격 가산율은 0%(고정 가격)로 둡니다.'):
         for r in edited.get('sha_rows') or []:
             if r['name'] in notes:
-                r['price'], r['rate'], r['price_note'] = notes[r['name']][0], 0., notes[r['name']][1]
+                r['price'], r['rate'], r['price_note'], r['perf'] = notes[r['name']][0], 0., notes[r['name']][1], notes[r['name']][2]
         st.session_state['_sha_price_applied'] = True
 
 
@@ -677,6 +687,22 @@ def sha_result_panel(run):
                 {c: '{:,.0f}' for c in ['평가금액 풋', '평가금액 콜', '조건 충족 시 풋', '조건 충족 시 콜', '차이 풋', '차이 콜']}),
                 hide_index=True, use_container_width=True)
             st.caption('조건 충족 가능성을 확률로 반영한 값이 아닙니다. 충족 가정과 미충족 가정의 차이를 보여 줄 뿐입니다.')
+    _perf_rows = [x for x in (run.terms.sha_rows or []) if isinstance(x, dict) and x.get('perf')]
+    if _perf_rows:
+        with st.expander('실적 연동 행사가격 — 매출·손실률 민감도 (선택한 회차만 다시 계산)'):
+            st.caption('매출액을 ±10%·±20% 바꾸고, 영업손실률을 입력값 · 기준과 같음 · 기준 + 0.1%p 로 바꿔 주당 행사가격과 '
+                       '그 회차의 풋·콜 금액을 다시 계산합니다. 확률을 붙이지 않으며 평가금액에는 반영되지 않습니다.')
+            _nm = st.selectbox('회차', [x.get('name') for x in _perf_rows], key='sha_perf_sens_row')
+            if st.button('민감도 계산', key='sha_perf_sens_btn'):
+                from valuation.legacy import sha_perf_sensitivity
+                with st.spinner('회차를 다시 계산합니다'):
+                    st.session_state['_sha_perf_sens'] = (_nm, sha_perf_sensitivity(run.terms, _nm))
+            _res = st.session_state.get('_sha_perf_sens')
+            if _res and _res[0] == _nm:
+                st.dataframe(pd.DataFrame(_res[1], columns=['매출 배율', '손실률 시나리오', '영업손실률', '적용 배수',
+                                                            '주당 행사가격(원)', '풋 (원)', '콜 (원)']).style.format(
+                    {'매출 배율': '{:.0%}', '영업손실률': '{:.2%}', '적용 배수': '{:g}', '주당 행사가격(원)': '{:,.2f}',
+                     '풋 (원)': '{:,.0f}', '콜 (원)': '{:,.0f}'}), hide_index=True, use_container_width=True)
     recon = run.summary.get('sha_recon')
     if recon:
         st.markdown('**수량 대사 — 평가 대상과 제외 물량**')

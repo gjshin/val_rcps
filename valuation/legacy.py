@@ -3063,7 +3063,10 @@ SHA_ROW_KEYS = ("name", "start", "end", "style", "freq", "price", "rate", "acc_f
                 # 평가 대상의 상태 — open 미행사 / agreed 행사·매매 확정·미결제 / settled 결제 완료 / cond 추가 조건부
                 "status", "side", "deal_px", "settle", "cond_basis", "cond_note",
                 # 같은 보유주식·공통 한도를 쓰는 회차 묶음과 그 묶음의 한도(주)
-                "pool", "pool_cap")
+                "pool", "pool_cap",
+                # 실적 연동 행사가격의 산식 입력 (dict) — 있으면 주당 기준가격을 이 산식으로 계산한다
+                "perf")
+SHA_PERF_KEYS = ("rev", "ded", "op", "thr", "hi", "lo", "sh", "fy", "ey", "kind")
 SHA_ROW_STATUS = {"open": "미행사", "agreed": "행사·매매 확정 (미결제)", "settled": "결제 완료",
                   "cond": "추가 조건부"}
 SHA_COND_BASIS = {"met": "조건 충족 가정 (평가에 반영)", "unmet": "조건 미충족 가정 (평가에서 제외)"}
@@ -3097,7 +3100,48 @@ def sha_row_defaults(row: dict) -> dict:
               "cond_note", "pool"):
         r[k] = str(r[k] or "").strip()
     r["status"] = str(r["status"] or "open").strip() or "open"
+    r["perf"] = r["perf"] if isinstance(r["perf"], dict) and r["perf"] else None
     return r
+
+
+def sha_perf_calc(pf: dict):
+    """실적 연동 산식 입력 → (주당 행사가격, 적용 배수, 영업손실률). 계약에 없는 하한은 두지 않는다.
+
+    영업손실률 = MAX(0, −영업손익 ÷ 매출액) — 영업손익을 부호 그대로 받는다(손실은 음수). 손실률이 기준을
+    **초과**해야 «초과 시 배수» 다 (정확히 같으면 «이하 시 배수»). 비교는 소수 12자리에서 반올림해 부동소수
+    잡음으로 경계가 뒤집히지 않게 한다.
+    """
+    rev, ded, op = float(pf["rev"]), float(pf.get("ded") or 0.0), float(pf["op"])
+    thr, hi, lo, sh = float(pf["thr"]), float(pf["hi"]), float(pf["lo"]), float(pf["sh"])
+    if not rev > 0:
+        raise ValueError("실적 연동 행사가격 — 매출액을 0 보다 크게 입력하십시오.")
+    loss = max(0.0, -op/rev)
+    px, mult = sha_perf_price(rev, ded, loss, thr, hi, lo, sh)
+    return px, mult, loss
+
+
+def sha_perf_sensitivity(tm: Terms, name: str, rev_mults=(0.8, 0.9, 1.0, 1.1, 1.2)) -> list:
+    """실적 연동 회차 하나의 매출·손실률 민감도 — [(매출 배율, 손실률, 적용 배수, 주당 행사가격, 풋 원, 콜 원)].
+
+    손실률은 입력값 · 기준과 정확히 같음 · 기준 + 0.1%p 세 경우. 확률을 붙이지 않는다 — 결과는 시나리오별
+    금액일 뿐 평가금액에 반영되지 않는다. 다른 입력(주가·변동성·금리)은 그대로다.
+    """
+    raw = next((x for x in tm.sha_rows or [] if sha_row_defaults(x)["name"] == name), None)
+    if raw is None or not sha_row_defaults(raw)["perf"]:
+        raise ValueError(f"«{name}» 회차에 실적 연동 산식이 없습니다.")
+    pf0 = dict(sha_row_defaults(raw)["perf"])
+    rev0, thr = float(pf0["rev"]), float(pf0["thr"])
+    loss0 = max(0.0, -float(pf0["op"])/rev0)
+    out = []
+    for m in rev_mults:
+        for lab, loss in (("입력값", loss0), ("기준과 같음", thr), ("기준 + 0.1%p", thr + 0.001)):
+            pf = dict(pf0, rev=rev0*m, op=-loss*rev0*m)
+            t = sha_row_terms(tm, dict(raw, perf=pf))
+            R = sha_engine(t)
+            qp, qc = sha_qty(t)
+            px, mult, _ = sha_perf_calc(pf)
+            out.append((m, lab, loss, mult, px, R["put"]/100*t.K0*qp, R["call"]/100*t.K0*qc))
+    return out
 
 
 def sha_perf_price(revenue: float, deduct: float, loss_rate: float, threshold: float,
@@ -3109,7 +3153,7 @@ def sha_perf_price(revenue: float, deduct: float, loss_rate: float, threshold: f
     """
     if not shares > 0:
         raise ValueError("발행주식 총수를 0 보다 크게 입력하십시오.")
-    mult = mult_over if loss_rate > threshold else mult_else
+    mult = mult_over if round(loss_rate, 12) > round(threshold, 12) else mult_else
     return (revenue - deduct)*mult/shares, mult
 
 
@@ -3207,7 +3251,22 @@ def sha_row_issues(tm: Terms) -> list:
             out.append((k, "행사 시작일이 종료일보다 늦습니다."))
         if r["put_q"] <= 0 and r["call_q"] <= 0:
             out.append((k, "풋 수량과 콜 수량이 모두 0 입니다 — 평가할 권리가 없습니다."))
-        if r["price"] is None:
+        if r["perf"]:
+            # 실적 연동 — 주당 기준가격은 산식이 정한다. 산식 입력이 모자라면 막는다.
+            _miss = [nm for key, nm in (("rev", "매출액"), ("op", "영업손익"), ("thr", "기준 손실률"), ("hi", "초과 시 배수"),
+                                        ("lo", "이하 시 배수"), ("sh", "계약상 발행주식 총수"))
+                     if r["perf"].get(key) in (None, "")]
+            if _miss:
+                out.append((k, f"{k}의 실적 연동 행사가격 산식에서 {' · '.join(_miss)}을(를) 입력하십시오."))
+            else:
+                try:
+                    _px = sha_perf_calc(r["perf"])[0]
+                    if not _px > 0:
+                        out.append((k, f"{k}: 실적 연동 산식의 주당 행사가격이 {_px:,.2f}원입니다 — 매출액·차감액을 "
+                                       "확인하십시오 (계약에 없는 하한은 두지 않습니다)."))
+                except (ValueError, TypeError, ZeroDivisionError) as ex:
+                    out.append((k, f"{k}: {ex}"))
+        elif r["price"] is None:
             out.append((k, f"{k}의 주당 기준가격을 입력하십시오."))
         elif not r["price"] > 0:
             out.append((k, f"{k}의 주당 기준가격을 0 보다 크게 입력하십시오."))
@@ -3318,7 +3377,8 @@ def sha_row_terms(tm: Terms, raw: dict) -> Terms:
     else:
         t.sha_call_s, t.sha_call_e = 0.0, 0.0
     t.sha_put_f = t.sha_call_f = f
-    t.K0 = float(r["price"])
+    t.K0 = float(r["price"]) if not r["perf"] else sha_perf_calc(r["perf"])[0]
+    t._perf = r["perf"]
     t.sha_call_k = float(r["call_price"]) if r["call_price"] else -1.0
     t.sha_put_yield = float(r["rate"])
     t.sha_call_prem = float(r["call_rate"]) if r["call_rate"] is not None else float(r["rate"])
@@ -11860,6 +11920,30 @@ def _sha_block(wb, K, tm, R, formula, pre, name, links=None):
             for c_, v in enumerate(row):
                 put(A, r, 2+c_, v, size=8.5, border=True)
             r += 1
+    # ── 실적 연동 행사가격 — 산식 입력이 있으면 주당 기준가격(6행)이 이 계산을 따른다 ──
+    _pf = getattr(tm, "_perf", None)
+    if _pf:
+        _px, _mult, _loss = sha_perf_calc(_pf)
+        r += 1
+        sec(A, r, "6. 실적 연동 행사가격 — 주당 행사가격 = (매출액 − 차감액) × 적용 배수 ÷ 계약상 발행주식 총수", span=4); r += 1
+        kv(r, "행사연도 · 기준 실적연도 · 실적 구분",
+           f"{_pf.get('ey') or '?'} · {_pf.get('fy') or '?'} · {_pf.get('kind') or '구분 미입력'}", None,
+           "추정 실적이면 하나의 추정값으로 고정한 단순화다 — 매출·손실률 민감도는 앱에서 본다", yellow=False); r += 1
+        kv(r, "매출액 (원)", float(_pf["rev"]), N0, "", "prev"); r += 1
+        kv(r, "차감액 (원)", float(_pf.get("ded") or 0.0), N0, "계약 원문의 차감 조건", "pded"); r += 1
+        kv(r, "영업손익 (원, 손실은 음수)", float(_pf["op"]), N0, "부호 그대로 — 손실률은 아래에서 계산", "pop"); r += 1
+        kv(r, "영업손실률", V(_loss, f"=MAX(0,-{K_['pop']}/{K_['prev']})"), P2, "MAX(0, −영업손익 ÷ 매출액)", "ploss",
+           yellow=False); r += 1
+        kv(r, "기준 손실률", float(_pf["thr"]), P2, "이 값을 «초과» 해야 초과 시 배수 (같으면 이하 시 배수)", "pthr"); r += 1
+        kv(r, "초과 시 배수", float(_pf["hi"]), N4, "", "phi"); r += 1
+        kv(r, "이하 시 배수", float(_pf["lo"]), N4, "", "plo"); r += 1
+        kv(r, "적용 배수", V(_mult, f"=IF(ROUND({K_['ploss']},12)>ROUND({K_['pthr']},12),{K_['phi']},{K_['plo']})"), N4,
+           "", "pmult", yellow=False); r += 1
+        kv(r, "계약상 발행주식 총수 (주)", float(_pf["sh"]), N0, "계약 산식의 분모 — 평가에 쓰는 희석 주식수와 다르다", "psh"); r += 1
+        kv(r, "주당 행사가격 (원)", V(_px, f"=({K_['prev']}-{K_['pded']})*{K_['pmult']}/{K_['psh']}"), N2,
+           "계약에 없는 하한은 두지 않는다 — 가정 6행(주당 기준가격)이 이 값을 따른다", "ppx", yellow=False); r += 1
+        put(A, 6, 3, V(_px, f"={K_['ppx']}"), fmt=N2, size=9.5, align="right", border=True)
+        put(A, 6, 4, "실적 연동 산식 (아래 6 절) — 산식 입력을 바꾸면 따라온다", size=9, color=RPT["grey"], wrap=True)
 
     # ── 트리 시트 ──
     HEAD = ["날짜", "스텝(노드 번호)", "풋 행사 가능 (1=예)", "콜 행사 가능 (1=예)", "적격상장 스텝",
