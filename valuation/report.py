@@ -53,15 +53,22 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
             if k in cols:
                 tot[cols.index(k)] = sum(r[k] for r in summary['sha_rows'])
         sheet('회차별 결과', [cols] + [[r[k] for k in cols] for r in summary['sha_rows']] + [tot])
+        if summary.get('sha_recon'):
+            rc = list(summary['sha_recon'][0])
+            sheet('수량 대사', [rc] + [[r[k] for k in rc] for r in summary['sha_recon']])
         from .legacy import SHA_ROW_KEYS, sha_row_defaults
         heads = dict(name='평가 구분', start='행사 시작일', end='행사 종료일', style='행사 방식', freq='주기(개월)',
                      price='주당 기준가격(원)', rate='가격 가산율(연)', acc_from='가격 가산 기산일(비우면 계약일)',
                      put_q='풋 수량', call_q='콜 수량', kill='한쪽 행사 시 상대 권리 소멸(1)',
-                     link_q='같은 주식 물량(비우면 수량이 같을 때 전부)', call_start='콜 시작일(비우면 풋과 같음)',
+                     link_q='같은 주식 물량(비우면 수량이 같을 때 전부)', status='평가 대상 상태', side='확정된 거래',
+                     deal_px='확정 주당 매매대금(원)', settle='결제 예정일', cond_basis='조건부 평가 가정',
+                     cond_note='추가 조건 내용', pool='같은 주식 묶음', pool_cap='묶음 공통 한도(주)', call_start='콜 시작일(비우면 풋과 같음)',
                      call_end='콜 종료일', call_price='콜 기준가격(원)', call_rate='콜 가산율(연)',
                      sig='회차 변동성(비우면 공통)', rf='회차 무위험 금리', pdisc='회차 풋 할인율', price_note='가격 산식 기록')
-        sheet('회차별 입력', [[heads[k] for k in SHA_ROW_KEYS]] +
-              [[sha_row_defaults(r)[k] for k in SHA_ROW_KEYS] for r in summary['applied_terms']['sha_rows']])
+        heads['perf'] = '실적 연동 산식 (매출·차감·영업손익·기준·배수·주식수·연도)'
+        _cell = lambda v: (' · '.join(f'{k}={v[k]}' for k in v) if isinstance(v, dict) else v)
+        sheet('회차별 입력', [[heads.get(k, k) for k in SHA_ROW_KEYS]] +
+              [[_cell(sha_row_defaults(r)[k]) for k in SHA_ROW_KEYS] for r in summary['applied_terms']['sha_rows']])
     header = ['항목', '원본 입력', '적용값', '가정·선택 근거', '출처', '기본값 보충']
     assumptions = {row['field']: row for row in run.case.assumptions}
     for group, name in [('contract', '계약조건'), ('market', '시장자료'), ('method', '평가방법')]:
@@ -338,7 +345,7 @@ def append_basic_accounting(wb, run):
     if legacy.is_sha(t):
         # 세 당사자 — 발행회사 · 콜 권리자 · 풋 권리자. 원 단위(풋·콜 수량을 각각 곱한 값). 회차가 여럿이면 합계.
         items = r['rows'] if r.get('portfolio') else [dict(tm=t, R=r)]
-        comp = {k: sum(legacy.sha_components_krw(x['tm'], x['R'])[k] for x in items) for k in ('eq', 'put', 'call', 'gpv')}
+        comp = {k: sum(legacy.sha_entry_comp_krw(x)[k] for x in items) for k in ('eq', 'put', 'call', 'gpv')}
         lines = legacy.sha_account_lines(items[0]['tm'] if len(items) == 1 else t, items[0]['R'],
                                          has_call=any(x['R'].get('has_call') for x in items),
                                          gross=(None if len(items) == 1 else False))

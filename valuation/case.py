@@ -299,6 +299,8 @@ def inspect_case(case: Case) -> list[Issue]:
     multi = {"sha_writer": 2, "sha_disc": 2, "issuer_call": 2, "rfx_mode": 2,
              "carry": 3, "k_method": 2, "k_less_cpn": 2, "p_less_cpn": 2, "m_less_cpn": 2}
     for key, value in values.items():
+        if key == "sha_ipo_kind" and value == -1:
+            continue                     # 주주간계약 상장 종료 조건 미선택 — 상장 조항을 켜면 sha_ipo_issues 가 막는다
         if types[key] is int and key != "emb_approach":
             if value < (1 if key == "carry" else 0) or (key not in counts and value > multi.get(key, 1)):
                 add("error", "enum", key, "지원하지 않는 선택값입니다.")

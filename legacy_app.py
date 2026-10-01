@@ -1642,24 +1642,38 @@ if _shared_run is None:
                 format_func=lambda x: "풋 권리자 우선" if x == 0 else "콜 권리자 우선", key="sha_pc_order"))
 
             with st.expander("적격상장(Q-IPO) 연계", expanded=True):
-                t.ipo_on = int(st.checkbox("적격상장 조항을 격자에 넣는다",
+                t.ipo_on = int(st.checkbox("상장 조항을 격자에 넣는다",
                                            value=bool(t.ipo_on)))
                 if t.ipo_on:
-                    t.ipo_m = _sched_one(st, "적격상장 기한 (개월)", "적격상장 기한일", t.ipo_m, "qipom")
+                    _ik = st.selectbox("상장 조항의 종료 조건", [None, 1, 0],
+                                       index=[None, 1, 0].index(t.sha_ipo_kind if t.sha_ipo_kind in (0, 1) else None),
+                                       format_func=lambda x: ("고르십시오" if x is None else
+                                                              "실제 상장 완료 시 종료 (상장일·상장 가정일 — 주가와 무관)" if x == 1
+                                                              else "그 시점 주가가 기준을 넘으면 상장으로 봄 (주가 기준)"),
+                                       help="계약이 «실제 기업공개 완료 시 종료» 라면 실제 상장입니다. 주가가 올랐다는 "
+                                            "이유만으로 실제 상장 조건을 충족한 것으로 보지 않습니다.")
+                    t.sha_ipo_kind = -1 if _ik is None else int(_ik)
+                    t.ipo_m = _sched_one(st, "상장 시점 (개월)" if t.sha_ipo_kind == 1 else "적격상장 기한 (개월)",
+                                         "상장일 (실제 또는 가정)" if t.sha_ipo_kind == 1 else "적격상장 기한일", t.ipo_m, "qipom")
+                if t.ipo_on and t.sha_ipo_kind == 0:
                     t.ipo_min = st.number_input(
                         "적격 판정 최소 주가 (원)", value=float(t.ipo_min), step=100.0,
                         help="그 시점 주가가 이 값을 넘으면 적격상장이 이루어진 것으로 "
                              "봅니다. 계약의 「적격상장」 정의(공모가·시가총액 기준)를 "
                              "주당으로 환산해 넣으십시오.")
+                    st.caption("주가 기준 — 상장 성공은 **그 노드의 주가**가 최소 주가를 넘는지로 "
+                               "판정합니다. 계약이 실제 상장 완료를 조건으로 하면 이 방식을 쓰지 마십시오.")
+                if t.ipo_on:
                     t.sha_qipo_kill = int(st.selectbox(
-                        "적격상장이 되면", [0, 1], index=int(t.sha_qipo_kill),
+                        "상장하면", [0, 1], index=int(t.sha_qipo_kill),
                         format_func=lambda x: ("풋만 소멸 — 콜은 남는다" if x == 0
                                                else "풋·콜 모두 소멸"),
-                        help="적격상장하면 투자자가 시장에서 팔 수 있으므로 풋이 소멸하는 "
-                             "것이 보통입니다. 콜도 함께 끝나는지는 계약마다 다릅니다."))
-                    st.caption("상장 성공은 **그 노드의 주가**가 최소 주가를 넘는지로 "
-                               "판정합니다. 상장 확률을 따로 넣지 않습니다 — 확률은 격자가 "
-                               "이미 담고 있습니다.")
+                        help="상장하면 투자자가 시장에서 팔 수 있으므로 풋이 소멸하는 "
+                             "것이 보통입니다. 콜도 함께 끝나는지는 계약마다 다릅니다 — 풋 제한을 "
+                             "콜에 자동으로 적용하지 않습니다."))
+                    if t.sha_ipo_kind == 1:
+                        st.caption("실제 상장 — 상장일(또는 상장 가정일) 노드에서 주가와 무관하게 권리가 끝납니다. "
+                                   "상장 시점은 가정이므로 근거를 남기십시오.")
 
             with st.expander("의무자 · 할인율", expanded=True):
                 t.sha_writer = int(st.selectbox(
@@ -2174,8 +2188,13 @@ if is_sha(t):
             {"주당 기준가격": "{:,.2f}", "풋 수량": "{:,.0f}", "콜 수량": "{:,.0f}", "풋 1주당": "{:,.2f}",
              "콜 1주당": "{:,.2f}", "풋 전액 (원)": "{:,.0f}", "콜 전액 (원)": "{:,.0f}"}, na_rep=""),
             use_container_width=True, hide_index=True)
-        _names = [x["name"] for x in R["rows"]]
-        _x = R["rows"][_names.index(st.selectbox("아래 상세를 볼 회차", _names, key="_legacy_sha_row"))]
+        # 확정 거래 회차는 선택권 트리가 없다 — 결과 표와 조서의 확정 거래 시트에서 본다
+        _lat = [x for x in R["rows"] if not x["R"].get("deal")]
+        if not _lat:
+            st.info("모든 회차가 확정 거래(결제만 남은 물량)라 선택권 트리 상세가 없습니다. 조서의 확정 거래 시트를 보십시오.")
+            st.stop()
+        _names = [x["name"] for x in _lat]
+        _x = _lat[_names.index(st.selectbox("아래 상세를 볼 회차 (선택권이 남은 회차)", _names, key="_legacy_sha_row"))]
         t, R = _x["tm"], _x["R"]
         st.caption("아래 표는 고른 회차 하나의 계산입니다 — 100 기준은 그 회차의 주당 기준가격 100 입니다.")
     if R["qbad"]:
@@ -2203,11 +2222,11 @@ if is_sha(t):
                        "각각 평가합니다. 사채가 없으므로 순차 차감이 아닙니다. 100 기준은 "
                        "주당 기준가격 100 입니다.")
         m1, m2, m3 = st.columns(3)
-        m1.metric("풋옵션 (원)", f"{_P_ALL['put_krw']:,.0f}",
+        m1.metric("풋 — 주식 보유자가 상대에게 사 달라고 요구 (원)", f"{_P_ALL['put_krw']:,.0f}",
                   help="주식 보유자가 상대방에게 주식을 사 달라고 요구할 권리")
-        m2.metric("콜옵션 (원)", f"{_P_ALL['call_krw']:,.0f}",
+        m2.metric("콜 — 상대가 주식 보유자에게 팔라고 요구 (원)", f"{_P_ALL['call_krw']:,.0f}",
                   help="상대방이 주식 보유자에게 주식을 팔라고 요구할 권리. 콜이 없으면 0")
-        m3.metric("지분가치 (100 기준)", f"{_eqv:,.2f}",
+        m3.metric("보통주 가치 (100 기준)", f"{_eqv:,.2f}",
                   help="100 × 주가 ÷ 주당 기준가격. 주당 기준가격은 행사가격 계산의 출발 금액이지 주식의 "
                        "주당가치가 아닙니다 — 주식의 가치는 평가기준일 주가입니다.")
 

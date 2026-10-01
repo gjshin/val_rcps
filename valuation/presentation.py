@@ -54,6 +54,8 @@ LABELS = {
     'sha_writer': '풋 행사 시 주식매수 의무자', 'sha_disc': '주주간계약 풋 할인 방식', 'sha_spread': '주주간계약 신용스프레드(%p)',
     'sha_qipo_kill': '적격상장 시 소멸 권리', 'sha_kill': '한쪽 행사 시 같은 주식의 상대 권리',
     'sha_link_q': '같은 주식에 붙은 풋·콜 물량(주, -1은 미입력)',
+    'sha_hold_q': '평가기준일 보유주식수(주, -1은 미입력 — 넣으면 회차 합계를 점검)',
+    'sha_ipo_kind': '상장 조항의 종료 조건',
     'bs_target': '역산 목표(원금 100 기준)', 'bs_net': '역산 목표금액 기준',
     'prev_hold': '투자자 전기 장부금액(원금 100 기준, -1은 없음)',
     'd1_pl': '최초 인식 차이 처리', 'd1_reason': '최초 인식 차이를 당기손익으로 처리한 근거',
@@ -98,6 +100,7 @@ CHOICES = {
     'sha_disc': {0: '무위험 금리', 1: '위험 금리', 2: '무위험 금리 + 스프레드'},
     'sha_qipo_kill': {0: '풋만 소멸', 1: '풋·콜 모두 소멸'},
     'sha_kill': {0: '존속 (각자 판단)', 1: '소멸 (같은 주식 물량은 연계 판단)'},
+    'sha_ipo_kind': {1: '실제 상장 완료 시 종료 (상장일·상장 가정일 — 주가와 무관)', 0: '그 시점 주가가 기준을 넘으면 상장으로 봄 (주가 기준)'},
     'bs_net': {0: '콜 차감 전', 1: '콜 차감 후'},
     'd1_pl': {0: '이연 (기본 · 1109 B5.1.2A(2))', 1: '당기손익 (관측 가능한 시장자료만 사용 · B5.1.2A(1))'},
 }
@@ -112,9 +115,9 @@ LABELS.setdefault('input', '입력 점검')
 SHA_LABELS = {
     'd_issue': '계약일(가격 가산 기산일)', 'K0': '주당 기준가격(원)',
     'face_total': '계산기준금액(원) — 주당 기준가격 × 대상 주식수', 'd_mat': '평가 종료일(마지막 행사 가능일)',
-    'S0': '대상 주식 주당가치(원)',
+    'S0': '보통주 1주당 가치(원) — 평가기준일 주가',
     'pc_order': '동시 행사 우선권 (같은 날 풋·콜을 모두 행사하려 할 때)',
-    'sha_kill': '한쪽이 행사하면 같은 주식의 상대 권리는',
+    'sha_kill': '행사 후 소멸하는 권리 — 한쪽이 행사하면 같은 주식의 상대 권리는',
     'sha_link_q': '같은 주식에 붙은 풋·콜 물량(주) — 한쪽 행사로 함께 끝나는 물량',
     'sha_writer': '풋 매수 의무자 (풋이 행사되면 주식을 사 주는 쪽)',
     'sha_put_q': '풋 대상 주식수(주, -1은 계산기준금액 ÷ 기준가격)', 'sha_call_q': '콜 대상 주식수(주, -1은 계산기준금액 ÷ 기준가격)',
@@ -147,7 +150,7 @@ def display_value(key, value, issue_date=None, inst=None):
         return '미입력'
     if key in CHOICES:
         return choices(key, inst).get(value, str(value))
-    if key == 'sha_link_q' and value is not None and value < 0:
+    if key in ('sha_link_q', 'sha_hold_q') and value is not None and value < 0:
         return '미입력 (풋·콜 수량이 같으면 전부)'
     if key == 'k_lock_w' and value < 0:
         return '콜 대상 비율과 같음'

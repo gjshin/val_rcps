@@ -45,7 +45,7 @@ BASE = {
                  issue_cost=2e8),
     "SHA":  dict(inst="SHA", d_issue="2025-03-31", d_base="2025-09-30", d_mat="2030-03-31", gap_m=3.0,
                  sha_put_s=36., sha_put_e=60., sha_call_s=12., sha_call_e=36., ipo_on=1, ipo_m=24.,
-                 ipo_px=1200., ipo_min=600.),
+                 ipo_px=1200., ipo_min=600., sha_ipo_kind=0),
 }
 
 # 값 하나를 고르려면 다른 칸도 따라 바뀌어야 하는 갈래 — 그 값이 «살아 있게» 하는 최소 동반 설정

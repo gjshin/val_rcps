@@ -24,9 +24,11 @@ CASES = [
     ("기본", {}),
     ("콜 없음", dict(sha_call_s=0., sha_call_e=0.)),
     ("단리 보장", dict(sha_put_cmp=0, sha_call_cmp=0)),
-    ("적격상장 36개월", dict(ipo_on=1, ipo_m=36., ipo_min=1200.)),
+    ("적격상장 36개월", dict(ipo_on=1, ipo_m=36., ipo_min=1200., sha_ipo_kind=0)),
+    # 실제 상장 완료(사건) — 상장일 노드에서 주가와 무관하게 권리 종료
+    ("상장 · 실제 상장일 36개월 (사건)", dict(ipo_on=1, ipo_m=36., ipo_min=1200., sha_ipo_kind=1)),
     ("적격상장 · 콜 존속",
-     dict(ipo_on=1, ipo_m=36., ipo_min=1200., sha_qipo_kill=0)),
+     dict(ipo_on=1, ipo_m=36., ipo_min=1200., sha_qipo_kill=0, sha_ipo_kind=0)),
     ("무위험 할인", dict(sha_disc=0)),
     ("무위험 + 스프레드", dict(sha_disc=2, sha_spread=.04)),
     ("중간평가", dict(d_base="2026-03-31")),
@@ -38,7 +40,7 @@ CASES = [
     # 수식 조서에 안 넣었던 적이 있어(조서를 풀면 다른 값이 나왔다) 여기 심는다.
     ("상호소멸", dict(sha_kill=1)),
     ("상호소멸 · 적격상장",
-     dict(sha_kill=1, ipo_on=1, ipo_m=36., ipo_min=1200.)),
+     dict(sha_kill=1, ipo_on=1, ipo_m=36., ipo_min=1200., sha_ipo_kind=0)),
     ("상호소멸 · 콜 우선", dict(sha_kill=1, pc_order=1)),
     # ── SHA 점검 (2026-09-30) — 엑셀이 엔진을 따라오지 못하던 자리 ──
     # 위험중립확률에서 배당수익률이 빠져 있었다 (엔진만 뺐다).
@@ -65,6 +67,14 @@ CASES = [
     ("연계 · 풋 의무자 = 발행회사", dict(sha_kill=1, sha_writer=1)),
     # 콜을 끄고 콜 수량을 남겨 둔 계약 — 계약 대상 주식은 풋 수량만 (없는 권리의 수량을 세지 않는다)
     ("풋만 · 상대 권리 소멸 켬 · 콜 수량 남김", dict(sha_kill=1, sha_call_s=0., sha_call_e=0.)),
+    # 주가 = 풋 · 콜 행사가격 · 같은 주식 · 지금·만기 행사 · 양 권리 종료 · 1년 1구간 · 연속 5% → 순가치 0 (가상)
+    ("같은 가격 · 즉시 행사 · 순가치 0", dict(d_mat="2026-03-31", gap_m=12., sig=0.1823215567939546,
+                                     rf_curve=[(1, 0.05127109637602412), (5, 0.05127109637602412)],
+                                     cr_curve=[(1, 0.05127109637602412), (5, 0.05127109637602412)],
+                                     y_type="spot", cmp_rf=1, cmp_cr=1, sha_disc=0,
+                                     sha_put_s=0., sha_put_e=12., sha_put_f=12., sha_put_yield=0.,
+                                     sha_call_s=0., sha_call_e=12., sha_call_f=12., sha_call_prem=0.,
+                                     sha_kill=1, pc_order=1)),
 ]
 BASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2025-03-31",
             d_base="2025-03-31", d_mat="2030-03-31", gap_m=6.0, sig=0.40,
@@ -92,6 +102,15 @@ PCASES = [
      dict(sha_rows=[dict(ROWS[0], kill=1), dict(ROWS[1], style="periodic", freq=3., kill=1, rate=.03)])),
     ("회차 하나 · 수량 다름 · 같은 주식 물량 연계",
      dict(sha_rows=[dict(ROWS[0], put_q=60_000., call_q=45_000., kill=1, link_q=45_000.)])),
+    # 평가 대상 상태 — 미행사 · 확정 거래(미결제) · 결제 완료 · 조건부(미충족 가정) · 실적 연동 가격 (가상)
+    ("회차 상태 섞임 · 확정 거래 · 결제 완료 · 조건부 · 실적 연동",
+     dict(sha_rows=[ROWS[0],
+                    dict(name="확정 거래", status="agreed", side="put", deal_px=1050., settle="2026-03-31",
+                         put_q=20_000., call_q=0.),
+                    dict(name="결제 완료", status="settled", put_q=10_000., call_q=0.),
+                    dict(ROWS[1], name="조건부", status="cond", cond_basis="unmet", put_q=15_000., call_q=0.,
+                         perf=dict(rev=3e9, ded=1.5e8, op=-3e8, thr=.10, hi=1.0, lo=1.5, sh=2.7e6, fy=2026, ey=2027,
+                                   kind="추정"))])),
 ]
 PBASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2021-11-15", d_base="2025-09-30",
              d_mat="2027-12-31", sig=.60, gap_m=1.0, grid_days=7., sha_disc=1,
@@ -161,7 +180,7 @@ def main():
         nonlocal bad
         A1 = None if multi else G["sha_accounts"](t, R)
         if multi:
-            comp = {k: sum(G["sha_components_krw"](x["tm"], x["R"])[k] for x in R["rows"]) for k in
+            comp = {k: sum(G["sha_entry_comp_krw"](x)[k] for x in R["rows"]) for k in
                     ("eq", "put", "call", "gpv")}
             has_call = any(x["R"]["has_call"] for x in R["rows"])
             lines = G["sha_account_lines"](t, R["rows"][0]["R"], has_call=has_call, gross=False)
@@ -221,8 +240,9 @@ def main():
             vw, fx = vwb[sh], got.get(sh, {})
             line(f"{x['name']} 풋 100", fx.get("C7"), vw.cell(7, 3).value, x["R"]["put"], 1e-6)
             line(f"{x['name']} 콜 100", fx.get("C8"), vw.cell(8, 3).value, x["R"]["call"], 1e-6)
-            line(f"{x['name']} 풋 원", fx.get("F7"), vw.cell(7, 6).value, x["put_krw"], "won")
-            line(f"{x['name']} 콜 원", fx.get("F8"), vw.cell(8, 6).value, x["call_krw"], "won")
+            # 회차 결과 시트는 «조건 충족 시» 금액이다 — 미충족 가정이면 회차 합계의 반영(0)이 뺀다
+            line(f"{x['name']} 풋 원", fx.get("F7"), vw.cell(7, 6).value, x["put_krw_met"], "won")
+            line(f"{x['name']} 콜 원", fx.get("F8"), vw.cell(8, 6).value, x["call_krw_met"], "won")
         tr = 5 + len(P["rows"])
         vw, fx = vwb["회차 합계"], got.get("회차 합계", {})
         line("합계 풋 원", fx.get(f"J{tr}"), vw.cell(tr, 10).value, P["put_krw"], "won")

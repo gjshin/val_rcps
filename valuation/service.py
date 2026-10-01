@@ -191,11 +191,17 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
                               if legacy.is_rcps(terms) else
                               {k: v * terms.K0 / 100 for k, v in amounts.items()}
                               if legacy.is_sha(terms) and not raw.get("portfolio") else None),
-        "sha_rows": ([{"회차": x["name"], "행사기간": x["window"], "주당 기준가격": x["K"],
+        "sha_rows": ([{"회차": x["name"], "평가 대상 상태": legacy.SHA_ROW_STATUS.get(x.get("status", "open"), ""),
+                       "행사기간": x["window"], "주당 기준가격": x["K"],
                        "풋 수량": x["qp"], "콜 수량": x["qc"],
                        "같은 주식 물량 (연계 판단)": float(x["R"].get("link_q") or 0.0), "풋 1주당": x["put_ps"],
-                       "콜 1주당": x["call_ps"], "풋 전액": x["put_krw"], "콜 전액": x["call_krw"]}
+                       "콜 1주당": x["call_ps"], "반영": int(x.get("incl", 1.0)), "풋 전액": x["put_krw"],
+                       "콜 전액": x["call_krw"], "조건 충족 시 풋 전액": x.get("put_krw_met", x["put_krw"]),
+                       "조건 충족 시 콜 전액": x.get("call_krw_met", x["call_krw"])}
                       for x in raw["rows"]] if legacy.is_sha(terms) and raw.get("portfolio") else None),
+        "sha_recon": ([{"회차": a, "평가 대상 상태": b, "풋 주식수": c, "콜 주식수": d, "계약 대상 주식": e,
+                        "평가 반영": f, "같은 주식 묶음": g} for a, b, c, d, e, f, g in raw.get("recon", [])]
+                      if legacy.is_sha(terms) and raw.get("portfolio") else None),
         "grid": {"intervals": terms.n, "average_days": terms.T*365/terms.n,
                  "requested_months": terms.gap_m, "requested_days": terms.grid_days,
                  "type": "day_target_equal_time" if terms.grid_days else "legacy_equal_time"},
