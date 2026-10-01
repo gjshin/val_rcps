@@ -304,8 +304,11 @@ def inspect_case(case: Case) -> list[Issue]:
                 add("error", "enum", key, "지원하지 않는 선택값입니다.")
     if not 0 <= values.get("k_w", 0) <= 1:
         add("error", "fraction", "k_w", "콜 대상 비율은 0~1이어야 합니다.")
+    # 콜이 꺼졌거나(콜 한도 0) 의무보유가 꺼지면 의무보유 물량은 쓰이지 않는다 — 화면에서 숨겨진 예전 값이
+    # 정상 입력을 막지 않게 콜과 의무보유가 모두 켜져 있을 때만 본다 (lock_share 도 그때만 쓴다).
     _lw = values.get("k_lock_w", -1.0)
-    if _lw >= 0 and _lw > values.get("k_w", 0) + 1e-12:
+    if (values.get("k_w", 0) > 0 and int(values.get("k_hold", 1)) == 1
+            and _lw >= 0 and _lw > values.get("k_w", 0) + 1e-12):
         add("error", "fraction", "k_lock_w",
             "의무보유 물량 비율이 콜 대상 비율보다 큽니다. 콜 대상 밖 물량의 의무보유는 이 모형이 반영하지 않습니다 — "
             "콜 대상 안에서 묶인 물량만 입력하십시오 (비우면 콜 대상 전부).")

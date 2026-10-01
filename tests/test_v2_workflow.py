@@ -309,3 +309,12 @@ def test_embedded_approach_only_accepts_1_or_2(value):
     with pytest.raises(CaseError) as exc:
         calculate(case)
     assert any(i.code == "enum" and i.field == "emb_approach" for i in exc.value.issues)
+
+
+def test_dormant_lock_share_does_not_block_when_call_or_hold_is_off():
+    """의무보유 물량을 넣은 뒤 콜이나 의무보유를 끄면, 숨겨진 예전 값이 평가를 막지 않는다."""
+    for over in (dict(k_w=0.), dict(k_hold=0, k_w=.20)):
+        case = _cb_case(k_lock_w=.30, **over)
+        assert not [i for i in inspect_case(case) if i.field == "k_lock_w"]
+    case = _cb_case(k_w=.20, k_lock_w=.30)
+    assert any(i.field == "k_lock_w" for i in inspect_case(case))
