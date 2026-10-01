@@ -52,7 +52,8 @@ LABELS = {
     'sha_call_q': '콜 대상 주식수(-1은 계산기준금액 ÷ 기준가격)', 'sha_side': '순액을 보는 관점',
     'sha_rows': '주주간계약 회차별 표',
     'sha_writer': '풋 행사 시 주식매수 의무자', 'sha_disc': '주주간계약 풋 할인 방식', 'sha_spread': '주주간계약 신용스프레드(%p)',
-    'sha_qipo_kill': '적격상장 시 소멸 권리', 'sha_kill': '주주간계약 권리의 상호소멸',
+    'sha_qipo_kill': '적격상장 시 소멸 권리', 'sha_kill': '한쪽 행사 시 같은 주식의 상대 권리',
+    'sha_link_q': '같은 주식에 붙은 풋·콜 물량(주, -1은 미입력)',
     'bs_target': '역산 목표(원금 100 기준)', 'bs_net': '역산 목표금액 기준',
     'prev_hold': '투자자 전기 장부금액(원금 100 기준, -1은 없음)',
     'd1_pl': '최초 인식 차이 처리', 'd1_reason': '최초 인식 차이를 당기손익으로 처리한 근거',
@@ -96,7 +97,7 @@ CHOICES = {
     'sha_side': {0: '콜 권리자 관점 (콜 − 풋)', 1: '풋 권리자 관점 (풋 − 콜)'},
     'sha_disc': {0: '무위험 금리', 1: '위험 금리', 2: '무위험 금리 + 스프레드'},
     'sha_qipo_kill': {0: '풋만 소멸', 1: '풋·콜 모두 소멸'},
-    'sha_kill': {0: '독립', 1: '한쪽 행사 시 다른 권리 소멸'},
+    'sha_kill': {0: '존속 (각자 판단)', 1: '소멸 (같은 주식 물량은 연계 판단)'},
     'bs_net': {0: '콜 차감 전', 1: '콜 차감 후'},
     'd1_pl': {0: '이연 (기본 · 1109 B5.1.2A(2))', 1: '당기손익 (관측 가능한 시장자료만 사용 · B5.1.2A(1))'},
 }
@@ -112,7 +113,25 @@ SHA_LABELS = {
     'd_issue': '계약일(가격 가산 기산일)', 'K0': '주당 기준가격(원)',
     'face_total': '계산기준금액(원) — 주당 기준가격 × 대상 주식수', 'd_mat': '평가 종료일(마지막 행사 가능일)',
     'S0': '대상 주식 주당가치(원)',
+    'pc_order': '동시 행사 우선권 (같은 날 풋·콜을 모두 행사하려 할 때)',
+    'sha_kill': '한쪽이 행사하면 같은 주식의 상대 권리는',
+    'sha_link_q': '같은 주식에 붙은 풋·콜 물량(주) — 한쪽 행사로 함께 끝나는 물량',
+    'sha_writer': '풋 매수 의무자 (풋이 행사되면 주식을 사 주는 쪽)',
+    'sha_put_q': '풋 대상 주식수(주, -1은 계산기준금액 ÷ 기준가격)', 'sha_call_q': '콜 대상 주식수(주, -1은 계산기준금액 ÷ 기준가격)',
 }
+# 주주간계약 화면의 선택지 — 사채의 «투자자 상환청구 · 발행자 콜» 이 아니라 권리자로 부른다.
+SHA_CHOICES = {
+    'pc_order': {0: '풋 권리자 우선', 1: '콜 권리자 우선'},
+    'sha_kill': {0: '그대로 남는다 — 각 권리자가 자기 권리만 보고 판단', 1: '함께 끝난다 — 같은 주식 물량은 소멸 권리까지 보고 판단'},
+    'sha_writer': {0: '콜 권리자(상대 주주)', 1: '대상회사(발행회사)', 2: '상대 주주·대상회사 연대'},
+}
+
+
+def choices(key, inst=None):
+    """선택지 — 주주간계약이면 그 상품의 이름으로."""
+    if inst == 'SHA' and key in SHA_CHOICES:
+        return SHA_CHOICES[key]
+    return CHOICES[key]
 
 
 def label(key, inst=None):
@@ -123,11 +142,13 @@ def label(key, inst=None):
     return LABELS.get(key, key)
 
 
-def display_value(key, value, issue_date=None):
+def display_value(key, value, issue_date=None, inst=None):
     if value is None:
         return '미입력'
     if key in CHOICES:
-        return CHOICES[key].get(value, str(value))
+        return choices(key, inst).get(value, str(value))
+    if key == 'sha_link_q' and value is not None and value < 0:
+        return '미입력 (풋·콜 수량이 같으면 전부)'
     if key == 'k_lock_w' and value < 0:
         return '콜 대상 비율과 같음'
     if key == 'rfx_first' and not value:

@@ -86,8 +86,8 @@ def coverage_rows(case, applied=None):
         ('sha', '주주간계약 풋·콜', ['sha_put_s', 'sha_put_e', 'sha_put_yield', 'sha_call_s', 'sha_call_e', 'sha_call_prem', 'sha_writer', 'sha_disc'])]
     rows = []
     for key, title, fields in groups:
-        rows.append(dict(id=key, title=title, inputs=' / '.join(f'{label(k)}: {display_value(k, values[k], values["d_issue"])}' for k in fields),
-                         applied_inputs=' / '.join(f'{label(k)}: {display_value(k, applied[k], applied["d_issue"])}' for k in fields) if applied else '평가 실행 후 표시',
+        rows.append(dict(id=key, title=title, inputs=' / '.join(f'{label(k)}: {display_value(k, values[k], values["d_issue"], values.get("inst"))}' for k in fields),
+                         applied_inputs=' / '.join(f'{label(k)}: {display_value(k, applied[k], applied["d_issue"], applied.get("inst"))}' for k in fields) if applied else '평가 실행 후 표시',
                          clause='', capability='기본 모형의 입력값. 계약과의 일치·비적용 여부를 확인하십시오.', right=None))
     for right in case.additional_rights:
         key = 'right:' + digest([right['kind'], right['clause']])[:20]

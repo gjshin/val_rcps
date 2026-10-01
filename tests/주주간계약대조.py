@@ -56,6 +56,15 @@ CASES = [
     # 풋·콜 대상 주식수가 다르고 콜 기준가격이 다른 계약
     ("풋·콜 수량 다름 · 풋 권리자 관점", dict(sha_put_q=6_190_690., sha_call_q=4_643_000., sha_side=1)),
     ("콜 기준가격 다름", dict(sha_call_k=1100., sha_call_prem=.05)),
+    # 같은 주식 물량의 연계 판단 — 수량이 달라 풋만·콜만 물량이 따로 남는 계약 (가상 수치)
+    ("연계 · 풋 많음 · 콜 권리자 우선", dict(sha_kill=1, sha_put_q=600_000., sha_call_q=450_000., sha_link_q=450_000.,
+                                    pc_order=1)),
+    ("연계 · 콜 많음 · 풋 권리자 우선", dict(sha_kill=1, sha_put_q=300_000., sha_call_q=500_000., sha_link_q=300_000.)),
+    ("연계 · 같은 가격 7% · 같은 기간", dict(sha_kill=1, sha_put_yield=.07, sha_call_prem=.07, sha_call_s=36.,
+                                     sha_call_e=60., pc_order=1)),
+    ("연계 · 풋 의무자 = 발행회사", dict(sha_kill=1, sha_writer=1)),
+    # 콜을 끄고 콜 수량을 남겨 둔 계약 — 계약 대상 주식은 풋 수량만 (없는 권리의 수량을 세지 않는다)
+    ("풋만 · 상대 권리 소멸 켬 · 콜 수량 남김", dict(sha_kill=1, sha_call_s=0., sha_call_e=0.)),
 ]
 BASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2025-03-31",
             d_base="2025-03-31", d_mat="2030-03-31", gap_m=6.0, sig=0.40,
@@ -81,6 +90,8 @@ PCASES = [
           d_mat="2029-06-10", S0=960., sig=.30, grid_days=14.)),
     ("회차 둘 · 상호소멸 · 정기",
      dict(sha_rows=[dict(ROWS[0], kill=1), dict(ROWS[1], style="periodic", freq=3., kill=1, rate=.03)])),
+    ("회차 하나 · 수량 다름 · 같은 주식 물량 연계",
+     dict(sha_rows=[dict(ROWS[0], put_q=60_000., call_q=45_000., kill=1, link_q=45_000.)])),
 ]
 PBASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2021-11-15", d_base="2025-09-30",
              d_mat="2027-12-31", sig=.60, gap_m=1.0, grid_days=7., sha_disc=1,
@@ -147,6 +158,7 @@ def main():
 
     def accounts(got, vw, t, R, multi):
         """회계처리 시트 — 세 관점 표의 모든 숫자 칸이 엔진(sha_accounts)과 같은가."""
+        nonlocal bad
         A1 = None if multi else G["sha_accounts"](t, R)
         if multi:
             comp = {k: sum(G["sha_components_krw"](x["tm"], x["R"])[k] for x in R["rows"]) for k in
@@ -161,7 +173,12 @@ def main():
         for who in G["SHA_PARTIES"]:
             r += 2
             for k, (nm, vk) in enumerate(AK[who][0]):
-                if not multi:
+                if not multi and A1[who][0][k][1] is None:
+                    # 주식수가 달라 100 기준 순액을 싣지 않는 칸 — 두 조서 모두 숫자가 아니어야 한다
+                    if isinstance(ws.cell(r, 3).value, (int, float)):
+                        print(f"   회계 {who[:4]} {nm[:10]} 100 — 주식수가 다른데 100 기준 순액이 숫자로 실림 ★")
+                        bad += 1
+                elif not multi:
                     line(f"회계 {who[:4]} {nm[:10]} 100", fx.get(f"C{r}"), ws.cell(r, 3).value, A1[who][0][k][1], 1e-6)
                 line(f"회계 {who[:4]} {nm[:10]} 원", fx.get(f"D{r}"), ws.cell(r, 4).value, vk, "won")
                 r += 1
@@ -182,7 +199,7 @@ def main():
         rows = [("지분가치", "C6", 6, 3, eqv),
                 ("풋", "C7", 7, 3, R["put"]),
                 ("콜", "C8", 8, 3, R["call"]),
-                ("지분+풋−콜", "C9", 9, 3, eqv + R["put"] - R["call"]),
+                ("지분+풋−콜 원", "F9", 9, 6, eqv*kp*G["sha_contract_shares"](t) + R["put"]*kp*qp - R["call"]*kp*qc),
                 ("총액 부채", "C15", 15, 3, gp["pv"] if gp else 0.0),
                 ("풋 원", "F7", 7, 6, R["put"]*kp*qp),
                 ("콜 원", "F8", 8, 6, R["call"]*kp*qc)]

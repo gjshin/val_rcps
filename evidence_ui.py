@@ -27,7 +27,7 @@ def main():
     st.markdown('**검토 목적**')
     st.write(card['explanation'])
     st.markdown('**관련 입력값**')
-    st.dataframe([{'항목': label(k), '현재 적용값': display_value(k, v, case.contract.get('d_issue')), '출처':case.sources.get(k,'')} for k,v in card['inputs'].items()], hide_index=True)
+    st.dataframe([{'항목': label(k), '현재 적용값': display_value(k, v, case.contract.get('d_issue'), case.facts().get('inst')), '출처':case.sources.get(k,'')} for k,v in card['inputs'].items()], hide_index=True)
     linked = findings_for(case, card['id'])
     for row in linked:
         st.markdown('**계약 검토안: ' + row['document'] + ' · ' + row['clause'] + '**')

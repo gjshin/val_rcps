@@ -197,7 +197,12 @@ def run_sha(G, t):
     C = {}
     C["finite"] = (fin(R["put"]) and fin(R["call"]), f"풋 {R['put']:.4f} 콜 {R['call']:.4f}")
     C["q_in_01"] = (not R["qbad"], f"q ∈ [{R['qmin']:.4f}, {R['qmax']:.4f}]")
-    C["put_ge_0"] = (R["put"] >= -TOL, f"풋 {R['put']:.6f}")
+    if R.get("linked") and int(t.sha_writer) != 0:
+        # 같은 주식 물량 · 풋 의무자(대상회사) ≠ 콜 권리자 — 풋 권리자는 상대 콜을 끝내려고 손해 보는 풋도 행사할 수
+        # 있다. 풋 표시금액은 풋 권리자의 순액이라 음수일 수 있다 (의사결정규칙 §9).
+        C["put_ge_0"] = (True, f"풋 {R['put']:.6f} — 연계 · 풋 의무자 대상회사라 음수 가능")
+    else:
+        C["put_ge_0"] = (R["put"] >= -TOL, f"풋 {R['put']:.6f}")
     C["call_ge_0"] = (R["call"] >= -TOL, f"콜 {R['call']:.6f}")
     # 풋은 어느 노드에서든 행사금액을 넘을 수 없다 (지분 ≥ 0)
     pmax = max(R["pk"](i) for i in range(R["n"] + 1))

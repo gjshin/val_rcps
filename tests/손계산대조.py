@@ -2301,11 +2301,208 @@ def test_sha_review_hand():
              len({b - a for a, b in zip(sorted(want), sorted(want)[1:])}) > 1)
 
 
+def _sha_game_oracle(t, R, same, pfirst):
+    """같은 주식 물량의 행사 판단을 엔진과 따로 다시 푼다 — (풋, 콜, 판단 격자).
+
+    풋 권리자는 풋을 사고 콜을 판 사람이라 «지금 풋 행사 = 풋 행사금액 − 지분가치» 를 «계속 = 풋 − 콜» 과 견준다.
+    콜 권리자가 풋 의무자이면(same) 거꾸로 «지분가치 − 콜 행사금액» 을 «콜 − 풋» 과 견주고, 아니면 자기 콜만 본다.
+    거래가 일어나면 풋 권리자가 받는 몫 MAX(가격 − 지분, 0) 은 풋 할인율로, 상대가 받는 몫은 무위험으로 할인한다.
+    """
+    n, dt_, u, d = R["n"], R["dt"], R["u"], R["d"]
+    T = G["SHA_SETTLE_TOL"]
+    e = lambda i, j: 100*t.S0*u**j*d**(i-j)/t.K0
+    P = [0.0]*(n+1); C = [0.0]*(n+1); DEC = [None]*(n+1)
+    for i in range(n, -1, -1):
+        nP, nC, nD = [], [], []
+        for j in range(i+1):
+            if i == n:
+                pc = cc = 0.0
+            else:
+                q = R["qi"](i)
+                pc = (q*P[j+1] + (1-q)*P[j])*math.exp(-R["pdisc"](i)*dt_)
+                cc = (q*C[j+1] + (1-q)*C[j])*math.exp(-R["rf"](i)*dt_)
+            ev = e(i, j)
+            want_p = want_c = False
+            if R["p_on"](i):
+                gain, keep = R["pk"](i) - ev, pc - cc
+                want_p = gain >= keep - T and (gain > T or keep < -T)
+            if R["c_on"](i):
+                gain = ev - R["ck"](i)
+                if same:
+                    keep = cc - pc
+                    want_c = gain >= keep - T and (gain > T or keep < -T)
+                else:
+                    want_c = gain > T and gain >= cc - T
+            if want_p and want_c:
+                want_p, want_c = pfirst, not pfirst
+            if want_p:
+                x = R["pk"](i)
+                v = ((max(x-ev, 0.0), max(ev-x, 0.0)) if same else (x-ev, 0.0)); dd = "put"
+            elif want_c:
+                x = R["ck"](i)
+                v = ((max(x-ev, 0.0), max(ev-x, 0.0)) if same else (0.0, ev-x)); dd = "call"
+            else:
+                v = (pc, cc); dd = "hold"
+            nP.append(v[0]); nC.append(v[1]); nD.append(dd)
+        P, C = nP, nC; DEC[i] = nD
+    return P[0], C[0], DEC
+
+
+def _sha_reach(R, DEC):
+    """판단 격자를 앞으로 따라가 «거래가 일어나는 노드» 의 위험중립확률을 낸다 — {(i, j): 확률}."""
+    n = R["n"]; live = {0: 1.0}; out = {}
+    for i in range(n+1):
+        nxt = {}
+        for j, pr in live.items():
+            if DEC[i][j] != "hold":
+                out[(i, j)] = pr; continue
+            if i == n: continue
+            q = R["qi"](i)
+            nxt[j+1] = nxt.get(j+1, 0.0) + pr*q
+            nxt[j] = nxt.get(j, 0.0) + pr*(1-q)
+        live = nxt
+    return out
+
+
+def test_sha_linked_conditions():
+    """주주간계약 — 계약조건별 행사 판단 (가상 수치, 엔진과 따로 다시 푼 값과 견준다).
+
+    (가) 80 · 100 · 107: 콜 권리자가 지금 외가격 콜을 행사한다 (기다리면 상대 풋으로 27 을 잃는다) → 풋 20 · 콜 0.
+    (나) 풋만 · 콜만 계약은 연계 판단 없이 따로 잰 값과 같다.
+    (다) 상대 권리 존속 — 따로 잰 풋 · 콜과 같다.
+    (라) 같은 물량 상대 권리 소멸 — 다시 푼 판단과 같고, 행사 노드에 두 권리가 함께 남지 않는다.
+    (마) 수량 다름 — 같은 주식 물량 + 풋만 물량으로 나눈 합. 콜 행사 뒤 남는 풋 물량은 자기 권리로 계속 행사한다.
+    (바) 행사가격 · 기간 다름 · 우선권 다름 · 풋 의무자 = 대상회사 — 다시 푼 판단과 같다.
+    (사) 같은 행사가격 — 첫 행사일에 반드시 거래 → 풋 · 콜 = 첫 행사일 만기 유럽형 (손계산 식).
+    (아) 신용위험 — 풋 = 거래 노드 확률 × MAX(가격 − 지분, 0) × 풋 할인, 콜은 무위험 할인 (판단 격자를 따라 직접 합산).
+    (자) 행사기간 전 · 만기 · 지원하지 않는 조건(연대 의무자의 연계)과 같은 주식 물량 누락은 막는다.
+    """
+    print("\n[50] 주주간계약 — 계약조건별 연계 행사 판단")
+    zero = [(1, 0.0), (5, 0.0)]
+    # (가)
+    t = Terms(inst="SHA", K0=100., S0=80., sig=1e-4, d_issue="2025-01-01", d_base="2025-01-01",
+              d_mat="2026-01-01", gap_m=12., rf_curve=zero, cr_curve=zero, y_type="spot", sha_disc=0,
+              sha_put_s=0., sha_put_e=12., sha_put_f=12., sha_call_s=0., sha_call_e=12., sha_call_f=12.,
+              sha_put_yield=.07, sha_call_prem=.07, sha_put_q=1., sha_call_q=1., sha_kill=1, sha_writer=0)
+    derive(t); R = G["sha_engine"](t)
+    chk("(가) 80·100·107 연계 — 풋 = 100 − 80", R["put"], 20.0, 1e-3)
+    chk("(가) 80·100·107 연계 — 콜 = 0", R["call"], 0.0, 1e-9)
+    chk_bool("(가) 평가기준일 노드의 판단 = 콜 (외가격 콜을 지금 행사)", R["DEC"][0][0] == "call")
+    t0 = Terms(**{**G["asdict"](t), "sha_kill": 0}); derive(t0); R0 = G["sha_engine"](t0)
+    chk("(가) 상대 권리가 남으면 — 풋 = 107 − 80 (기다린다)", R0["put"], 27.0, 1e-3)
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    base = dict(inst="SHA", K0=1000., S0=900., sig=.40, d_issue="2025-01-01", d_base="2025-01-01",
+                d_mat="2029-01-01", gap_m=3., rf_curve=RF, cr_curve=CR, sha_disc=1,
+                sha_put_s=12., sha_put_e=48., sha_put_f=3., sha_call_s=12., sha_call_e=48., sha_call_f=3.,
+                sha_put_yield=.07, sha_call_prem=.07, sha_put_q=100., sha_call_q=100., sha_kill=1, sha_writer=0,
+                pc_order=1)
+    mk = lambda **o: (lambda tt: (derive(tt), tt)[1])(Terms(**{**base, **o}))
+    # (나) 풋만 · 콜만
+    tp = mk(sha_call_s=0., sha_call_e=0.); Rp = G["sha_engine"](tp)
+    tpi = mk(sha_call_s=0., sha_call_e=0., sha_kill=0); Rpi = G["sha_engine"](tpi)
+    chk_bool("(나) 풋만 — 연계 판단 없음", not Rp["linked"])
+    chk("(나) 풋만 = 따로 잰 풋", Rp["put"], Rpi["put"], 1e-12)
+    chk("(나) 풋만 · 콜 수량이 남아 있어도 계약 대상 주식 = 풋 수량", G["sha_contract_shares"](tp), 100., 1e-12)
+    tc = mk(sha_put_s=99., sha_put_e=0.); Rc = G["sha_engine"](tc)
+    tci = mk(sha_put_s=99., sha_put_e=0., sha_kill=0); Rci = G["sha_engine"](tci)
+    chk_bool("(나) 콜만 — 연계 판단 없음", not Rc["linked"])
+    chk("(나) 콜만 = 따로 잰 콜", Rc["call"], Rci["call"], 1e-12)
+    # (다) 상대 권리 존속
+    ti = mk(sha_kill=0); Ri = G["sha_engine"](ti)
+    chk("(다) 존속 — 풋 = 풋만 계약의 풋", Ri["put"], Rpi["put"], 1e-12)
+    chk("(다) 존속 — 콜 = 콜만 계약의 콜", Ri["call"], Rci["call"], 1e-12)
+    # (라) 같은 물량 소멸 · (바) 조건을 바꿔 가며 — 다시 푼 판단과 같은가
+    variants = [("(라) 같은 물량 · 같은 가격 · 콜 권리자 우선", {}),
+                ("(바) 콜 가산율 10% · 콜 기간 24~60개월", dict(sha_call_prem=.10, sha_call_s=24., sha_call_e=48.)),
+                ("(바) 위와 같고 풋 권리자 우선", dict(sha_call_prem=.10, sha_call_s=24., sha_call_e=48., pc_order=0)),
+                ("(바) 콜 기준가격 1,100원 · 풋 매달", dict(sha_call_k=1100., sha_put_f=1., sha_call_f=1.)),
+                ("(바) 풋 의무자 = 대상회사", dict(sha_writer=1)),
+                ("(바) 풋 의무자 = 대상회사 · 콜 가산율 4%", dict(sha_writer=1, sha_call_prem=.04)),
+                ("(바) 풋 할인 = 무위험 + 3%", dict(sha_disc=2, sha_spread=.03)),
+                # 콜 가격이 풋 가격보다 낮으면 두 권리자가 같은 노드에서 함께 행사하려 할 수 있다 — 우선권이 값을 가른다
+                ("(바) 콜 기준가격 800원 · 콜 권리자 우선", dict(sha_call_k=800.)),
+                ("(바) 콜 기준가격 800원 · 풋 권리자 우선", dict(sha_call_k=800., pc_order=0))]
+    vals = {}
+    for nm, o in variants:
+        tt = mk(**o); RR = G["sha_engine"](tt)
+        same, pf = int(tt.sha_writer) == 0, int(tt.pc_order) == 0
+        op, oc, OD = _sha_game_oracle(tt, RR, same, pf)
+        chk(f"{nm} — 풋", RR["put"], op, 1e-9)
+        chk(f"{nm} — 콜", RR["call"], oc, 1e-9)
+        chk_bool(f"{nm} — 판단 격자가 같다", all(RR["DEC"][i][j] == OD[i][j] for i in range(RR["n"]+1)
+                                                  for j in range(i+1)))
+        both = sum(1 for i in range(RR["n"]+1) for j in range(i+1)
+                   if RR["DEC"][i][j] != "hold" and RR["P"][i][j] > 1e-12 and RR["C"][i][j] > 1e-12)
+        chk_bool(f"{nm} — 행사 노드에 두 권리가 함께 남지 않는다", both == 0)
+        # (아) 신용위험 처리 — 판단 격자를 따라 직접 합산
+        reach = _sha_reach(RR, RR["DEC"])
+        dfp = lambda i: math.exp(-sum(RR["pdisc"](k) for k in range(i))*RR["dt"])
+        dfr = lambda i: math.exp(-sum(RR["rf"](k) for k in range(i))*RR["dt"])
+        ev = lambda i, j: RR["eq"](i, j)
+        if same:
+            sp = sum(pr*max((RR["pk"](i) if RR["DEC"][i][j] == "put" else RR["ck"](i)) - ev(i, j), 0.0)*dfp(i)
+                     for (i, j), pr in reach.items())
+            sc = sum(pr*max(ev(i, j) - (RR["pk"](i) if RR["DEC"][i][j] == "put" else RR["ck"](i)), 0.0)*dfr(i)
+                     for (i, j), pr in reach.items())
+        else:
+            sp = sum(pr*(RR["pk"](i) - ev(i, j))*dfp(i) for (i, j), pr in reach.items() if RR["DEC"][i][j] == "put")
+            sc = sum(pr*(ev(i, j) - RR["ck"](i))*dfr(i) for (i, j), pr in reach.items() if RR["DEC"][i][j] == "call")
+        chk(f"(아) {nm[4:]} — 풋 = 거래 노드 × 풋 할인 합", RR["put"], sp, 1e-9)
+        chk(f"(아) {nm[4:]} — 콜 = 거래 노드 × 무위험 할인 합", RR["call"], sc, 1e-9)
+        vals[nm] = (RR["put"], RR["call"])
+    a, b = vals["(바) 콜 가산율 10% · 콜 기간 24~60개월"], vals["(바) 위와 같고 풋 권리자 우선"]
+    print(f"   우선권만 바꾼 두 사례(동시 행사 없음): 풋 {a[0]:.6f} → {b[0]:.6f} · 콜 {a[1]:.6f} → {b[1]:.6f}")
+    a, b = vals["(바) 콜 기준가격 800원 · 콜 권리자 우선"], vals["(바) 콜 기준가격 800원 · 풋 권리자 우선"]
+    print(f"   콜 가격 800 · 우선권만 바꿈: 풋 {a[0]:.6f} → {b[0]:.6f} · 콜 {a[1]:.6f} → {b[1]:.6f}")
+    chk_bool("(바) 콜 가격이 풋보다 낮으면 우선권이 값을 바꾼다 (풋 권리자 우선이면 풋이 크다)", b[0] > a[0] + 1e-9)
+    # (사) 같은 행사가격 — 첫 행사일에 반드시 거래, 값은 첫 행사일 만기 유럽형
+    for pc in (0, 1):
+        tt = mk(pc_order=pc); RR = G["sha_engine"](tt)
+        i1 = min(RR["p_dates"])
+        chk_bool(f"(사) 같은 가격 · {'풋' if pc == 0 else '콜'} 권리자 우선 — 첫 행사일 모든 노드에서 거래",
+                 all(RR["DEC"][i1][j] != "hold" for j in range(i1+1)))
+        pr = [1.0]
+        for i in range(i1):
+            q = RR["qi"](i)
+            pr = [(pr[j-1]*q if j > 0 else 0.0) + (pr[j]*(1-q) if j < len(pr) else 0.0) for j in range(i+2)]
+        X = RR["pk"](i1)
+        eu_p = sum(pr[j]*max(X - RR["eq"](i1, j), 0.0) for j in range(i1+1))*math.exp(
+            -sum(RR["pdisc"](k) for k in range(i1))*RR["dt"])
+        eu_c = sum(pr[j]*max(RR["eq"](i1, j) - X, 0.0) for j in range(i1+1))*math.exp(
+            -sum(RR["rf"](k) for k in range(i1))*RR["dt"])
+        chk(f"(사) 같은 가격 · 우선권 {pc} — 풋 = 첫 행사일 만기 유럽형 풋", RR["put"], eu_p, 1e-9)
+        chk(f"(사) 같은 가격 · 우선권 {pc} — 콜 = 첫 행사일 만기 유럽형 콜", RR["call"], eu_c, 1e-9)
+        vals[f"same{pc}"] = (RR["put"], RR["call"])
+    chk("(사) 같은 가격이면 우선권이 값을 바꾸지 않는다 — 풋", vals["same0"][0], vals["same1"][0], 1e-12)
+    # (마) 수량 다름 — 같은 주식 물량 + 풋만 물량
+    tq = mk(sha_put_q=600., sha_call_q=450., sha_link_q=450., sha_call_prem=.10)
+    Rq = G["sha_engine"](tq)
+    tl = mk(sha_put_q=450., sha_call_q=450., sha_call_prem=.10); Rl = G["sha_engine"](tl)
+    to = mk(sha_put_q=150., sha_call_s=0., sha_call_e=0., sha_kill=0, sha_call_prem=.10); Ro = G["sha_engine"](to)
+    chk("(마) 풋 전체 = 같은 주식 450주 연계 풋 + 풋만 150주 따로 잰 풋", Rq["put"]*600, Rl["put"]*450 + Ro["put"]*150, 1e-9)
+    chk("(마) 콜 전체 = 같은 주식 450주 연계 콜", Rq["call"]*450, Rl["call"]*450, 1e-9)
+    chk("(마) 계약 대상 주식 = 600 + 450 − 450", G["sha_contract_shares"](tq), 600., 1e-12)
+    chk_bool("(마) 콜 행사 뒤 남는 150주 풋은 자기 권리로 남는다 (따로 잰 풋 > 0)", Ro["put"] > 0)
+    # (자) 행사기간 전 · 만기 · 막는 조건
+    chk_bool("(자) 행사기간 전 노드는 보유", all(RR["DEC"][0][0] == "hold" for _ in [0]) and not RR["p_on"](0))
+    n = Rpi["n"]
+    chk_bool("(자) 만기 노드의 풋 = MAX(행사금액 − 지분, 0)",
+             all(abs(Rpi["P"][n][j] - max(Rpi["pk"](n) - Rpi["eq"](n, j), 0.0)) < 1e-12 for j in range(n+1)))
+    bad = mk(sha_put_q=600., sha_call_q=450.)
+    chk_bool("(자) 수량이 다른데 같은 주식 물량이 없으면 → 막음",
+             any("같은 주식에 붙은" in m for m in G["sha_contract_issues"](bad)))
+    bad = mk(sha_writer=2)
+    chk_bool("(자) 풋 의무자가 연대인 계약의 연계 판단 → 지원하지 않는다고 막음",
+             bool(G["sha_contract_issues"](bad)))
+    bad = mk(sha_kill=0, sha_link_q=50.)
+    chk_bool("(자) 상대 권리가 남는데 같은 주식 물량을 넣으면 → 모순으로 막음", bool(G["sha_contract_issues"](bad)))
+
+
 def test_sha_rows_block_and_isolate():
     """회차별 표 — 계산을 막는 입력과, 회차끼리 섞이지 않는지.
 
     · 평가기준일 전에 끝난 회차는 막는다 (이미 행사됐다고 가정하지 않는다).
-    · 풋·콜 수량이 다른 회차에 상호소멸을 켜면 막는다 (겹치는 수량을 나눠 넣으라고 안내).
+    · 풋·콜 수량이 다른 회차에 상호소멸을 켜면 같은 주식에 붙은 물량을 넣어야 한다 (넣으면 엔진이 나눠 잰다).
     · 회차 둘의 합계 = 회차 하나씩 따로 잰 값의 합 — 다음 회차로 물량을 넘기지 않는다.
     · 한 회차의 행사기간·가격을 바꿔도 다른 회차 값은 그대로다.
     """
@@ -2325,8 +2522,10 @@ def test_sha_rows_block_and_isolate():
     chk_bool("평가기준일 전에 끝난 회차 → 막음",
              any("이미 행사" in m for _, m in G["sha_row_issues"](bad)))
     bad.sha_rows = [dict(r2, kill=1)]
-    chk_bool("수량이 다른 회차의 상호소멸 → 막음",
-             any("상호소멸" in m for _, m in G["sha_row_issues"](bad)))
+    chk_bool("수량이 다른 회차의 상호소멸 · 같은 주식 물량 없음 → 막음 (수량만 보고 잇지 않는다)",
+             any("같은 주식에 붙은" in m for _, m in G["sha_row_issues"](bad)))
+    bad.sha_rows = [dict(r2, kill=1, link_q=60.)]
+    chk_bool("같은 주식 물량을 넣으면 계산한다 (나머지 풋은 엔진이 따로)", not G["sha_row_issues"](bad))
     bad.sha_rows = [dict(r1), dict(r1)]
     chk_bool("회차 이름이 겹치면 → 막음", any("겹칩니다" in m for _, m in G["sha_row_issues"](bad)))
     bad.sha_rows = [dict(r1, style="anytime")]
@@ -2522,6 +2721,7 @@ def main():
     test_wow_trace()
     test_sha_review_hand()
     test_sha_rows_block_and_isolate()
+    test_sha_linked_conditions()
     test_refix_contract_dates()
     test_lock_end_same_node_as_last_call()
     test_lock_share_split()

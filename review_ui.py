@@ -40,7 +40,7 @@ def input_review(case, pending=False):
         defaults = controls.default_fields(case)
         values = {**asdict(Terms()), **case.effective()}
         if defaults:
-            st.dataframe(pd.DataFrame([{'항목': label(k), '적용값': display_value(k, values[k], values['d_issue'])} for k in defaults]), hide_index=True)
+            st.dataframe(pd.DataFrame([{'항목': label(k), '적용값': display_value(k, values[k], values['d_issue'], values.get('inst'))} for k in defaults]), hide_index=True)
             record = case.review_controls.get('defaults', {})
             st.caption('현재 입력 확인 완료' if record.get('input_key') == controls.input_key(case) else '기본값을 그대로 저장해도 확인 기록이 자동으로 생기지 않습니다.')
             with st.form(f'default_review_{rev}'):
