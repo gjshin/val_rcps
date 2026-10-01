@@ -2537,6 +2537,12 @@ def test_sha_contract_state():
         sh = 950.*math.exp(-.01*T)
         want = ((1100.*math.exp(-math.log(1.08)*T) - sh)*q if side == "put" else (sh - 1100.*math.exp(-math.log(1.03)*T))*q)
         chk(f"(가) 확정 {side} — 확정 거래 금액 (원)", x["put_krw"] + x["call_krw"], want, 1e-6)
+    # 회차 할인율을 직접 넣었으면 공통 등급 보간(두 등급 곡선 섞기)을 쓰지 않는다 — 입력한 율로 할인
+    t = mk([dict(name="B", status="agreed", side="put", deal_px=1100., settle="2025-12-31", put_q=200., call_q=0.,
+                 pdisc=.06)], rate_mode="rating", cr_curve_b=[(.25, .20), (30, .20)])
+    want = (1100.*math.exp(-math.log(1.06)*T) - 950.*math.exp(-.01*T))*200.
+    chk("(가) 확정 거래 · 회차 할인율 6% 직접 입력 · 등급 보간 방식이어도 6% 로 할인",
+        G["sha_portfolio"](t)["rows"][0]["put_krw"], want, 1e-6)
     t = mk([dict(name="B", status="agreed", side="put", deal_px=1100., settle="2025-06-01", put_q=10., call_q=0.)])
     chk_bool("(가) 결제 예정일이 평가기준일 이전인 확정 거래 → 막음 (결제 완료로 두라고 안내)",
              any("결제 완료" in m for _, m in G["sha_row_issues"](t)))
@@ -2576,6 +2582,11 @@ def test_sha_contract_state():
     chk_bool(f"(바) 실제 상장 — 상장 스텝({i0})의 모든 노드에서 풋 0", all(Re["P"][i0][j] == 0.0 for j in range(i0+1)))
     chk_bool("(바) 주가 기준 — 최소 주가 이하 노드에서는 풋이 남는다 (주가 상승만으로 소멸하지 않는다)",
              any(Rp["P"][i0][j] > 0 for j in range(i0+1)))
+    # 상장 시점이 평가기준일 이전이면 첫 노드에 떨어져 상장 종료가 걸리지 않는다 — 계산하지 않고 막는다
+    for kd in (1, 0):
+        chk_bool(f"(바) 상장 시점이 평가기준일 이전 (종료 조건 {'사건' if kd else '주가 기준'}) → 막음",
+                 any("평가기준일" in m and "상장 시점" in m
+                     for _, m in G["sha_row_issues"](mk([A], sha_ipo_kind=kd, **dict(ipo, ipo_m=5.)))))
 
 
 def test_sha_rows_block_and_isolate():
