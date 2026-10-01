@@ -5134,6 +5134,12 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
     return out
 
 
+# 기대만기(첫 조기상환 가능일)로 상각할 때 그날 행사되지 않으면 — 세 화면·조서가 같은 문장을 쓴다.
+EXPECT_B546 = ("첫 조기상환일에 행사되지 않으면 남은 현금흐름(다음 조기상환일 또는 만기)을 다시 추정해 최초 "
+               "유효이자율로 할인한 금액으로 장부금액을 조정하고, 그 차이를 당기손익으로 인식한다 (1109 문단 B5.4.6). "
+               "이 상각표는 첫 조기상환일까지만 보여 준다 — 그 뒤의 조정은 결산 평가에서 따로 한다.")
+
+
 # 분리 판단의 «검토용 수치» 는 판단에만 쓴다 — 분개·상각표의 장부금액이 아니다.
 SPLIT_NUM_NOTE = ("아래 금액은 분리 여부를 판단하려고 잰 값이다. 분개와 상각표의 장부금액(「회계처리」 "
                   "시트의 최초 장부금액)과 다르다.")
@@ -6231,9 +6237,13 @@ def eir_table(tm: Terms, host, expect=None):
         k += 1
     ts.append(hz)
     nper = len(ts)
+    # 기대만기(첫 조기상환 가능일)에 끝나는 상각표면 마지막 회차의 이자는 계약을 따른다 — «행사일 이자를
+    # 따로 준다» 가 아니면(행사금액에 포함) 그날 이자를 따로 받지 않는다. 격자의 조기상환 갈래(_pcx)와 같다.
+    # 종전에는 늘 이자를 더해, 그 설정에서 상각표의 마지막 현금흐름이 격자보다 이자 한 회분 많았다.
+    cl = c if (expect is None or int(getattr(tm, "p_cpn_add", 0))) else 0.0
     def pv(r):
         return (sum(c*(1+r)**(-t) for t in ts[:-1])
-                + (c + red)*(1+r)**(-hz))
+                + (cl + red)*(1+r)**(-hz))
     # 상한은 넉넉히 잡되 고정하지 않는다 — 만기 한두 달 앞의 중간평가는 연 환산 유효이자율이
     # 수백 % 를 넘을 수 있고, 상한에 걸리면 상각표가 엉뚱한 곳에서 끝난다. 상한에서도
     # 현재가치가 장부금액을 넘으면 상한을 네 배씩 올린다 (1e4 = 연 1,000,000%).
@@ -6246,8 +6256,9 @@ def eir_table(tm: Terms, host, expect=None):
     r = (lo+hi)/2
     rows, bv, prev = [], host, 0.0
     for k, t in enumerate(ts, 1):
-        it = bv*((1+r)**(t-prev) - 1); end = bv + it - c
-        rows.append((k, t, bv, it, c, end)); bv, prev = end, t
+        ck = cl if k == len(ts) else c
+        it = bv*((1+r)**(t-prev) - 1); end = bv + it - ck
+        rows.append((k, t, bv, it, ck, end)); bv, prev = end, t
     return r, rows, red, nper
 
 
@@ -9222,7 +9233,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
             "이자 지급주기를 따른다."
             + ("  ※ 조기상환권을 분리하지 않으므로 기대만기 = 첫 조기상환 가능일, 만기 현금흐름 = 그 시점 "
                "행사금액이다. 계약만기로 굴리면 첫 조기상환일의 행사금액과 장부금액이 벌어져 이자비용·부채가 "
-               "과소계상된다 (B4.3.5(5)(가))." if eir_expect(tm) is not None else ""),
+               "과소계상된다 (B4.3.5(5)(가)). " + EXPECT_B546 if eir_expect(tm) is not None else ""),
             color=GREY, size=9)
         sec(M, 4, "유효이자율 역산", span=7)
         for i, (k, v, fm) in enumerate([("주계약 (인식액, 거래원가 차감 후)"
@@ -11352,7 +11363,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(M, 3, 2, "주계약(옵션 없는 사채)을 유효이자율법으로 상각한다. "
             "기말 잔액이 만기상환금액과 맞아떨어져야 한다. "
             + ("※ 조기상환권을 분리하지 않으므로 기대만기 = 첫 조기상환 가능일, 만기 현금흐름 = 그 시점 "
-               "행사금액이다 (B4.3.5(5)(가)). " if _exf is not None else "")
+               "행사금액이다 (B4.3.5(5)(가)). " + EXPECT_B546 + " " if _exf is not None else "")
             + "지급일은 계약상 일정이므로 발행일부터 센다. 평가기준일이 발행일보다 뒤이면 "
             "첫 회차만 짧고 나머지는 온전한 한 주기다. 회차 수는 노드가 아니라 "
             "이자 지급주기를 따른다.", color=GREY, size=9)
@@ -11396,7 +11407,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             gap = f"(D{r}" + ("" if i == 0 else f"-D{prev}") + ")"
             put(M, r, 6, f"=E{r}*((1+$C$10)^{gap}-1)", fmt=N2, align="right",
                 border=True, bold=last, fill=fl)
-            put(M, r, 7, "=$C$8", fmt=N2, align="right", border=True, bold=last, fill=fl)
+            # 기대만기(조기상환일)에 끝나면 마지막 회차 이자는 «행사일 이자 별도지급» 칸을 따른다 (eir_table 과 같다).
+            put(M, r, 7, (f"=IF({K['pcadd']}=1,$C$8,0)" if (last and _exf is not None) else "=$C$8"),
+                fmt=N2, align="right", border=True, bold=last, fill=fl)
             put(M, r, 8, f"=E{r}+F{r}-G{r}", fmt=N2, align="right",
                 border=True, bold=last, fill=fl)
         # 기말 잔액이 만기상환금액과 맞는지는 앱이 평가할 때 확인한다 — 조서에 싣지 않는다.
@@ -11737,7 +11750,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(J, _r, 3, _d["평가"].replace("**", ""), border=True); _r += 1
         if _d["지표"]:
             put(J, _r, 2, "분리 검토용 수치", bold=True, border=True)
-            put(J, _r, 3, SPLIT_NUM_NOTE, color=GREY, size=9, border=True); _r += 1
+            put(J, _r, 3, SPLIT_NUM_NOTE + " 이 칸들은 앱에서 생성 당시 계산한 참고값이다 — 가정 시트를 바꾸면 아래 «행사금액과 상각후원가 비교 — 수식» 표가 따라온다.", color=GREY, size=9, border=True); _r += 1
         for _a, _v in _d["지표"].items():
             put(J, _r, 2, _a, border=True)
             put(J, _r, 3, (f"{_v*100:.1f}%" if _a in ("차이", "가장 큰 차이") else
