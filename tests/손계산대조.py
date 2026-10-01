@@ -2352,6 +2352,53 @@ def test_sha_rows_block_and_isolate():
     chk("단일 계약 · 풋 원 = 풋 × 계산기준금액 ÷ 100", Ps["put_krw"], Rs["put"]*1e9/100, 1e-4)
 
 
+def test_refix_contract_dates():
+    """정기 리픽싱 조정일 — 계약 조정일을 «그날 이후 첫 노드» 에 배정 (행사일과 같은 규칙).
+
+    종전에는 주기를 노드 간격으로 반올림한 칸마다 조정해 계약일에서 밀렸다.
+    ① 노드 6개월 · 주기 7개월 · 만기 60개월: 계약 조정일 7·14·21·28·35·42·49·56개월
+       → 그날 이후 첫 노드 = 12·18·24·30·36·42·54·60개월 = 노드 2·3·4·5·6·7·9·10 (8번 노드 48개월은 아님).
+       종전 규칙(7 ÷ 6 → 1칸)은 노드 1~10 열 번을 조정했다.
+    ② 주 노드 · 매월 · 2025-01-01 ~ 2026-01-01 (52구간, 한 구간 365/52 = 7.019일, 허용 1일):
+       2025-02-01(31일) — 노드 4 = 28일(1월 29일, 3일 앞) · 노드 5 = 35일(2월 5일) → 노드 5.
+       2025-03-01(59일) — 노드 8 = 56일(3일 앞) · 노드 9 = 63일 → 노드 9.
+       종전 규칙은 4노드(28일)마다라 노드 4·8 — 계약일보다 앞선 날에 조정했다.
+    """
+    print("\n[47] 리픽싱 조정일 — 계약 조정일 뒤 첫 노드")
+    RS = G["refix_steps"]
+    t = Terms(gap_m=6., rf_curve=[(1, .0226), (3, .0240), (5, .0252)], cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    derive(t)
+    got = RS(t, int(t.n), t.T/int(t.n))
+    chk_bool(f"노드 6개월 · 7개월 주기 → 노드 {sorted(got)} = 2·3·4·5·6·7·9·10", sorted(got) == [2, 3, 4, 5, 6, 7, 9, 10])
+    chk_bool("각 노드가 가리키는 계약 조정월 = 7·14·…·56", [got[i] for i in sorted(got)] == [7., 14., 21., 28., 35., 42., 49., 56.])
+    w = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2026-01-01", grid_days=7., rfx_cyc=1.,
+              rf_curve=[(1, .0226), (3, .0240)], cr_curve=[(1, .1409), (3, .1740)])
+    derive(w)
+    n = int(w.n); gw = RS(w, n, w.T/n)
+    chk_bool(f"주 노드 52구간 (n={n})", n == 52)
+    chk_bool("2025-02-01 → 노드 5 (종전 4)", 5 in gw and 4 not in gw)
+    chk_bool("2025-03-01 → 노드 9 (종전 8)", 9 in gw and 8 not in gw)
+    chk_bool(f"매월 12번 조정 (마지막 2026-01-01 = 노드 52) — {len(gw)}번", len(gw) == 12 and 52 in gw)
+    # 모든 조정 노드가 «계약일 − 허용일수 이후 첫 노드» 다 — 노드 날짜에서 직접 센다
+    import datetime as _dt
+    nd = G["node_dates"](w, n, w.T/n); tol = G["date_tol_days"](w.T/n)
+    want = set()
+    for m in range(1, 13):
+        cd = _dt.date(2025 + m//12, m % 12 + 1, 1)
+        want.add(min(i for i in range(1, n+1) if (nd[i] - cd).days >= -tol))
+    chk_bool("주 노드 · 조정 노드 = 노드 날짜에서 센 첫 노드 (12개 모두)", set(gw) == want)
+    # 주기가 노드 간격의 정수배이면 종전과 같다 — 월 노드 · 3개월 주기는 3·6·9…
+    m3 = Terms(gap_m=1., rfx_cyc=3., rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(m3)
+    g3 = RS(m3, int(m3.n), m3.T/int(m3.n))
+    chk_bool("월 노드 · 3개월 주기 → 3·6·…·60", sorted(g3) == list(range(3, 61, 3)))
+    # 평가기준일이 발행 뒤면 이미 지난 조정일은 세지 않는다 (발행 10개월 뒤 평가 · 7개월 주기 → 첫 조정 14개월)
+    e = Terms(d_issue="2025-01-01", d_base="2025-11-01", d_mat="2030-01-01", gap_m=1., rfx_cyc=7.,
+              rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(e)
+    ge = RS(e, int(e.n), e.T/int(e.n))
+    chk_bool(f"발행 10개월 뒤 평가 → 첫 조정월 14 (노드 4) — {min(ge.values()) if ge else None}",
+             bool(ge) and min(ge.values()) == 14. and min(ge) == 4)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -2400,6 +2447,7 @@ def main():
     test_wow_trace()
     test_sha_review_hand()
     test_sha_rows_block_and_isolate()
+    test_refix_contract_dates()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

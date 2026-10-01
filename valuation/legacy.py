@@ -595,7 +595,7 @@ def pay_offset(tm: "Terms", st_lo) -> int:
 
     지급일은 계약(발행일) 기준으로 확정된다. 평가기준일에서 다시 세면 결산
     평가에서 지급일이 통째로 밀려 지급 횟수가 하나 사라진다. 리픽싱의 첫
-    조정 스텝(``rfx_off``)과 같은 방식으로 발행일에서 센다.
+    조정일(``refix_steps``)과 같이 발행일에서 센다.
     """
     if tm.ipay <= 0: return 1
     return st_lo(tm.ipay*(math.floor(tm.elapsed_m/tm.ipay) + 1))
@@ -679,7 +679,7 @@ SCHEMA_VER = 3
 
 # 기준선 — 화면·조서 99_모형검증·tests/run_all.py 가 «같은 원본» 을 본다.
 # 종전에는 조서에 숫자를 직접 박아 두어, 값이 움직인 뒤에도 옛 숫자가 실려 나갔다.
-BASELINE_BASE = dict(주계약=37.5208, 부채요소=73.1837, 전체=114.8781, 매도청구권=13.0762)
+BASELINE_BASE = dict(주계약=37.5208, 부채요소=73.1837, 전체=116.3743, 매도청구권=13.5251)
 BASELINE_TEXT = " · ".join(f"{k} {v:,.4f}" for k, v in BASELINE_BASE.items())
 
 MODEL_LIMITS = (
@@ -1687,6 +1687,35 @@ def rfx_any(tm: Terms) -> bool:
     return float(tm.rfx_cyc) <= node_gap_m(tm) + 1e-9
 
 
+def refix_steps(tm: Terms, n: int, dt_: float) -> dict:
+    """정기 전환가액 조정일 {스텝: 계약 조정월(발행일부터 개월)} — 엔진 · 값 조서 · 수식 조서가 함께 쓴다.
+
+    조정일은 발행일부터 주기마다 돌아오는 계약일이고, 날마다 «그날 이후 첫 노드» 에 배정한다
+    (허용 일수 안에서 앞선 노드는 같은 날 — EXDATE_RULE). 평가기준일 전에 지난 조정일과 평가기준일
+    노드(스텝 0 — 현재 전환가액에 이미 반영)는 싣지 않는다. 격자가 성겨 두 조정일이 한 노드에
+    떨어지면 한 번만 조정한다. «언제든지» (주기 ≤ 노드 간격)면 스텝 1 부터 모든 노드다.
+
+    한때 «주기 × 월당 노드 수» 를 반올림한 칸 간격으로 열어, 주·2주 격자에서 매월 조정이 4·2노드
+    마다(28일) 일어나며 5년에 다섯 번 더 조정하고 날짜가 최대 140일 밀렸다. 월 격자에서도 주기가
+    노드 간격의 배수가 아니면(예: 6개월 노드 · 7개월 주기) 매 노드 조정으로 바뀌어 있었다.
+    """
+    if int(tm.rfx_mode) == 0 or tm.rfx_cyc <= 0:
+        return {}
+    if rfx_any(tm):
+        return {i: None for i in range(1, n+1)}
+    st_lo, _ = step_mapper(tm, n, dt_)
+    rem_m = float(getattr(tm, "rem_m", 0.0) or tm.T*12)
+    end = tm.elapsed_m + rem_m + 1e-6
+    out, k = {}, math.floor(tm.elapsed_m/tm.rfx_cyc) + 1
+    while tm.rfx_cyc*k <= end:
+        m = tm.rfx_cyc*k
+        i = st_lo(m)
+        if 1 <= i <= n and i not in out:
+            out[i] = m
+        k += 1
+    return out
+
+
 def rfx_cycle_text(tm: Terms) -> str:
     return ("언제든지 (매 노드 조정)" if rfx_any(tm) else f"{tm.rfx_cyc:,.0f}개월 주기")
 
@@ -2275,12 +2304,9 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     # 의무보유는 전환뿐 아니라 조기상환청구도 막는다. 부르는 쪽이 시작을 미뤄 준다.
     ps = tm.p_s if put_start is None else put_start
 
-    rfx_per = max(1, int(round(tm.rfx_cyc*mper)))
-    # 다음 조정일은 발행일 + (지난 회차 + 1) × 주기 다. 그 날 이후 첫 노드가 시작이다.
-    rfx_off = (st_lo(tm.rfx_cyc*(math.floor(el/tm.rfx_cyc) + 1))
-               if tm.rfx_cyc > 0 else 1)
-    is_rfx = lambda i: (tm.rfx_mode > 0 and i > 0 and i >= rfx_off
-                        and (i-rfx_off) % rfx_per == 0)
+    # 조정일은 계약일마다 그날 이후 첫 노드다 (refix_steps — 조서와 같은 목록).
+    _RFX = refix_steps(tm, n, dt_)
+    is_rfx = lambda i: i in _RFX
     # 지급일은 계약일 목록에서 온다 (pay_steps) — 격자 간격과 무관하게 횟수가 같다.
     _pays = pay_steps(tm, n, dt_)
     cpn_amt = 100*eff_cpn(tm)*tm.ipay/12
@@ -7765,13 +7791,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         if (i, j) not in idx: idx[(i, j)] = v
     node = lambda i, r: idx.get((i, i-r))
     S = fullv["S"]
-    # 다음 조정일은 평가기준일부터 (주기 − 경과분) 뒤다. 엔진과 같은 오프셋이다.
-    rfx_per = max(1, int(round(tm.rfx_cyc*mper)))
-    rfx_off = (stp_lo(tm.rfx_cyc*(math.floor(tm.elapsed_m/tm.rfx_cyc) + 1))
-               if tm.rfx_cyc > 0 else 1)
-    is_rfx = lambda i: (tm.rfx_mode > 0 and i > 0 and i >= rfx_off
-                        and (i-rfx_off) % rfx_per == 0)
-    REFIXC = {i for i in range(1, n+1) if is_rfx(i)}
+    # 조정일은 엔진과 같은 목록이다 (refix_steps — 계약일마다 그날 이후 첫 노드).
+    REFIXC = set(refix_steps(tm, n, dt_))
     cpn_amt = 100*eff_cpn(tm)*tm.ipay/12
     ey = tm.elapsed_m/12                     # 경과 연수 — 행사금액은 발행일부터 붙는다
     EA = exercise_amounts(tm, n, dt_)        # 엔진과 같은 산식에서 나온다
@@ -8682,13 +8703,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     # 의무보유가 미루는 두 시작점 — 엔진의 lock_delay 와 같은 값을 쓴다.
     _lk_cs, _lk_ps = lock_delay(tm)
     RF, CR = curves(tm)
-    # 다음 조정일은 평가기준일부터 (주기 − 경과분) 뒤다. 엔진과 같은 오프셋이다.
-    rfx_per = max(1, int(round(tm.rfx_cyc*mper)))
-    rfx_off = (stp_lo(tm.rfx_cyc*(math.floor(tm.elapsed_m/tm.rfx_cyc) + 1))
-               if tm.rfx_cyc > 0 else 1)
-    is_rfx = lambda i: (tm.rfx_mode > 0 and i > 0 and i >= rfx_off
-                        and (i-rfx_off) % rfx_per == 0)
-    REFIXSET = {i for i in range(1, n+1) if is_rfx(i)}
+    # 조정일은 엔진과 같은 목록이다 (refix_steps). 계약일을 노드에 배정한 결과라 00 격자 공통
+    # 6행에 값으로 싣는다 — 행사일(20·27행)과 같다. 날짜를 바꾸려면 앱에서 조서를 다시 만든다.
+    _RFXD = refix_steps(tm, n, dt_)
+    REFIXSET = set(_RFXD)
     # 전환가격을 바꾸는 조항은 정기 조정(리픽싱)과 상장(IPO) 조정 둘이다. 둘 다 없으면
     # 전환가격은 모든 노드에서 현재 전환가액 그대로라 02·03 트리와 그 입력 줄을 싣지 않는다.
     _ipo_on = bool(is_rcps(tm) and tm.ipo_on and tm.ipo_px > 0)
@@ -8762,7 +8780,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("표면이자율", "cpn", tm.cpn, P2, True),
         ("이자 지급주기 (스텝)", "ipay", max(1, int(round(tm.ipay*mper))), N0, True),
         # 지급일은 계약(발행일) 기준이다. 평가기준일에서 다시 세면 결산 평가에서
-        # 지급일이 밀린다 — 첫 조정 스텝(roff)과 같은 방식으로 잡는다.
+        # 지급일이 밀린다 — 발행일부터 센 계약 지급일로 잡는다.
         ("첫 지급 스텝", "payoff", pay_offset(tm, stp_lo), N0, True),
         ("이자 지급주기 (개월) — 지급일은 앱이 계약일로 정함", "ipaym", tm.ipay, N2, False),
         ("만기보장수익률", "ytm", tm.ytm, P2, True),
@@ -8784,8 +8802,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         # 상향 재조정의 상한은 **최초** 전환가액이다. 이미 하향 조정된 상품을
         # 결산 평가하면 현재 전환가액과 갈리므로 따로 받는다.
         ("리픽싱 상한 (최초 전환가액)", "cap", k_cap(tm), N2, True),
-        ("리픽싱 주기 (스텝)", "cyc", max(1, int(round(tm.rfx_cyc*mper))), N0, True),
-        ("첫 조정 스텝", "roff", rfx_off, N0, True),
+        ("리픽싱 조정일 (앱이 계약일을 노드에 배정)", "rfxd",
+         ("기간 중 언제든지 (모든 노드)" if rfx_any(tm) else
+          (f"{rfx_cycle_text(tm)} · 격자에 {len(_RFXD)}회 · 첫 조정 "
+           + (months_to_date(tm.d_issue, min(v for v in _RFXD.values())).isoformat() if _RFXD else "없음"))),
+         None, False),
         ("전환 시작 (스텝)", "cvs", stp_lo(tm.cv_s), N0, True),
         ("전환 종료 (스텝)", "cve", stp_hi(tm.cv_e), N0, True),
         ("조기상환 시작 (스텝) — 행사일은 앱이 계약일로 정함", "pst", stp_lo(tm.p_s), N0, False),
@@ -8903,7 +8924,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     # 남아 있으면 K 에서 KeyError 가 나므로 조서가 조용히 틀어지지 않는다.
     _unused = {"ipay", "payoff"}           # 지급일은 계약일 목록(pay_steps)이 정한다
     if _kconst:
-        _unused |= {"flr", "cap", "cyc", "roff", "rfx", "up", "mth"}
+        _unused |= {"flr", "cap", "rfxd", "rfx", "up", "mth"}
         if not is_rcps(tm):
             _unused.add("par")
     if not _ipo_on:
@@ -8937,7 +8958,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _SEC = [("1. 평가 대상 · 기준일", {"d_issue", "d_base", "d_mat", "elm", "T", "remm", "view", "face", "inst"}),
             ("2. 계약 조건 — 이자 · 만기", {"cpn", "cpnc", "dbas", "ipx", "dmode", "ipaym", "txpay", "ytm", "ycm",
                                         "matx", "red", "mless", "accb", "auto"}),
-            ("3. 계약 조건 — 전환", {"K0", "txcv", "cvs", "cve", "flr", "par", "cap", "cyc", "roff", "rfx", "up", "mth",
+            ("3. 계약 조건 — 전환", {"K0", "txcv", "cvs", "cve", "flr", "par", "cap", "rfxd", "rfx", "up", "mth",
                                  "ipoon", "ipos", "ipopx", "ipomul", "ipok", "ipomin", "ipocv"}),
             ("4. 계약 조건 — 조기상환 (투자자 풋)", {"txput", "pst", "prate", "pcadd", "pmode", "psm", "pyld", "pcmp",
                                               "pless", "psch"}),
@@ -8989,7 +9010,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         "bbase": {0: "위험 곡선에 직접", 1: "무위험 + 확정 스프레드"},
         "ipoon": {1: "있음", 0: "없음"}, "ipocv": {1: "강제전환", 0: "없음"},
         "dbas": {0: "발행가 기준", 1: "액면가 기준"}, "dmode": {0: "상환가액에 가산", 1: "재량배당"}}
-    _STEPS = {"cvs", "cve", "pst", "cv30", "pt30", "lockend", "roff", "ipos"}
+    _STEPS = {"cvs", "cve", "pst", "cv30", "pt30", "lockend", "ipos"}
     _d0 = dt.date.fromisoformat(tm.d_base)
     # 상장 스텝에서 주가가 최소공모가격을 넘으면 그 자리에서 주식이 된다. IPO 조항이 없으면
     # 그 갈래를 식에서 아예 뺀다 (값은 같다).
@@ -9173,8 +9194,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
              4: "=" + x_pflag(st, pst),
              5: (0 if not call_on else "=" + x_kflag(st)),
              # 조정일 표시 — 전환가격을 바꾸는 조항이 없으면 늘 0 이다.
-             6: (0 if _kconst else (f"=IF(AND({st}>0,{st}>={K['roff']},"
-                                    f"MOD({st}-{K['roff']},{K['cyc']})=0),1,0)")),
+             # 조정일 표시 — 앱이 계약일을 노드에 배정한 값(refix_steps). 조항이 없으면 늘 0.
+             6: (0 if _kconst else (1 if i in REFIXSET else 0)),
              # 금액은 00 격자 공통의 보조 행에서 계산한 값을, 이 시트의 행사 가능 표시로 켠다.
              7: f"=IF({L}$4=1,{COMQ}!{L}${CROW['pamt']},0)",
              8: f"=IF({L}$5=1,{COMQ}!{L}${CROW['kamt']},999999)",

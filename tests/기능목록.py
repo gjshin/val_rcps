@@ -363,6 +363,7 @@ def collect_coverage(G):
         "test_sha_review_hand": [("SHA", "acc_basis", 0), ("SHA", "acc_basis", 1), ("SHA", "sha_disc", 0),
                                  ("SHA", "call", True), ("SHA", "put", True)],
         "test_sha_rows_block_and_isolate": [("SHA", "sha_kill", 0), ("SHA", "sha_kill", 1)],
+        "test_refix_contract_dates": [("CB", "rfx_mode", 2)],
         "test_decision_matches_old_chains": [("CB", "pc_order", 0), ("CB", "pc_order", 1),
                                              ("BW", "pc_order", 0), ("BW", "pc_order", 1)],
         "test_maturity_layer_in_distribution": [("RCPS", "mat_mode", 0), ("RCPS", "put", True),
