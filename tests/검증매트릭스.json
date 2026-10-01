@@ -1,7 +1,9 @@
 {
- "generated": "2026-10-01T08:16:49",
- "head": "d7e3d3d",
- "manifest_missing": [],
+ "generated": "2026-10-01T09:13:12",
+ "head": "995e172",
+ "manifest_missing": [
+  "Terms 열거형 필드 `sha_ipo_kind`(int) 가 MANIFEST 에 없다"
+ ],
  "unlisted_hand_tests": [],
  "summary": {
   "CB": {
@@ -35,7 +37,7 @@
   "ALL": {
    "PASS": 0,
    "EXPECTED_BLOCK": 5,
-   "KNOWN_LIMITATION": 24,
+   "KNOWN_LIMITATION": 26,
    "FAIL": 0,
    "NOT_TESTED": 0
   }
@@ -138,16 +140,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 29
+   "n_tests": 31
   },
   {
    "case_id": "CB-model-TF",
@@ -4553,16 +4555,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 27
+   "n_tests": 28
   },
   {
    "case_id": "SHA-pc_order-1",
@@ -4579,11 +4581,12 @@
     "tests/주주간계약대조.py::상호소멸 · 콜 우선",
     "tests/주주간계약대조.py::연계 · 풋 많음 · 콜 권리자 우선",
     "tests/주주간계약대조.py::연계 · 같은 가격 7% · 같은 기간",
+    "tests/주주간계약대조.py::같은 가격 · 즉시 행사 · 순가치 0",
     "tests/손계산대조.py::test_sha_linked_conditions",
     "tests/손계산대조.py::test_sha_boundaries",
     "tests/분기전수.py::pc_order=1"
    ],
-   "n_tests": 6
+   "n_tests": 7
   },
   {
    "case_id": "CB-ytm_cmp-0",
@@ -5070,12 +5073,13 @@
    "meaning": "무위험 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "invariants",
+   "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
+    "tests/주주간계약대조.py::같은 가격 · 즉시 행사 · 순가치 0",
     "tests/분기전수.py::cmp_rf=1"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-cmp_rf-2",
@@ -5093,16 +5097,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 28
+   "n_tests": 29
   },
   {
    "case_id": "SHA-cmp_rf-4",
@@ -5372,12 +5376,13 @@
    "meaning": "위험 복리 횟수",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "invariants",
+   "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
+    "tests/주주간계약대조.py::같은 가격 · 즉시 행사 · 순가치 0",
     "tests/분기전수.py::cmp_cr=1"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SHA-cmp_cr-2",
@@ -5411,16 +5416,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 28
+   "n_tests": 29
   },
   {
    "case_id": "SHA-cmp_cr-12",
@@ -5584,16 +5589,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 28
+   "n_tests": 29
   },
   {
    "case_id": "SHA-y_type-SPOT",
@@ -5604,12 +5609,13 @@
    "meaning": "금리 입력 유형",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "invariants",
+   "oracle": "engine_vs_formula_workbook",
    "independent_oracle": false,
    "covered_by": [
+    "tests/주주간계약대조.py::같은 가격 · 즉시 행사 · 순가치 0",
     "tests/분기전수.py::y_type=spot"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "CB-rate_mode-DIRECT",
@@ -5756,16 +5762,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 28
+   "n_tests": 30
   },
   {
    "case_id": "SHA-rate_mode-RATING",
@@ -6348,7 +6354,7 @@
     "tests/주주간계약대조.py::상호소멸",
     "tests/주주간계약대조.py::상호소멸 · 콜 우선"
    ],
-   "n_tests": 25
+   "n_tests": 26
   },
   {
    "case_id": "SHA-ipo_on-1",
@@ -6359,15 +6365,17 @@
    "meaning": "적격상장 조항",
    "kind": "enum",
    "status": "PASS",
-   "oracle": "engine_vs_formula_workbook",
-   "independent_oracle": false,
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::상호소멸 · 적격상장",
+    "tests/손계산대조.py::test_sha_contract_state",
     "tests/분기전수.py::ipo_on=1"
    ],
-   "n_tests": 4
+   "n_tests": 6
   },
   {
    "case_id": "RCPS-ipo_conv-0",
@@ -6943,16 +6951,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::월 노드",
-    "tests/주주간계약대조.py::상호소멸"
+    "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 28
+   "n_tests": 30
   },
   {
    "case_id": "SHA-sha_writer-1",
@@ -7007,16 +7015,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 27
+   "n_tests": 29
   },
   {
    "case_id": "SHA-sha_side-1",
@@ -7048,12 +7056,13 @@
    "independent_oracle": true,
    "covered_by": [
     "tests/주주간계약대조.py::무위험 할인",
+    "tests/주주간계약대조.py::같은 가격 · 즉시 행사 · 순가치 0",
     "tests/손계산대조.py::test_sha_review_hand",
     "tests/손계산대조.py::test_sha_linked_conditions",
     "tests/오라클.py::test_sha_european",
     "tests/분기전수.py::sha_disc=0"
    ],
-   "n_tests": 5
+   "n_tests": 6
   },
   {
    "case_id": "SHA-sha_disc-1",
@@ -7071,16 +7080,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::월 노드",
-    "tests/주주간계약대조.py::상호소멸",
-    "tests/주주간계약대조.py::상호소멸 · 적격상장"
+    "tests/주주간계약대조.py::상호소멸"
    ],
-   "n_tests": 27
+   "n_tests": 29
   },
   {
    "case_id": "SHA-sha_disc-2",
@@ -7133,16 +7142,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드",
-    "tests/주주간계약대조.py::상호소멸"
+    "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 27
+   "n_tests": 29
   },
   {
    "case_id": "SHA-sha_kill-0",
@@ -7160,16 +7169,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 23
+   "n_tests": 24
   },
   {
    "case_id": "SHA-sha_kill-1",
@@ -7191,12 +7200,12 @@
     "tests/주주간계약대조.py::연계 · 같은 가격 7% · 같은 기간",
     "tests/주주간계약대조.py::연계 · 풋 의무자 = 발행회사",
     "tests/주주간계약대조.py::풋만 · 상대 권리 소멸 켬 · 콜 수량 남김",
+    "tests/주주간계약대조.py::같은 가격 · 즉시 행사 · 순가치 0",
     "tests/손계산대조.py::test_sha_mutual_kill_probabilities_sum_to_one",
     "tests/손계산대조.py::test_sha_rows_block_and_isolate",
-    "tests/손계산대조.py::test_sha_linked_conditions",
-    "tests/손계산대조.py::test_sha_boundaries"
+    "tests/손계산대조.py::test_sha_linked_conditions"
    ],
-   "n_tests": 13
+   "n_tests": 14
   },
   {
    "case_id": "SHA-sha_put_cmp-0",
@@ -7230,6 +7239,7 @@
     "tests/주주간계약대조.py::기본",
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
@@ -7237,10 +7247,9 @@
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드",
-    "tests/주주간계약대조.py::상호소멸"
+    "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 28
+   "n_tests": 30
   },
   {
    "case_id": "SHA-sha_put_cmp-2",
@@ -7307,6 +7316,7 @@
     "tests/주주간계약대조.py::기본",
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
@@ -7314,10 +7324,9 @@
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드",
-    "tests/주주간계약대조.py::상호소멸"
+    "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 28
+   "n_tests": 30
   },
   {
    "case_id": "SHA-sha_call_cmp-2",
@@ -8129,16 +8138,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드",
-    "tests/주주간계약대조.py::상호소멸"
+    "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 25
+   "n_tests": 27
   },
   {
    "case_id": "CB-cost-ON",
@@ -8421,16 +8430,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 28
+   "n_tests": 30
   },
   {
    "case_id": "SHA-curve-OFF",
@@ -8464,16 +8473,16 @@
     "tests/주주간계약대조.py::콜 없음",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
     "tests/주주간계약대조.py::중간평가",
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
-    "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드"
+    "tests/주주간계약대조.py::풋 의무자 = 발행회사"
    ],
-   "n_tests": 30
+   "n_tests": 32
   },
   {
    "case_id": "SHA-sha_put-OFF",
@@ -8506,6 +8515,7 @@
     "tests/주주간계약대조.py::기본",
     "tests/주주간계약대조.py::단리 보장",
     "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
     "tests/주주간계약대조.py::적격상장 · 콜 존속",
     "tests/주주간계약대조.py::무위험 할인",
     "tests/주주간계약대조.py::무위험 + 스프레드",
@@ -8513,10 +8523,9 @@
     "tests/주주간계약대조.py::풋 주기 12개월",
     "tests/주주간계약대조.py::주가 60%",
     "tests/주주간계약대조.py::풋 의무자 = 발행회사",
-    "tests/주주간계약대조.py::월 노드",
-    "tests/주주간계약대조.py::상호소멸"
+    "tests/주주간계약대조.py::월 노드"
    ],
-   "n_tests": 29
+   "n_tests": 31
   },
   {
    "case_id": "SHA-sha_call-OFF",
@@ -9002,7 +9011,7 @@
    "product": "ALL",
    "branch": "SHA: 실적 연동 행사가격은 고정값으로",
    "value": null,
-   "label": "추정 재무수치로 계산한 가격을 회차 표에 고정해 평가한다 — 미래 실적의 불확실성은 반영하지 않는다",
+   "label": "추정 재무수치로 산식의 가격을 고정해 평가한다 — 미래 실적의 불확실성은 확률로 반영하지 않으며 매출·손실률 민감도만 제공한다",
    "meaning": "계산은 하되 한계를 표시",
    "kind": "limitation",
    "status": "KNOWN_LIMITATION",
@@ -9022,6 +9031,52 @@
   },
   {
    "case_id": "LIMIT-18",
+   "product": "ALL",
+   "branch": "SHA: 회차를 넘는 공통 한도 잔량은 지원하지 않음",
+   "value": null,
+   "label": "같은 보유주식·공통 한도를 쓰는 회차 묶음은 합계가 한도 안일 때만 계산한다 — 한 회차의 행사가 다른 회차의 잔량을 줄이는 경로 의존 계약은 막는다",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
+   "must_appear_in": [
+    "화면 회차 표 «같은 주식 묶음»",
+    "docs/입력안내_주주간계약.md"
+   ],
+   "display_checked": true,
+   "note": ""
+  },
+  {
+   "case_id": "LIMIT-19",
+   "product": "ALL",
+   "branch": "SHA: 조건부 물량은 고른 가정 하나만 반영",
+   "value": null,
+   "label": "추가 조건부 물량은 조건 충족·미충족 가정 중 사용자가 고른 것만 평가금액에 넣는다 — 충족 가능성을 확률로 반영하지 않는다",
+   "meaning": "계산은 하되 한계를 표시",
+   "kind": "limitation",
+   "status": "KNOWN_LIMITATION",
+   "oracle": "display_consistency",
+   "independent_oracle": false,
+   "covered_by": [
+    "README.md 「한계」",
+    "app.py MODEL_LIMITS → 화면 검산 탭 · 조서 99_모형검증"
+   ],
+   "n_tests": 1,
+   "must_appear_in": [
+    "결과 화면 «조건 충족 전·후 차이»",
+    "docs/입력안내_주주간계약.md"
+   ],
+   "display_checked": true,
+   "note": ""
+  },
+  {
+   "case_id": "LIMIT-20",
    "product": "ALL",
    "branch": "역산이 목표를 정확히 못 맞힐 수 있다",
    "value": null,
@@ -9044,7 +9099,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-19",
+   "case_id": "LIMIT-21",
    "product": "ALL",
    "branch": "자동전환·상장 강제전환 RCPS 의 전환권이 음수",
    "value": null,
@@ -9067,7 +9122,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-20",
+   "case_id": "LIMIT-22",
    "product": "ALL",
    "branch": "강제전환 할인율 효과로 매도청구권이 음수",
    "value": null,
@@ -9091,7 +9146,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-21",
+   "case_id": "LIMIT-23",
    "product": "ALL",
    "branch": "잔여 주계약 ≤ 0 이면 상각표 없음",
    "value": null,
@@ -9114,7 +9169,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-22",
+   "case_id": "LIMIT-24",
    "product": "ALL",
    "branch": "주가 basis 검증은 내부 신호뿐 — 분할 이력은 참고",
    "value": null,
@@ -9138,7 +9193,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-23",
+   "case_id": "LIMIT-25",
    "product": "ALL",
    "branch": "주가와 금리를 함께 흔드는 결합격자 미지원",
    "value": null,
@@ -9161,7 +9216,7 @@
    "note": ""
   },
   {
-   "case_id": "LIMIT-24",
+   "case_id": "LIMIT-26",
    "product": "ALL",
    "branch": "비분리형 BW 는 신주인수권 조기행사를 상태로 갖지 않는다",
    "value": null,

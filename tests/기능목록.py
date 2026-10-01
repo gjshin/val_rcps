@@ -363,6 +363,7 @@ def collect_coverage(G):
         "test_sha_review_hand": [("SHA", "acc_basis", 0), ("SHA", "acc_basis", 1), ("SHA", "sha_disc", 0),
                                  ("SHA", "call", True), ("SHA", "put", True)],
         "test_sha_rows_block_and_isolate": [("SHA", "sha_kill", 0), ("SHA", "sha_kill", 1)],
+        "test_sha_contract_state": [("SHA", "sha_disc", 1), ("SHA", "ipo_on", 1)],
         "test_sha_linked_conditions": [("SHA", "sha_kill", 0), ("SHA", "sha_kill", 1), ("SHA", "sha_writer", 0),
                                        ("SHA", "sha_writer", 1), ("SHA", "pc_order", 0), ("SHA", "pc_order", 1),
                                        ("SHA", "sha_disc", 0), ("SHA", "sha_disc", 1), ("SHA", "sha_disc", 2)],

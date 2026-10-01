@@ -102,6 +102,15 @@ PCASES = [
      dict(sha_rows=[dict(ROWS[0], kill=1), dict(ROWS[1], style="periodic", freq=3., kill=1, rate=.03)])),
     ("회차 하나 · 수량 다름 · 같은 주식 물량 연계",
      dict(sha_rows=[dict(ROWS[0], put_q=60_000., call_q=45_000., kill=1, link_q=45_000.)])),
+    # 평가 대상 상태 — 미행사 · 확정 거래(미결제) · 결제 완료 · 조건부(미충족 가정) · 실적 연동 가격 (가상)
+    ("회차 상태 섞임 · 확정 거래 · 결제 완료 · 조건부 · 실적 연동",
+     dict(sha_rows=[ROWS[0],
+                    dict(name="확정 거래", status="agreed", side="put", deal_px=1050., settle="2026-03-31",
+                         put_q=20_000., call_q=0.),
+                    dict(name="결제 완료", status="settled", put_q=10_000., call_q=0.),
+                    dict(ROWS[1], name="조건부", status="cond", cond_basis="unmet", put_q=15_000., call_q=0.,
+                         perf=dict(rev=3e9, ded=1.5e8, op=-3e8, thr=.10, hi=1.0, lo=1.5, sh=2.7e6, fy=2026, ey=2027,
+                                   kind="추정"))])),
 ]
 PBASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2021-11-15", d_base="2025-09-30",
              d_mat="2027-12-31", sig=.60, gap_m=1.0, grid_days=7., sha_disc=1,

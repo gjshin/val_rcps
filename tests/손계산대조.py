@@ -2511,6 +2511,73 @@ def test_sha_linked_conditions():
     chk_bool("(자) 상대 권리가 남는데 같은 주식 물량을 넣으면 → 모순으로 막음", bool(G["sha_contract_issues"](bad)))
 
 
+def test_sha_contract_state():
+    """주주간계약 — 평가 대상 상태 · 공통 한도 · 실적 연동 가격 · 상장 종료 조건 (가상 수치).
+
+    (가) 행사·매매 확정(미결제) — 새 선택권 없이 확정 거래: 풋 = 대금 × 할인계수 − 주가 × EXP(−배당 × t).
+    (나) 결제 완료 — 평가에서 빠지고 수량 대사에만 남는다. 일부 물량 결제 후 남은 회차는 그대로.
+    (다) 추가 조건부 — 가정을 고르지 않으면 막는다. 미충족 가정이면 0, 충족 시 금액은 차이로만.
+    (라) 같은 주식 묶음·보유주식 — 합계가 한도를 넘으면 막고, 한도 안이면 계산한다.
+    (마) 실적 연동 — 손실률이 기준과 정확히 같으면 이하 시 배수, 넘으면 초과 시 배수. 영업이익(양수)은 손실률 0.
+    (바) 상장 — 실제 상장(사건)은 주가와 무관하게 그 노드에서 종료, 주가 기준은 주가가 기준 이하인 노드에서 존속.
+         종료 조건을 고르지 않으면 막는다.
+    """
+    print("\n[51] 주주간계약 — 평가 대상 상태 · 공통 한도 · 실적 연동 · 상장 종료")
+    base = dict(inst="SHA", S0=950., K0=1000., d_issue="2025-01-01", d_base="2025-06-30", d_mat="2027-05-31", sig=.4,
+                div_y=.01, grid_days=14., gap_m=1., sha_disc=1, y_type="spot", cmp_rf=1, cmp_cr=1,
+                rf_curve=[(.25, .03), (30, .03)], cr_curve=[(.25, .08), (30, .08)])
+    A = dict(name="A", start="2026-01-01", end="2026-12-31", style="any", price=1000., rate=.05, put_q=300., call_q=300., kill=1)
+    mk = lambda rows, **o: (lambda t: (derive(t), t)[1])(Terms(**{**base, "sha_rows": rows, **o}))
+    # (가) 확정 거래
+    T = (G["dt"].date(2025, 12, 31) - G["dt"].date(2025, 6, 30)).days/365
+    for side, q in (("put", 200.), ("call", 150.)):
+        t = mk([dict(name="B", status="agreed", side=side, deal_px=1100., settle="2025-12-31",
+                     put_q=(q if side == "put" else 0.), call_q=(q if side == "call" else 0.))])
+        P = G["sha_portfolio"](t); x = P["rows"][0]
+        sh = 950.*math.exp(-.01*T)
+        want = ((1100.*math.exp(-math.log(1.08)*T) - sh)*q if side == "put" else (sh - 1100.*math.exp(-math.log(1.03)*T))*q)
+        chk(f"(가) 확정 {side} — 확정 거래 금액 (원)", x["put_krw"] + x["call_krw"], want, 1e-6)
+    t = mk([dict(name="B", status="agreed", side="put", deal_px=1100., settle="2025-06-01", put_q=10., call_q=0.)])
+    chk_bool("(가) 결제 예정일이 평가기준일 이전인 확정 거래 → 막음 (결제 완료로 두라고 안내)",
+             any("결제 완료" in m for _, m in G["sha_row_issues"](t)))
+    # (나) 결제 완료 — 일부 물량 결제 뒤 남은 회차
+    PA = G["sha_portfolio"](mk([A]))
+    PS = G["sha_portfolio"](mk([A, dict(name="C", status="settled", put_q=100., call_q=0.)]))
+    chk("(나) 결제 완료 회차를 더해도 풋 합계 그대로", PS["put_krw"], PA["put_krw"], 1e-9)
+    chk_bool("(나) 결제 완료 회차는 수량 대사에 «제외» 로 남는다",
+             any(r[0] == "C" and "제외" in r[5] for r in PS["recon"]))
+    # (다) 추가 조건부
+    D = dict(A, name="D", status="cond", put_q=150., call_q=0., kill=0)
+    chk_bool("(다) 조건부 가정을 고르지 않으면 → 막음", bool(G["sha_row_issues"](mk([dict(D, cond_basis="")]))))
+    Pu = G["sha_portfolio"](mk([dict(D, cond_basis="unmet")])); Pm = G["sha_portfolio"](mk([dict(D, cond_basis="met")]))
+    chk("(다) 미충족 가정 — 평가금액 0", Pu["put_krw"], 0.0, 1e-12)
+    chk("(다) 미충족 가정의 «조건 충족 시 금액» = 충족 가정 평가금액", Pu["rows"][0]["put_krw_met"], Pm["put_krw"], 1e-9)
+    # (라) 묶음 · 보유주식
+    over = mk([dict(A, pool="X", pool_cap=400.), dict(D, cond_basis="met", pool="X", pool_cap=400.)])
+    chk_bool("(라) 같은 주식 묶음 합 450 > 한도 400 → 막음", any("공통 한도" in m for _, m in G["sha_row_issues"](over)))
+    ok = mk([dict(A, pool="X", pool_cap=450.), dict(D, cond_basis="met", pool="X", pool_cap=450.)], sha_hold_q=450.)
+    chk_bool("(라) 한도·보유주식 안이면 계산한다", not G["sha_row_issues"](ok))
+    chk_bool("(라) 보유주식 400 < 합 450 → 막음",
+             any("보유주식" in m for _, m in G["sha_row_issues"](mk(ok.sha_rows, sha_hold_q=400.))))
+    # (마) 실적 연동
+    pf = dict(rev=3e9, ded=1.5e8, op=-3e8, thr=.10, hi=1.0, lo=1.5, sh=2e6)
+    chk("(마) 손실률 정확히 10% — 이하 시 배수 1.5", G["sha_perf_calc"](pf)[1], 1.5, 1e-12)
+    chk("(마) 손실률 10% 초과 — 초과 시 배수 1.0", G["sha_perf_calc"](dict(pf, op=-3e8 - 1))[1], 1.0, 1e-12)
+    chk("(마) 영업이익(양수) — 손실률 0", G["sha_perf_calc"](dict(pf, op=5e7))[2], 0.0, 1e-12)
+    chk("(마) 주당 행사가격 = (매출 − 차감) × 배수 ÷ 계약상 발행주식", G["sha_perf_calc"](pf)[0], (3e9 - 1.5e8)*1.5/2e6, 1e-9)
+    tp = mk([dict(A, perf=pf)])
+    chk("(마) 회차 주당 기준가격이 산식을 따른다", G["sha_portfolio"](tp)["rows"][0]["K"], (3e9 - 1.5e8)*1.5/2e6, 1e-9)
+    # (바) 상장 종료 조건
+    ipo = dict(ipo_on=1, ipo_m=18., ipo_min=5000.)
+    chk_bool("(바) 상장 조항 · 종료 조건 미선택 → 막음", bool(G["sha_row_issues"](mk([A], **ipo))))
+    Re = G["sha_portfolio"](mk([A], sha_ipo_kind=1, **ipo))["rows"][0]["R"]
+    Rp = G["sha_portfolio"](mk([A], sha_ipo_kind=0, **ipo))["rows"][0]["R"]
+    i0 = Re["qi_step"]
+    chk_bool(f"(바) 실제 상장 — 상장 스텝({i0})의 모든 노드에서 풋 0", all(Re["P"][i0][j] == 0.0 for j in range(i0+1)))
+    chk_bool("(바) 주가 기준 — 최소 주가 이하 노드에서는 풋이 남는다 (주가 상승만으로 소멸하지 않는다)",
+             any(Rp["P"][i0][j] > 0 for j in range(i0+1)))
+
+
 def test_sha_rows_block_and_isolate():
     """회차별 표 — 계산을 막는 입력과, 회차끼리 섞이지 않는지.
 
@@ -2735,6 +2802,7 @@ def main():
     test_sha_review_hand()
     test_sha_rows_block_and_isolate()
     test_sha_linked_conditions()
+    test_sha_contract_state()
     test_refix_contract_dates()
     test_lock_end_same_node_as_last_call()
     test_lock_share_split()
