@@ -70,6 +70,10 @@ class Terms:
     # 평가기준일 현재 실제 보유주식수 (회차별 표) — 넣으면 평가하는 회차들의 계약 대상 주식 합이 이를 넘지 않는지 본다.
     # −1 이면 입력하지 않음 (점검하지 않는다 — 자동으로 가정하지 않는다).
     sha_hold_q: float = -1.0
+    # 주주간계약 상장 조항의 종료 조건 — 1 실제 상장 완료(상장일·상장 가정일에 주가와 무관하게 종료) /
+    # 0 그 시점 주가가 기준을 넘으면 상장으로 봄(주가 기준) / −1 고르지 않음(상장 조항을 넣으면 막는다).
+    # 전환사채·상환전환우선주의 상장 조항에는 쓰지 않는다.
+    sha_ipo_kind: int = -1
     # 순액을 누구 입장에서 보나 — 0 콜 권리자(풋이 행사되면 주식을 사 주는 쪽) · 콜 − 풋
     #                           1 풋 권리자(주식 보유자) · 풋 − 콜
     sha_side: int = 0
@@ -2894,7 +2898,9 @@ def _sha_lattice(tm: Terms):
     c_on = lambda i: i in c_dates
     # 적격상장 — 그 스텝의 주가가 최소 기준을 넘으면 성공이다.
     qi_step = st_lo(tm.ipo_m) if (int(tm.ipo_on) and tm.ipo_m > 0) else -1
-    qipo = lambda i, j: (i == qi_step and 0 < i <= n and S(i, j) > tm.ipo_min)
+    # 상장 종료 — 실제 상장(사건)이면 그 노드에서 주가와 무관하게, 주가 기준이면 그 노드 주가가 기준을 넘을 때만
+    _ipo_event = int(getattr(tm, "sha_ipo_kind", -1)) == 1
+    qipo = lambda i, j: (i == qi_step and 0 < i <= n and (_ipo_event or S(i, j) > tm.ipo_min))
 
     # 뒤에서부터 한 열씩. 두 격자를 나란히 굴린다.
     P = [[0.0]*(n+1) for _ in range(n+1)]    # 투자자 풋
@@ -3157,6 +3163,17 @@ def sha_perf_price(revenue: float, deduct: float, loss_rate: float, threshold: f
     return (revenue - deduct)*mult/shares, mult
 
 
+SHA_IPO_KIND_MSG = ("상장 조항을 넣었으면 종료 조건을 고르십시오 — «실제 상장 완료 시 종료»(상장일·상장 가정일에 주가와 "
+                    "무관하게 권리가 끝남) 또는 «그 시점 주가가 기준을 넘으면 상장으로 봄». 주가가 올랐다는 이유만으로 "
+                    "실제 상장 조건을 충족한 것으로 보지 않습니다.")
+
+
+def sha_ipo_issues(tm: Terms) -> list:
+    if int(getattr(tm, "ipo_on", 0)) and int(getattr(tm, "sha_ipo_kind", -1)) not in (0, 1):
+        return [SHA_IPO_KIND_MSG]
+    return []
+
+
 def sha_link_issues(kill, qp, qc, lq, writer) -> list:
     """같은 주식에 붙은 풋·콜(상호소멸)의 계산을 막는 입력 — 문장 목록. 단일 계약·회차가 같이 쓴다."""
     out = []
@@ -3184,7 +3201,8 @@ def sha_contract_issues(tm: Terms) -> list:
     if tm.sha_rows:
         return [sha_row_issue_text(k, m) for k, m in sha_row_issues(tm)]
     qp, qc = sha_qty(tm)
-    return sha_link_issues(int(tm.sha_kill), qp, qc, float(getattr(tm, "sha_link_q", -1.0)), int(tm.sha_writer))
+    return sha_ipo_issues(tm) + sha_link_issues(int(tm.sha_kill), qp, qc, float(getattr(tm, "sha_link_q", -1.0)),
+                                                int(tm.sha_writer))
 
 
 def sha_row_issues(tm: Terms) -> list:
@@ -3199,6 +3217,7 @@ def sha_row_issues(tm: Terms) -> list:
     except (TypeError, ValueError):
         return [(0, "평가기준일을 먼저 입력하십시오.")]
     names = set()
+    out += [("상장 조항", m) for m in sha_ipo_issues(tm)]
     for k, raw in enumerate(tm.sha_rows or [], 1):
         if not isinstance(raw, dict):
             out.append((k, "회차 줄의 형식이 올바르지 않습니다.")); continue
@@ -11746,9 +11765,12 @@ def _sha_intro(wb, K, tm, formula, multi, entries):
                      "12» 또는 «평가기준일까지 개월 ÷ 12 + 이후 실제 일수 ÷ 365» — 가정 시트에서 고른다."),
         ("적격상장", "그 노드의 주가가 최소 기준을 넘으면 상장이 이루어진 것으로 본다. 풋이 소멸하고, "
                   "콜도 함께 끝나는지는 가정에서 고른다."),
-        ("할인율", "풋은 현금을 받을 권리라 의무자의 신용위험이 붙는다 (트리 8행). 콜은 주식을 받을 "
-                 "권리라 무위험으로 잰다 (9행). 위험중립확률은 무위험 선도이자율에서 배당수익률을 "
-                 "뺀 드리프트로 잰다 (13행)."),
+        ("할인율", "풋은 현금을 받을 권리라 대금을 지급할 의무자의 신용위험이 붙는다 (트리 8행). 콜은 주식을 "
+                 "받을 권리라 무위험으로 잰다 (9행). 위험중립확률은 무위험 선도이자율에서 배당수익률을 뺀 드리프트로 "
+                 "잰다 (13행). 풋 할인 곡선은 사용자가 고른 것이다 — 계약상 실제 대금 지급 의무자의 신용을 대표하는지 "
+                 "근거를 남기십시오. 앱은 모회사 신용등급을 자회사 의무에 자동으로 쓰지 않으며, 매도 대상 주식에 설정된 "
+                 "담보(근질권)를 이유로 할인율을 바꾸거나 금액을 차감하지 않는다. 한계: 같은 주식 물량의 행사 판단은 "
+                 "이 할인율로 할인한 보유가치를 비교하는 범위에서만 상대방 신용을 반영한다."),
         ("총액 부채", "발행회사가 풋 의무자면 기준서 1032 문단 23 에 따라 옵션 공정가치가 아니라 "
                    "**상환금액의 현재가치**를 총액으로 싣는다. 결과 시트에 함께 낸다."),
         ("이 파일", ("수식 조서다 — 노란 칸(주가·변동성·배당수익률·가산율·수량 등)을 바꾸면 트리·결과·"
@@ -11879,11 +11901,15 @@ def _sha_block(wb, K, tm, R, formula, pre, name, links=None):
     kv(31, "콜 대상 주식수", qc, N0, "", "qc")
 
     sec(A, 33, "4. 적격상장 · 상대 권리 소멸 · 할인 · 가산기간 · 우선권", span=4)
-    kv(34, "적격상장 조항 (1 반영)", int(tm.ipo_on), N0, "", "ipoon")
-    kv(35, "적격상장 스텝", R["qi_step"], N0,
+    _ipk = int(getattr(tm, "sha_ipo_kind", -1))
+    kv(34, "상장 조항 (1 반영)", int(tm.ipo_on), N0,
+       ("" if not int(tm.ipo_on) else "종료 조건: 실제 상장 완료 — 상장 스텝에서 주가와 무관하게 종료" if _ipk == 1
+        else "종료 조건: 그 시점 주가가 기준을 넘으면 상장으로 봄 (주가 기준)"), "ipoon")
+    kv(35, "상장 스텝", R["qi_step"], N0,
        (f"계약 {_dd(tm.ipo_m)}" if int(tm.ipo_on) else "반영하지 않음"), "ipos", yellow=False)
-    kv(36, "적격 판정 최소 주가 (원)", tm.ipo_min, N2,
-       "그 노드 주가가 이 값을 넘으면 상장 성공", "ipomin")
+    kv(36, "주가 기준 최소 주가 (원)", tm.ipo_min, N2,
+       ("실제 상장 기준이라 쓰지 않는다" if _ipk == 1 else "그 노드 주가가 이 값을 넘으면 상장 성공"), "ipomin",
+       yellow=(_ipk != 1))
     kv(37, "상장 시 콜도 소멸 (1)", int(tm.sha_qipo_kill), N0, "", "qkill")
     kv(38, "한쪽 행사 시 같은 물량의 상대 권리 (0 존속 / 1 소멸)", int(tm.sha_kill), N0,
        ("같은 주식에 붙은 물량은 두 당사자의 행사 판단을 한 격자에서 함께 푼다 (⑤ 행사 판단)"
@@ -12043,7 +12069,8 @@ def _sha_block(wb, K, tm, R, formula, pre, name, links=None):
     fill(W, lambda i, r_, L, Lp, Ln: V(
         round(R["eq"](i, i-r_), 6), f"=100*{Q(S1)}!{L}{R0+r_}/{K_['K0']}"))
 
-    _QI = lambda L, r_: f"AND({L}$5=1,{Q(S1)}!{L}{R0+r_}>{K_['ipomin']})"
+    _QI = ((lambda L, r_: f"{L}$5=1") if int(getattr(tm, "sha_ipo_kind", -1)) == 1 else
+           (lambda L, r_: f"AND({L}$5=1,{Q(S1)}!{L}{R0+r_}>{K_['ipomin']})"))
     _PEX = lambda L, r_: f"IF({L}$3=1,MAX({L}$6-{Q(S2)}!{L}{R0+r_},0),0)"
     _CEX = lambda L, r_: f"IF({L}$4=1,MAX({Q(S2)}!{L}{R0+r_}-{L}$7,0),0)"
     _EQ = lambda L, r_: f"{Q(S2)}!{L}{R0+r_}"

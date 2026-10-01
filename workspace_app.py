@@ -543,9 +543,17 @@ def input_editor(case, autosave=False):
             fields(['rfx_cyc', 'rfx_first', 'floor', 'K_cap', 'carry'], edited, case)
     with st.expander('IPO 조건·미반영 권리 메모'):
         field('ipo_on', edited, case)
-        if edited.get('ipo_on'):
+        if edited.get('ipo_on') and inst == 'SHA':
+            # 주주간계약 — 실제 상장(사건)과 주가 기준을 구분한다. 고르지 않으면 계산을 막는다.
+            field('sha_ipo_kind', edited, case)
+            fields(['ipo_m'] + (['ipo_min'] if edited.get('sha_ipo_kind') == 0 else []), edited, case)
+            field('sha_qipo_kill', edited, case)
+            if edited.get('sha_ipo_kind') == 1:
+                st.caption('상장 시점은 실제 상장일 또는 사용자가 정한 상장 가정일입니다. 그 날 주가와 무관하게 권리가 '
+                           '끝납니다 — 상장 시점은 가정이므로 근거를 «출처·평가가정» 에 남기십시오.')
+        elif edited.get('ipo_on'):
             fields(['ipo_m', 'ipo_px', 'ipo_mult', 'ipo_min'], edited, case)
-            field('sha_qipo_kill' if inst == 'SHA' else 'ipo_conv', edited, case)
+            field('ipo_conv', edited, case)
         fields(['unmod_note', 'base_shares', 'dil_shares'], edited, case)
     st.subheader('시장자료 및 계산방법')
     fields(['S0', 'sig', 'div_y', 'model'], edited, case)

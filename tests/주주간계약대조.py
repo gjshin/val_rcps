@@ -24,9 +24,11 @@ CASES = [
     ("기본", {}),
     ("콜 없음", dict(sha_call_s=0., sha_call_e=0.)),
     ("단리 보장", dict(sha_put_cmp=0, sha_call_cmp=0)),
-    ("적격상장 36개월", dict(ipo_on=1, ipo_m=36., ipo_min=1200.)),
+    ("적격상장 36개월", dict(ipo_on=1, ipo_m=36., ipo_min=1200., sha_ipo_kind=0)),
+    # 실제 상장 완료(사건) — 상장일 노드에서 주가와 무관하게 권리 종료
+    ("상장 · 실제 상장일 36개월 (사건)", dict(ipo_on=1, ipo_m=36., ipo_min=1200., sha_ipo_kind=1)),
     ("적격상장 · 콜 존속",
-     dict(ipo_on=1, ipo_m=36., ipo_min=1200., sha_qipo_kill=0)),
+     dict(ipo_on=1, ipo_m=36., ipo_min=1200., sha_qipo_kill=0, sha_ipo_kind=0)),
     ("무위험 할인", dict(sha_disc=0)),
     ("무위험 + 스프레드", dict(sha_disc=2, sha_spread=.04)),
     ("중간평가", dict(d_base="2026-03-31")),
@@ -38,7 +40,7 @@ CASES = [
     # 수식 조서에 안 넣었던 적이 있어(조서를 풀면 다른 값이 나왔다) 여기 심는다.
     ("상호소멸", dict(sha_kill=1)),
     ("상호소멸 · 적격상장",
-     dict(sha_kill=1, ipo_on=1, ipo_m=36., ipo_min=1200.)),
+     dict(sha_kill=1, ipo_on=1, ipo_m=36., ipo_min=1200., sha_ipo_kind=0)),
     ("상호소멸 · 콜 우선", dict(sha_kill=1, pc_order=1)),
     # ── SHA 점검 (2026-09-30) — 엑셀이 엔진을 따라오지 못하던 자리 ──
     # 위험중립확률에서 배당수익률이 빠져 있었다 (엔진만 뺐다).

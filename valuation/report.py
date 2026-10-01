@@ -65,8 +65,10 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
                      cond_note='추가 조건 내용', pool='같은 주식 묶음', pool_cap='묶음 공통 한도(주)', call_start='콜 시작일(비우면 풋과 같음)',
                      call_end='콜 종료일', call_price='콜 기준가격(원)', call_rate='콜 가산율(연)',
                      sig='회차 변동성(비우면 공통)', rf='회차 무위험 금리', pdisc='회차 풋 할인율', price_note='가격 산식 기록')
-        sheet('회차별 입력', [[heads[k] for k in SHA_ROW_KEYS]] +
-              [[sha_row_defaults(r)[k] for k in SHA_ROW_KEYS] for r in summary['applied_terms']['sha_rows']])
+        heads['perf'] = '실적 연동 산식 (매출·차감·영업손익·기준·배수·주식수·연도)'
+        _cell = lambda v: (' · '.join(f'{k}={v[k]}' for k in v) if isinstance(v, dict) else v)
+        sheet('회차별 입력', [[heads.get(k, k) for k in SHA_ROW_KEYS]] +
+              [[_cell(sha_row_defaults(r)[k]) for k in SHA_ROW_KEYS] for r in summary['applied_terms']['sha_rows']])
     header = ['항목', '원본 입력', '적용값', '가정·선택 근거', '출처', '기본값 보충']
     assumptions = {row['field']: row for row in run.case.assumptions}
     for group, name in [('contract', '계약조건'), ('market', '시장자료'), ('method', '평가방법')]:
