@@ -810,6 +810,19 @@ if _shared_run is None:
                         value=bval("rfx_cyc", float(t.rfx_cyc if not rfx_any(t) else max(3.0, t.gap_m*2))),
                         step=1.0, disabled=(t.rfx_mode == 0))
                     t.rfx_cyc = bget("rfx_cyc", _v, t.rfx_cyc, "리픽싱 조정 주기", need=(t.rfx_mode > 0))
+                # 첫 조정만 따로 정한 계약 — 「발행 후 12개월 되는 날 최초 조정, 이후 매 7개월」 이면
+                # 주기는 7 로 두고 최초 조정일만 12개월로 넣는다 (12 · 19 · 26 · 33 …).
+                _rf_on = st.checkbox("최초 조정일을 따로 정함", value=float(t.rfx_first or 0) > 0,
+                                     key="rfx_first_on", disabled=(t.rfx_mode == 0),
+                                     help="계약이 첫 조정일만 따로 정했으면 켭니다 (예: 발행 후 12개월 되는 날 "
+                                          "최초 조정, 이후 매 7개월). 끄면 첫 조정일 = 발행일 + 주기입니다. "
+                                          "주기를 바꿔 맞추면 이후 조정일이 계약과 달라집니다.")
+                if _rf_on:
+                    t.rfx_first = float(_sched_one(st, "최초 조정일 (발행 후 개월)", "최초 조정일",
+                                                   float(t.rfx_first or t.rfx_cyc), "rfxfirst",
+                                                   disabled=(t.rfx_mode == 0)))
+                else:
+                    t.rfx_first = 0.0
                 _v = st.number_input("최저 조정가액 (원)", value=bval("floor", float(t.floor)), step=1.0)
                 t.floor = bget("floor", _v, t.floor, "최저 조정가액", need=(t.rfx_mode > 0))
                 # 상향 재조정의 상한은 계약상 **최초** 전환가액이다. 현재 전환가액으로
@@ -1313,6 +1326,25 @@ if _shared_run is None:
                         t.k_lock_put = 1 if st.checkbox(
                             "이 기간에 조기상환청구도 막는다",
                             value=bool(t.k_lock_put), key="klput_rcps", help='계약 정의는 「콜 대상물량을 의무보유 기간 동안 **전환 및 조기상환청구가 불가능한 상태로** 보유」입니다. 끄면 **전환만** 막고 조기상환청구는 허용하는 계약이 됩니다 — 그 물량이 조기상환으로 빠져나갈 수 있어 콜 가치가 낮아집니다. 계약서의 처분·전환 제한 조항을 그대로 반영하십시오.') else 0
+                    if t.k_hold:
+                        # 콜 한도와 의무보유 물량이 다른 계약 — 「콜 한도 70% · 미전환 의무보유 30%」. 콜 대상 70% 가운데
+                        # 30% 만 묶이고 40% 는 처음부터 전환·조기상환할 수 있다. 두 몫을 따로 재어 더한다.
+                        _lw_on = st.checkbox("의무보유 물량이 콜 한도와 다름", value=float(t.k_lock_w) >= 0,
+                                             key="klw_on_rcps",
+                                             help="끄면 콜 대상 물량 전부가 의무보유로 묶입니다(종전). 켜면 묶인 물량을 따로 "
+                                                  "넣습니다 — 콜 값 = 묶인 물량 × 묶인 1단위 값 + 나머지 콜 대상 × 묶이지 않은 "
+                                                  "1단위 값. 콜 한도는 한 번만 걸립니다. 콜 대상 밖 물량의 의무보유는 반영하지 "
+                                                  "않으므로 콜 한도보다 크게 넣을 수 없습니다.")
+                        if _lw_on:
+                            _lw0 = t.k_lock_w if t.k_lock_w >= 0 else t.k_w
+                            _v = st.number_input("의무보유 물량 (%, 발행총액 대비)", min_value=0.0,
+                                                 max_value=float(t.k_w*100), value=float(min(_lw0, t.k_w)*100),
+                                                 step=5.0, key="klw_rcps")
+                            t.k_lock_w = _v/100
+                            st.caption(f"콜 대상 {t.k_w:.0%} 가운데 {t.k_lock_w:.0%} 는 의무보유로 묶이고, "
+                                       f"{max(t.k_w - t.k_lock_w, 0):.0%} 는 처음부터 전환·조기상환할 수 있습니다.")
+                        else:
+                            t.k_lock_w = -1.0
                     st.caption("의무보유는 **기초자산을 바꾸지 않습니다.** 옵션차익법에서는 콜 대상우선주가 그 기간 동안 존속하는지로, 유무가치비교법에서는 같은 기간의 전환(·조기상환) 시작을 늦추는 방식으로 들어갑니다 — 두 방법이 같은 기간·같은 권리를 봅니다. 값 차이는 분리 판단 탭에서 나눠 보실 수 있습니다.")
                     st.caption("거래상대방이 발행회사가 아니라 제3자이므로 **별도의 금융상품**입니다 "
                                "(기준서 1109 문단 4.3.1). 회계처리 탭에서 **파생상품자산**으로 "
@@ -1375,6 +1407,25 @@ if _shared_run is None:
                       t.k_lock_put = 1 if st.checkbox(
                           "이 기간에 조기상환청구도 막는다",
                           value=bool(t.k_lock_put), key="klput_cb", help='계약 정의는 「콜 대상물량을 의무보유 기간 동안 **전환 및 조기상환청구가 불가능한 상태로** 보유」입니다. 끄면 **전환만** 막고 조기상환청구는 허용하는 계약이 됩니다 — 그 물량이 조기상환으로 빠져나갈 수 있어 콜 가치가 낮아집니다. 계약서의 처분·전환 제한 조항을 그대로 반영하십시오.') else 0
+                  if t.k_hold:
+                      # 콜 한도와 의무보유 물량이 다른 계약 — 「콜 한도 70% · 미전환 의무보유 30%」. 콜 대상 70% 가운데
+                      # 30% 만 묶이고 40% 는 처음부터 전환·조기상환할 수 있다. 두 몫을 따로 재어 더한다.
+                      _lw_on = st.checkbox("의무보유 물량이 콜 한도와 다름", value=float(t.k_lock_w) >= 0,
+                                           key="klw_on_cb",
+                                           help="끄면 콜 대상 물량 전부가 의무보유로 묶입니다(종전). 켜면 묶인 물량을 따로 "
+                                                "넣습니다 — 콜 값 = 묶인 물량 × 묶인 1단위 값 + 나머지 콜 대상 × 묶이지 않은 "
+                                                "1단위 값. 콜 한도는 한 번만 걸립니다. 콜 대상 밖 물량의 의무보유는 반영하지 "
+                                                "않으므로 콜 한도보다 크게 넣을 수 없습니다.")
+                      if _lw_on:
+                          _lw0 = t.k_lock_w if t.k_lock_w >= 0 else t.k_w
+                          _v = st.number_input("의무보유 물량 (%, 발행총액 대비)", min_value=0.0,
+                                               max_value=float(t.k_w*100), value=float(min(_lw0, t.k_w)*100),
+                                               step=5.0, key="klw_cb")
+                          t.k_lock_w = _v/100
+                          st.caption(f"콜 대상 {t.k_w:.0%} 가운데 {t.k_lock_w:.0%} 는 의무보유로 묶이고, "
+                                     f"{max(t.k_w - t.k_lock_w, 0):.0%} 는 처음부터 전환·조기상환할 수 있습니다.")
+                      else:
+                          t.k_lock_w = -1.0
                   st.caption("의무보유는 **기초자산을 바꾸지 않습니다.** 옵션차익법에서는 콜 대상사채가 그 기간 동안 존속하는지로, 유무가치비교법에서는 같은 기간의 전환(·조기상환) 시작을 늦추는 방식으로 들어갑니다 — 두 방법이 같은 기간·같은 권리를 봅니다. 값 차이는 분리 판단 탭에서 나눠 보실 수 있습니다.")
                   if int(t.k_kind) == 1 and not t.k_sep:
                       t.k_sep = 1

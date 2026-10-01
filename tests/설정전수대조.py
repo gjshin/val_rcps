@@ -37,8 +37,11 @@ CASES = [
     ("만기보장 7%", dict(ytm=.07), None),
     ("보장 복리 연 1회", dict(ytm=.07, ytm_cmp=1), None),
     # 전환
-    ("전환 시작 24개월", dict(cv_s=24., _gap=3.), None),
-    ("전환 종료 48개월", dict(cv_e=48.), None),
+    # 전환 시작·종료는 값이 실제로 움직이는 자리를 고른다 — 리픽싱 조정일을 계약일로 바로잡은 뒤
+    # 3개월 노드에서 전환 시작 12~24개월, 6개월 노드에서 전환 종료 48~59개월은 조기전환이 일어나지 않아
+    # 값이 같다(모형 성질). 같은 값이면 «조서가 그 칸을 참조하는가» 를 볼 수 없다.
+    ("전환 시작 30개월", dict(cv_s=30., _gap=3.), None),
+    ("전환 종료 42개월", dict(cv_e=42.), None),
     # 리픽싱 — 성긴 격자에서는 주기가 모두 1스텝으로 뭉개져 _gap 을 준다
     ("리픽싱 없음", dict(rfx_mode=0), None),
     # 주기 7개월·분기 노드에서는 상향 허용 여부가 결과를 안 바꾼다(엔진도 같은 값).
@@ -178,8 +181,11 @@ def _combin(f):
 def build(G, over, path):
     t = terms(G, over)
     full, b0, b1, b2, ca, conv = G["decompose"](t)
+    # 앱이 매도청구권을 재는 With 격자와 같다 — 의무보유 시작 지연(lock_delay)과 의무보유가 걸린
+    # 마지막 노드(lock_end_step, 같은 계약일의 마지막 매도청구 노드까지)를 함께 넘긴다.
+    _cs, _ps = G["lock_delay"](t)
     b3 = G["pick"](G["engine"](t, conv=True, put=True, call=True,
-                               conv_start=max(t.cv_s, t.k_lock)), t.model)
+                               conv_start=_cs, put_start=_ps, lock_m=t.k_lock), t.model)
     open(path, "wb").write(
         G["build_xlsx_formula"](t, full, b0, b1, b2, ca, conv,
                                 G["eir_or_none"](t, full, b0, b1, b2, ca)))

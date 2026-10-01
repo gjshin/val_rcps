@@ -152,6 +152,22 @@ CASES = [
      dict(_gap=1., k_method=1, conv_class="liability", d_issue="2025-05-23",
           d_base="2025-06-30", d_mat="2027-08-23", cv_s=12., cv_e=26., p_s=12.,
           p_e=24., k_s=6., k_e=18., k_lock=20., rfx_cyc=7.)),
+    # 주 노드 — 매도청구일(계약일 뒤 첫 노드)이 계약일과 어긋난다. 의무보유 종료(12개월)와 같은
+    # 날의 마지막 매도청구는 같은 노드에서 묶여 있어야 한다 (lock_end_step). 리픽싱은 매월.
+    ("주 노드 · 의무보유 종료 = 마지막 콜 · 유무가치",
+     dict(grid_days=7., d_issue="2025-01-31", d_base="2025-01-31", d_mat="2026-04-30",
+          cv_s=6., cv_e=14., p_s=12., p_e=14., k_s=6., k_e=12., k_f=3., k_lock=12.,
+          rfx_cyc=1., k_method=0)),
+    ("주 노드 · 의무보유 종료 = 마지막 콜 · 방법2 · 가치 구성비율",
+     dict(grid_days=7., d_issue="2025-01-31", d_base="2025-01-31", d_mat="2026-04-30",
+          cv_s=6., cv_e=14., p_s=12., p_e=14., k_s=6., k_e=12., k_f=3., k_lock=12.,
+          rfx_cyc=1., k_third=1, k_method=2, k_split=0)),
+    # 콜 한도 40% · 의무보유 15% — 콜 대상 가운데 묶이지 않은 25% 를 15n · 19n · 20n … 시트로 따로 잰다.
+    ("콜 40% · 의무보유 15% · 유무가치", dict(k_w=.40, k_lock_w=.15, k_method=0)),
+    ("콜 40% · 의무보유 15% · 방법1", dict(k_w=.40, k_lock_w=.15, k_third=1, k_method=1)),
+    ("콜 40% · 의무보유 15% · 방법2 · 전환확률", dict(k_w=.40, k_lock_w=.15, k_third=1, k_method=2, k_split=1)),
+    # 최초 리픽싱 조정일을 따로 정한 계약 (발행 후 12개월 · 이후 7개월)
+    ("월 노드 · 최초 조정 12개월 · 이후 7개월", dict(_gap=1., rfx_first=12., rfx_cyc=7.)),
     # 조기상환권을 BDT 금리격자로 잴 때. 자본·TF 에서만 열린다.
     ("BDT σ=20% · 위험곡선", dict(put_bdt=1, bdt_sig=.20)),
     ("BDT σ=20% · 무위험+스프레드", dict(put_bdt=1, bdt_sig=.20, bdt_base=1)),
@@ -383,8 +399,11 @@ def build(G, over, path):
     derive(t)
     full, b0, b1, b2, ca, conv = decompose(t)
     _cs, _ps = G["lock_delay"](t)
+    # 의무보유가 걸린 마지막 노드(lock_end_step)까지 넘긴다 — decompose 와 같은 With 격자다.
     b3 = G["pick"](G["engine"](t, conv=True, put=True, call=True,
-                               conv_start=_cs, put_start=_ps), t.model)
+                               conv_start=_cs, put_start=_ps, lock_m=t.k_lock), t.model)
+    # 콜 한도 ≠ 의무보유 물량이면 의무보유가 없는 몫의 With 격자(⑮n · 결과 C13)도 본다.
+    b3n = G["pick"](G["engine"](t, conv=True, put=True, call=True), t.model)
     ctp1 = G["call_third_party"](t, full, 1)
     ctp2 = G["call_third_party"](t, full, 2)
     eir = G["eir_or_none"](t, full, b0, b1, b2, ca)
@@ -411,7 +430,7 @@ def build(G, over, path):
     for o, nn in mp.items(): wb[o].title = nn
     wb.save(path)
     al, _ = G["allocate"](t, full, b0, b1, b2, ca)
-    return dict(b0=b0, b1=b1, b2=b2, gs=full["GS"], b3=b3, ca=ca, conv=conv,
+    return dict(b0=b0, b1=b1, b2=b2, gs=full["GS"], b3=b3, b3n=b3n, ca=ca, conv=conv,
                 # 발행일 뒤 평가에 전기말 장부금액이 없으면 회계처리 시트가 «공정가치 산출 전용» 이라
                 # 배분표·분개가 없다 — 그때는 공정가치 표 첫 줄(전체 = b2)만 본다
                 fv_only=(G["acc_mode"](t) == "fv_only"),
@@ -465,6 +484,8 @@ def main():
         if (over.get("k_method", 0) == 0 and over.get("k_w", 1) != 0
                 and (over.get("inst") != "RCPS" or over.get("issuer_call"))):
             ROWS = ROWS + [("적용 30% 트랜치", "C11", "b3")]
+            if 0 <= over.get("k_lock_w", -1.) < over.get("k_w", .30):
+                ROWS = ROWS + [("콜 대상 · 의무보유 없는 몫 트랜치", "C13", "b3n")]
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "wb.xlsx")
             eng, res, acc = build(G, over, path)

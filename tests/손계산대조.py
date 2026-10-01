@@ -1923,7 +1923,8 @@ def _three(t):
     full = engine(t, call=False)
     b2 = G["pick"](full, t.model)
     cs, ps = G["lock_delay"](t)
-    b3 = G["pick"](engine(t, conv=True, put=True, call=True, conv_start=cs, put_start=ps), t.model)
+    b3 = G["pick"](engine(t, conv=True, put=True, call=True, conv_start=cs, put_start=ps,
+                              lock_m=t.k_lock), t.model)
     return (t.k_w*(b2 - b3), t.k_w*G["call_third_party"](t, full, 1), t.k_w*G["call_third_party"](t, full, 2))
 
 
@@ -2352,6 +2353,127 @@ def test_sha_rows_block_and_isolate():
     chk("단일 계약 · 풋 원 = 풋 × 계산기준금액 ÷ 100", Ps["put_krw"], Rs["put"]*1e9/100, 1e-4)
 
 
+def test_refix_contract_dates():
+    """정기 리픽싱 조정일 — 계약 조정일을 «그날 이후 첫 노드» 에 배정 (행사일과 같은 규칙).
+
+    종전에는 주기를 노드 간격으로 반올림한 칸마다 조정해 계약일에서 밀렸다.
+    ① 노드 6개월 · 주기 7개월 · 만기 60개월: 계약 조정일 7·14·21·28·35·42·49·56개월
+       → 그날 이후 첫 노드 = 12·18·24·30·36·42·54·60개월 = 노드 2·3·4·5·6·7·9·10 (8번 노드 48개월은 아님).
+       종전 규칙(7 ÷ 6 → 1칸)은 노드 1~10 열 번을 조정했다.
+    ② 주 노드 · 매월 · 2025-01-01 ~ 2026-01-01 (52구간, 한 구간 365/52 = 7.019일, 허용 1일):
+       2025-02-01(31일) — 노드 4 = 28일(1월 29일, 3일 앞) · 노드 5 = 35일(2월 5일) → 노드 5.
+       2025-03-01(59일) — 노드 8 = 56일(3일 앞) · 노드 9 = 63일 → 노드 9.
+       종전 규칙은 4노드(28일)마다라 노드 4·8 — 계약일보다 앞선 날에 조정했다.
+    """
+    print("\n[47] 리픽싱 조정일 — 계약 조정일 뒤 첫 노드")
+    RS = G["refix_steps"]
+    t = Terms(gap_m=6., rf_curve=[(1, .0226), (3, .0240), (5, .0252)], cr_curve=[(1, .1409), (3, .1740), (5, .1905)])
+    derive(t)
+    got = RS(t, int(t.n), t.T/int(t.n))
+    chk_bool(f"노드 6개월 · 7개월 주기 → 노드 {sorted(got)} = 2·3·4·5·6·7·9·10", sorted(got) == [2, 3, 4, 5, 6, 7, 9, 10])
+    chk_bool("각 노드가 가리키는 계약 조정월 = 7·14·…·56", [got[i] for i in sorted(got)] == [7., 14., 21., 28., 35., 42., 49., 56.])
+    w = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2026-01-01", grid_days=7., rfx_cyc=1.,
+              rf_curve=[(1, .0226), (3, .0240)], cr_curve=[(1, .1409), (3, .1740)])
+    derive(w)
+    n = int(w.n); gw = RS(w, n, w.T/n)
+    chk_bool(f"주 노드 52구간 (n={n})", n == 52)
+    chk_bool("2025-02-01 → 노드 5 (종전 4)", 5 in gw and 4 not in gw)
+    chk_bool("2025-03-01 → 노드 9 (종전 8)", 9 in gw and 8 not in gw)
+    chk_bool(f"매월 12번 조정 (마지막 2026-01-01 = 노드 52) — {len(gw)}번", len(gw) == 12 and 52 in gw)
+    # 모든 조정 노드가 «계약일 − 허용일수 이후 첫 노드» 다 — 노드 날짜에서 직접 센다
+    import datetime as _dt
+    nd = G["node_dates"](w, n, w.T/n); tol = G["date_tol_days"](w.T/n)
+    want = set()
+    for m in range(1, 13):
+        cd = _dt.date(2025 + m//12, m % 12 + 1, 1)
+        want.add(min(i for i in range(1, n+1) if (nd[i] - cd).days >= -tol))
+    chk_bool("주 노드 · 조정 노드 = 노드 날짜에서 센 첫 노드 (12개 모두)", set(gw) == want)
+    # 주기가 노드 간격의 정수배이면 종전과 같다 — 월 노드 · 3개월 주기는 3·6·9…
+    m3 = Terms(gap_m=1., rfx_cyc=3., rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(m3)
+    g3 = RS(m3, int(m3.n), m3.T/int(m3.n))
+    chk_bool("월 노드 · 3개월 주기 → 3·6·…·60", sorted(g3) == list(range(3, 61, 3)))
+    # 평가기준일이 발행 뒤면 이미 지난 조정일은 세지 않는다 (발행 10개월 뒤 평가 · 7개월 주기 → 첫 조정 14개월)
+    e = Terms(d_issue="2025-01-01", d_base="2025-11-01", d_mat="2030-01-01", gap_m=1., rfx_cyc=7.,
+              rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(e)
+    ge = RS(e, int(e.n), e.T/int(e.n))
+    chk_bool(f"발행 10개월 뒤 평가 → 첫 조정월 14 (노드 4) — {min(ge.values()) if ge else None}",
+             bool(ge) and min(ge.values()) == 14. and min(ge) == 4)
+    # 최초 조정일만 따로 정한 계약 — 「발행 후 12개월 최초 조정, 이후 매 7개월」 · 만기 3년
+    #   → 12 · 19 · 26 · 33개월 (주기를 12 로 바꾸면 12 · 24 · 36 이 되어 틀린다).
+    f = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2028-01-01", gap_m=1., rfx_cyc=7.,
+              rfx_first=12., rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(f)
+    gf = RS(f, int(f.n), f.T/int(f.n))
+    chk_bool(f"최초 12개월 · 이후 7개월 → 조정월 {[gf[i] for i in sorted(gf)]} = 12·19·26·33",
+             [gf[i] for i in sorted(gf)] == [12., 19., 26., 33.] and sorted(gf) == [12, 19, 26, 33])
+    # 평가기준일이 최초 조정일 뒤 — 발행 20개월 뒤 평가면 지난 12·19 는 빼고 26 · 33
+    f2 = Terms(d_issue="2025-01-01", d_base="2026-09-01", d_mat="2028-01-01", gap_m=1., rfx_cyc=7.,
+               rfx_first=12., rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(f2)
+    gf2 = RS(f2, int(f2.n), f2.T/int(f2.n))
+    chk_bool(f"발행 20개월 뒤 평가 → 남은 조정월 {sorted(gf2.values())} = 26·33", sorted(gf2.values()) == [26., 33.])
+    # 비워 두면(0) 종전과 같다 — 첫 조정 = 발행일 + 주기
+    f0 = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2028-01-01", gap_m=1., rfx_cyc=7.,
+               rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(f0)
+    chk_bool("최초 조정일 비움 → 7·14·21·28·35",
+             sorted(RS(f0, int(f0.n), f0.T/int(f0.n)).values()) == [7., 14., 21., 28., 35.])
+
+
+def test_lock_end_same_node_as_last_call():
+    """의무보유 종료와 같은 계약일의 마지막 매도청구는 같은 노드에서 처리한다.
+
+    매도청구일은 «계약일 이후 첫 노드», 의무보유 종료는 «계약일 이전 마지막 노드» 로 잡혀 있어,
+    노드가 계약일과 어긋나면 마지막 매도청구(주 격자 105번)가 의무보유 종료(104번) 뒤로 밀렸다.
+    그 노드에서 투자자가 먼저 전환하면 의무보유가 지키려던 마지막 매도청구가 사라진다.
+    ① 주 노드 · 매도청구 12~24개월 분기 · 의무보유 24개월 → 의무보유 마지막 노드 = 마지막 매도청구 노드.
+    ② 월 노드: 의무보유 24개월(= 마지막 매도청구일) 과 24.5개월은 같은 값이고(둘 다 그날을 묶는다),
+       23.5개월(마지막 매도청구일 전에 풀림)보다 크다.
+    """
+    print("\n[48] 의무보유 종료 — 같은 계약일의 마지막 매도청구와 같은 노드")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    w = Terms(grid_days=7., k_lock=24., rf_curve=RF, cr_curve=CR); derive(w)
+    n = int(w.n); dt_ = w.T/n
+    kd = G["exercise_amounts"](w, n, dt_)["k_dates"]
+    last = max(i for i, m in kd.items() if m <= 24. + 1e-9)
+    _, hi = G["step_mapper"](w, n, dt_)
+    L = G["lock_end_step"](w, n, dt_)
+    chk_bool(f"주 노드 · 마지막 매도청구 노드 {last} > 계약일 이전 마지막 노드 {hi(24.)}", last > hi(24.))
+    chk_bool(f"의무보유 마지막 노드 {L} = 마지막 매도청구 노드 {last}", L == last)
+    row = [r for r in G["exercise_date_rows"](w) if r[0] == "의무보유"]
+    chk_bool("행사일 대조표에 의무보유 종료 줄 (같은 노드)", len(row) == 1 and row[0][3] == last)
+    def callv(lock):
+        t = Terms(gap_m=1., k_lock=lock, rf_curve=RF, cr_curve=CR); derive(t)
+        return G["decompose"](t)[4]
+    a, b, c = callv(24.), callv(24.5), callv(23.5)
+    chk("월 노드 · 의무보유 24개월 = 24.5개월 (둘 다 마지막 매도청구일을 묶음)", a, b, 1e-9)
+    chk_bool(f"의무보유 24개월 {a:.4f} > 23.5개월 {c:.4f} (마지막 매도청구일 전에 풀림)", a > c + 1e-6)
+    chk_bool("의무보유 없음 → −1", G["lock_end_step"](Terms(k_hold=0), 60, 5/60) == -1)
+
+
+def test_lock_share_split():
+    """콜 한도와 의무보유 물량이 다른 계약 — 콜 = 묶인 물량 × 묶인 1단위 + 나머지 × 묶이지 않은 1단위.
+
+    기대값은 엔진의 다른 두 설정에서 나온다 (같은 값을 두 번 세지 않는다):
+      의무보유 = 콜 한도      → 콜 대상 전부 묶임 (종전)            A
+      의무보유 = 0            → 의무보유 없음 (k_hold = 0 과 같다)   B
+      의무보유 = 콜 한도 × ¼  → ¼·A + ¾·B  (콜 한도는 한 번만 걸린다)
+    세 평가방법(유무가치비교법 · 옵션차익 혼합할인율 · 성분 분리할인) 모두.
+    """
+    print("\n[49] 콜 한도 ≠ 의무보유 물량 — 묶인 몫과 묶이지 않은 몫")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    def callv(**kw):
+        t = Terms(gap_m=6., k_w=.40, rf_curve=RF, cr_curve=CR, **kw); derive(t)
+        return G["decompose"](t)[4]
+    for nm, m in (("유무가치비교법", dict()), ("옵션차익 혼합할인율", dict(k_third=1, k_method=1)),
+                  ("옵션차익 성분 분리할인", dict(k_third=1, k_method=2))):
+        A, B = callv(**m), callv(k_lock_w=0., **m)
+        chk(f"{nm} · 의무보유 비움 = 콜 한도 40% 입력", callv(k_lock_w=.40, **m), A, 1e-12)
+        chk(f"{nm} · 의무보유 0% = 의무보유 없음", B, callv(k_hold=0, **m), 1e-12)
+        chk(f"{nm} · 의무보유 10% = ¼·전부 + ¾·없음", callv(k_lock_w=.10, **m), .25*A + .75*B, 1e-9)
+        chk_bool(f"{nm} · 묶인 몫이 늘면 콜이 커진다 ({B:.4f} < {A:.4f})", A > B)
+    chk_bool("lock_share — 콜 한도보다 크게 넣으면 콜 한도에서 자른다",
+             G["lock_share"](Terms(k_w=.3, k_lock_w=.5)) == .3)
+    chk_bool("lock_share — 의무보유 없음이면 0", G["lock_share"](Terms(k_w=.3, k_hold=0)) == 0.)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -2400,6 +2522,9 @@ def main():
     test_wow_trace()
     test_sha_review_hand()
     test_sha_rows_block_and_isolate()
+    test_refix_contract_dates()
+    test_lock_end_same_node_as_last_call()
+    test_lock_share_split()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

@@ -289,18 +289,29 @@ def inspect_case(case: Case) -> list[Issue]:
                          "view": {"holder", "issuer"}, "y_type": {"par", "spot"},
                          "conv_class": {"equity", "liability"},
                          "p_mode": {"fixed", "accrue"},
-                         "rate_mode": {"direct", "rating", "pick"}}.items():
+                         "rate_mode": {"direct", "rating", "pick"},
+                         # 내재파생 분리 정책은 «접근법 1 · 접근법 2» 다 — 0 은 없는 값이다.
+                         # 일반 0/1 선택항목으로 검사하면 화면에서 고른 접근법 2 를 막고 0 을 통과시킨다.
+                         "emb_approach": {1, 2}}.items():
         if key in values and values[key] not in allowed:
             add("error", "enum", key, f"지원하는 값: {sorted(allowed)}")
     counts = {"sha_put_cmp", "sha_call_cmp", "cur_periods", "ytm_cmp", "k_cmp", "cmp_rf", "cmp_cr", "p_cmp"}
     multi = {"sha_writer": 2, "sha_disc": 2, "issuer_call": 2, "rfx_mode": 2,
              "carry": 3, "k_method": 2, "k_less_cpn": 2, "p_less_cpn": 2, "m_less_cpn": 2}
     for key, value in values.items():
-        if types[key] is int:
+        if types[key] is int and key != "emb_approach":
             if value < (1 if key == "carry" else 0) or (key not in counts and value > multi.get(key, 1)):
                 add("error", "enum", key, "지원하지 않는 선택값입니다.")
     if not 0 <= values.get("k_w", 0) <= 1:
         add("error", "fraction", "k_w", "콜 대상 비율은 0~1이어야 합니다.")
+    # 콜이 꺼졌거나(콜 한도 0) 의무보유가 꺼지면 의무보유 물량은 쓰이지 않는다 — 화면에서 숨겨진 예전 값이
+    # 정상 입력을 막지 않게 콜과 의무보유가 모두 켜져 있을 때만 본다 (lock_share 도 그때만 쓴다).
+    _lw = values.get("k_lock_w", -1.0)
+    if (values.get("k_w", 0) > 0 and int(values.get("k_hold", 1)) == 1
+            and _lw >= 0 and _lw > values.get("k_w", 0) + 1e-12):
+        add("error", "fraction", "k_lock_w",
+            "의무보유 물량 비율이 콜 대상 비율보다 큽니다. 콜 대상 밖 물량의 의무보유는 이 모형이 반영하지 않습니다 — "
+            "콜 대상 안에서 묶인 물량만 입력하십시오 (비우면 콜 대상 전부).")
     for key in ("S0", "K0", "sig", "gap_m", "face_total", "par", "cmp_rf", "cmp_cr"):
         if key in values and values[key] <= 0:
             add("error", "positive", key, "0보다 큰 값이 필요합니다.")
@@ -311,6 +322,8 @@ def inspect_case(case: Case) -> list[Issue]:
         add('error', 'fraction', 'split_tol', '분리 판단 비교기준은 0%보다 크고 100%보다 작아야 합니다.')
     if values.get('split_base_in', -1) > 0 and not str(values.get('split_base_why', '')).strip():
         add('error', 'split_base_reason', 'split_base_why', '분리 판단 출발 금액을 직접 넣었으면 그 근거(실제 회계상 배분액 등)를 적으십시오.')
+    if values.get('rfx_first', 0) < 0:
+        add('error', 'negative', 'rfx_first', '최초 조정일은 발행일 이후여야 합니다 (비우면 발행일 + 주기).')
     for key in ('cpn', 'bdt_sig'):
         if key in values and values[key] < 0:
             add('error', 'negative', key, '음수는 지원하지 않습니다.')

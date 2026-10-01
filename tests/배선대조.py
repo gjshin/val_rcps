@@ -25,7 +25,7 @@ WANT = {
     3:  {"cvs", "cve", "cv30", "auto", "n"},                # Flag(전환) — ⑮ 는 cv30
     4:  {"pst", "pt30"},                       # Flag(조기상환) — 행사일 목록 + 의무보유로 늦춰진 시작
     5:  set(),                                 # Flag(매도청구) — 행사일 목록만 본다
-    6:  {"roff", "cyc"},                       # Flag(리픽싱)
+    6:  set(),                                 # Flag(리픽싱) — 조정일은 앱이 계약일을 노드에 배정한 값
     # 조기상환금액 — 계약 행사월(20행) → 경과연수(accb·elm·remm·T) → 할증률(pyld·cpn·pcmp)
     # → 기지급 공제(pless·ipaym) → 금액(pmode·prate) + 행사일 이자(pcadd). 기간 중 언제든지면
     # 행사월이 노드 개월(elm·remm·n)이다.
@@ -109,8 +109,9 @@ def main():
     # 계약서의 행사일(시작일부터 주기마다)을 «계약일 이후 첫 노드» 에 둔다 — 여기서는 앱의
     # 목록을 보지 않고 날짜를 직접 세어 배정한다. 같은 날의 두 권리는 같은 노드에 와야 한다.
     d0 = dt.date.fromisoformat(G["Terms"]().d_issue)
-    for el in (0, 3, 6, 12, 18, 24, 36):
-        t = terms(G, d_base=(d0+dt.timedelta(days=int(el*30.4375))).isoformat())
+    # 뒤의 두 줄은 최초 조정일을 따로 정한 계약 (발행 후 12개월 최초 · 이후 주기마다).
+    for el, rf1 in ((0, 0.), (3, 0.), (6, 0.), (12, 0.), (18, 0.), (24, 0.), (36, 0.), (0, 12.), (15, 12.)):
+        t = terms(G, d_base=(d0+dt.timedelta(days=int(el*30.4375))).isoformat(), rfx_first=rf1)
         n = t.n; mper = n/(t.T*12)
         lo, hi = G["step_mapper"](t, n, t.T/n)
         gapm = t.rem_m/n
@@ -123,10 +124,16 @@ def main():
                 if m < t.elapsed_m - 1e-6: continue
                 if lo(m) <= n: out.add(lo(m))
             return out
-        per = max(1, int(round(t.rfx_cyc*mper)))
-        off = int(round((t.rfx_cyc - t.elapsed_m % t.rfx_cyc)*mper)) if t.rfx_cyc > 0 else 1
+        # 리픽싱 조정일 — 발행일부터 주기마다의 계약일을 «그날 이후 첫 노드» 에 배정 (평가기준일 노드 제외)
+        # 최초 조정일을 따로 정했으면 그날부터, 아니면 발행일 + 주기부터 주기마다.
+        f0 = t.rfx_first if t.rfx_first > 0 else t.rfx_cyc
+        rf_set, k = set(), 0
+        while f0 + t.rfx_cyc*k <= t.elapsed_m + t.rem_m + 1e-6:
+            m = f0 + t.rfx_cyc*k
+            if m > t.elapsed_m + 1e-9 and 1 <= lo(m) <= n: rf_set.add(lo(m))
+            k += 1
         eng = {
-            "리픽싱": {i for i in range(1, n+1) if i >= off and (i-off) % per == 0},
+            "리픽싱": rf_set,
             "조기상환": dates(t.p_s, t.p_e, t.p_f),
             "매도청구": dates(t.k_s, t.k_e, t.k_f),
         }
@@ -136,7 +143,7 @@ def main():
         val = {"리픽싱": {i for i in range(1, n+1) if wv.cell(6, 3+i).value == 1},
                "조기상환": {i for i in range(0, n+1) if wv.cell(4, 3+i).value == 1},
                "매도청구": {i for i in range(0, n+1) if wv.cell(5, 3+i).value == 1}}
-        # 수식 조서 — 리픽싱은 가정 값으로 같은 식을 세우고, 행사일은 00 격자 공통의 행사월 행을 본다
+        # 수식 조서 — 리픽싱은 00 격자 공통 6행(앱이 배정한 조정일), 행사일은 행사월 행을 본다
         wbf = formula_wb(G, t, full, b0, b1, b2, ca, conv)
         wf, wc = wbf["가정"], wbf["00 격자 공통"]
         A = {}
@@ -144,8 +151,7 @@ def main():
             nm2 = wf.cell(r, 2).value
             if nm2: A[nm2] = wf.cell(r, 3).value
         fm = {
-            "리픽싱": {i for i in range(1, n+1)
-                    if i >= A["첫 조정 스텝"] and (i-A["첫 조정 스텝"]) % A["리픽싱 주기 (스텝)"] == 0},
+            "리픽싱": {i for i in range(1, n+1) if wc.cell(6, 3+i).value == 1},
             "조기상환": {i for i in range(0, n+1) if wc.cell(20, 3+i).value not in (None, "")},
             "매도청구": {i for i in range(0, n+1) if wc.cell(27, 3+i).value not in (None, "")},
         }

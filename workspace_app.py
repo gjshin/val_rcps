@@ -90,12 +90,15 @@ def field(key, edited, case, prefix='input'):
             st.caption(f'{title}: 실제 발행일을 먼저 입력하십시오.')
             return
         original_date = case.contract.get('d_issue') or issue_date
-        initial = months_to_date(original_date, value) if value is not None else None
+        # 최초 조정일 0 은 «따로 정하지 않음» (발행일 + 주기) 이다 — 발행일로 보이지 않게 비워 둔다.
+        initial = (months_to_date(original_date, value)
+                   if value is not None and not (key == 'rfx_first' and not value) else None)
         chosen = st.date_input(title, value=initial, min_value=dt.date(1900, 1, 1), max_value=dt.date(2200, 12, 31), key=widget_key)
         if chosen and chosen < dt.date.fromisoformat(issue_date):
             st.error(f'{title}이 발행일보다 빠릅니다.'); new = None
         else:
-            new = event_months(issue_date, chosen, value, original_date)
+            new = (0.0 if key == 'rfx_first' and chosen is None else
+                   event_months(issue_date, chosen, value, original_date))
     elif key.startswith('d_'):
         try:
             initial = dt.date.fromisoformat(value) if value else None
@@ -108,9 +111,13 @@ def field(key, edited, case, prefix='input'):
         new = int(st.checkbox(title, value=bool(value), key=widget_key))
     elif TYPES[key] in (float, int):
         scale = 100 if key in PERCENT else 1
-        displayed = float(value * scale) if value is not None else None
+        # 의무보유 물량 비율의 음수는 «콜 대상 비율과 같음» 이다 — 칸을 비워 보여 준다.
+        _same = key == 'k_lock_w' and value is not None and value < 0
+        displayed = float(value * scale) if value is not None and not _same else None
         number = st.number_input(title, value=displayed, format='%.8f' if key in PERCENT else '%.6f', key=widget_key)
         new = value if number == displayed else number / scale if number is not None else None
+        if key == 'k_lock_w' and new is None:
+            new = -1.0
         if new is not None and TYPES[key] is int:
             if float(new).is_integer():
                 new = int(new)
@@ -440,7 +447,7 @@ def input_editor(case, autosave=False):
             else:
                 fields(['k_w', 'k_hold'], edited, case)
                 if edited.get('k_hold'):
-                    fields(['k_lock', 'k_lock_put'], edited, case)
+                    fields(['k_lock', 'k_lock_put', 'k_lock_w'], edited, case)
                 fields(['k_method', 'k_split'], edited, case)
                 third_now = edited.get('issuer_call') == 2 if inst == 'RCPS' else bool(edited.get('k_third', DEFAULTS['k_third']))
                 policy = (2 if third_now and edited.get('model', 'TF') == 'TF' else 0, 1)
@@ -460,7 +467,7 @@ def input_editor(case, autosave=False):
             edited['k_w'] = 0.
         field('rfx_mode', edited, case)
         if edited.get('rfx_mode'):
-            fields(['rfx_cyc', 'floor', 'K_cap', 'carry'], edited, case)
+            fields(['rfx_cyc', 'rfx_first', 'floor', 'K_cap', 'carry'], edited, case)
     with st.expander('IPO 조건·미반영 권리 메모'):
         field('ipo_on', edited, case)
         if edited.get('ipo_on'):
