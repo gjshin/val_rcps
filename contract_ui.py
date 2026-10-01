@@ -17,7 +17,7 @@ def main(case):
                 st.write('원문 발췌'); st.text(row['quote'])
                 st.write('계약 해석: ' + row['interpretation'])
                 st.write('후속 작업: ' + row['action'])
-                st.dataframe([{'입력항목': label(k), '계약 입력': display_value(k, case.facts().get(k), case.contract.get('d_issue')), '계산 적용값': display_value(k, case.effective().get(k), case.contract.get('d_issue'))} for k in row['fields']], hide_index=True)
+                st.dataframe([{'입력항목': label(k), '계약 입력': display_value(k, case.facts().get(k), case.contract.get('d_issue'), case.facts().get('inst')), '계산 적용값': display_value(k, case.effective().get(k), case.contract.get('d_issue'), case.facts().get('inst'))} for k in row['fields']], hide_index=True)
         st.caption('검토안은 검토자의 서명이나 승인 기록이 아닙니다. 「검토조서」에서 결론과 검토자를 기록하십시오.')
     else:
         st.info('조항별 검토안이 없는 평가파일입니다. 기존 입력은 그대로 사용할 수 있습니다. 자료 출처와 추가 확인사항을 기록하십시오.')
@@ -45,4 +45,4 @@ def main(case):
     else:
         st.success('계산에 필요한 입력 형식이 갖추어져 있습니다. 계약 해석과 시장자료 적정성은 별도로 검토하십시오.')
     with st.expander('입력항목과 출처 대조'):
-        st.dataframe([{'입력항목': label(k), '현재 입력': display_value(k, v, case.contract.get('d_issue')), '출처·근거': case.sources.get(k, '')} for k,v in case.facts().items()], hide_index=True)
+        st.dataframe([{'입력항목': label(k), '현재 입력': display_value(k, v, case.contract.get('d_issue'), case.facts().get('inst')), '출처·근거': case.sources.get(k, '')} for k,v in case.facts().items()], hide_index=True)

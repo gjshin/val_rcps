@@ -55,7 +55,8 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
         from .legacy import SHA_ROW_KEYS, sha_row_defaults
         heads = dict(name='평가 구분', start='행사 시작일', end='행사 종료일', style='행사 방식', freq='주기(개월)',
                      price='주당 기준가격(원)', rate='가격 가산율(연)', acc_from='가격 가산 기산일(비우면 계약일)',
-                     put_q='풋 수량', call_q='콜 수량', kill='상호소멸(1)', call_start='콜 시작일(비우면 풋과 같음)',
+                     put_q='풋 수량', call_q='콜 수량', kill='한쪽 행사 시 상대 권리 소멸(1)',
+                     link_q='같은 주식 물량(비우면 수량이 같을 때 전부)', call_start='콜 시작일(비우면 풋과 같음)',
                      call_end='콜 종료일', call_price='콜 기준가격(원)', call_rate='콜 가산율(연)',
                      sig='회차 변동성(비우면 공통)', rf='회차 무위험 금리', pdisc='회차 풋 할인율', price_note='가격 산식 기록')
         sheet('회차별 입력', [[heads[k] for k in SHA_ROW_KEYS]] +
@@ -72,8 +73,8 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
             # Curves have their own numeric table with explicit percent units.
             if isinstance(value, list):
                 continue
-            rows.append([label(key), display_value(key, run.case.facts().get(key), tm.d_issue),
-                         display_value(key, value, tm.d_issue), assumptions.get(key, {}).get('rationale', ''),
+            rows.append([label(key), display_value(key, run.case.facts().get(key), tm.d_issue, tm.inst),
+                         display_value(key, value, tm.d_issue, tm.inst), assumptions.get(key, {}).get('rationale', ''),
                          run.case.sources.get(key, ''), '기본값 적용' if key in run.case.imported_defaults or key in summary['engine_defaults'] else ''])
         sheet(name, rows)
     sheet('행사방식', [['권리·조정 항목', '계약상 방식', '계산 반영']] +
@@ -92,7 +93,7 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
                            applied[tenor] * 100 if tenor in applied else None, run.case.sources.get(key, '')])
     sheet('금리곡선', curves)
     sheet('평가가정', [['변경 항목', '적용 가정', '근거']] +
-          [[label(r['field']), display_value(r['field'], r['value'], tm.d_issue), r['rationale']] for r in run.case.assumptions])
+          [[label(r['field']), display_value(r['field'], r['value'], tm.d_issue, tm.inst), r['rationale']] for r in run.case.assumptions])
     sheet('산술검산', [['검사 항목', '결과', '검사 범위']] +
           [[r['name'], '통과' if r['passed'] else '차이 발생', r['detail']] for r in summary['checks']])
     rows = issue_rows(run.issues)
@@ -111,7 +112,7 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
         sheet('별도분석입력', rows)
     if previous:
         sheet('전기입력비교', [['항목', '전기', '당기']] +
-              [[label(r['field']), display_value(r['field'], r['previous']), display_value(r['field'], r['current'])]
+              [[label(r['field']), display_value(r['field'], r['previous'], inst=tm.inst), display_value(r['field'], r['current'], inst=tm.inst)]
                for r in compare_cases(previous, run.case)])
     if as_workbook:
         return wb
@@ -187,7 +188,7 @@ def append_controls(data, run, *, final=False):
         '기본값확인': [['검토 상태', '확인 완료' if records.get('defaults', {}).get('input_key') == input_key(run.case) else '확인 필요' if default_fields(run.case) else '보충값 없음'],
             ['확인자', records.get('defaults', {}).get('reviewer', '')], ['확인시각', records.get('defaults', {}).get('reviewed_at', '')],
             ['확인 근거', records.get('defaults', {}).get('rationale', '')], ['항목', '적용값']] +
-            [[label(k), display_value(k, run.summary['applied_terms'][k], run.terms.d_issue)] for k in default_fields(run.case)],
+            [[label(k), display_value(k, run.summary['applied_terms'][k], run.terms.d_issue, run.terms.inst)] for k in default_fields(run.case)],
     }
     tables['행사방식'] = [['권리·조정 항목', '계약상 방식', '계산 적용 주기(개월)']] + [
         [label(k) if k != 'cv' else '전환·신주인수권', {'any':'기간 중 언제든지', 'periodic':'정기 행사·조정', 'single':'특정일에만 행사'}[v],

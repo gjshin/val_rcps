@@ -192,7 +192,8 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
                               {k: v * terms.K0 / 100 for k, v in amounts.items()}
                               if legacy.is_sha(terms) and not raw.get("portfolio") else None),
         "sha_rows": ([{"회차": x["name"], "행사기간": x["window"], "주당 기준가격": x["K"],
-                       "풋 수량": x["qp"], "콜 수량": x["qc"], "풋 1주당": x["put_ps"],
+                       "풋 수량": x["qp"], "콜 수량": x["qc"],
+                       "같은 주식 물량 (연계 판단)": float(x["R"].get("link_q") or 0.0), "풋 1주당": x["put_ps"],
                        "콜 1주당": x["call_ps"], "풋 전액": x["put_krw"], "콜 전액": x["call_krw"]}
                       for x in raw["rows"]] if legacy.is_sha(terms) and raw.get("portfolio") else None),
         "grid": {"intervals": terms.n, "average_days": terms.T*365/terms.n,

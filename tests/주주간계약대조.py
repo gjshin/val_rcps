@@ -156,6 +156,7 @@ def main():
 
     def accounts(got, vw, t, R, multi):
         """회계처리 시트 — 세 관점 표의 모든 숫자 칸이 엔진(sha_accounts)과 같은가."""
+        nonlocal bad
         A1 = None if multi else G["sha_accounts"](t, R)
         if multi:
             comp = {k: sum(G["sha_components_krw"](x["tm"], x["R"])[k] for x in R["rows"]) for k in
@@ -170,7 +171,12 @@ def main():
         for who in G["SHA_PARTIES"]:
             r += 2
             for k, (nm, vk) in enumerate(AK[who][0]):
-                if not multi:
+                if not multi and A1[who][0][k][1] is None:
+                    # 주식수가 달라 100 기준 순액을 싣지 않는 칸 — 두 조서 모두 숫자가 아니어야 한다
+                    if isinstance(ws.cell(r, 3).value, (int, float)):
+                        print(f"   회계 {who[:4]} {nm[:10]} 100 — 주식수가 다른데 100 기준 순액이 숫자로 실림 ★")
+                        bad += 1
+                elif not multi:
                     line(f"회계 {who[:4]} {nm[:10]} 100", fx.get(f"C{r}"), ws.cell(r, 3).value, A1[who][0][k][1], 1e-6)
                 line(f"회계 {who[:4]} {nm[:10]} 원", fx.get(f"D{r}"), ws.cell(r, 4).value, vk, "won")
                 r += 1

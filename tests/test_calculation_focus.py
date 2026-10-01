@@ -306,3 +306,47 @@ def test_sha_tranche_table_screen_to_excel():
             name = next(n for n in z.namelist() if n.endswith('.xlsx'))
             wb = load_workbook(io.BytesIO(z.read(name)))
             assert want <= set(wb.sheetnames), (option, wb.sheetnames)
+
+
+def test_sha_linked_rows_screen_to_excel():
+    """주주간계약 — 같은 주식 물량 연계 판단이 입력 화면 → 평가 → 상세 화면 → 수식 조서까지 같은 조건으로 간다.
+
+    2차는 풋 30,000주 · 콜 20,000주 · 한쪽 행사 시 상대 권리 소멸 · 같은 주식 20,000주(가상 수치).
+    주당 기준가격을 비운 회차는 «○○의 주당 기준가격을 입력하십시오» 로 막는다."""
+    rows = [dict(name='1차', start='2026-01-01', end='2026-12-31', style='any', price=900., rate=0.,
+                 put_q=30000., call_q=30000.),
+            dict(name='2차', start='2027-01-01', end='2027-12-31', style='periodic', freq=3., price=1600.,
+                 rate=.07, put_q=30000., call_q=20000., kill=1, link_q=20000.)]
+    contract = dict(inst='SHA', d_issue='2021-11-15', d_mat='2027-12-31', K0=900.,
+                    face_total=900.*30000+1600.*30000, rfx_mode=0, cpn=0., cv_s=99., cv_e=0., p_s=99., p_e=0.,
+                    k_w=0., sha_put_s=99., sha_put_e=0., sha_call_s=99., sha_call_e=0., sha_rows=rows, pc_order=1)
+    market = dict(S0=1000., sig=.6, rf_curve=[[1, .0226], [3, .024]], cr_curve=[[1, .05], [3, .055]])
+    method = dict(d_base='2025-09-30', model='TF', view='issuer', gap_m=1., grid_days=14.)
+    bad = Case(name='가격 누락', contract=dict(contract, sha_rows=[dict(rows[0], price=None)]), market=market,
+               method=method)
+    msgs = [i.message for i in inspect_case(bad) if i.severity == 'error']
+    assert any(m == '1차의 주당 기준가격을 입력하십시오.' for m in msgs), msgs
+    case = Case(name='연계 회차 시험', contract=contract, market=market, method=method)
+    app = AppTest.from_file(str(ROOT/'app.py'), default_timeout=300)
+    app.session_state.case = case; app.run()
+    assert not app.exception and not app.error
+    assert app.session_state.case.contract['sha_rows'][1]['link_q'] == 20000.
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
+    next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
+    assert not app.exception
+    run = app.session_state.run
+    assert [r['같은 주식 물량 (연계 판단)'] for r in run.summary['sha_rows']] == [0.0, 20000.]
+    assert run.summary['amounts_total'] == calculate(app.session_state.case).summary['amounts_total']
+    next(w for w in app.selectbox if w.label == '분석 도구').set_value('상세 계산·회계 참고표').run()
+    for section in next(w for w in app.selectbox if w.label == '상세 분석 항목').options:
+        next(w for w in app.selectbox if w.label == '상세 분석 항목').set_value(section).run()
+        assert not app.exception, section
+    app.radio(key='_workflow_stage').set_value('조서 출력').run()
+    next(w for w in app.radio if w.label == '조서 구성').set_value('상세 계산 수식 조서').run()
+    next(b for b in app.button if b.label == '조서 생성').click().run()
+    assert not app.exception and not app.error
+    with zipfile.ZipFile(io.BytesIO(app.session_state.bundle)) as z:
+        name = next(n for n in z.namelist() if n.endswith('.xlsx'))
+        wb = load_workbook(io.BytesIO(z.read(name)))
+    assert {'2·05 행사 판단', '2·03b 풋 (풋만)'} <= set(wb.sheetnames), wb.sheetnames
+    assert '1·05 행사 판단' not in wb.sheetnames

@@ -336,13 +336,13 @@ def inspect_case(case: Case) -> list[Issue]:
     except (ValueError, KeyError):
         add("error", "date", "dates", "발행일·기준일·만기일은 YYYY-MM-DD 형식이어야 합니다.")
     if values.get('inst') == 'SHA' and values.get('sha_rows'):
-        from .legacy import SHA_ROW_KEYS, sha_row_issues
+        from .legacy import SHA_ROW_KEYS, sha_row_issues, sha_row_issue_text
         rows = values['sha_rows']
         if not all(isinstance(r, dict) and set(r) <= set(SHA_ROW_KEYS) for r in rows):
             add('error', 'sha_rows', 'sha_rows', '회차별 표의 형식이 올바르지 않습니다.')
         elif not any(i.severity == 'error' for i in issues):
             for k, message in sha_row_issues(Terms(**values)):
-                add('error', 'sha_rows', 'sha_rows', f'{k}회차: {message}')
+                add('error', 'sha_rows', 'sha_rows', sha_row_issue_text(k, message))
     if values.get('inst') == 'SHA' and not values.get('sha_rows') and not any(i.severity == 'error' for i in issues):
         from .legacy import sha_contract_issues
         for message in sha_contract_issues(Terms(**values)):
