@@ -9516,7 +9516,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _lk_ps_st = max(stp_lo(_lk_ps), _LKEND + 1) if int(tm.k_lock_put) else stp_lo(_lk_ps)
     RF, CR = curves(tm)
     # 조정일은 엔진과 같은 목록이다 (refix_steps). 계약일을 노드에 배정한 결과라 00 격자 공통
-    # 6행에 값으로 싣는다 — 행사일(20·27행)과 같다. 날짜를 바꾸려면 앱에서 조서를 다시 만든다.
+    # 6행이 «00 계약일 목록» 에서 찾아 온다 — 행사일(20·27행)과 같다. 날짜를 바꾸려면 앱에서 조서를 다시 만든다.
     _RFXD = refix_steps(tm, n, dt_)
     REFIXSET = set(_RFXD)
     # 전환가격을 바꾸는 조항은 정기 조정(리픽싱)과 상장(IPO) 조정 둘이다. 둘 다 없으면
@@ -9966,13 +9966,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _FP = pay_steps(tm, n, dt_)
 
     def x_cpn(i):
-        """스텝 i 에 지급하는 이자·배당 식. 지급일이 아니면 0."""
-        c_ = _FP.get(i, 0)
-        return (f"{c_}*100*{K['cpn']}*{K['ipaym']}/12" if c_ > 1 else
-                f"100*{K['cpn']}*{K['ipaym']}/12" if c_ == 1 else "0")
+        """스텝 i 에 지급하는 이자·배당 식 — 00 격자 공통 9행을 가리킨다 (계약일 목록에서 센 회수 × 이자).
+
+        지급일이 하나도 없는 계약이면 0 이다."""
+        if not _FP: return "0"
+        return f"{COMQ}!{gl(3+i)}$9"
 
     def _cadd(i, key):
-        if i >= n or i not in _FP: return "0"
+        if i >= n or not _FP: return "0"
         return f"IF({K[key]}=1,{x_cpn(i)},0)"
 
     # 개월로 묻는 자리(상각표의 기대만기 · 분리 판단의 첫 조기상환일)도 표를 먼저 본다.
@@ -10001,6 +10002,91 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     CROW = dict(pmo=20, pyr=21, p1=22, p0=23, ppaid=24, pap=25, pamt=26,
                 kmo=27, kyr=28, k1=29, k0=30, kpaid=31, kap=32, kamt=33)
     _common = {}
+    # ── 00 계약일 목록 — 계약서의 날짜를 노드에 배정하는 과정을 수식으로 편다 ──
+    # 정기 조정일 · 이자 지급일 · 조기상환일 · 매도청구일을 한 줄씩 적고 «계약일 이후 첫 노드»
+    # (허용 일수 안에서 앞선 노드는 같은 날 — EXDATE_RULE) 를 COUNTIF 로 센다. 00 격자 공통의
+    # 6행(조정일) · 9행(지급 회수) · 20·27행(행사월)이 이 목록을 본다. 종전에는 앱이 배정한 결과를
+    # 숫자(빨간색)로 넣어 배정이 맞는지 엑셀에서 따라갈 수 없었다. 계약일과 노드 수는 앱이 정한다.
+    DATES = "00 계약일 목록"
+    DQ = f"'{DATES}'"
+    DL = {}                       # 권리 → (첫 행, 끝 행)
+    _dl = lambda key, col: f"{DQ}!${col}${DL[key][0]}:${col}${DL[key][1]}"
+
+    def make_dates():
+        D = wb.create_sheet(DATES); D.sheet_view.showGridLines = False
+        for cc, w_ in (("B", 16), ("C", 9), ("D", 14), ("E", 13), ("F", 16), ("G", 12), ("H", 58)):
+            D.column_dimensions[cc].width = w_
+        title(D, 1, "00 계약일 목록 — 계약서의 날짜를 노드에 배정하는 과정", span=7)
+        put(D, 2, 2, "계약일마다 «계약일 이후 첫 노드» 에 배정한다. 노드 날짜가 계약일보다 허용 일수 안에서 "
+                     "앞서면 같은 날로 본다. 노드 번호 = 노드 날짜가 «계약일 − 허용 일수» 보다 이른 노드의 개수 "
+                     "(COUNTIF). 00 격자 공통 6행(조정일)·9행(지급 회수)·20·27행(행사월)이 이 표를 본다. "
+                     "계약일은 계약서의 날짜를 앱이 적은 값이다 — 바꾸려면 앱에서 조서를 다시 만든다.",
+            color=GREY, size=9)
+        put(D, 4, 2, "노드 번호", bold=True, size=8, fill=LIGHT, border=True)
+        put(D, 5, 2, "노드 날짜", bold=True, size=8, fill=LIGHT, border=True)
+        for i in range(n+1):
+            L_ = gl(3+i); D.column_dimensions[L_].width = max(D.column_dimensions[L_].width or 0, 11)
+            put(D, 4, 3+i, i, fmt=N0, align="center", size=8)
+            # 엔진의 node_dates 와 같다 — 평가기준일 + 반올림(스텝 × 구간 일수)
+            put(D, 5, 3+i, f"={K['d_base']}+ROUND({L_}4*{K['dt']}*365,0)", fmt=DATE, align="center", size=8)
+        NROW = f"$C$5:${gl(3+n)}$5"
+        put(D, 6, 2, "허용 일수", bold=True, size=8, fill=LIGHT, border=True)
+        put(D, 6, 3, f"=MIN(5,MAX(1,INT({K['dt']}*365/4)))", fmt=N0, align="center", size=8)
+        TOL = "$C$6"
+        r0 = 8
+        for j, h in enumerate(["권리", "회차", "계약 개월 (발행일부터)", "계약일", "계약일 이후 첫 노드",
+                               "적용 노드", "적용 규칙 (−1 = 이 격자에서 쓰지 않음)"]):
+            put(D, r0, 2+j, h, bold=True, size=8, fill=LIGHT, border=True)
+        r = r0 + 1
+        rem_m = float(getattr(tm, "rem_m", 0.0) or tm.T*12)
+        end = el + rem_m
+        lists = []
+        if not _kconst and int(tm.rfx_mode) and tm.rfx_cyc > 0 and not rfx_any(tm):
+            first = rfx_first_m(tm)
+            k = max(0, math.floor((el - first)/tm.rfx_cyc) + 1) if el >= first - 1e-9 else 0
+            ms = []
+            while first + tm.rfx_cyc*k <= end + 1e-6:
+                ms.append(first + tm.rfx_cyc*k); k += 1
+            lists.append(("rfx", "전환가격 조정일", ms,
+                          lambda rr: f"=IF(AND(D{rr}>{K['elm']}+1E-9,F{rr}>=1,F{rr}<={K['n']}),F{rr},-1)",
+                          "평가기준일 뒤 · 노드 1~n 만. 두 조정일이 한 노드에 오면 한 번 조정한다"))
+        if _FP:
+            k = math.floor(el/tm.ipay + 1e-9) + 1
+            ms = []
+            while k*tm.ipay <= end + 1e-6:
+                ms.append(k*tm.ipay); k += 1
+            lists.append(("pay", inst_text(tm, "이자 지급일"), ms,
+                          lambda rr: f"=IF(F{rr}>=1,MIN(F{rr},{K['n']}),-1)",
+                          "노드 1 부터 · 만기 뒤 지급일은 만기 노드. 두 지급일이 한 노드에 오면 그 노드에서 회수만큼 지급"))
+        for key, nm, cont, rows_, s_, e_, f_, on in (
+                ("put", "조기상환일", _EA["p_cont"], _EA["p_rows"], tm.p_s, tm.p_e, tm.p_f, bool(_EA["p_dates"])),
+                ("call", "매도청구일", _EA["k_cont"], _EA["k_rows"], tm.k_s, tm.k_e, tm.k_f,
+                 tm.k_w > 0 and bool(_EA["k_dates"]))):
+            if cont or not on: continue
+            if rows_:
+                ms = [m for m, _ in rows_]
+            else:
+                ms, k = [], 0
+                while s_ + k*f_ <= e_ + 1e-6:
+                    ms.append(s_ + k*f_); k += 1
+            lists.append((key, inst_text(tm, nm), ms,
+                          lambda rr: f"=IF(OR(D{rr}<{K['elm']}-1E-6,F{rr}>{K['n']}),-1,F{rr})",
+                          "평가기준일 전에 지난 회차 · 만기 뒤는 쓰지 않음. 두 회차가 한 노드에 오면 앞 회차"))
+        for key, nm, ms, gf, rule in lists:
+            a = r
+            for j, m in enumerate(ms):
+                put(D, r, 2, nm if j == 0 else "", size=8, border=True)
+                put(D, r, 3, j+1, fmt=N0, align="center", size=8, border=True)
+                put(D, r, 4, round(m, 6), fmt=N2, align="right", size=8, border=True)
+                put(D, r, 5, months_to_date(tm.d_issue, m), fmt=DATE, align="center", size=8, border=True)
+                put(D, r, 6, f'=COUNTIF({NROW},"<"&(E{r}-{TOL}))', fmt=N0, align="center", size=8, border=True)
+                put(D, r, 7, gf(r), fmt=N0, align="center", size=8, border=True, bold=True)
+                if j == 0: put(D, r, 8, rule, color=GREY, size=8)
+                r += 1
+            DL[key] = (a, r-1)
+            r += 1
+        D.freeze_panes = "C9"
+        return D
 
     def head_formulas(L, Lp, i, cvs, pst, call_on):
         """트리 머리 17행의 식(이 시트 기준). 00 격자 공통과 같은 식이면 참조로 바꾼다."""
@@ -10012,13 +10098,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
              # 표를 넣으면 «표가 정한 회차만» 열린다 (00 행사금액표).
              4: "=" + x_pflag(st, pst),
              5: (0 if not call_on else "=" + x_kflag(st)),
-             # 조정일 표시 — 전환가격을 바꾸는 조항이 없으면 늘 0 이다.
-             # 조정일 표시 — 앱이 계약일을 노드에 배정한 값(refix_steps). 조항이 없으면 늘 0.
-             6: (0 if _kconst else (1 if i in REFIXSET else 0)),
+             # 조정일 표시 — 00 계약일 목록에서 이 노드에 배정된 조정일이 있으면 1 (refix_steps 와 같은 규칙).
+             # 조항이 없으면 늘 0, «언제든지» 조정이면 계약일이 없어 앱이 정한 노드다.
+             6: (0 if _kconst else
+                 f"=IF(COUNTIF({_dl('rfx', 'G')},{st})>0,1,0)" if "rfx" in DL else
+                 (1 if i in REFIXSET else 0)),
              # 금액은 00 격자 공통의 보조 행에서 계산한 값을, 이 시트의 행사 가능 표시로 켠다.
              7: f"=IF({L}$4=1,{COMQ}!{L}${CROW['pamt']},0)",
              8: f"=IF({L}$5=1,{COMQ}!{L}${CROW['kamt']},999999)",
-             9: f"={x_cpn(i)}",
+             9: (f"=COUNTIF({_dl('pay', 'G')},{st})*100*{K['cpn']}*{K['ipaym']}/12" if "pay" in DL else "=0"),
              10: f"=IF({st}={K['n']},{K['red']},0)",
              13: f"={K['sig']}", 14: f"={K['u']}", 15: f"={K['dd']}"}
         if i < n:
@@ -10042,6 +10130,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
 
     def make_common():
         W = wb.create_sheet(COM); W.sheet_view.showGridLines = False
+        make_dates()
         W.column_dimensions["B"].width = 30
         for i in range(n+1): W.column_dimensions[gl(3+i)].width = 9
         title(W, 18, "00 격자 공통 — 모든 트리가 함께 쓰는 날짜·행사일·금액·금리·확률", span=min(n+1, 14))
@@ -10074,46 +10163,52 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             # 계약 행사월은 계약서의 날짜(발행일부터 개월)다. 노드는 그 날 이후 첫
             # 노드이므로 노드 날짜와 며칠 다를 수 있다 — 할인은 노드 날짜로, 금액은
             # 계약일로 한다. 기간 중 언제든지 행사하는 권리는 노드 개월이 곧 행사월이다.
-            if i in _EA["p_dates"]:
-                mo_v = (f"={_MO(st)}" if _EA["p_cont"] else round(_EA["p_dates"][i], 6))
-                put(W, CROW['pmo'], 3+i, mo_v, fmt=N2, align="center", size=8,
-                    color=("000000" if _EA["p_cont"] else RED))
-                mo = c(CROW['pmo'])
-                put(W, CROW['pyr'], 3+i, "=" + _yr(mo), fmt=N4, align="center", size=8)
-                yr = c(CROW['pyr'])
-                put(W, CROW['p1'], 3+i, "=" + xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr), fmt=N6, align="center", size=8)
-                put(W, CROW['p0'], 3+i, "=" + xl_prem(K['pyld'], '0', K['pcmp'], yr), fmt=N6, align="center", size=8)
-                put(W, CROW['ppaid'], 3+i, "=" + _paid(mo), fmt=N6, align="center", size=8)
-                put(W, CROW['pap'], 3+i, (f"=IF({K['pless']}=1,{c(CROW['p1'])},"
-                                          f"MAX(0,{c(CROW['p0'])}-IF({K['pless']}=2,{c(CROW['ppaid'])},0)))"),
-                    fmt=N6, align="center", size=8)
-                pf = f"IF({K['pmode']}=1,100*(1+{c(CROW['pap'])}),{K['prate']})"
-                if i in _EA["p_steps"]:
-                    pf = _pv0(st)
-                put(W, CROW['pamt'], 3+i, f"=({pf}+{_cadd(i, 'pcadd')})", fmt=N4, align="center", size=8)
-            if i in _EA["k_dates"]:
-                mo_v = (f"={_MO(st)}" if _EA["k_cont"] else round(_EA["k_dates"][i], 6))
-                put(W, CROW['kmo'], 3+i, mo_v, fmt=N2, align="center", size=8,
-                    color=("000000" if _EA["k_cont"] else RED))
-                mo = c(CROW['kmo'])
-                put(W, CROW['kyr'], 3+i, "=" + _yr(mo), fmt=N4, align="center", size=8)
-                yr = c(CROW['kyr'])
-                put(W, CROW['k1'], 3+i, "=" + xl_prem(K['prem'], K['cpn'], K['kcmp'], yr), fmt=N6, align="center", size=8)
-                put(W, CROW['k0'], 3+i, "=" + xl_prem(K['prem'], '0', K['kcmp'], yr), fmt=N6, align="center", size=8)
-                put(W, CROW['kpaid'], 3+i, "=" + _paid(mo), fmt=N6, align="center", size=8)
-                put(W, CROW['kap'], 3+i, (f"=IF({K['kless']}=1,{c(CROW['k1'])},"
-                                          f"MAX(0,{c(CROW['k0'])}-IF({K['kless']}=2,{c(CROW['kpaid'])},0)))"),
-                    fmt=N6, align="center", size=8)
-                kf = (f"IF({K['prem']}>0,100*(1+{c(CROW['kap'])}),"
-                      f"100*(1+MAX(0,-{_KC}*{yr})))")
-                if i in _EA["k_steps"]:
-                    kf = _kv0(st)
-                put(W, CROW['kamt'], 3+i, f"=({kf}+{_cadd(i, 'kcadd')})", fmt=N4, align="center", size=8)
+            # 계약일이 따로 있는 권리(정기 행사)는 모든 열에 행사월 식을 둔다 — 00 계약일 목록에서 이 노드에
+            # 배정된 회차의 계약 개월이고, 없으면 빈칸이라 그 열의 금액 행도 빈칸이다 (행사 가능 표시가 0).
+            for key, mrow, dates, cont, steps, kind in (
+                    ("put", CROW['pmo'], _EA["p_dates"], _EA["p_cont"], _EA["p_steps"], "p"),
+                    ("call", CROW['kmo'], _EA["k_dates"], _EA["k_cont"], _EA["k_steps"], "k")):
+                live = (not cont) and key in DL
+                if not (i in dates or live): continue
+                if cont:
+                    mo_v = f"={_MO(st)}"
+                else:
+                    mo_v = (f'=IFERROR(INDEX({_dl(key, "D")},MATCH({st},{_dl(key, "G")},0)),"")')
+                put(W, mrow, 3+i, mo_v, fmt=N2, align="center", size=8)
+                mo = c(mrow)
+                g = (lambda x: f'=IF(ISNUMBER({mo}),{x},"")') if live else (lambda x: "=" + x)
+                if kind == "p":
+                    put(W, CROW['pyr'], 3+i, g(_yr(mo)), fmt=N4, align="center", size=8)
+                    yr = c(CROW['pyr'])
+                    put(W, CROW['p1'], 3+i, g(xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)), fmt=N6, align="center", size=8)
+                    put(W, CROW['p0'], 3+i, g(xl_prem(K['pyld'], '0', K['pcmp'], yr)), fmt=N6, align="center", size=8)
+                    put(W, CROW['ppaid'], 3+i, g(_paid(mo)), fmt=N6, align="center", size=8)
+                    put(W, CROW['pap'], 3+i, g(f"IF({K['pless']}=1,{c(CROW['p1'])},"
+                                               f"MAX(0,{c(CROW['p0'])}-IF({K['pless']}=2,{c(CROW['ppaid'])},0)))"),
+                        fmt=N6, align="center", size=8)
+                    pf = f"IF({K['pmode']}=1,100*(1+{c(CROW['pap'])}),{K['prate']})"
+                    if i in steps:
+                        pf = _pv0(st)
+                    put(W, CROW['pamt'], 3+i, g(f"({pf}+{_cadd(i, 'pcadd')})"), fmt=N4, align="center", size=8)
+                else:
+                    put(W, CROW['kyr'], 3+i, g(_yr(mo)), fmt=N4, align="center", size=8)
+                    yr = c(CROW['kyr'])
+                    put(W, CROW['k1'], 3+i, g(xl_prem(K['prem'], K['cpn'], K['kcmp'], yr)), fmt=N6, align="center", size=8)
+                    put(W, CROW['k0'], 3+i, g(xl_prem(K['prem'], '0', K['kcmp'], yr)), fmt=N6, align="center", size=8)
+                    put(W, CROW['kpaid'], 3+i, g(_paid(mo)), fmt=N6, align="center", size=8)
+                    put(W, CROW['kap'], 3+i, g(f"IF({K['kless']}=1,{c(CROW['k1'])},"
+                                               f"MAX(0,{c(CROW['k0'])}-IF({K['kless']}=2,{c(CROW['kpaid'])},0)))"),
+                        fmt=N6, align="center", size=8)
+                    kf = (f"IF({K['prem']}>0,100*(1+{c(CROW['kap'])}),"
+                          f"100*(1+MAX(0,-{_KC}*{yr})))")
+                    if i in steps:
+                        kf = _kv0(st)
+                    put(W, CROW['kamt'], 3+i, g(f"({kf}+{_cadd(i, 'kcadd')})"), fmt=N4, align="center", size=8)
         put(W, 35, 2, "트리 시트의 1~17행은 이 시트를 가리킨다. 트리마다 행사 시작일이 다를 때"
             "(매도청구 대상 물량 등)만 그 시트가 행사 가능 표시(3~5행)를 따로 계산한다. "
             "금액(7·8행)은 늘 이 시트 26·33행에서 가져와 그 시트의 행사 가능 표시로 켠다. "
-            "행사일(20·27행 빨간 숫자)은 계약서의 날짜를 앱이 노드에 배정한 것이다 — 날짜를 "
-            "바꾸려면 앱에서 조서를 다시 만든다.", color=GREY, size=9)
+            "조정일(6행)·지급 회수(9행)·행사월(20·27행)은 «00 계약일 목록» 에서 계약일을 노드에 배정한 "
+            "식으로 온다 — 계약일을 바꾸려면 앱에서 조서를 다시 만든다.", color=GREY, size=9)
         put(W, 36, 2, "상환할증률 = (보장수익률 − 차감률) ÷ 보장수익률 × ((1 + 보장수익률/m)^(m·t) − 1). "
             "복리 횟수 m 이 0 이면 (보장수익률 − 차감률) × t.", color=GREY, size=9)
         W.freeze_panes = "C3"
@@ -11820,8 +11915,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                          + ("선도이자율은 IR 시트(입력곡선 → 부트스트래핑 → 현물 → 선도)에서 수식으로 계산되어 "
                             "00 격자 공통 11·12행으로 옵니다. " if _irref else "")
                          + "상각표와 분리 판단의 유효이자율도 수식(앱과 같은 이분법)이라 입력을 바꾸면 따라옵니다.")),
-      ("앱이 정한 날짜", "조기상환·매도청구 행사일(00 격자 공통 20·27행)과 이자 지급일(9행)은 "
-                     "계약서의 날짜를 앱이 노드에 배정한 것입니다 (아래 «행사일 대조» 표와 규칙). 같은 날의 권리는 "
+      ("계약일과 노드 배정", "전환가격 조정일·이자 지급일·조기상환일·매도청구일은 «00 계약일 목록» 시트에 계약일로 "
+                     "적혀 있고, 각 계약일이 어느 노드에 배정되는지는 그 시트의 수식(COUNTIF)이 정합니다. 00 격자 공통 "
+                     "6행(조정일)·9행(지급 회수)·20·27행(행사월)은 그 목록을 찾아 옵니다 (아래 «행사일 대조» 표와 규칙). "
+                     "계약일 자체는 앱이 계약서에서 적은 값이라 바꾸려면 앱에서 조서를 다시 만듭니다. 같은 날의 권리는 "
                      "같은 노드에 배정됩니다. 행사금액은 노드 날짜가 아니라 계약일의 경과기간으로 계산합니다. "
                      "그래서 가정 시트의 이자 지급주기·조기상환 시작은 입력칸(노란색)이 아닙니다."),
       ("각 계산 시트의 공통조건 1~17행", "날짜·스텝·행사 가능 표시·행사금액·이자·만기상환금액·선도이자율·σ·u·d·q 는 "
