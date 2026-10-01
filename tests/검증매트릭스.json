@@ -1,9 +1,7 @@
 {
- "generated": "2026-10-01T09:13:12",
- "head": "995e172",
- "manifest_missing": [
-  "Terms 열거형 필드 `sha_ipo_kind`(int) 가 MANIFEST 에 없다"
- ],
+ "generated": "2026-10-01T09:13:24",
+ "head": "591b25e",
+ "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
   "CB": {
@@ -28,7 +26,7 @@
    "NOT_TESTED": 0
   },
   "SHA": {
-   "PASS": 45,
+   "PASS": 47,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -7152,6 +7150,42 @@
     "tests/주주간계약대조.py::월 노드"
    ],
    "n_tests": 29
+  },
+  {
+   "case_id": "SHA-sha_ipo_kind-0",
+   "product": "SHA",
+   "branch": "sha_ipo_kind",
+   "value": 0,
+   "label": "주가 기준",
+   "meaning": "상장 조항 종료 조건",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/주주간계약대조.py::적격상장 36개월",
+    "tests/주주간계약대조.py::적격상장 · 콜 존속",
+    "tests/주주간계약대조.py::상호소멸 · 적격상장",
+    "tests/손계산대조.py::test_sha_contract_state"
+   ],
+   "n_tests": 4
+  },
+  {
+   "case_id": "SHA-sha_ipo_kind-1",
+   "product": "SHA",
+   "branch": "sha_ipo_kind",
+   "value": 1,
+   "label": "실제 상장(사건)",
+   "meaning": "상장 조항 종료 조건",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/주주간계약대조.py::상장 · 실제 상장일 36개월 (사건)",
+    "tests/손계산대조.py::test_sha_contract_state"
+   ],
+   "n_tests": 2
   },
   {
    "case_id": "SHA-sha_kill-0",
