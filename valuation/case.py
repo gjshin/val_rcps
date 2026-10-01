@@ -289,14 +289,17 @@ def inspect_case(case: Case) -> list[Issue]:
                          "view": {"holder", "issuer"}, "y_type": {"par", "spot"},
                          "conv_class": {"equity", "liability"},
                          "p_mode": {"fixed", "accrue"},
-                         "rate_mode": {"direct", "rating", "pick"}}.items():
+                         "rate_mode": {"direct", "rating", "pick"},
+                         # 내재파생 분리 정책은 «접근법 1 · 접근법 2» 다 — 0 은 없는 값이다.
+                         # 일반 0/1 선택항목으로 검사하면 화면에서 고른 접근법 2 를 막고 0 을 통과시킨다.
+                         "emb_approach": {1, 2}}.items():
         if key in values and values[key] not in allowed:
             add("error", "enum", key, f"지원하는 값: {sorted(allowed)}")
     counts = {"sha_put_cmp", "sha_call_cmp", "cur_periods", "ytm_cmp", "k_cmp", "cmp_rf", "cmp_cr", "p_cmp"}
     multi = {"sha_writer": 2, "sha_disc": 2, "issuer_call": 2, "rfx_mode": 2,
              "carry": 3, "k_method": 2, "k_less_cpn": 2, "p_less_cpn": 2, "m_less_cpn": 2}
     for key, value in values.items():
-        if types[key] is int:
+        if types[key] is int and key != "emb_approach":
             if value < (1 if key == "carry" else 0) or (key not in counts and value > multi.get(key, 1)):
                 add("error", "enum", key, "지원하지 않는 선택값입니다.")
     if not 0 <= values.get("k_w", 0) <= 1:

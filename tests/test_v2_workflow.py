@@ -280,3 +280,32 @@ def test_new_case_keeps_market_inputs_blank():
     assert "rf_curve" not in app.session_state["case"].market
     app.radio(key="_workflow_stage").set_value("평가·분석").run()
     assert next(b for b in app.button if b.label == "현재 입력으로 평가").disabled
+
+
+def _cb_case(**over):
+    terms = legacy.Terms(inst="CB", d_issue="2025-01-01", d_base="2025-01-01", d_mat="2028-01-01",
+        gap_m=6., S0=9000., K0=10000., sig=.30, rfx_mode=0, conv_class="liability",
+        rf_curve=[[1., .025], [5., .027]], cr_curve=[[1., .08], [5., .09]], **over)
+    return import_legacy(asdict(terms), "Synthetic CB — no client data")
+
+
+@pytest.mark.parametrize("p_sep", [0, 1])
+def test_embedded_approach_2_runs_through_to_both_workbooks(p_sep):
+    """접근법 2 는 화면·엔진이 지원하는 값이다 — 입력 검사가 막으면 평가에 들어가지 못한다."""
+    case = _cb_case(emb_approach=2, p_sep=p_sep)
+    assert not [i for i in inspect_case(case) if i.severity == "error"]
+    run = calculate(case)
+    for formula in (False, True):
+        data = export_bundle(run, formula=formula)
+        name = "formula_review.xlsx" if formula else "value_review.xlsx"
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            assert load_workbook(io.BytesIO(z.read(name))).sheetnames
+
+
+@pytest.mark.parametrize("value", [0, 3])
+def test_embedded_approach_only_accepts_1_or_2(value):
+    case = _cb_case()
+    case.method["emb_approach"] = value
+    with pytest.raises(CaseError) as exc:
+        calculate(case)
+    assert any(i.code == "enum" and i.field == "emb_approach" for i in exc.value.issues)

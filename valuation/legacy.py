@@ -560,6 +560,17 @@ def exercise_date_rows(tm: "Terms") -> list:
     _kname = "발행자 상환권" if issuer_redeem(tm) else "매도청구권"
     if tm.k_w > 0 and (tm.k_s <= tm.k_e or EA["k_rows"]):
         dated(_kname, EA["k_dates"], EA["k_drop"], EA["k_cont"], float(tm.k_s), float(tm.k_e), EA["k_rows"])
+        # 의무보유 종료일도 계약일이다 — 매도청구와 같은 노드 규칙으로 배정한다 (lock_end_step).
+        _L = lock_end_step(tm, n, dt_)
+        if _L >= 0 and tm.k_lock > el + 1e-6:
+            cd = months_to_date(di, float(tm.k_lock))
+            dd = (nd[_L] - cd).days
+            rows.append(("의무보유", "종료 (이 노드까지 전환" + ("·조기상환" if int(tm.k_lock_put) else "")
+                         + " 제한)", cd.isoformat(), _L, nd[_L].isoformat(), dd,
+                         ("같은 계약일의 마지막 매도청구 노드까지 묶음" if _L > hi(float(tm.k_lock)) else
+                          "같은 날" if dd == 0 else
+                          f"계약일 앞 마지막 노드 ({-dd}일 앞)" if dd < 0 else
+                          f"노드가 {dd}일 늦음 — 허용 {tol}일 안이라 같은 날로 봄")))
     return rows
 
 
@@ -2280,7 +2291,7 @@ def tie_tol(x, y):
 
 
 def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
-           put_start=None):
+           put_start=None, lock_m=None):
     RF, CR = curves(tm)
     n, T = int(tm.n), tm.T
     dt_ = T/n
@@ -2303,6 +2314,11 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     cs = tm.cv_s if conv_start is None else conv_start
     # 의무보유는 전환뿐 아니라 조기상환청구도 막는다. 부르는 쪽이 시작을 미뤄 준다.
     ps = tm.p_s if put_start is None else put_start
+    # 의무보유가 걸린 마지막 노드 (lock_end_step). 그 노드까지는 전환이 막히고, 조기상환청구도
+    # 막는 계약(k_lock_put)이면 조기상환도 막힌다. 시작 개월(cs·ps)만으로는 종료일과 같은 날의
+    # 마지막 매도청구 노드를 묶지 못한다.
+    _LK = -1 if lock_m is None else lock_end_step(tm, n, dt_, lock_m)
+    _lkput = int(getattr(tm, "k_lock_put", 1)) == 1
 
     # 조정일은 계약일마다 그날 이후 첫 노드다 (refix_steps — 조서와 같은 목록).
     _RFX = refix_steps(tm, n, dt_)
@@ -2322,7 +2338,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     # 앞쪽 회차를 막는다 — 표에 있는 날이라도 묶여 있으면 청구할 수 없다.
     # 의무보유는 «스텝» 으로 견준다. 개월에 반 노드 허용오차를 두면 조서(스텝 비교)와
     # 경계에서 갈려, 의무보유가 걸린 트랜치에서 매도청구권 값이 어긋난다.
-    _pin = lambda i: EA["p_on"](i) and i >= st_lo(ps)
+    _pin = lambda i: EA["p_on"](i) and i >= st_lo(ps) and not (_lkput and i <= _LK)
     _kin = EA["k_on"]
     put_a = lambda i: put_amt(i) if (put and _pin(i)) else 0.0
     # kstrike 는 콜 스위치와 무관한 행사금액이다. 행사기간이 아니면 None.
@@ -2335,7 +2351,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     _kadd = int(getattr(tm, "k_cpn_add", 0)) == 1
     kcash = lambda i: (None if kstrike(i) is None else
                        kstrike(i) + (cpn_at(i) if (_kadd and i < n) else 0.0))
-    conv_ok = lambda i: conv and st_lo(cs) <= i <= st_hi(tm.cv_e)
+    conv_ok = lambda i: conv and st_lo(cs) <= i <= st_hi(tm.cv_e) and i > _LK
     # ── BW 현금납입 ──
     # 신주인수권을 현금으로 행사하면 사채가 그대로 남는다. 그래서 「사채를 내주고
     # 주식을 받는」 전환 갈래가 없다. 대신 지분요소가 신주인수권 하나가 되어
@@ -3140,6 +3156,28 @@ def lock_delay(tm: Terms, lock=None):
     return cs, ps
 
 
+def lock_end_step(tm: Terms, n: int, dt_: float, lock=None) -> int:
+    """의무보유가 걸려 있는 마지막 노드. 의무보유가 없으면 −1.
+
+    의무보유 종료일도 계약일이다. 행사일과 같은 규칙으로 노드에 배정한다 —
+    종료일 이전 마지막 노드(hi)까지 묶이고, **종료일 이전 계약일의 매도청구가 배정된
+    노드**도 묶인 채로 본다. 매도청구일은 «그날 이후 첫 노드» 로 가므로, 노드가 계약일과
+    어긋나면 같은 날의 마지막 매도청구(예: 78번)가 의무보유 종료(77번) 뒤로 밀려 그날
+    투자자가 먼저 전환해 버리는 일이 생겼다. 같은 계약일은 같은 노드에서 함께 처리한다.
+    엔진(유무가치비교법 With 격자 · 옵션차익법) · 값 조서 · 수식 조서가 이 값 하나를 쓴다.
+    """
+    lk = tm.k_lock if lock is None else lock
+    if not int(getattr(tm, "k_hold", 1)) or lk <= 0 or tm.k_w <= 0:
+        return -1
+    _, hi = step_mapper(tm, n, dt_)
+    L = hi(lk)
+    kd = exercise_amounts(tm, n, dt_)["k_dates"]
+    for i, m in kd.items():
+        if m is not None and m <= lk + 1e-9:
+            L = max(L, i)
+    return min(L, n)
+
+
 # 기초 사채가 그 자리에서 정산되어 사라지는 결정들. 의무보유가 없을 때 콜도 함께 소멸한다.
 
 
@@ -3201,7 +3239,7 @@ def call_third_party(tm: Terms, full, method: int, nodes=None) -> float:
     ksplit = int(getattr(tm, "k_split", 0)) == 1
     khold = int(getattr(tm, "k_hold", 1)) == 1
     # 의무보유가 살아 있는 마지막 스텝. 없으면 -1 이라 첫 노드부터 소멸 조건이 걸린다.
-    lock_end = full["st_hi"](tm.k_lock) if khold else -1
+    lock_end = lock_end_step(tm, n_last, dt_) if khold else -1
     # 의무보유가 조기상환청구까지 막는가. 0 이면 전환만 막으므로 조기상환 노드에서는
     # 의무보유 기간 안이라도 사채가 사라지고 콜도 함께 사라진다.
     lkput = int(getattr(tm, "k_lock_put", 1)) == 1
@@ -3369,7 +3407,7 @@ def call_compare(tm: Terms, full, b2):
     def wow(lock):                      # 유무가치비교법 — 콜을 넣고 뺀 차액
         cs, ps = lock_delay(tm, lock)
         b3 = pick(engine(tm, conv=True, put=True, call=True, conv_start=cs,
-                         put_start=ps), tm.model)
+                         put_start=ps, lock_m=lock), tm.model)
         return tm.k_w * (b2 - b3)
 
     km, kspl, khl = int(tm.k_method), int(tm.k_split), int(tm.k_hold)
@@ -3458,13 +3496,16 @@ def wow_trace(tm: Terms, full, b2):
     A0 = tm.k_w*(b2 - pick(w, tm.model))
     lk = tm.k_lock if int(tm.k_hold) else 0.0
     cs1, ps1 = lock_delay(tm, lk)
-    _locked = (cs1, ps1) != lock_delay(tm, 0.0)
+    _locked = ((cs1, ps1) != lock_delay(tm, 0.0)
+               or lock_end_step(tm, int(full["n"]), full["dt"], lk) >= 0)
     A = (A0 if not _locked else
-         tm.k_w*(b2 - pick(engine(tm, conv=True, put=True, call=True, conv_start=cs1, put_start=ps1), tm.model)))
+         tm.k_w*(b2 - pick(engine(tm, conv=True, put=True, call=True, conv_start=cs1, put_start=ps1,
+                                  lock_m=lk), tm.model)))
     # 참고 — 의무보유가 콜과 «별개» 약정이라면(콜이 없어도 적용) 콜만의 값은 의무보유를 둔 채 콜만 넣고 뺀
     # 차액이다. 앱은 딸린 약정으로 읽는다(4.4.2 · 4.4.3 «콜과 그 부속조항»). 두 읽기의 차이가 이 줄과 A 의 차이다.
     A_sep = (None if not _locked else
-             A - tm.k_w*(b2 - pick(engine(tm, conv=True, put=True, call=False, conv_start=cs1, put_start=ps1),
+             A - tm.k_w*(b2 - pick(engine(tm, conv=True, put=True, call=False, conv_start=cs1, put_start=ps1,
+                                          lock_m=lk),
                                    tm.model)))
     return {"A": A, "A0": A0, "lock": A - A0, "A_sep": A_sep, "X": tm.k_w*X, "Y": tm.k_w*Y,
             "X_call": tm.k_w*Xg["call"], "X_forced": tm.k_w*Xg["forced"], "X_resp": tm.k_w*Xg["resp"],
@@ -4001,7 +4042,7 @@ def decompose(tm: Terms):
         # 의무보유는 전환과 조기상환청구를 함께 늦춘다. 시작보다 이르면 아무 제약이 아니다.
         cs, ps = lock_delay(tm)
         b3 = pick(engine(tm, conv=True, put=True, call=True, conv_start=cs,
-                         put_start=ps), tm.model)
+                         put_start=ps, lock_m=tm.k_lock), tm.model)
         ca = tm.k_w*(b2-b3)
     # RCPS 의 발행자 상환권은 자본요소가 아닌 파생이라 **부채요소 안에서** 잰다
     # (1032 문단 31·32 — 비자본 파생 특성은 부채요소 장부금액에 포함). 전체 격자에서
@@ -4973,7 +5014,7 @@ def model_checks(tm: Terms, full, b0, b1, b2, ca, eir=None, light=False):
         rights.append(("매도청구권", cad, "한계", ""))
     elif cad < -1e-7:
         _cs3, _ps3 = lock_delay(tm)
-        r3 = engine(tm, conv=True, put=True, call=True, conv_start=_cs3, put_start=_ps3)
+        r3 = engine(tm, conv=True, put=True, call=True, conv_start=_cs3, put_start=_ps3, lock_m=tm.k_lock)
         fc = r3["dist"].get("conv_called", 0.0)
         rights.append(("매도청구권", cad, "한계" if fc > 0 else "확인 필요",
                        f"강제전환 확률 {fc:.4f} — 콜이 전환을 강제하면 할인이 가벼워져 값이 오른다 (모형 성질)" if fc > 0 else ""))
@@ -7064,14 +7105,15 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
                "국내 채권의 관행적 복할인(끝 구간 단리)과의 차이는 3개월·3% 기준 가격의 약 0.003% 이다.")
 
     # ── 입력곡선 ──
-    I = sheet(IN, widths=[12, 16, 15, 5, 12, 16, 15])
+    # 무위험은 B·C·D, 위험은 E·F·G 열이다 — 산출 시트들이 이 열(LEG 의 만기·수익률 열)을 가리킨다.
+    I = sheet(IN, widths=[12, 16, 15, 12, 16, 15])
     head(I, 2, "입력 곡선", ("적용 금리곡선 — 앱에 입력한 곡선" + (" (위험 곡선은 등급 조정 후 적용 금리곡선)"
                                                          if tm.rate_mode == "rating" else "")
                              + ". 이후 모든 이자율 계산의 출발점이다."),
-         span=7)
-    cols(I, R0IN-1, ["무위험 만기", "수익률", "연속환산", "",
+         span=6)
+    cols(I, R0IN-1, ["무위험 만기", "수익률", "연속환산",
                      "위험 만기", "수익률", "연속환산"],
-         [12, 16, 15, 5, 12, 16, 15])
+         [12, 16, 15, 12, 16, 15])
     for (lbl, pts, cmp_, mcol, ycol) in LEG:
         for i, (mt, y) in enumerate(pts):
             rr = R0IN + i
@@ -7085,7 +7127,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
     endr = R0IN + max(len(tm.rf_curve), len(cc)) + 1
     note(I, endr, "연속환산 열은 참고다. 만기수익률을 넣었다면 실제 계산은 다음 두 "
                   "시트의 부트스트래핑에서 하고, 현물이자율을 넣었다면 이 열이 곧 "
-                  "쓰이는 값이다.", span=7)
+                  "쓰이는 값이다.", span=6)
 
     # ── 곡선별 산출 ──
     made = {}
@@ -8702,6 +8744,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     stp_lo, stp_hi = step_mapper(tm, n, dt_)
     # 의무보유가 미루는 두 시작점 — 엔진의 lock_delay 와 같은 값을 쓴다.
     _lk_cs, _lk_ps = lock_delay(tm)
+    # 의무보유가 걸린 마지막 노드 — 엔진과 같은 값 (lock_end_step). 같은 계약일의 마지막
+    # 매도청구 노드까지 묶이므로, 전환·조기상환 시작은 그 다음 노드보다 이를 수 없다.
+    _LKEND = lock_end_step(tm, n, dt_)
+    _lk_cs_st = max(stp_lo(_lk_cs), _LKEND + 1)
+    _lk_ps_st = max(stp_lo(_lk_ps), _LKEND + 1) if int(tm.k_lock_put) else stp_lo(_lk_ps)
     RF, CR = curves(tm)
     # 조정일은 엔진과 같은 목록이다 (refix_steps). 계약일을 노드에 배정한 결과라 00 격자 공통
     # 6행에 값으로 싣는다 — 행사일(20·27행)과 같다. 날짜를 바꾸려면 앱에서 조서를 다시 만든다.
@@ -8836,9 +8883,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("풋·콜 우선순위 (조기상환과 매도청구 사이)", "pcord", pc_order_text(tm), None, False),
         # 전환과 매도청구 사이는 따로 정한다 — 우선순위 하나가 전환권까지 바꾸지 않게.
         ("매도청구 통지 뒤 전환 대응", "kresp", conv_resp_text(tm), None, False),
-        (f"{KW} 전환 시작 (스텝)", "cv30", stp_lo(_lk_cs), N0, tm.k_method == 0),
+        (f"{KW} 전환 시작 (스텝)", "cv30", _lk_cs_st, N0, tm.k_method == 0),
         # 의무보유는 조기상환청구도 막는다 (k_lock_put). 유무가치비교법의 With 격자가 본다.
-        (f"{KW} 조기상환 시작 (스텝)", "pt30", stp_lo(_lk_ps), N0, tm.k_method == 0),
+        (f"{KW} 조기상환 시작 (스텝)", "pt30", _lk_ps_st, N0, tm.k_method == 0),
         ("변동성 σ", "sig",
          (f"={_volref}" if _volref else tm.sig), P2, not _volref),
         # 배당수익률은 드리프트에서만 빠진다 — 할인율에는 손대지 않는다.
@@ -8873,8 +8920,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("콜옵션 유형 (0 제3자 지정 가능 / 1 제3자 기특정)", "kkind", int(tm.k_kind), N0, False),
         ("콜 대상물량 의무보유 (1 있음 / 0 없음)", "khold", int(tm.k_hold), N0, False),
         # 의무보유가 살아 있는 마지막 스텝. 없으면 -1 이라 첫 노드부터 소멸 조건이 걸린다.
-        ("의무보유 만료 (스텝)", "lockend",
-         (stp_hi(tm.k_lock) if int(tm.k_hold) else -1), N0, False),
+        ("의무보유 만료 (스텝)", "lockend", _LKEND, N0, False),
         ("의무보유가 조기상환청구도 막음 (1/0)", "lkput", int(tm.k_lock_put), N0, False),
         # 복수 내재파생을 묶는 순서 — 회계정책(한공회 실무사례 30~32쪽). 앱에서 고른 값이다.
         ("내재파생 분리 정책 (1 접근법 1 / 2 접근법 2)", "embap", emb_policy(tm), N0, False),
@@ -10975,8 +11021,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
       ("유의사항", ""),
       ("매도청구권 평가방법", "이 조서는 「"
                     + ["유무가치비교법 — 매도청구 대상 물량과 비대상 물량의 가치 차이",
-                       "옵션차익법 · 혼합할인율 — 매도청구 행사가격을 전환확률로 배분하고 혼합할인율로 할인",
-                       "옵션차익법 · 주식결제·현금결제 분리 — 매도청구 행사가격을 전환확률로 배분하고 성분별로 할인"][tm.k_method]
+                       "옵션차익법 · 혼합할인율 — 매도청구 행사가격을 {sp}로 배분하고 혼합할인율로 할인",
+                       "옵션차익법 · 주식결제·현금결제 분리 — 매도청구 행사가격을 {sp}로 배분하고 성분별로 할인"][tm.k_method]
+                      .format(sp=("GS 전환확률(⑪)" if int(tm.k_split) == 1
+                                  else "가치 구성비율(⑰ = 주식결제분 ÷ 콜 반영 전 CB 가치)"))
                     + "」 방법으로 계산했습니다. 가정 시트의 평가방법 줄은 적용한 방법을 적어 둔 것이며 선택 칸이 아닙니다."),
       ("신용위험 처리", ("이 조서는 TF 로 계산했습니다. " if _tf else "이 조서는 GS 로 계산했습니다. ")
                      + "가정 시트의 TF/GS 줄을 바꿔도 결과가 따라오지 않습니다. 10 주계약가치와 16 부채요소는 "

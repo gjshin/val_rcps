@@ -2399,6 +2399,37 @@ def test_refix_contract_dates():
              bool(ge) and min(ge.values()) == 14. and min(ge) == 4)
 
 
+def test_lock_end_same_node_as_last_call():
+    """의무보유 종료와 같은 계약일의 마지막 매도청구는 같은 노드에서 처리한다.
+
+    매도청구일은 «계약일 이후 첫 노드», 의무보유 종료는 «계약일 이전 마지막 노드» 로 잡혀 있어,
+    노드가 계약일과 어긋나면 마지막 매도청구(주 격자 105번)가 의무보유 종료(104번) 뒤로 밀렸다.
+    그 노드에서 투자자가 먼저 전환하면 의무보유가 지키려던 마지막 매도청구가 사라진다.
+    ① 주 노드 · 매도청구 12~24개월 분기 · 의무보유 24개월 → 의무보유 마지막 노드 = 마지막 매도청구 노드.
+    ② 월 노드: 의무보유 24개월(= 마지막 매도청구일) 과 24.5개월은 같은 값이고(둘 다 그날을 묶는다),
+       23.5개월(마지막 매도청구일 전에 풀림)보다 크다.
+    """
+    print("\n[48] 의무보유 종료 — 같은 계약일의 마지막 매도청구와 같은 노드")
+    RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
+    w = Terms(grid_days=7., k_lock=24., rf_curve=RF, cr_curve=CR); derive(w)
+    n = int(w.n); dt_ = w.T/n
+    kd = G["exercise_amounts"](w, n, dt_)["k_dates"]
+    last = max(i for i, m in kd.items() if m <= 24. + 1e-9)
+    _, hi = G["step_mapper"](w, n, dt_)
+    L = G["lock_end_step"](w, n, dt_)
+    chk_bool(f"주 노드 · 마지막 매도청구 노드 {last} > 계약일 이전 마지막 노드 {hi(24.)}", last > hi(24.))
+    chk_bool(f"의무보유 마지막 노드 {L} = 마지막 매도청구 노드 {last}", L == last)
+    row = [r for r in G["exercise_date_rows"](w) if r[0] == "의무보유"]
+    chk_bool("행사일 대조표에 의무보유 종료 줄 (같은 노드)", len(row) == 1 and row[0][3] == last)
+    def callv(lock):
+        t = Terms(gap_m=1., k_lock=lock, rf_curve=RF, cr_curve=CR); derive(t)
+        return G["decompose"](t)[4]
+    a, b, c = callv(24.), callv(24.5), callv(23.5)
+    chk("월 노드 · 의무보유 24개월 = 24.5개월 (둘 다 마지막 매도청구일을 묶음)", a, b, 1e-9)
+    chk_bool(f"의무보유 24개월 {a:.4f} > 23.5개월 {c:.4f} (마지막 매도청구일 전에 풀림)", a > c + 1e-6)
+    chk_bool("의무보유 없음 → −1", G["lock_end_step"](Terms(k_hold=0), 60, 5/60) == -1)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -2448,6 +2479,7 @@ def main():
     test_sha_review_hand()
     test_sha_rows_block_and_isolate()
     test_refix_contract_dates()
+    test_lock_end_same_node_as_last_call()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

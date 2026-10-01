@@ -364,6 +364,7 @@ def collect_coverage(G):
                                  ("SHA", "call", True), ("SHA", "put", True)],
         "test_sha_rows_block_and_isolate": [("SHA", "sha_kill", 0), ("SHA", "sha_kill", 1)],
         "test_refix_contract_dates": [("CB", "rfx_mode", 2)],
+        "test_lock_end_same_node_as_last_call": [("CB", "k_hold", 1), ("CB", "k_hold", 0)],
         "test_decision_matches_old_chains": [("CB", "pc_order", 0), ("CB", "pc_order", 1),
                                              ("BW", "pc_order", 0), ("BW", "pc_order", 1)],
         "test_maturity_layer_in_distribution": [("RCPS", "mat_mode", 0), ("RCPS", "put", True),
