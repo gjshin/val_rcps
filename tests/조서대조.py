@@ -168,6 +168,11 @@ CASES = [
     ("콜 40% · 의무보유 15% · 유무가치", dict(k_w=.40, k_lock_w=.15, k_method=0)),
     ("콜 40% · 의무보유 15% · 방법1", dict(k_w=.40, k_lock_w=.15, k_third=1, k_method=1)),
     ("콜 40% · 의무보유 15% · 방법2 · 전환확률", dict(k_w=.40, k_lock_w=.15, k_third=1, k_method=2, k_split=1)),
+    # 콜 권리자 세 가지의 기본 설정 (call_holder_fields) — 발행회사 본인만 · 지정 가능 · 사전 특정
+    ("콜 권리자 · 발행회사 본인만 · 기본 설정", dict(k_third=0, k_kind=0, k_sep=0, k_method=0, k_split=1)),
+    ("콜 권리자 · 지정 가능 · 기본 설정", dict(k_third=1, k_kind=0, k_sep=1, k_method=2, k_split=1)),
+    ("콜 권리자 · 사전 특정 · 기본 설정", dict(k_third=1, k_kind=1, k_sep=1, k_method=2, k_split=1)),
+    ("신주인수권부사채 · 콜 권리자 · 발행회사 본인만", dict(inst="BW", bw_pay=1, k_third=0, k_kind=0, k_sep=0, k_method=0)),
     # 최초 리픽싱 조정일을 따로 정한 계약 (발행 후 12개월 · 이후 7개월)
     ("월 노드 · 최초 조정 12개월 · 이후 7개월", dict(_gap=1., rfx_first=12., rfx_cyc=7.)),
     # 조기상환권을 BDT 금리격자로 잴 때. 자본·TF 에서만 열린다.

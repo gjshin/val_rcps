@@ -690,6 +690,9 @@ COMPAT_GS_KMETHOD = ("**GS 에서는 유무가치비교법만 지원합니다.**
                      "(한공회 4.4.3). GS 로 재려면 신용위험 처리를 TF 로 바꾸십시오.")
 COMPAT_KKIND = ("**제3자 기특정 콜옵션은 별도의 금융상품입니다.** 발행 시 제3자가 정해져 있어 거래상대방이 "
                 "발행자가 아니므로 내재파생에 넣을 수 없습니다 (문단 4.3.1). 회계 처리를 «별도 금융상품» 으로 되돌렸습니다.")
+COMPAT_KHOLDER = ("**제3자 사전 특정 콜은 제3자가 행사하는 콜입니다.** «제3자 지정 불가» 와 함께 둘 수 없어 "
+                  "콜 권리자를 «발행 시 정해진 제3자» 로 맞췄습니다. 발행회사만 행사하는 콜이면 콜 권리자를 "
+                  "«발행회사 본인만» 으로 고르십시오.")
 COMPAT_PSEP = ("조기상환권 처리를 «주계약에 포함(분리하지 않음)» 으로 둘 수 없습니다. 분리 정책이 "
                "**접근법 1**(서로 얽힌 권리를 먼저 묶고 판단 — 한공회 실무사례 30~31쪽)이라, 전환권이 부채이거나 "
                "매도청구권을 내재파생에 포함하면 조기상환권은 그 파생상품과 **묶어서 하나의 복합내재파생상품**"
@@ -861,6 +864,8 @@ def compat(tm: Terms):
         out.append(("put_bdt", 0, COMPAT_BDT))
     if int(getattr(tm, "k_kind", 0)) == 1 and int(tm.k_sep) == 0:
         out.append(("k_sep", 1, COMPAT_KKIND))
+    if int(getattr(tm, "k_kind", 0)) == 1 and not int(tm.k_third) and not is_rcps(tm):
+        out.append(("k_third", 1, COMPAT_KHOLDER))
     if (is_rcps(tm) and int(getattr(tm, "div_basis", 0)) == 1
             and not (float(getattr(tm, "issue_px", 0.0)) > 0 and tm.par > 0)):
         out.append(("div_basis", 0, COMPAT_DIVBASIS))
@@ -4140,6 +4145,58 @@ K_HOLDS = {1: "의무보유 있음 — 콜 대상물량이 의무보유 기간 �
            0: "의무보유 없음 — 투자자의 전환·조기상환으로 콜도 소멸"}
 K_KINDS = {0: "제3자 지정 가능 콜 (발행자 보유 · 파생상품자산)",
            1: "제3자 사전 기특정 콜 (4.5.4 접근법 2-2 · 주주간 분배)"}
+
+# 콜 권리자 — 전환사채·신주인수권부사채 콜의 첫 선택. 계약서의 «발행회사», «발행회사 또는 발행회사가
+# 지정하는 자», «○○(최대주주 등)» 문구를 그대로 고른다. 저장은 종전 두 칸(k_third · k_kind)이다.
+CALL_HOLDERS = {0: "발행회사 본인만 — 발행자 콜 (내재파생상품)",
+                1: "발행회사 또는 발행회사가 지정하는 제3자 — 지정 가능 콜 (별도 금융상품)",
+                2: "발행 시 정해진 제3자 — 사전 특정 콜 (4.5.4 접근법 2-2)"}
+
+
+def call_holder(tm) -> int:
+    """콜 권리자 0 발행회사 본인만 / 1 제3자 지정 가능 / 2 제3자 사전 특정. ``tm`` 은 Terms 나 dict."""
+    g = (lambda k, d: tm.get(k, d)) if isinstance(tm, dict) else (lambda k, d: getattr(tm, k, d))
+    if int(g("k_kind", 0)) == 1: return 2
+    return 1 if int(g("k_third", 1)) else 0
+
+
+def call_alloc_note(tm, whole: bool = False) -> str:
+    """회계처리 시트 첫 문단의 매도청구권 문장 — 콜 권리자와 회계처리 설정을 따른다 (두 조서 공통).
+
+    종전에는 콜이 없거나 발행회사만 행사하는 콜에도 «제3자에게 이전될 수 있어 별도의 금융상품» 이라고 적었다.
+    """
+    if tm.k_w <= 0 or is_sha(tm): return ""
+    h, sep = call_holder(tm), int(tm.k_sep) == 1
+    if h == 2:
+        why = ("발행 시 정해진 제3자의 매도청구권은 이 접근법(한공회 실무사례 4.5.4 접근법 2-2)에서 발행회사가 "
+               "옵션 당사자가 아니라고 보아 자산으로 인식하지 않는다")
+    elif h == 1:
+        why = ("매도청구권은 발행회사가 제3자를 지정할 수 있어 거래상대방이 달라지므로 별도의 금융상품이다 "
+               "(제1109호 문단 4.3.1, 회계기준원 질의회신 2022-I-KQA006, 금융위 2022.5.3 감독지침)")
+    elif sep:
+        why = ("발행회사만 행사하는 매도청구권은 내재파생상품이지만 이 조서는 이용자 설정에 따라 별도 금융상품으로 "
+               "처리했다 — 분리 판단 시트의 «판정과 설정 비교» 를 확인한다")
+    else:
+        why = ("발행회사만 행사하는 매도청구권은 거래상대방이 그대로인 내재파생상품이라 전환권·조기상환권과 하나의 "
+               "복합내재파생상품으로 묶는다 (제1109호 문단 B4.3.4)")
+    if whole:
+        return why + (" — 이 지정 밖에 남는다." if (sep and h != 2) else
+                      " — 발행회사의 자산이 아니다." if h == 2 else " — 이 지정 안에 포함된다.")
+    return why + ". "
+
+
+def call_holder_fields(h: int, model: str = "TF") -> dict:
+    """콜 권리자를 고르면 함께 정해지는 값 — 저장 칸과 **기본** 평가방법·회계처리.
+
+    발행회사 본인만: 거래상대방이 그대로라 내재파생 (복합내재파생에 포함, 문단 B4.3.4) · 유무가치비교법 (4.3.2).
+    제3자(지정 가능 · 사전 특정): 별도 금융상품 (문단 4.3.1) · TF 면 옵션차익 성분 분리할인 + 전환확률 분해.
+    평가방법·회계처리는 기본값일 뿐이라 화면에서 바꿀 수 있다 (바꾸면 근거를 남긴다).
+    """
+    h = int(h)
+    third = h in (1, 2)
+    return dict(k_third=1 if third else 0, k_kind=1 if h == 2 else 0,
+                k_sep=1 if third else 0,
+                k_method=(2 if (third and model == "TF") else 0), k_split=1)
 
 
 def call_method_text(tm: Terms) -> str:
@@ -8679,7 +8736,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         ("매도청구권 평가방법", K_METHODS[tm.k_method], None),
         ("지분·채권 구분 기준", (K_SPLITS[int(tm.k_split)] if tm.k_method else "해당 없음 (유무가치비교법)"), None),
         ("콜 대상물량 의무보유", (K_HOLDS[int(tm.k_hold)] if tm.k_method else "유무가치비교법은 격자에서 직접 반영"), None),
-        ("콜옵션 유형", K_KINDS[int(tm.k_kind)], None),
+        ("콜 권리자", CALL_HOLDERS[call_holder(tm)], None),
+        ("콜옵션 유형", (K_KINDS[int(tm.k_kind)] if call_holder(tm) else "해당 없음 — 발행회사 본인만 행사"), None),
         ("평가기법", " · ".join(v for k, v in call_method_rows(tm)[:2]) + " — 상세는 결과 시트", None),
         ("풋·콜 우선순위 (조기상환과 매도청구 사이)", pc_order_text(tm), None),
         ("매도청구 통지 뒤 전환 대응", conv_resp_text(tm), None),
@@ -8963,12 +9021,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
     title(E, 2, "회계처리", span=6)
     put(E, 3, 2, ("복합계약 **전체**를 당기손익-공정가치 측정 금융부채로 지정했으므로 "
                   "내재파생상품을 분리하지 않고 한 줄로 인식한다 (제1109호 문단 4.2.2 · "
-                  "4.3.3(3)). 요소별 배분도 유효이자율 상각도 없다. 매도청구권은 제3자에게 "
-                  "이전될 수 있어 별도의 금융상품이라(문단 4.3.1) 이 지정 밖에 남는다."
+                  "4.3.3(3)). 요소별 배분도 유효이자율 상각도 없다. " + call_alloc_note(tm, whole=True)
                   if fvpl_on(tm) else
                   "기업회계기준서 제1032호 문단 31·32 — 부채요소를 먼저 정하고 나머지를 자본에 배분한다. "
-                  "매도청구권은 제3자에게 이전될 수 있어 별도의 금융상품이다 (제1109호 문단 4.3.1, "
-                  "회계기준원 질의회신 2022-I-KQA006, 금융위 2022.5.3 감독지침). "
+                  + call_alloc_note(tm) +
                   "전환권이 부채이면 전환권과 조기상환권은 상호의존적이므로 하나의 복합내재파생상품으로 "
                   "전체로서 측정한다 (제1109호 문단 B4.3.4)."),
         color=GREY, size=9)
@@ -9629,6 +9685,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
          "kmeth", tm.k_method, N0, False),
         ("지분·채권 구분 기준 (0 비례균등차감법 / 1 본문 4.3.3 GS 전환확률)",
          "ksplit", int(tm.k_split), N0, False),
+        ("콜 권리자 (앱에서 고른 값)", "kwho", CALL_HOLDERS[call_holder(tm)], None, False),
         ("콜옵션 유형 (0 제3자 지정 가능 / 1 제3자 기특정)", "kkind", int(tm.k_kind), N0, False),
         ("콜 대상물량 의무보유 (1 있음 / 0 없음)", "khold", int(tm.k_hold), N0, False),
         # 의무보유가 살아 있는 마지막 스텝. 없으면 -1 이라 첫 노드부터 소멸 조건이 걸린다.
@@ -9723,7 +9780,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                                  "ipoon", "ipos", "ipopx", "ipomul", "ipok", "ipomin", "ipocv"}),
             ("4. 계약 조건 — 조기상환 (투자자 풋)", {"txput", "pst", "prate", "pcadd", "pmode", "psm", "pyld", "pcmp",
                                               "pless", "psch"}),
-            ("5. 계약 조건 — 매도청구 (콜)", {"txcall", "prem", "kcmp", "kless", "cw", "kcadd", "pcord", "kresp", "cv30", "pt30",
+            ("5. 계약 조건 — 매도청구 (콜)", {"kwho", "txcall", "prem", "kcmp", "kless", "cw", "kcadd", "pcord", "kresp", "cv30", "pt30",
                                         "khold", "lockend", "lkput", "lkw"}),
             ("6. 시장자료", {"S0", "s0src", "sig", "divy", "crsrc", "rfc", "bsig", "rvhow", "bbase"}),
             ("7. 평가방법 (앱에서 고른 값 — 여기서 바꿔도 트리가 따라오지 않는다)",
@@ -11266,12 +11323,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     title(E, 2, "회계처리", span=5)
     put(E, 3, 2, ("복합계약 **전체**를 당기손익-공정가치 측정 금융부채로 지정했으므로 "
                   "내재파생상품을 분리하지 않고 한 줄로 인식한다 (제1109호 문단 4.2.2 · "
-                  "4.3.3(3)). 요소별 배분도 유효이자율 상각도 없다. 매도청구권은 제3자에게 "
-                  "이전될 수 있어 별도의 금융상품이라(문단 4.3.1) 이 지정 밖에 남는다."
+                  "4.3.3(3)). 요소별 배분도 유효이자율 상각도 없다. " + call_alloc_note(tm, whole=True)
                   if _FVROW else
                   "기업회계기준서 제1032호 문단 31·32 — 부채요소를 먼저 정하고 나머지를 자본에 배분한다. "
-                  "매도청구권은 제3자에게 이전될 수 있어 별도의 금융상품이다 (제1109호 문단 4.3.1, "
-                  "회계기준원 질의회신 2022-I-KQA006, 금융위 2022.5.3 감독지침). "
+                  + call_alloc_note(tm) +
                   "전환권이 부채이면 전환권과 조기상환권은 상호의존적이므로 하나의 복합내재파생상품으로 "
                   "전체로서 측정한다 (제1109호 문단 B4.3.4)."),
         color=GREY, size=9)

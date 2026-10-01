@@ -1457,8 +1457,16 @@ if _shared_run is None:
                                             disabled=_gs_blk)
                   if _gs_blk:
                       st.caption(COMPAT_GS_KMETHOD)
-                  t.k_kind = int(st.selectbox("콜옵션 유형", [0, 1], index=int(t.k_kind),
-                                                format_func=lambda i: K_KINDS[i], key="kkind_cb", help="**지정 가능 콜**: 발행자가 보유하다 제3자를 지정해 넘기는 콜 — 발행자의 파생상품자산으로 매 결산 재평가 (회계기준원 2022-I-KQA006, 본문 4.4).\n\n**기특정 콜**: 발행 시 제3자(최대주주 등)가 이미 정해진 콜. 값은 지정 가능 콜과 같은 격자에서 나오고 회계처리만 다릅니다.\n\n본문 4.5 는 기특정 콜에 **세 접근법**을 나란히 둡니다 — 4.5.2 «접근법 1»(발행자 콜과 같이 유무가치비교법), 4.5.3 «접근법 2-1»(이연지정), 4.5.4 «접근법 2-2». 4.5.1 도 「주주간 분배로 **회계처리 되는 경우가 있다**」고 쓰지 「항상 그렇다」고 하지 않습니다. **이 앱은 접근법 2-2 를 채택**했습니다 — 발행회사가 옵션 당사자가 아니라고 보아 자산을 인식하지 않고 최초 인식 시 주주간 분배로 봅니다.\n\n**접근법 1 을 따르려면** 위 「평가방법」을 「유무가치비교법」으로 두십시오. 접근법 2-1(이연지정)은 본문 FAQ 의 반론(제3자 이전이 값을 바꾸면 무차익거래 원칙과 배치)이 있어 넣지 않았습니다."))
+                  _h = st.selectbox("콜 권리자", list(CALL_HOLDERS), index=call_holder(t), format_func=CALL_HOLDERS.get,
+                                     key="kholder_cb",
+                                     help="계약서의 매도청구권 행사자 문구를 고르십시오. «발행회사» 이면 발행회사 본인만, "
+                                          "«발행회사 및 발행회사가 지정하는 자» 이면 지정 가능, 발행 시 최대주주 등 특정인이 "
+                                          "정해져 있으면 사전 특정입니다. 사전 특정 콜은 값이 지정 가능 콜과 같은 격자에서 "
+                                          "나오고 회계처리만 다릅니다 — " + KKIND_CHOICE.replace("**", ""))
+                  if _h != call_holder(t):
+                      # 콜 권리자를 바꾸면 기본 평가방법·회계처리로 다시 맞춘다 (바꾼 뒤 아래에서 고칠 수 있다).
+                      for _k, _v in call_holder_fields(_h, t.model).items(): setattr(t, _k, _v)
+                      st.rerun()
                   if t.k_method:
                       t.k_split = int(st.selectbox("지분·채권 구분 기준", [1, 0],
                                                    index=[1, 0].index(int(t.k_split)),
@@ -2899,9 +2907,9 @@ if _detail_section == _detail_sections[2]:
         _lk = is_rcps(t)
         t.k_third = 1 if f1.checkbox(
             inst_text(t, "매도청구권을 제3자에게 지정할 수 있다"), value=bool(t.k_third),
-            disabled=_lk,
+            disabled=True,                                # 콜 권리자(입력화면)·콜옵션 갈래(RCPS)가 정한다
             help=("입력화면 「콜옵션」에서 **제3자 지정 매도청구권**을 고르시면 켜집니다."
-                  if _lk else
+                  if is_rcps(t) else "입력화면 매도청구권의 «콜 권리자» 가 정합니다. "
                   "공시에 \"발행회사 및 발행회사가 지정하는 자\" 로 적혀 있으면 "
                   "해당합니다. 거래상대방이 달라질 수 있어 내재파생상품이 아니라 "
                   "별도의 금융상품입니다 (문단 4.3.1 마지막 문장).")) else 0

@@ -9,7 +9,8 @@ from typing import get_type_hints
 import pandas as pd
 import streamlit as st
 from valuation.case import Case, SCHEMA, RIGHT_KINDS, FIELDS, REQUIRED, RCPS_REQUIRED, section_for, import_legacy, inspect_case, compare_cases
-from valuation.legacy import Terms, months_to_date, issuer_day1_cases, inst_text
+from valuation.legacy import (Terms, months_to_date, issuer_day1_cases, inst_text, CALL_HOLDERS, call_holder,
+                              call_holder_fields)
 from valuation.presentation import CHOICES, PERCENT, EVENT_DATES, label, display_value, event_months, issue_rows, choices
 from valuation.service import AMOUNT_LABELS, calculate, calculation_key, refresh_run, export_bundle
 from valuation.analysis import sensitivity
@@ -504,15 +505,32 @@ def input_editor(case, autosave=False):
         if call_on:
             old_call = bool(case.facts().get('k_w', 0) or case.facts().get('issuer_call', 0))
             changed_type = inst == 'RCPS' and edited.get('issuer_call') != case.contract.get('issuer_call', 0)
+            linked = ['k_method', 'k_split']
+            if inst != 'RCPS':
+                # 콜 권리자가 첫 선택이다 — 계약서 문구(«발행회사» / «발행회사 또는 발행회사가 지정하는 자» /
+                # 발행 시 정해진 제3자)를 그대로 고르면 저장 칸(제3자 지정 · 콜 유형)과 기본 평가방법·회계처리가 따라온다.
+                rev = st.session_state.get("revision", 0)
+                now_h = call_holder({**DEFAULTS, **case.facts(), **edited})
+                holder = st.selectbox('콜 권리자', list(CALL_HOLDERS), index=now_h,
+                                      format_func=CALL_HOLDERS.get, key=f'input_call_holder_{rev}',
+                                      help='계약서의 매도청구권 행사자 문구를 고르십시오. «발행회사 및 발행회사가 지정하는 자» 이면 '
+                                           '지정 가능, 발행 시 최대주주 등 특정인이 정해져 있으면 사전 특정입니다.')
+                st.session_state.setdefault('_rendered_fields', set()).update({'k_third', 'k_kind'})
+                pol = call_holder_fields(holder, edited.get('model', 'TF'))
+                edited['k_third'], edited['k_kind'] = pol['k_third'], pol['k_kind']
+                changed_type = holder != call_holder({**DEFAULTS, **case.facts()})
+                linked = ['k_method', 'k_split', 'k_sep']
             if not old_call or changed_type:
-                third_party = edited.get('issuer_call') == 2 if inst == 'RCPS' else edited.get('k_third', DEFAULTS['k_third'])
-                initial_method = 2 if third_party and edited.get('model', 'TF') == 'TF' else 0
-                edited['k_method'], edited['k_split'] = initial_method, 1
-                for key in ['k_method', 'k_split']:
+                third_party = edited.get('issuer_call') == 2 if inst == 'RCPS' else bool(edited['k_third'])
+                pol = call_holder_fields(1 if third_party else 0, edited.get('model', 'TF'))
+                for key in linked:
+                    edited[key] = pol[key]
                     widget_key = f'input_{key}_{st.session_state.get("revision", 0)}'
                     if widget_key in st.session_state:
                         st.session_state[widget_key] = edited[key]
-            st.caption('발행자 상환권은 콜 유무 가치 비교, 제3자 콜은 옵션차익 성분 분리할인(주식결제·현금결제)을 초기 설정으로 사용합니다. 기존 평가파일의 선택은 유지하며, 다른 방법을 선택한 경우 근거를 기록하십시오.')
+            st.caption('발행회사 본인만 행사하는 콜(발행자 상환권)은 콜 유무 가치 비교·복합내재파생에 포함, 제3자 콜은 '
+                       '옵션차익 성분 분리할인(주식결제·현금결제)·별도 금융상품을 초기 설정으로 사용합니다. 콜 권리자를 바꾸면 '
+                       '초기 설정으로 다시 맞추고, 기존 평가파일의 선택은 유지합니다. 다른 방법을 선택한 경우 근거를 기록하십시오.')
             fields(['k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp'], edited, case)
             if inst == 'RCPS' and edited.get('issuer_call') == 1:
                 edited['k_w'] = 1.
@@ -531,7 +549,8 @@ def input_editor(case, autosave=False):
                         for key in ['k_method', 'k_split']:
                             st.session_state.pop(f'input_{key}_{st.session_state.get("revision", 0)}', None)
             with st.expander('콜 권리의 상세 조건'):
-                fields(['k_kind', 'k_third', 'k_transfer', 'k_less_cpn', 'k_cpn_add', 'k_sched', 'k_basis', 'pc_order'], edited, case)
+                fields((['k_kind', 'k_third'] if inst == 'RCPS' else []) +
+                       ['k_transfer', 'k_less_cpn', 'k_cpn_add', 'k_sched', 'k_basis', 'pc_order'], edited, case)
             if edited.get('k_w', 0) <= 0:
                 draft_errors.append('콜 권리가 있으면 콜 대상 비율을 0%보다 크게 입력하십시오.')
             if edited.get('k_s', 0) > edited.get('k_e', float('inf')):
