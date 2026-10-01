@@ -65,6 +65,14 @@ CASES = [
     ("연계 · 풋 의무자 = 발행회사", dict(sha_kill=1, sha_writer=1)),
     # 콜을 끄고 콜 수량을 남겨 둔 계약 — 계약 대상 주식은 풋 수량만 (없는 권리의 수량을 세지 않는다)
     ("풋만 · 상대 권리 소멸 켬 · 콜 수량 남김", dict(sha_kill=1, sha_call_s=0., sha_call_e=0.)),
+    # 주가 = 풋 · 콜 행사가격 · 같은 주식 · 지금·만기 행사 · 양 권리 종료 · 1년 1구간 · 연속 5% → 순가치 0 (가상)
+    ("같은 가격 · 즉시 행사 · 순가치 0", dict(d_mat="2026-03-31", gap_m=12., sig=0.1823215567939546,
+                                     rf_curve=[(1, 0.05127109637602412), (5, 0.05127109637602412)],
+                                     cr_curve=[(1, 0.05127109637602412), (5, 0.05127109637602412)],
+                                     y_type="spot", cmp_rf=1, cmp_cr=1, sha_disc=0,
+                                     sha_put_s=0., sha_put_e=12., sha_put_f=12., sha_put_yield=0.,
+                                     sha_call_s=0., sha_call_e=12., sha_call_f=12., sha_call_prem=0.,
+                                     sha_kill=1, pc_order=1)),
 ]
 BASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2025-03-31",
             d_base="2025-03-31", d_mat="2030-03-31", gap_m=6.0, sig=0.40,

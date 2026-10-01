@@ -2390,6 +2390,19 @@ def test_sha_linked_conditions():
     chk_bool("(가) 평가기준일 노드의 판단 = 콜 (외가격 콜을 지금 행사)", R["DEC"][0][0] == "call")
     t0 = Terms(**{**G["asdict"](t), "sha_kill": 0}); derive(t0); R0 = G["sha_engine"](t0)
     chk("(가) 상대 권리가 남으면 — 풋 = 107 − 80 (기다린다)", R0["put"], 27.0, 1e-3)
+    # (가-2) 주가 = 풋 · 콜 행사가격 = 100 · 같은 주식 1주 · 지금·만기 행사 · 한쪽 행사로 양 권리 종료 · 1년 1구간 ·
+    #       상승 1.2 · 연속 5% · 배당·신용위험 없음 → 계약 순가치 0. 주가가 다르면 매수인(콜 권리자) 순가치 = 주가 − 행사가격.
+    #       격자의 하락 배수는 1 ÷ 상승 배수(0.8333)라 0.8 이 아니다 — 즉시 행사로 끝나므로 결과와 무관하다.
+    r5 = math.exp(.05) - 1
+    for S0 in (100., 120., 80.):
+        tg = Terms(inst="SHA", K0=100., S0=S0, sig=math.log(1.2), d_issue="2025-01-01", d_base="2025-01-01",
+                   d_mat="2026-01-01", gap_m=12., rf_curve=[(1, r5), (5, r5)], cr_curve=[(1, r5), (5, r5)], y_type="spot",
+                   cmp_rf=1, cmp_cr=1, sha_disc=0, sha_put_s=0., sha_put_e=12., sha_put_f=12., sha_call_s=0.,
+                   sha_call_e=12., sha_call_f=12., sha_put_yield=0., sha_call_prem=0., sha_put_q=1., sha_call_q=1.,
+                   sha_kill=1, sha_writer=0, pc_order=1)
+        derive(tg); Rg = G["sha_engine"](tg)
+        chk(f"(가-2) 주가 {S0:g} · 행사가격 100 — 매수인 순가치(콜 − 풋) = 주가 − 행사가격", Rg["call"] - Rg["put"],
+            S0 - 100., 1e-9)
     RF = [(1, .0226), (3, .0240), (5, .0252)]; CR = [(1, .1409), (3, .1740), (5, .1905)]
     base = dict(inst="SHA", K0=1000., S0=900., sig=.40, d_issue="2025-01-01", d_base="2025-01-01",
                 d_mat="2029-01-01", gap_m=3., rf_curve=RF, cr_curve=CR, sha_disc=1,
