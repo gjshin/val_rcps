@@ -138,3 +138,17 @@ def test_cb_relabel_unchanged():
     assert legacy.relabel_text("전환사채와 같은", []) == "전환사채와 같은"
     assert legacy.relabel_text("전환사채와 같은", legacy._BW_WORDS) == "전환사채와 같은"
     assert legacy.relabel_text("전환사채의 전환권", legacy._BW_WORDS) == "신주인수권부사채의 신주인수권"
+
+
+def test_split_compare_call_room_is_review():
+    # 매도청구권은 어느 설정이든 분리해 처리하므로 «분리하지 않을 여지» 면 검토 필요다
+    t = bw_case().terms
+    out = legacy.split_compare(t, "call", {"결론": "분리하지 않을 여지", "설정일치": True})
+    assert "검토 필요" in out and "지원하지 않음" in out
+
+
+def test_formula_compare_follows_workbook_setting(fwb):
+    # 이용자 설정 글자도 가정 시트의 분류·매도청구권 처리 칸을 보고 정한다 (값으로 굳히지 않는다)
+    J = fwb["분리 판단"]
+    v = J.cell(find(J, "판정과 설정 비교"), 3).value
+    assert "신주인수권과 묶어 분리" in v and "매도청구권과 묶어 분리" in v and "분리 — 파생상품부채" in v
