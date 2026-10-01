@@ -3193,8 +3193,23 @@ SHA_IPO_KIND_MSG = ("상장 조항을 넣었으면 종료 조건을 고르십시
 
 
 def sha_ipo_issues(tm: Terms) -> list:
-    if int(getattr(tm, "ipo_on", 0)) and int(getattr(tm, "sha_ipo_kind", -1)) not in (0, 1):
+    if not int(getattr(tm, "ipo_on", 0)):
+        return []
+    if int(getattr(tm, "sha_ipo_kind", -1)) not in (0, 1):
         return [SHA_IPO_KIND_MSG]
+    # 상장일이 평가기준일 이전(같은 날 포함)이면 격자의 첫 노드(0)에 떨어지는데, 상장 종료는 노드 1 부터
+    # 본다 — 이미 끝난 권리를 살아 있는 것으로 재게 된다. 계산하지 않고 알린다.
+    if tm.ipo_m > 0:
+        try:
+            _ld = months_to_date(tm.d_issue, tm.ipo_m)
+            if _ld <= dt.date.fromisoformat(tm.d_base):
+                return [f"상장 시점({_ld.isoformat()})이 평가기준일({tm.d_base}) 이전입니다 — "
+                        + ("실제 상장으로 권리가 이미 끝났으면 그 회차를 «결제 완료» 로 두거나 평가 대상에서 빼십시오."
+                           if int(tm.sha_ipo_kind) == 1 else
+                           "그 시점의 주가 기준 충족 여부는 이미 정해졌습니다. 충족했으면 권리가 끝난 것이므로 "
+                           "그 회차를 «결제 완료» 로 두거나 평가 대상에서 빼고, 충족하지 못했으면 상장 조항을 끄십시오.")]
+        except (TypeError, ValueError):
+            pass
     return []
 
 
@@ -3541,7 +3556,9 @@ def sha_deal(tm: Terms, raw: dict):
     if r["rf"] is not None:
         t.rf_curve = [(0.25, float(r["rf"])), (30.0, float(r["rf"]))]
     if r["pdisc"] is not None:
-        t.cr_curve = [(0.25, float(r["pdisc"])), (30.0, float(r["pdisc"]))]; t.sha_disc = 1
+        # 회차 할인율을 직접 넣었으면 등급 보간을 끈다 — 켜 두면 curves() 가 이 곡선을 공통 등급 곡선과
+        # 섞어 확정 거래의 결제대금을 입력한 율이 아닌 섞인 율로 할인한다 (미행사 회차와 같은 처리).
+        t.cr_curve = [(0.25, float(r["pdisc"])), (30.0, float(r["pdisc"]))]; t.sha_disc = 1; t.rate_mode = "direct"
     derive(t)
     T = max(0.0, (dt.date.fromisoformat(r["settle"]) - dt.date.fromisoformat(tm.d_base)).days/365)
     RF, CR = curves(t)
