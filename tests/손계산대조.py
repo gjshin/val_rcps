@@ -2397,6 +2397,23 @@ def test_refix_contract_dates():
     ge = RS(e, int(e.n), e.T/int(e.n))
     chk_bool(f"발행 10개월 뒤 평가 → 첫 조정월 14 (노드 4) — {min(ge.values()) if ge else None}",
              bool(ge) and min(ge.values()) == 14. and min(ge) == 4)
+    # 최초 조정일만 따로 정한 계약 — 「발행 후 12개월 최초 조정, 이후 매 7개월」 · 만기 3년
+    #   → 12 · 19 · 26 · 33개월 (주기를 12 로 바꾸면 12 · 24 · 36 이 되어 틀린다).
+    f = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2028-01-01", gap_m=1., rfx_cyc=7.,
+              rfx_first=12., rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(f)
+    gf = RS(f, int(f.n), f.T/int(f.n))
+    chk_bool(f"최초 12개월 · 이후 7개월 → 조정월 {[gf[i] for i in sorted(gf)]} = 12·19·26·33",
+             [gf[i] for i in sorted(gf)] == [12., 19., 26., 33.] and sorted(gf) == [12, 19, 26, 33])
+    # 평가기준일이 최초 조정일 뒤 — 발행 20개월 뒤 평가면 지난 12·19 는 빼고 26 · 33
+    f2 = Terms(d_issue="2025-01-01", d_base="2026-09-01", d_mat="2028-01-01", gap_m=1., rfx_cyc=7.,
+               rfx_first=12., rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(f2)
+    gf2 = RS(f2, int(f2.n), f2.T/int(f2.n))
+    chk_bool(f"발행 20개월 뒤 평가 → 남은 조정월 {sorted(gf2.values())} = 26·33", sorted(gf2.values()) == [26., 33.])
+    # 비워 두면(0) 종전과 같다 — 첫 조정 = 발행일 + 주기
+    f0 = Terms(d_issue="2025-01-01", d_base="2025-01-01", d_mat="2028-01-01", gap_m=1., rfx_cyc=7.,
+               rf_curve=t.rf_curve, cr_curve=t.cr_curve); derive(f0)
+    chk_bool("최초 조정일 비움 → 7·14·21·28·35",
+             sorted(RS(f0, int(f0.n), f0.T/int(f0.n)).values()) == [7., 14., 21., 28., 35.])
 
 
 def test_lock_end_same_node_as_last_call():

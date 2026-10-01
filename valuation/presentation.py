@@ -19,6 +19,7 @@ LABELS = {
     'k_transfer': '콜 독립 양도 가능', 'k_kind': '제3자 콜 유형', 'k_basis': '콜 평가방법 선택 근거',
     'k_method': '콜 평가방법', 'k_split': '콜 행사가액 분해방법', 'k_cpn_add': '콜 행사일 이자 별도 지급',
     'pc_order': '풋·콜 동시 행사 시 우선권', 'k_conv_resp': '매도청구 통지 뒤 전환 대응', 'rfx_mode': '정기 전환가액 조정', 'rfx_cyc': '전환가액 조정 주기(개월)',
+    'rfx_first': '최초 전환가액 조정일 (비우면 발행일 + 주기)',
     'floor': '최저 조정가액(원)', 'carry': '전환가액 경로 처리',
     'ipay': '이자 지급 주기(개월)', 'ytm': '만기보장수익률(연, %)', 'ytm_cmp': '만기수익률 복리 횟수(연, 0은 단리)',
     'mat_amt': '만기상환금액(원금 대비 %, -1은 산식)', 'acc_basis': '보장수익률 경과기간 기준',
@@ -67,7 +68,7 @@ LABELS = {
 }
 PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'ytm', 'bdt_sig',
                      'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue'})
-EVENT_DATES = frozenset({'cv_s', 'cv_e', 'p_s', 'p_e', 'k_s', 'k_e', 'k_lock', 'ipo_m',
+EVENT_DATES = frozenset({'cv_s', 'cv_e', 'p_s', 'p_e', 'k_s', 'k_e', 'k_lock', 'ipo_m', 'rfx_first',
                         'sha_put_s', 'sha_put_e', 'sha_call_s', 'sha_call_e'})
 CHOICES = {
     'model': {'TF': 'TF', 'GS': 'GS'}, 'view': {'holder': '투자자', 'issuer': '발행자'},
@@ -126,6 +127,8 @@ def display_value(key, value, issue_date=None):
         return '미입력'
     if key in CHOICES:
         return CHOICES[key].get(value, str(value))
+    if key == 'rfx_first' and not value:
+        return '주기와 같음 (발행일 + 주기)'
     if key in EVENT_DATES and issue_date:
         return months_to_date(issue_date, value).isoformat()
     if key in PERCENT:

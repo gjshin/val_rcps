@@ -123,6 +123,10 @@ class Terms:
     cv_e: float = 59.0
     rfx_mode: int = 2           # 0 없음 / 1 하향만 / 2 하향+상향
     rfx_cyc: float = 7.0
+    # 최초 조정일 (발행 후 개월). 0 이면 주기와 같다 — 첫 조정 = 발행일 + 주기.
+    # 「발행 후 12개월 되는 날 최초 조정, 이후 매 7개월」 처럼 첫 조정만 따로 정한 계약은
+    # 여기에 12 를 넣는다 (12 · 19 · 26 · 33 …). 주기를 12 로 바꾸면 이후 조정일이 틀린다.
+    rfx_first: float = 0.0
     floor: float = 598.0
     par: float = 500.0
     carry: int = 1              # 1 경로가중치 / 2 확률가중평균 / 3 특정노드선택 (상태확장은 없앴다)
@@ -1712,23 +1716,39 @@ def refix_steps(tm: Terms, n: int, dt_: float) -> dict:
     """
     if int(tm.rfx_mode) == 0 or tm.rfx_cyc <= 0:
         return {}
-    if rfx_any(tm):
-        return {i: None for i in range(1, n+1)}
     st_lo, _ = step_mapper(tm, n, dt_)
+    first = rfx_first_m(tm)
+    if rfx_any(tm):
+        # 언제든지 — 최초 조정일을 따로 정했으면 그날 이후 노드부터다.
+        i0 = max(1, st_lo(first)) if float(getattr(tm, "rfx_first", 0.0) or 0.0) > 0 else 1
+        return {i: None for i in range(i0, n+1)}
     rem_m = float(getattr(tm, "rem_m", 0.0) or tm.T*12)
     end = tm.elapsed_m + rem_m + 1e-6
-    out, k = {}, math.floor(tm.elapsed_m/tm.rfx_cyc) + 1
-    while tm.rfx_cyc*k <= end:
-        m = tm.rfx_cyc*k
+    # 조정일 = 최초 조정일 + 주기 × k (k = 0, 1, 2, …). 평가기준일 당일 이전 조정일은 이미
+    # 현재 전환가액에 반영되어 있다.
+    k = max(0, math.floor((tm.elapsed_m - first)/tm.rfx_cyc) + 1) if tm.elapsed_m >= first - 1e-9 else 0
+    out = {}
+    while first + tm.rfx_cyc*k <= end:
+        m = first + tm.rfx_cyc*k
         i = st_lo(m)
-        if 1 <= i <= n and i not in out:
+        if m > tm.elapsed_m + 1e-9 and 1 <= i <= n and i not in out:
             out[i] = m
         k += 1
     return out
 
 
+def rfx_first_m(tm: Terms) -> float:
+    """최초 리픽싱 조정일 (발행 후 개월). 따로 넣지 않았으면 주기와 같다."""
+    f = float(getattr(tm, "rfx_first", 0.0) or 0.0)
+    return f if f > 0 else float(tm.rfx_cyc)
+
+
 def rfx_cycle_text(tm: Terms) -> str:
-    return ("언제든지 (매 노드 조정)" if rfx_any(tm) else f"{tm.rfx_cyc:,.0f}개월 주기")
+    _f = float(getattr(tm, "rfx_first", 0.0) or 0.0)
+    if rfx_any(tm):
+        return "언제든지 (매 노드 조정)" + (f" · 발행 후 {_f:,.4g}개월부터" if _f > 0 else "")
+    return (f"최초 발행 후 {_f:,.4g}개월 · 이후 {tm.rfx_cyc:,.4g}개월 주기" if _f > 0
+            else f"{tm.rfx_cyc:,.0f}개월 주기")
 
 
 def ded_of(tm: Terms, which: str) -> int:
@@ -7955,7 +7975,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         ("만기상환금액", red, N2)]),
       # 조정 조항이 없으면 주기·최저 조정가액은 계약에 없는 값(앱 기본값)이라 싣지 않는다.
       ("3. 전환가액 조정", ([("조정 방식", ["조정 없음", "하향만", "하향+상향"][tm.rfx_mode], None),
-        ("조정 주기 (개월)", tm.rfx_cyc, N2), ("조정 시점", rfx_cycle_text(tm), None),
+        ("조정 주기 (개월)", tm.rfx_cyc, N2),
+        ("최초 조정일 (발행 후 개월)", rfx_first_m(tm), N2), ("조정 시점", rfx_cycle_text(tm), None),
         ("최저 조정가액", tm.floor, N2), ("액면가", tm.par, N2)] if tm.rfx_mode > 0 else
         [("조정 방식", "정기 조정 없음 — 전환가액이 만기까지 그대로다", None)])
         + ([("IPO 조항", "반영" if tm.ipo_on and tm.ipo_px > 0 else "없음", None)]

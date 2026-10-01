@@ -314,6 +314,8 @@ def inspect_case(case: Case) -> list[Issue]:
         add('error', 'fraction', 'split_tol', '분리 판단 비교기준은 0%보다 크고 100%보다 작아야 합니다.')
     if values.get('split_base_in', -1) > 0 and not str(values.get('split_base_why', '')).strip():
         add('error', 'split_base_reason', 'split_base_why', '분리 판단 출발 금액을 직접 넣었으면 그 근거(실제 회계상 배분액 등)를 적으십시오.')
+    if values.get('rfx_first', 0) < 0:
+        add('error', 'negative', 'rfx_first', '최초 조정일은 발행일 이후여야 합니다 (비우면 발행일 + 주기).')
     for key in ('cpn', 'bdt_sig'):
         if key in values and values[key] < 0:
             add('error', 'negative', key, '음수는 지원하지 않습니다.')

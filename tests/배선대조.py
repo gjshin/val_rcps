@@ -109,8 +109,9 @@ def main():
     # 계약서의 행사일(시작일부터 주기마다)을 «계약일 이후 첫 노드» 에 둔다 — 여기서는 앱의
     # 목록을 보지 않고 날짜를 직접 세어 배정한다. 같은 날의 두 권리는 같은 노드에 와야 한다.
     d0 = dt.date.fromisoformat(G["Terms"]().d_issue)
-    for el in (0, 3, 6, 12, 18, 24, 36):
-        t = terms(G, d_base=(d0+dt.timedelta(days=int(el*30.4375))).isoformat())
+    # 뒤의 두 줄은 최초 조정일을 따로 정한 계약 (발행 후 12개월 최초 · 이후 주기마다).
+    for el, rf1 in ((0, 0.), (3, 0.), (6, 0.), (12, 0.), (18, 0.), (24, 0.), (36, 0.), (0, 12.), (15, 12.)):
+        t = terms(G, d_base=(d0+dt.timedelta(days=int(el*30.4375))).isoformat(), rfx_first=rf1)
         n = t.n; mper = n/(t.T*12)
         lo, hi = G["step_mapper"](t, n, t.T/n)
         gapm = t.rem_m/n
@@ -124,9 +125,12 @@ def main():
                 if lo(m) <= n: out.add(lo(m))
             return out
         # 리픽싱 조정일 — 발행일부터 주기마다의 계약일을 «그날 이후 첫 노드» 에 배정 (평가기준일 노드 제외)
-        rf_set, k = set(), int(t.elapsed_m // t.rfx_cyc) + 1
-        while t.rfx_cyc*k <= t.elapsed_m + t.rem_m + 1e-6:
-            if 1 <= lo(t.rfx_cyc*k) <= n: rf_set.add(lo(t.rfx_cyc*k))
+        # 최초 조정일을 따로 정했으면 그날부터, 아니면 발행일 + 주기부터 주기마다.
+        f0 = t.rfx_first if t.rfx_first > 0 else t.rfx_cyc
+        rf_set, k = set(), 0
+        while f0 + t.rfx_cyc*k <= t.elapsed_m + t.rem_m + 1e-6:
+            m = f0 + t.rfx_cyc*k
+            if m > t.elapsed_m + 1e-9 and 1 <= lo(m) <= n: rf_set.add(lo(m))
             k += 1
         eng = {
             "리픽싱": rf_set,

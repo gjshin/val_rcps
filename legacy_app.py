@@ -810,6 +810,19 @@ if _shared_run is None:
                         value=bval("rfx_cyc", float(t.rfx_cyc if not rfx_any(t) else max(3.0, t.gap_m*2))),
                         step=1.0, disabled=(t.rfx_mode == 0))
                     t.rfx_cyc = bget("rfx_cyc", _v, t.rfx_cyc, "리픽싱 조정 주기", need=(t.rfx_mode > 0))
+                # 첫 조정만 따로 정한 계약 — 「발행 후 12개월 되는 날 최초 조정, 이후 매 7개월」 이면
+                # 주기는 7 로 두고 최초 조정일만 12개월로 넣는다 (12 · 19 · 26 · 33 …).
+                _rf_on = st.checkbox("최초 조정일을 따로 정함", value=float(t.rfx_first or 0) > 0,
+                                     key="rfx_first_on", disabled=(t.rfx_mode == 0),
+                                     help="계약이 첫 조정일만 따로 정했으면 켭니다 (예: 발행 후 12개월 되는 날 "
+                                          "최초 조정, 이후 매 7개월). 끄면 첫 조정일 = 발행일 + 주기입니다. "
+                                          "주기를 바꿔 맞추면 이후 조정일이 계약과 달라집니다.")
+                if _rf_on:
+                    t.rfx_first = float(_sched_one(st, "최초 조정일 (발행 후 개월)", "최초 조정일",
+                                                   float(t.rfx_first or t.rfx_cyc), "rfxfirst",
+                                                   disabled=(t.rfx_mode == 0)))
+                else:
+                    t.rfx_first = 0.0
                 _v = st.number_input("최저 조정가액 (원)", value=bval("floor", float(t.floor)), step=1.0)
                 t.floor = bget("floor", _v, t.floor, "최저 조정가액", need=(t.rfx_mode > 0))
                 # 상향 재조정의 상한은 계약상 **최초** 전환가액이다. 현재 전환가액으로

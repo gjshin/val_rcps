@@ -90,12 +90,15 @@ def field(key, edited, case, prefix='input'):
             st.caption(f'{title}: 실제 발행일을 먼저 입력하십시오.')
             return
         original_date = case.contract.get('d_issue') or issue_date
-        initial = months_to_date(original_date, value) if value is not None else None
+        # 최초 조정일 0 은 «따로 정하지 않음» (발행일 + 주기) 이다 — 발행일로 보이지 않게 비워 둔다.
+        initial = (months_to_date(original_date, value)
+                   if value is not None and not (key == 'rfx_first' and not value) else None)
         chosen = st.date_input(title, value=initial, min_value=dt.date(1900, 1, 1), max_value=dt.date(2200, 12, 31), key=widget_key)
         if chosen and chosen < dt.date.fromisoformat(issue_date):
             st.error(f'{title}이 발행일보다 빠릅니다.'); new = None
         else:
-            new = event_months(issue_date, chosen, value, original_date)
+            new = (0.0 if key == 'rfx_first' and chosen is None else
+                   event_months(issue_date, chosen, value, original_date))
     elif key.startswith('d_'):
         try:
             initial = dt.date.fromisoformat(value) if value else None
@@ -460,7 +463,7 @@ def input_editor(case, autosave=False):
             edited['k_w'] = 0.
         field('rfx_mode', edited, case)
         if edited.get('rfx_mode'):
-            fields(['rfx_cyc', 'floor', 'K_cap', 'carry'], edited, case)
+            fields(['rfx_cyc', 'rfx_first', 'floor', 'K_cap', 'carry'], edited, case)
     with st.expander('IPO 조건·미반영 권리 메모'):
         field('ipo_on', edited, case)
         if edited.get('ipo_on'):
