@@ -42,6 +42,10 @@ def run_case(G, product, over, label, layer, extra=None):
                        note=("지원하지 않는 조합 — " + "; ".join(f"{k}→{v}" for k, v, _ in notes)) if notes
                        else "derive() 가 되돌림: " + ", ".join(f"{k}={getattr(t, k)!r}" for k in forced))
             return row, t
+        if product == "SHA" and G["sha_contract_issues"](t):
+            # 지원하지 않는 계약조건(연대 의무자의 연계 판단 · 같은 주식 물량 누락) — 화면·입력 검사·엔진이 모두 막는다
+            row.update(status="EXPECTED_BLOCK", note="지원하지 않는 계약조건 — " + " / ".join(G["sha_contract_issues"](t)))
+            return row, t
         C, vals = (BX.run_sha if product == "SHA" else BX.run_bond)(G, t)
         if extra: C.update(extra(G, t, vals))
         bad = [k for k, (ok, _) in C.items() if ok is False]

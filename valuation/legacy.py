@@ -761,8 +761,8 @@ MODEL_LIMITS = (
     ('SHA: Drag/Tag/ROFR 미지원',
      '동반매도·우선매수권은 모형에 넣지 않는다. 연도·물량·가격이 다른 회차는 회차별 표로 한 줄씩 넣는다',
      ('docs/입력안내_주주간계약.md',)),
-    ('SHA: 상호소멸은 같은 회차 안에서만',
-     '회차 사이의 소멸·우선순위·미행사 물량 이월, 행사일부터 대금 지급일까지의 시차는 반영하지 않는다. 풋·콜 수량이 다른 회차의 상호소멸은 겹치는 수량과 남는 수량을 두 회차로 나눠 넣어야 한다',
+    ('SHA: 상대 권리 소멸은 같은 회차 안에서만',
+     '회차 사이의 소멸·우선순위·미행사 물량 이월, 행사일부터 대금 지급일까지의 시차는 반영하지 않는다. 같은 주식 물량은 두 권리자가 소멸 권리까지 보고 행사를 판단하고(연계 판단), 풋만·콜만 남는 물량은 따로 평가해 더한다. 수량이 다르면 같은 주식 물량을 입력해야 하며, 풋 의무자가 연대인 계약의 연계 판단은 지원하지 않는다',
      ('화면 «이 모델이 다루지 않는 계약 조건»', 'docs/입력안내_주주간계약.md')),
     ('SHA: 실적 연동 행사가격은 고정값으로',
      '추정 재무수치로 계산한 가격을 회차 표에 고정해 평가한다 — 미래 실적의 불확실성은 반영하지 않는다',
@@ -2764,6 +2764,9 @@ def sha_engine(tm: Terms):
     lq, qpo, qco = sha_link_split(tm)
     qp, qc = sha_qty(tm)
     kill = int(getattr(tm, "sha_kill", 0)) == 1 and lq > 0
+    if kill and int(tm.sha_writer) == 2:
+        # 지원하지 않는 조건 — 단순화한 값을 정상 결과처럼 내지 않는다 (화면·입력 검사와 같은 문장)
+        raise ValueError(" / ".join(sha_link_issues(1, qp, qc, lq, 2)))
     if kill:
         RL = _sha_lattice(tm)
         if qpo > 1e-9 or qco > 1e-9:
@@ -4071,8 +4074,9 @@ def sha_validate(tm: Terms):
         # 회차별 표 — 계산을 막는 입력은 sha_row_issues(평가 입력 오류)가 잡는다. 여기서는 확인할 점만.
         rows = [sha_row_defaults(r) for r in tm.sha_rows]
         if any(r["put_q"] > 0 and r["call_q"] > 0 and not r["kill"] for r in rows):
-            w.append("풋·콜을 **독립**으로 잽니다(상호소멸 끔). 같은 주식에 붙은 풋·콜이고 한쪽 행사로 다른 쪽이 "
-                     "소멸하는 계약이면 그 회차의 «상호소멸» 을 켜십시오 — 계약서의 소멸·우선순위 조항을 확인하십시오.")
+            w.append("한쪽 행사 뒤에도 상대 권리가 **남는** 계약으로 잽니다. 같은 주식에 붙은 풋·콜이고 한쪽 행사로 상대 "
+                     "권리가 끝나는 계약이면 그 회차의 «한쪽 행사 시 상대 권리 소멸» 을 켜고 같은 주식 물량을 넣으십시오 — "
+                     "계약서의 소멸·우선순위 조항을 확인하십시오.")
         if len({(r["start"], r["end"]) for r in rows}) < len(rows):
             w.append("행사기간이 같은 회차가 둘 이상입니다. 같은 물량을 두 번 넣지 않았는지 확인하십시오.")
         if int(tm.sha_writer) in (1, 2):
@@ -5395,9 +5399,9 @@ def sha_checks(tm: Terms, R):
     if int(tm.sha_kill):
         co = sum(1 for i in range(n + 1) for j in range(i + 1)
                  if R["KIND"][i][j] in ("put", "call") and R["P"][i][j] > 1e-12 and R["C"][i][j] > 1e-12)
-        out.append(("상호소멸 — 행사 노드에 두 권리가 함께 남지 않음", f"{co}", "적합" if co == 0 else "확인 필요", ""))
+        out.append(("상대 권리 소멸 — 행사 노드에 두 권리가 함께 남지 않음", f"{co}", "적합" if co == 0 else "확인 필요", ""))
     else:
-        out.append(("상호소멸", "끔", "해당 없음", "두 권리를 독립으로 잰다"))
+        out.append(("상대 권리 소멸", "없음 (존속)", "해당 없음", "각 권리자가 자기 권리만 보고 판단한다"))
     out.append(("적격상장 스텝", f"{R['qi_step']}", "해당 없음" if R["qi_step"] < 0 else "적합",
                 "" if R["qi_step"] < 0 else f"주가 > {tm.ipo_min:,.0f} 인 노드에서 풋 소멸" + (" · 콜도 소멸" if int(tm.sha_qipo_kill) else "")))
     # 재현 기록 한 줄 — model_checks 와 같은 형식이다.
@@ -11626,7 +11630,7 @@ def _sha_block(wb, K, tm, R, formula, pre, name, links=None):
     kv(30, "콜 가산 복리 횟수 (연)", tm.sha_call_cmp, N0, "0 이면 단리", "ccmp")
     kv(31, "콜 대상 주식수", qc, N0, "", "qc")
 
-    sec(A, 33, "4. 적격상장 · 상호소멸 · 할인 · 가산기간", span=4)
+    sec(A, 33, "4. 적격상장 · 상대 권리 소멸 · 할인 · 가산기간 · 우선권", span=4)
     kv(34, "적격상장 조항 (1 반영)", int(tm.ipo_on), N0, "", "ipoon")
     kv(35, "적격상장 스텝", R["qi_step"], N0,
        (f"계약 {_dd(tm.ipo_m)}" if int(tm.ipo_on) else "반영하지 않음"), "ipos", yellow=False)
