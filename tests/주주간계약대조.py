@@ -169,7 +169,7 @@ def main():
         nonlocal bad
         A1 = None if multi else G["sha_accounts"](t, R)
         if multi:
-            comp = {k: sum(G["sha_components_krw"](x["tm"], x["R"])[k] for x in R["rows"]) for k in
+            comp = {k: sum(G["sha_entry_comp_krw"](x)[k] for x in R["rows"]) for k in
                     ("eq", "put", "call", "gpv")}
             has_call = any(x["R"]["has_call"] for x in R["rows"])
             lines = G["sha_account_lines"](t, R["rows"][0]["R"], has_call=has_call, gross=False)
@@ -229,8 +229,9 @@ def main():
             vw, fx = vwb[sh], got.get(sh, {})
             line(f"{x['name']} 풋 100", fx.get("C7"), vw.cell(7, 3).value, x["R"]["put"], 1e-6)
             line(f"{x['name']} 콜 100", fx.get("C8"), vw.cell(8, 3).value, x["R"]["call"], 1e-6)
-            line(f"{x['name']} 풋 원", fx.get("F7"), vw.cell(7, 6).value, x["put_krw"], "won")
-            line(f"{x['name']} 콜 원", fx.get("F8"), vw.cell(8, 6).value, x["call_krw"], "won")
+            # 회차 결과 시트는 «조건 충족 시» 금액이다 — 미충족 가정이면 회차 합계의 반영(0)이 뺀다
+            line(f"{x['name']} 풋 원", fx.get("F7"), vw.cell(7, 6).value, x["put_krw_met"], "won")
+            line(f"{x['name']} 콜 원", fx.get("F8"), vw.cell(8, 6).value, x["call_krw_met"], "won")
         tr = 5 + len(P["rows"])
         vw, fx = vwb["회차 합계"], got.get("회차 합계", {})
         line("합계 풋 원", fx.get(f"J{tr}"), vw.cell(tr, 10).value, P["put_krw"], "won")

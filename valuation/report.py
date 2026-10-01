@@ -338,7 +338,7 @@ def append_basic_accounting(wb, run):
     if legacy.is_sha(t):
         # 세 당사자 — 발행회사 · 콜 권리자 · 풋 권리자. 원 단위(풋·콜 수량을 각각 곱한 값). 회차가 여럿이면 합계.
         items = r['rows'] if r.get('portfolio') else [dict(tm=t, R=r)]
-        comp = {k: sum(legacy.sha_components_krw(x['tm'], x['R'])[k] for x in items) for k in ('eq', 'put', 'call', 'gpv')}
+        comp = {k: sum(legacy.sha_entry_comp_krw(x)[k] for x in items) for k in ('eq', 'put', 'call', 'gpv')}
         lines = legacy.sha_account_lines(items[0]['tm'] if len(items) == 1 else t, items[0]['R'],
                                          has_call=any(x['R'].get('has_call') for x in items),
                                          gross=(None if len(items) == 1 else False))
