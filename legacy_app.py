@@ -2701,6 +2701,9 @@ if _detail_section == _detail_sections[1]:
             st.caption(ISSUER_DAY1 if _d1x["hybrid"] else
                        "전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수됩니다 (1032 문단 31). "
                        "최초 인식 손익은 생기지 않습니다.")
+            st.dataframe(pd.DataFrame([[inst_text(t, k), v, on] for k, v, on in issuer_day1_cases(_d1x)],
+                                      columns=["최초 인식 차이의 세 가지 구분", "처리", "이 평가"]),
+                         use_container_width=True, hide_index=True)
         if t.issue_cost > 0:
             _cs, _c100 = cost_split(t, alloc_rows)
             _F = t.face_total/100

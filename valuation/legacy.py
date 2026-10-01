@@ -1417,6 +1417,24 @@ def issuer_day1_rows(d1):
     return rows
 
 
+def issuer_day1_cases(d1) -> list:
+    """최초 인식 차이의 세 가지 구분 — [(구분, 처리, 이 평가)]. 화면·두 조서 공통.
+
+    차이를 어디에 두는지는 지분요소의 분류와 평가 투입변수의 관측 가능성이 정한다. 세 갈래를
+    나란히 적고 이 평가가 어느 갈래인지 표시한다 — 하나만 적으면 다른 갈래를 검토했는지 알 수 없다.
+    """
+    hy, pl = bool(d1["hybrid"]), bool(d1["pl"])
+    return [("① 전환권(지분요소)이 자본 — 복합금융상품",
+             "차이는 잔여인 자본요소에 흡수된다. 최초 인식 손익이 생기지 않는다 (1032 문단 31).",
+             "◀ 이 평가" if not hy else ""),
+            ("② 부채(복합계약) · 관측 가능한 시장자료만 쓴 평가",
+             "차이를 당기손익으로 인식하고 주계약을 공정가치로 둔다 (1109 문단 B5.1.2A(1)).",
+             "◀ 이 평가" if (hy and pl) else ""),
+            ("③ 부채(복합계약) · 관측할 수 없는 투입변수를 쓴 평가",
+             "차이를 이연해 주계약 장부금액에서 빼고 유효이자율로 기간에 걸쳐 인식한다 (1109 문단 B5.1.2A(2)).",
+             "◀ 이 평가" if (hy and not pl) else "")]
+
+
 def alloc_journal(rows):
     """배분표를 분개로 뒤집는다 — [(계정, 차변, 대변)]. 화면·값 조서가 같이 쓴다.
 
@@ -4825,13 +4843,13 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
             cite.append("1109 문단 B4.3.5(5)(나)")
         elif close:
             res = "분리하지 않을 여지"
-            why.append(f"{_cmp} 모든 행사일에서 회계정책으로 정한 비교기준 {tol*100:g}% 이내이므로 "
+            why.append(f"{_cmp} 모든 행사일에서 이용자 설정 비교기준({tol*100:g}%) 이내이므로 "
                        "밀접하게 관련되어 있다고 볼 여지가 있습니다. 비교기준은 기준서가 정한 "
                        "수치가 아닙니다 (실무사례 28쪽).")
             cite.append("1109 문단 B4.3.5(5)(가)")
         else:
             res = "분리"
-            why.append(f"{_cmp} 회계정책으로 정한 비교기준 {tol*100:g}% 를 넘는 행사일이 있습니다. "
+            why.append(f"{_cmp} 이용자 설정 비교기준({tol*100:g}%)을 초과함 — 기준을 넘는 행사일이 있습니다. "
                        "비교기준은 기준서가 정한 수치가 아닙니다 (실무사례 28쪽).")
             why.append("같은 조건의 별도 금융상품이 파생상품의 정의를 충족하고, "
                        "복합계약 전체를 당기손익-공정가치로 측정하지 않습니다.")
@@ -4961,9 +4979,8 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
         why, cite = [], []
         if int(tm.bw_pay) == 1:
             res = "복합금융상품의 자본요소" if not liab else "복합내재파생상품"
-            why.append("신주인수권을 행사할 때 사채를 권면액만큼 납입에 갈음하므로 "
-                       "(대용납입) 사채가 소멸하고 주식을 받습니다. 전환사채의 "
-                       "전환권과 경제적 실질이 같아 격자도 같은 것을 씁니다.")
+            why.append("신주인수권 행사 시 사채로 대용납입하여 사채가 소멸하므로, "
+                       "전환사채의 전환과 같은 계산 구조를 적용합니다.")
             cite.append("1032 문단 28~32")
         elif int(tm.bw_detach) == 1:
             res = "별도의 금융상품" if liab else "복합금융상품의 자본요소"
@@ -5068,6 +5085,33 @@ def split_policy_rows(tm: "Terms", key: str) -> list:
         cho = ("별도 금융상품 — 파생상품자산으로 따로 인식" if int(tm.k_sep) else
                "복합내재파생상품에 포함")
     return [("적용 회계정책", pol), ("선택한 처리 (이 조서의 회계처리)", cho)]
+
+
+def split_compare(tm: "Terms", key: str, d: dict) -> str:
+    """분리 판단 한 권리의 «수치 판정 · 이용자 설정 · 일치 여부» 한 줄. 두 조서 공통.
+
+    「분리하지 않을 여지」 는 수치상 주계약과 밀접하다고 볼 여지가 있다는 뜻이다. 그때 분리를
+    골랐으면 어긋났다고 단정하지 않되 «검토 필요» 로 적는다 — 밀접한 내재파생은 분리하지 않는다.
+    """
+    res = d.get("결론", "")
+    cho = dict(split_policy_rows(tm, key))["선택한 처리 (이 조서의 회계처리)"]
+    if fvpl_on(tm) or res == "최초 인식 판단 이어 적용":
+        ok = "해당 없음 — " + ("복합계약 전체 지정" if fvpl_on(tm) else "최초 인식 때의 결론을 이어 적용")
+    elif key == "put":
+        host = put_in_host(tm)
+        if res in ("분리", "묶어서 분리"):
+            ok = "검토 필요 — 수치 판정과 이용자 설정이 다름" if host else "일치"
+        elif res == "분리하지 않음":
+            ok = "일치" if host else "검토 필요 — 수치 판정과 이용자 설정이 다름"
+        else:
+            ok = "일치" if host else "검토 필요 — 수치상 분리하지 않을 여지가 있으나 분리를 선택함"
+    elif res == "분리하지 않을 여지":
+        # 매도청구권은 어느 설정(별도 금융상품 · 복합내재파생에 포함)이든 분리해 처리한다 — 주계약에 남기는
+        # 처리를 지원하지 않으므로 수치 판정이 회계처리에 반영되지 않았다고 적는다.
+        ok = "검토 필요 — 수치상 분리하지 않을 여지가 있으나 이 조서는 분리해 처리함 (주계약에 남기는 처리는 지원하지 않음)"
+    else:
+        ok = "일치" if d.get("설정일치", True) else "검토 필요 — 수치 판정과 이용자 설정이 다름"
+    return f"수치 판정 «{res}» · 이용자 설정 «{cho}» → {ok}"
 
 
 # 분리 판단 «행사일별 비교표» 의 열 — 화면·값 조서·수식 조서가 같은 머리를 쓴다.
@@ -5735,12 +5779,14 @@ def write_call_rows(R, r, tm: Terms, full, b2, put, sec, fmt4, pct, grey):
     """
     cmp_, rec = call_compare(tm, full, b2)
     if not cmp_: return r
-    sec(R, r, "4. 매도청구권 — 방법별 값과 선택 근거 (값 · 4.6.2 문서화)", span=6); r += 1
+    sec(R, r, "4. 매도청구권 — 방법별 값과 선택 근거 (앱에서 생성 당시 계산한 참고값 · 4.6.2 문서화)", span=6); r += 1
+    put(R, r, 2, "이 표의 숫자는 앱에서 생성 당시 계산한 참고값이다 — 수식 조서에서 입력을 바꿔도 다시 계산되지 않는다. "
+                 "적용한 방법의 값은 위 2. 구성요소에서 수식으로 따라온다.", color=grey, size=9); r += 1
     put(R, r, 2, call_type_note(tm).replace("**", ""), color=grey, size=9)
     R.merge_cells(start_row=r, start_column=2, end_row=r, end_column=6)
     R.row_dimensions[r].height = 42; r += 2
     base = next((v for nm, _, v, _ in cmp_ if nm.startswith("유무가치비교법 (")), None)
-    for i, h in enumerate(["방법", "지분·채권 구분 기준", "값", "유무가치 대비", "차이율", "적용"]):
+    for i, h in enumerate(["방법", "지분·채권 구분 기준", "값 (앱에서 생성 당시 계산한 참고값)", "유무가치 대비", "차이율", "적용"]):
         put(R, r, 2+i, h, bold=True, border=True, size=9)
     r += 1
     for nm, sp, v, on in cmp_:
@@ -5813,7 +5859,7 @@ def write_pc_rows(R, r, tm: Terms, put, sec, fmt4, grey):
     풋·콜 우선순위 두 값과, 값이 갈릴 자리가 있으면 매도청구 통지 뒤 전환 대응 두 값을 싣는다.
     """
     pcc = pc_compare(tm)
-    sec(R, r, "3. 풋·콜 우선순위별 매도청구권 (값 · 계약이 정한다)", span=5); r += 1
+    sec(R, r, "3. 풋·콜 우선순위별 매도청구권 (앱에서 생성 당시 계산한 참고값 · 계약이 정한다)", span=5); r += 1
     if pcc is None:
         put(R, r, 2, "겹치는 노드에서 조기상환금액이 매도청구금액보다 큰 자리가 없어 두 우선순위가 같은 답이다.",
             color=grey, size=9)
@@ -7350,7 +7396,7 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
     series = [(nm, px) for nm, px in series if px and len(px) >= 10]
     if not series: raise ValueError("종가가 10개 이상인 계열이 하나도 없습니다.")
     many = len(series) > 1
-    YEL = "FFF9DB"
+    YEL = INPUT_FILL                          # 입력 칸 — 모든 조서가 같은 노란색
     # 금리 계열이면 절대(정규) 변동성을 한 줄 더 낸다. 실무에서 bp 로 말하는
     # 그 값이고, BDT 가 쓰는 상대(로그정규) 변동성과 헷갈리기 쉬워 나란히 둔다.
     _rate = (kind == "rate")
@@ -7420,6 +7466,11 @@ def build_xlsx_vol(series, tdays=250, drop=True, mad_k=2.5, pick="median",
                   if _rate else
                   "종가는 수정주가여야 한다 — 유상증자·액면분할·배당이 반영되지 "
                   "않은 종가를 쓰면 그날 하루가 통째로 이상치가 된다."))
+    if _rate:
+        r += 1
+        note(C, r, "이 시트는 BDT 금리변동성 σ 의 산출 근거다. 여기서 값을 바꿔도 조서의 BDT 격자는 "
+                   "따라오지 않는다 — BDT 기준금리 a 가 지금 σ 와 금리곡선에 맞춰 앱에서 역산한 고정값이라, "
+                   "σ 만 바뀌면 격자가 금리곡선과 어긋난다. σ 를 바꾸려면 앱에서 다시 평가해 조서를 새로 만든다.")
 
     # ── 회사별 시트 ──
     for (nm, px), sn in zip(series, names):
@@ -7571,7 +7622,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
     K = report_kit(wb)
     put, head, sec, cols, note, sheet = (K[x] for x in
         ("put", "head", "sec", "cols", "note", "sheet"))
-    YEL = "FFF9DB"
+    YEL = INPUT_FILL                          # 입력 칸 — 모든 조서가 같은 노란색
     derive(tm)
     n, T = int(tm.n), tm.T
     dt_ = T/n
@@ -7641,9 +7692,15 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
     r += 1
     for _cn in curve_notes(tm):
         note(C, r, _cn.replace("**", "")); r += 1
-    note(C, r, "노란 셀만 입력이다. 만기와 수익률을 고치면 부트스트래핑부터 선도까지 "
-               "전부 다시 계산된다. 다만 만기 칸을 늘리거나 줄이려면 앱에서 곡선을 "
-               "바꿔 리포트를 다시 만들어야 한다 — 표의 길이는 구조라 수식으로 늘지 않는다.")
+    if put_bdt_on(tm):
+        note(C, r, "BDT 금리격자를 쓰는 조서라 입력곡선의 만기·수익률은 입력칸(노란색)이 아니다. "
+                   "BDT 기준금리 a 가 이 곡선에 맞춰 앱에서 역산한 고정값이어서, 곡선을 이 파일에서 고치면 "
+                   "주가 격자의 선도이자율만 따라오고 a 는 그대로라 결과가 틀어진다. 곡선을 바꾸려면 앱에서 "
+                   "다시 평가해 조서를 새로 만든다.")
+    else:
+        note(C, r, "노란 셀만 입력이다. 만기와 수익률을 고치면 부트스트래핑부터 선도까지 "
+                   "전부 다시 계산된다. 다만 만기 칸을 늘리거나 줄이려면 앱에서 곡선을 "
+                   "바꿔 리포트를 다시 만들어야 한다 — 표의 길이는 구조라 수식으로 늘지 않는다.")
     r += 1
     note(C, r, "주가 변동성 σ 는 이자율 산출에 쓰이지 않는다. 선도이자율 시트의 "
                "위험중립가중치 q = [exp((f − δ)·Δt) − d] ÷ (u − d) 에서 u·d 를 만드는 "
@@ -7654,6 +7711,14 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
         note(C, r, "BDT 단기이자율 변동성 σ 는 조기상환청구권을 평가하는 금리격자에만 쓴다(전환권·매도청구권 "
                    "가치는 주가 격자에서 계산한다). 산출방식 줄이 「직접 입력」이면 이 조서에 금리변동성 산출내역이 "
                    "포함되어 있지 않습니다 — 앱 조서 탭의 「금리변동성 산출내역」 리포트를 함께 철하십시오.")
+        r += 1
+        note(C, r, "BDT 단기이자율과 이 시트의 선도이자율은 다르다. 선도이자율은 주가 격자의 한 구간에 쓰는 "
+                   "확정 금리다. BDT 단기이자율 r(i,j) = a_i · exp(2σ·j·√Δt) 는 같은 시점에서도 노드마다 다른 "
+                   "금리이고, 시점마다 기준금리 a_i 를 정해 격자 전체로 할인한 값(도달가격의 합)이 "
+                   + ("위험 곡선의 할인계수와 같아지게 맞춘다." if tm.bdt_base == 0 else
+                      "무위험 곡선의 할인계수와 같아지게 맞추고, 할인할 때 구간 선도 신용스프레드를 확정으로 얹는다.")
+                   + " 그래서 할인계수는 곡선과 같지만 한 노드의 단기이자율은 "
+                   "선도이자율과 같지 않다. a_i 는 앱이 역산한 고정값이다 — 곡선이나 σ 를 바꾸려면 앱에서 다시 평가한다.")
         r += 1
     note(C, r, "위험 곡선 출처는 앱의 이자율 칸에서 고른 그대로다. 두 등급으로 대상 등급을 만들었으면 "
                "(대상 등급이 두 등급 사이면 보간, 밖이면 외삽) 아래 입력곡선 시트의 위험 열이 그렇게 만든 "
@@ -7678,13 +7743,18 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
     cols(I, R0IN-1, ["무위험 만기", "수익률", "연속환산",
                      "위험 만기", "수익률", "연속환산"],
          [12, 16, 15, 12, 16, 15])
+    # BDT 금리격자를 쓰면 기준금리 a 가 이 곡선에 맞춰 앱에서 역산한 고정값이다. 곡선을
+    # 엑셀에서 고치면 주가 격자의 선도이자율은 따라오지만 a 는 그대로라 두 격자가 서로 다른
+    # 곡선을 쓰게 된다 — 그래서 입력칸(노란색)으로 열지 않는다.
+    _lock = put_bdt_on(tm)
+    _yf = None if _lock else YEL
     for (lbl, pts, cmp_, mcol, ycol) in LEG:
         for i, (mt, y) in enumerate(pts):
             rr = R0IN + i
             put(I, rr, 2 if mcol == "B" else 5, mt, fmt="0.####",
-                border=True, align="right", fill=YEL)
+                border=True, align="right", fill=_yf)
             put(I, rr, 3 if mcol == "B" else 6, y, fmt=R_P4,
-                border=True, align="right", fill=YEL)
+                border=True, align="right", fill=_yf)
             put(I, rr, 4 if mcol == "B" else 7,
                 f"={cmp_}*LN(1+{ycol}{rr}/{cmp_})", fmt=R_P4,
                 border=True, align="right")
@@ -7692,6 +7762,10 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
     note(I, endr, "연속환산 열은 참고다. 만기수익률을 넣었다면 실제 계산은 다음 두 "
                   "시트의 부트스트래핑에서 하고, 현물이자율을 넣었다면 이 열이 곧 "
                   "쓰이는 값이다.", span=6)
+    if _lock:
+        note(I, endr+1, "BDT 금리격자를 쓰는 조서라 이 곡선은 입력칸이 아니다 — BDT 기준금리 a 가 이 곡선과 "
+                        "BDT 금리변동성 σ 에 맞춰 앱에서 역산한 고정값이므로, 곡선을 바꾸려면 앱에서 다시 "
+                        "평가해 조서를 새로 만든다.", span=6)
 
     # ── 곡선별 산출 ──
     made = {}
@@ -8044,7 +8118,12 @@ def rename_sheets(wb, mapping: dict, words=()):
 
 
 # 상품 이름을 바꾸면 안 되는 말 — 세 상품을 나란히 적은 적용범위 문장, 기준서 용어.
+# 엑셀에서 고쳐도 되는 입력 칸의 색. 가정 시트·산출내역·주주간계약 조서가 같은 색을 써야
+# 해설의 «노란 칸» 이 한 가지 뜻이 된다.
+INPUT_FILL = "FDF6DD"
 _RELABEL_KEEP = ("전환사채·신주인수권부사채·상환전환우선주", "전환채무상품", "상환전환우선주")
+# 신주인수권부사채 조서에서 전환사채와 **견주는** 말. 바꾸면 「신주인수권부사채와 같은」이 되어 뜻이 없다.
+_BW_KEEP = ("전환사채의 전환과 같은", "전환사채와 같은")
 # 받침에 따라 모양이 바뀌는 조사. 뒤에 띄어쓰기·문장부호·줄끝이 올 때만 조사로 본다.
 _JOSA = (("은", "는"), ("이", "가"), ("을", "를"), ("과", "와"), ("으로", "로"))
 _JOSA_RE = re.compile(r"(은|는|이|가|을|를|과|와|으로|로)(?=[\s,.·)」』—:;]|$)")
@@ -8089,7 +8168,7 @@ def fix_josa(text: str, word: str) -> str:
 def relabel_text(v: str, words) -> str:
     """한 글자 칸을 상품 용어로 바꾼다 — 지켜야 할 말은 가려 두고, 바꾼 말 뒤 조사를 고친다."""
     keep = {}
-    for n_, w in enumerate(_RELABEL_KEEP):
+    for n_, w in enumerate(_RELABEL_KEEP + (_BW_KEEP if ("전환사채", "신주인수권부사채") in words else ())):
         if w in v:
             tok = f"\x00{n_}\x00"; keep[tok] = w; v = v.replace(w, tok)
     used = []
@@ -8236,9 +8315,10 @@ def _sha_stamp(tm: Terms) -> list:
 def inst_text(tm: Terms, text: str) -> str:
     """화면 문장을 상품 용어로. CB 면 그대로다."""
     if not isinstance(text, str): return text
-    for a, b in inst_words(tm):
-        if a in text: text = text.replace(a, b)
-    return text
+    # 조서 글자 칸과 같은 치환(지킬 말 · 조사 고침)을 쓴다 — 따로 바꾸면 「전환사채의 전환과 같은」 이
+    # 「신주인수권부사채의 행사과 같은」 이 된다.
+    words = inst_words(tm)
+    return relabel_text(text, words) if words else text
 
 
 def amort_year(tm: Terms):
@@ -9031,6 +9111,13 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
             (issuer_day1_note(_d1x) if _d1x["hybrid"] else
              "전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수된다 (1032 문단 31). "
              "최초 인식 손익은 생기지 않는다.").replace("**", ""), color=GREY, size=9)
+        _rc = rd+2+len(issuer_day1_rows(_d1x))+2
+        for i, h in enumerate(["최초 인식 차이의 세 가지 구분", "처리", "이 평가"]):
+            put(E, _rc, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+        for i, (k, v, on) in enumerate(issuer_day1_cases(_d1x)):
+            put(E, _rc+1+i, 2, k, border=True, bold=bool(on), size=9)
+            put(E, _rc+1+i, 3, v, border=True, size=9)
+            put(E, _rc+1+i, 4, on, border=True, bold=True, size=9)
 
     # ── 상각표 ──
     # 전체를 당기손익-공정가치로 지정했으면 상각할 주계약이 없다. 빈 표를 싣는
@@ -9126,6 +9213,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         if _d.get("있음", True):
             for _a, _v in split_policy_rows(tm, _k):
                 put(J, _r, 2, _a, border=True); put(J, _r, 3, _v, border=True); _r += 1
+            _cmpx = split_compare(tm, _k, _d)
+            put(J, _r, 2, "판정과 설정 비교", bold=True, border=True)
+            put(J, _r, 3, _cmpx, bold=True, border=True,
+                color=(RED if "검토 필요" in _cmpx else "000000")); _r += 1
         for _i, _x in enumerate(_d["이유"]):
             put(J, _r, 2, "판단 근거" if _i == 0 else "", border=True)
             put(J, _r, 3, _x, border=True); _r += 1
@@ -9497,7 +9588,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("상향 조정 (1/0)", "up", 1 if tm.rfx_mode == 2 else 0, N0, True),
         ("조정일 처리 (1/2/3)", "mth", max(1, tm.carry), N0, True),
         ("전환권 분류 (1 자본 / 0 부채)", "eqcls", 1 if tm.conv_class == "equity" else 0, N0, True),
-        ("상품 (0 CB / 1 RCPS)", "inst", 1 if is_rcps(tm) else 0, N0, False),
+        ("상품 (0 CB / 1 RCPS / 2 BW)", "inst", 1 if is_rcps(tm) else 2 if is_bw(tm) else 0, N0, False),
         # 존속기간 만료 시 보통주 자동전환. 만기 노드 수식이 모두 이 셀을 보므로
         # 엑셀에서 바꿔도 따라온다. CB 는 0 이다.
         ("존속기간 만료 시 자동전환 (1/0)", "auto", 1 if auto_conv(tm) else 0, N0, True),
@@ -9537,8 +9628,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("매도청구권 처리 (1 별도 금융상품 / 0 내재파생 포함)", "ksep", tm.k_sep, N0, True),
         ("신용위험 처리 (0 TF / 1 GS)", "mdl", 1 if tm.model == "GS" else 0, N0, False),
         ("조기상환권 (0 금리고정 / 1 BDT)", "pbdt", 1 if put_bdt_on(tm) else 0, N0, False),
-        ("BDT 변동성 σ", "bsig",
-         (f"={_rvolref}" if _rvolref else tm.bdt_sig), P2, not _rvolref),
+        # 기준금리 a 가 이 σ 와 금리곡선에 맞춰 앱에서 역산한 고정값이라, σ 를 엑셀에서 바꾸면
+        # 격자가 곡선과 어긋난다. 그래서 입력칸(노란색)으로 열지 않고 산출내역에도 잇지 않는다.
+        ("BDT 변동성 σ (앱에서만 변경)", "bsig", tm.bdt_sig, P2, False),
         ("BDT 기준 (0 위험곡선 / 1 무위험+스프레드)", "bbase", tm.bdt_base, N0, False),
         ("전자등록총액 (원)", "face", tm.face_total, N0, True),
         # 기말 재평가. 음수면 「없음」이다 — 발행 시점 평가.
@@ -9642,7 +9734,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         "auto": {1: "만료 시 보통주 자동전환", 0: "없음"},
         "rfx": {1: "있음", 0: "없음"}, "up": {1: "하향·상향", 0: "하향만"},
         "mth": {1: "경로가중치", 2: "확률가중평균", 3: "특정노드 선택"},
-        "eqcls": {1: "자본", 0: "파생상품부채"}, "inst": {0: "CB", 1: "RCPS"},
+        "eqcls": {1: "자본", 0: "파생상품부채"}, "inst": {0: "CB", 1: "RCPS", 2: "BW"},
         "kmeth": {0: "콜 유무 가치 비교", 1: "옵션차익 혼합할인율", 2: "옵션차익 성분 분리할인 (주식결제·현금결제)"},
         "ksplit": {0: "가치 구성비율", 1: "전환확률 (본문 4.3.3)"},
         "kkind": {0: "제3자 지정 가능", 1: "제3자 사전 특정"},
@@ -9678,7 +9770,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(A, r, 2, _nm, border=True)
         val = v.lstrip("@").format(**ROWN) if (isinstance(v, str) and v.startswith("@")) else v
         put(A, r, 3, val, color=(RED if inp else "000000"),
-            fill=("FDF6DD" if inp else None), fmt=fm, align="right", border=True)
+            fill=(INPUT_FILL if inp else None), fmt=fm, align="right", border=True)
         if key in _MEAN and isinstance(v, (int, float)):
             put(A, r, 4, _MEAN[key].get(int(v), ""), color=GREY, size=9)
         elif key == "prate" and tm.p_mode == "accrue":
@@ -11188,7 +11280,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     # 마지막 줄은 전환권이 자본이면 전환권대가, 부채면 최초 인식 손익(당기손익을 고른 때만)이다.
     # 두 경우가 함께 설 수 없으므로 한 줄을 나눠 쓴다 — 행 번호가 밀리지 않는다.
     _EQ = f'=IF({K["eqcls"]}=1,결과!C23,IF({K["d1pl"]}=1,-{_D1},""))'
-    _EQNM = (f'=IF({K["eqcls"]}=1,"전환권대가 · 자본",IF({K["d1pl"]}=1,'
+    # 수식 안의 글자는 relabel_inst 가 건드리지 않으므로 상품 용어를 여기서 넣는다
+    # (신주인수권부사채면 「신주인수권대가」).
+    _EQW = relabel_text("전환권대가", inst_words(tm))
+    _EQNM = (f'=IF({K["eqcls"]}=1,"{_EQW} · 자본",IF({K["d1pl"]}=1,'
              f'IF({_D1}>0,"{DAY1_LOSS}","{DAY1_GAIN}"),"최초 인식 손익 · 당기손익 (고르지 않음)"))')
     # 복합계약 **전체**를 당기손익-공정가치로 지정하면 요소별 줄이 한 줄로 접힌다.
     # 새로 계산할 값이 없다 — 부채 갈래의 「주계약 + 복합내재파생」 합이 그대로
@@ -11257,7 +11352,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _JCR = f'=IF({K["eqcls"]}=1,결과!C23,IF(AND({K["d1pl"]}=1,{_D1}<0),-{_D1},""))'
     if _FVROW:
         _JCR = f'=IF(AND({K["d1pl"]}=1,{_D1}<0),-{_D1},"")'
-    _JNM = (f'=IF({K["eqcls"]}=1,"　전환권대가 (자본)",IF({K["d1pl"]}=1,'
+    _JNM = (f'=IF({K["eqcls"]}=1,"　{_EQW} (자본)",IF({K["d1pl"]}=1,'
             f'IF({_D1}>0,"최초 인식 손실 (당기손익)","　최초 인식 이익 (당기손익)"),'
             f'"　최초 인식 손익 (고르지 않음)"))')
     # 매도청구권이 음수(콜이 전환을 강제해 값이 오르는 모형 성질)면 자산이 아니라 부채다 — 배분표와
@@ -11406,6 +11501,13 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
              if _d1x["hybrid"] else
              "전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수된다 (1032 문단 31). "
              "최초 인식 손익은 생기지 않는다."), color=GREY, size=9)
+        _rc = RD+2+len(_nm0)+2
+        for i, h in enumerate(["최초 인식 차이의 세 가지 구분", "처리", "이 평가"]):
+            put(E, _rc, 2+i, h, bold=True, fill=LIGHT, align="center", border=True, size=9)
+        for i, (k, v, on) in enumerate(issuer_day1_cases(_d1x)):
+            put(E, _rc+1+i, 2, k, border=True, bold=bool(on), size=9)
+            put(E, _rc+1+i, 3, v, border=True, size=9)
+            put(E, _rc+1+i, 4, on, border=True, bold=True, size=9)
 
     # ── 분리 판단 ──
     # 화면과 같은 함수가 만든 문안이라 둘이 어긋날 수 없다.
@@ -11442,9 +11544,16 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(J, _r, 2, "결론", bold=True, border=True)
         put(J, _r, 3, _d["결론"], bold=True, border=True); _r += 1
         # 적용 회계정책 · 선택한 처리 — 판정(결론)과 이 조서가 실제로 한 처리를 나눠 적는다.
+        _r38 = _r - 1
+        _rcmp = None
         if _d.get("있음", True):
             for _a, _v in split_policy_rows(tm, _k):
                 put(J, _r, 2, _a, border=True); put(J, _r, 3, _v, border=True); _r += 1
+            _cmpx = split_compare(tm, _k, _d)
+            put(J, _r, 2, "판정과 설정 비교", bold=True, border=True)
+            put(J, _r, 3, _cmpx, bold=True, border=True,
+                color=(RED if "검토 필요" in _cmpx else "000000"))
+            _rcmp = _r; _r += 1
         for _i, _x in enumerate(_d["이유"]):
             put(J, _r, 2, "판단 근거" if _i == 0 else "", border=True)
             put(J, _r, 3, _x, border=True); _r += 1
@@ -11499,6 +11608,24 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                             f'IF(AND({K["embap"]}=1,OR({K["eqcls"]}=0,AND({K["ksep"]}=0,{K["cw"]}>0))),"묶어서 분리",'
                             f'IF({K["plost"]}=1,"분리하지 않음",IF(C{_rg}<={K["stol"]},"분리하지 않을 여지","분리"))))'),
                 bold=True, border=True)
+            # 위의 «결론» 과 «판정과 설정 비교» 를 이 판정 수식에 잇는다 — 가정 시트의 비교기준이나
+            # 조기상환권 처리를 바꾸면 결론·일치 여부가 함께 바뀐다 (값 조서와 같은 글자).
+            if not fvpl_on(tm):
+                put(J, _r38, 3, f"=C{_rv}", bold=True, border=True)
+                if _rcmp:
+                    # 이용자 설정 글자도 가정 시트의 분류·매도청구권 처리 칸을 보고 정한다 (split_policy_rows 와 같은 순서).
+                    _w = inst_words(tm)
+                    _sep = (f'IF({K["eqcls"]}=0,"{relabel_text("전환권과 묶어 분리 — 복합내재파생상품 (파생상품부채)", _w)}",'
+                            f'IF(AND({K["ksep"]}=0,{K["cw"]}>0),"매도청구권과 묶어 분리 — 복합내재파생상품",'
+                            f'"분리 — 파생상품부채"))')
+                    _h = K["phost"]
+                    _dif = "검토 필요 — 수치 판정과 이용자 설정이 다름"
+                    put(J, _rcmp, 3,
+                        (f'="수치 판정 «"&C{_rv}&"» · 이용자 설정 «"&IF({_h}=1,"주계약에 포함 (분리하지 않음) — 상각후원가로 측정",{_sep})&"» → "&'
+                         f'IF(OR(C{_rv}="분리",C{_rv}="묶어서 분리"),IF({_h}=1,"{_dif}","일치"),'
+                         f'IF(C{_rv}="분리하지 않음",IF({_h}=1,"일치","{_dif}"),'
+                         f'IF({_h}=1,"일치","검토 필요 — 수치상 분리하지 않을 여지가 있으나 분리를 선택함")))'),
+                        bold=True, border=True)
             put(J, _rr, 2, "유효이자율 (자본요소 분리 전 · 계약만기)", border=True)
             put(J, _rr+1, 2, "자본요소 분리 전 상각표 (분리 판단용)", bold=True)
             for _j, _h in enumerate(["회차", "연수", "기초", "이자", "지급", "기말"]):
@@ -11596,11 +11723,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _tf = tm.model == "TF"
     _aux = _tf and int(getattr(tm, "k_split", 0)) == 1 and tm.k_w > 0 and tm.k_method in (1, 2)
     ex = [("재계산 범위", ""),
-      ("입력 변경에 따라 재계산되는 항목", "가정 시트의 노란 칸(계약 금액·비율, 주가, 주가변동성, 금리곡선 수익률 등)을 "
-                     "바꾸면 그 값을 쓰는 모든 계산 시트가 엑셀 안에서 다시 계산됩니다."),
+      ("입력 변경에 따라 재계산되는 항목", "가정 시트의 노란 칸(계약 금액·비율, 주가, 주가변동성"
+                     + ("" if _bdt else ", 금리곡선 수익률") + " 등)을 "
+                     "바꾸면 그 값을 쓰는 모든 계산 시트가 엑셀 안에서 다시 계산됩니다."
+                     + (" BDT 금리격자를 쓰는 조서라 금리곡선 수익률과 BDT 금리변동성 σ 는 노란 칸이 아닙니다 — "
+                        "BDT 기준금리 a 가 그 두 값에 맞춰 앱에서 역산한 고정값이기 때문입니다." if _bdt else "")),
       ("앱에서 다시 만들어야 하는 항목", "노드 수·계산 간격, 행사일·이자 지급일(계약 날짜를 노드에 배정한 결과), "
                      "전환가격 조정 주기, 평가모형(TF/GS)·매도청구권 평가방법, 금리곡선의 만기 칸 수"
-                     + (", BDT 금리변동성 σ" if _bdt else "")
+                     + (", 금리곡선 수익률, BDT 금리변동성 σ" if _bdt else "")
                      + ". 이 파일에서 바꾸면 결과가 따라오지 않거나 틀린 값이 나오므로 앱에서 바꾸고 조서를 새로 만듭니다."),
       ("고정 산출값 (주황색)", (("앱이 역산해 값으로 넣은 것 — "
                           + ", ".join(([] if not _bdt else ["BDT 기준금리 a"])
@@ -11843,7 +11973,7 @@ def _sha_block(wb, K, tm, R, formula, pre, name, links=None):
     R0 = 24                                   # 트리 첫 자료행
     N2, N0, P2, N4, N6 = '#,##0.00', '#,##0', '0.00%', '0.0000', '0.000000'
     DATE = 'yyyy-mm-dd'
-    YEL = "FFF6D8"                            # 수식 조서의 입력 셀
+    YEL = INPUT_FILL                          # 입력 칸 — 모든 조서가 같은 노란색
     put, head, sec, cols, note, sheet = (K[x] for x in
         ("put", "head", "sec", "cols", "note", "sheet"))
     Q = lambda nm: f"'{nm}'"
@@ -12328,7 +12458,7 @@ def _sha_deal_block(wb, K, tm, R, formula, pre, name):
     put, head, sec, cols, note, sheet = (K[x] for x in ("put", "head", "sec", "cols", "note", "sheet"))
     N2, N0, P2, N4, N6 = '#,##0.00', '#,##0', '0.00%', '0.0000', '0.000000'
     DATE = 'yyyy-mm-dd'
-    YEL = "FFF6D8"
+    YEL = INPUT_FILL                          # 입력 칸 — 모든 조서가 같은 노란색
     V = lambda val, fx: (fx if formula else val)
     SR = pre + "결과"
     W = sheet(SR, widths=[40, 16, 14, 14, 18, 52])
@@ -12414,7 +12544,7 @@ def _sha_total(wb, K, tm, entries, refs, formula, recon=None):
             border=True)
         _inc = float(e.get("incl", 1.0))
         put(T, r, 13, _inc, fmt=N0, align="center", border=True,
-            fill=("FFF6D8" if (formula and e.get("status") == "cond") else None))
+            fill=(INPUT_FILL if (formula and e.get("status") == "cond") else None))
         put(T, r, 14, SHA_ROW_STATUS.get(e.get("status", "open"), "") + (
             " · " + SHA_COND_BASIS.get(e.get("cond_basis"), "") if e.get("status") == "cond" else ""), size=9, border=True)
         put(T, r, 15, V(pk*qp, f"={f['put_krw']}"), fmt=N0, align="right", border=True)
