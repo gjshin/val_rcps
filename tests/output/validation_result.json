@@ -6,6 +6,51 @@
  "python": "3.11.15",
  "suites": [
   {
+   "suite": "손계산대조",
+   "cmd": "python3 tests/손계산대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 78.1,
+   "last": "모두 통과",
+   "tail": []
+  },
+  {
+   "suite": "오라클",
+   "cmd": "python3 tests/오라클.py",
+   "ok": true,
+   "code": 0,
+   "sec": 0.9,
+   "last": "모두 통과",
+   "tail": []
+  },
+  {
+   "suite": "분기전수",
+   "cmd": "python3 tests/분기전수.py",
+   "ok": true,
+   "code": 0,
+   "sec": 5.8,
+   "last": "→ tests/output/분기전수.json 383 줄",
+   "tail": []
+  },
+  {
+   "suite": "기능목록",
+   "cmd": "python3 tests/기능목록.py --strict",
+   "ok": true,
+   "code": 0,
+   "sec": 0.6,
+   "last": "   → tests/검증매트릭스.json (412 행)",
+   "tail": []
+  },
+  {
+   "suite": "조합시험",
+   "cmd": "python3 tests/조합시험.py --quick",
+   "ok": true,
+   "code": 0,
+   "sec": 46.8,
+   "last": "→ tests/output/조합시험.json 1846 줄 · 실패 0 (tests/output/조합시험_실패.json) · 46초",
+   "tail": []
+  },
+  {
    "suite": "검산수식대조",
    "cmd": "python3 tests/검산수식대조.py --quick",
    "ok": true,
@@ -38,6 +83,42 @@
    "ok": true,
    "code": 0,
    "sec": 211.4,
+   "last": "",
+   "tail": []
+  },
+  {
+   "suite": "값조서대조",
+   "cmd": "python3 tests/값조서대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 74.3,
+   "last": "모든 항목 일치",
+   "tail": []
+  },
+  {
+   "suite": "주주간계약대조",
+   "cmd": "python3 tests/주주간계약대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 1480.5,
+   "last": "",
+   "tail": []
+  },
+  {
+   "suite": "조합시험 전체",
+   "cmd": "python3 tests/조합시험.py",
+   "ok": true,
+   "code": 0,
+   "sec": 173.5,
+   "last": "→ tests/output/조합시험.json 4845 줄 · 실패 0 (tests/output/조합시험_실패.json) · 173초",
+   "tail": []
+  },
+  {
+   "suite": "조서대조",
+   "cmd": "python3 tests/조서대조.py",
+   "ok": true,
+   "code": 0,
+   "sec": 2977.1,
    "last": "",
    "tail": []
   },
@@ -102,5 +183,6 @@
   }
  },
  "all_ok": true,
- "sec": 1553.8
+ "sec": 6390.9,
+ "note": "13종은 HEAD 4ecbe7c 에서, 검산수식대조·배선대조·리포트대조·엑셀입력변경·설정전수대조는 수식 조서 분개(음수 매도청구권) 수정 뒤 다시 돌린 결과다."
 }
