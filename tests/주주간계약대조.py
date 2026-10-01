@@ -63,6 +63,8 @@ CASES = [
     ("연계 · 같은 가격 7% · 같은 기간", dict(sha_kill=1, sha_put_yield=.07, sha_call_prem=.07, sha_call_s=36.,
                                      sha_call_e=60., pc_order=1)),
     ("연계 · 풋 의무자 = 발행회사", dict(sha_kill=1, sha_writer=1)),
+    # 콜을 끄고 콜 수량을 남겨 둔 계약 — 계약 대상 주식은 풋 수량만 (없는 권리의 수량을 세지 않는다)
+    ("풋만 · 상대 권리 소멸 켬 · 콜 수량 남김", dict(sha_kill=1, sha_call_s=0., sha_call_e=0.)),
 ]
 BASE = dict(inst="SHA", S0=1000., K0=1000., d_issue="2025-03-31",
             d_base="2025-03-31", d_mat="2030-03-31", gap_m=6.0, sig=0.40,

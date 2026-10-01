@@ -4008,6 +4008,11 @@ def sha_contract_shares(tm: Terms) -> float:
     물량을 넣지 않았으면 종전처럼 두 수량 가운데 큰 쪽(콜 대상이 풋 대상에 포함된다고 본다)이다.
     """
     qp, qc = sha_qty(tm)
+    # 행사기간이 없는 권리의 수량은 세지 않는다 — 화면에서 권리를 끄고 수량을 남겨 두어도 계약 대상이 아니다.
+    _has_put = tm.sha_put_s <= tm.sha_put_e
+    _has_call = tm.sha_call_e > 0 and tm.sha_call_s <= tm.sha_call_e
+    if not (_has_put and _has_call):
+        return (qp if _has_put else 0.0) + (qc if _has_call else 0.0)
     lq = float(getattr(tm, "sha_link_q", -1.0))
     if int(getattr(tm, "sha_kill", 0)) == 1:
         try:
@@ -11916,7 +11921,8 @@ def _sha_block(wb, K, tm, R, formula, pre, name, links=None):
     _qun = sha_contract_shares(tm)
     _items = [
         ("계약 대상 주식가치 (평가기준일)", _eqv, f"={Q(S2)}!C{R0}", _qun,
-         f"{K_['qp']}+{K_['qc']}-{K_['qov']}",
+         (f"{K_['qp']}+{K_['qc']}-{K_['qov']}" if (R["has_put"] and R["has_call"]) else
+          K_['qp'] if R["has_put"] else K_['qc'] if R["has_call"] else "0"),
          "풋·콜 대상 주식(같은 주식에 붙은 물량은 한 번)의 가치 — 평가 의뢰인이 가진 주식 전체가 아니다"),
         ("풋옵션 (풋 1주당 · 물량별 합계)", (_put_k*100/tm.K0/qp if qp > 0 else 0.0),
          f"=IF(E7>0,G{_BT}/E7/{K_['K0']}*100,0)", qp, K_['qp'], "주식 보유자가 되팔 권리 — 아래 3 의 물량별 합계"),

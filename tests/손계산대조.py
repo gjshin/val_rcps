@@ -2402,6 +2402,7 @@ def test_sha_linked_conditions():
     tpi = mk(sha_call_s=0., sha_call_e=0., sha_kill=0); Rpi = G["sha_engine"](tpi)
     chk_bool("(나) 풋만 — 연계 판단 없음", not Rp["linked"])
     chk("(나) 풋만 = 따로 잰 풋", Rp["put"], Rpi["put"], 1e-12)
+    chk("(나) 풋만 · 콜 수량이 남아 있어도 계약 대상 주식 = 풋 수량", G["sha_contract_shares"](tp), 100., 1e-12)
     tc = mk(sha_put_s=99., sha_put_e=0.); Rc = G["sha_engine"](tc)
     tci = mk(sha_put_s=99., sha_put_e=0., sha_kill=0); Rci = G["sha_engine"](tci)
     chk_bool("(나) 콜만 — 연계 판단 없음", not Rc["linked"])

@@ -49,8 +49,9 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
         # 주주간계약 회차별 표 — 회차마다 따로 잰 풋·콜과 합계 (미행사 물량은 다음 회차로 넘기지 않는다).
         cols = list(summary['sha_rows'][0])
         tot = ['합계'] + [''] * (len(cols) - 1)
-        for k in ('풋 수량', '콜 수량', '풋 전액', '콜 전액'):
-            tot[cols.index(k)] = sum(r[k] for r in summary['sha_rows'])
+        for k in ('풋 수량', '콜 수량', '같은 주식 물량 (연계 판단)', '풋 전액', '콜 전액'):
+            if k in cols:
+                tot[cols.index(k)] = sum(r[k] for r in summary['sha_rows'])
         sheet('회차별 결과', [cols] + [[r[k] for k in cols] for r in summary['sha_rows']] + [tot])
         from .legacy import SHA_ROW_KEYS, sha_row_defaults
         heads = dict(name='평가 구분', start='행사 시작일', end='행사 종료일', style='행사 방식', freq='주기(개월)',
