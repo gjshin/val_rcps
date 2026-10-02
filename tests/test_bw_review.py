@@ -152,3 +152,18 @@ def test_formula_compare_follows_workbook_setting(fwb):
     J = fwb["분리 판단"]
     v = J.cell(find(J, "판정과 설정 비교"), 3).value
     assert "신주인수권과 묶어 분리" in v and "매도청구권과 묶어 분리" in v and "분리 — 파생상품부채" in v
+
+
+def test_base_rate_cannot_be_hand_edited(fwb):
+    # 기준금리 a 를 엑셀에서 손으로 고치지 못하게 — 금리격자 시트와 입력곡선 시트를 보호하고,
+    # 금리변동성 칸을 바꾸면 경고가 뜬다
+    assert fwb["BDT 단기이자율"].protection.sheet
+    assert fwb["IR 입력곡선"].protection.sheet
+    A = fwb["가정"]
+    r = find(A, "BDT 변동성 σ (앱에서만 변경)")
+    assert "앱에서 정한 값" in str(A.cell(r, 4).value) and str(A.cell(r, 4).value).startswith("=IF(")
+
+
+def test_no_protection_without_bdt():
+    wb = book(bw_case(put_bdt=0), True)
+    assert not wb["IR 입력곡선"].protection.sheet
