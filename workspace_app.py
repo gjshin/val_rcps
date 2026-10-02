@@ -250,6 +250,20 @@ def _sha_rows_from(frame, cols, old):
     return rows
 
 
+def _sha_row_px(r):
+    """회차의 주당 기준가격 — 실적 연동 산식이 있으면 산식 값, 없으면 칸에 넣은 값 (엔진 sha_row_terms 와 같은 순서).
+
+    산식 입력이 모자라거나 잘못되면 None — 그 문장은 입력 검사(sha_row_issues)가 낸다.
+    """
+    if r.get('perf'):
+        from valuation.legacy import sha_perf_calc
+        try:
+            return float(sha_perf_calc(r['perf'])[0])
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            return None
+    return float(r['price']) if r.get('price') else None
+
+
 def sha_editor(edited, case, errors):
     """주주간계약 입력 — 회차별 표(주식수·원 단위)가 기본이다. 기존 평가파일의 단일 계약 칸도 연다."""
     rev = st.session_state.get('revision', 0)
@@ -344,17 +358,18 @@ def sha_editor(edited, case, errors):
         # 계약 대상 주식수는 작은 쪽을 한 번만 센다 (엔진 sha_contract_shares 와 같다).
         _ov = float(_lq) if _lq is not None else min(_qp, _qc)
         _lk = (float(_lq) if _lq is not None else (_qp if abs(_qp - _qc) < 1e-9 else None)) if r.get('kill') else 0.
-        base += float(r.get('price') or 0) * (_qp + _qc - _ov)
+        base += float(_sha_row_px(r) or 0) * (_qp + _qc - _ov)
         qrows.append({'회차': r.get('name'), '풋 수량': _qp, '콜 수량': _qc,
                       '같은 주식 · 연계 판단': _lk, '풋만': (_qp - _lk) if _lk is not None else None,
                       '콜만': (_qc - _lk) if _lk is not None else None, '계약 대상 주식': _qp + _qc - _ov})
     if ends:
         edited['d_mat'] = max(ends)
-    _priced = [r for r in new_rows if r.get('price') and r.get('status', 'open') in ('open', 'cond')]
+    _priced = [r for r in new_rows if _sha_row_px(r) and r.get('status', 'open') in ('open', 'cond')]
     if _priced:
-        edited['K0'] = float(_priced[0]['price'])
+        edited['K0'] = _sha_row_px(_priced[0])
     for r in new_rows:
-        if not r.get('price') and r.get('status', 'open') in ('open', 'cond'):
+        # 실적 연동 산식이 있는 회차는 산식이 가격을 정한다 — 산식 입력의 빈칸·오류는 입력 검사가 알린다.
+        if not r.get('price') and not r.get('perf') and r.get('status', 'open') in ('open', 'cond'):
             errors.append(f"{r.get('name')}의 주당 기준가격을 입력하십시오.")
     if qrows:
         _qt = pd.DataFrame(qrows)
