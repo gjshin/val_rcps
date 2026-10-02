@@ -3014,6 +3014,8 @@ if _detail_section == _detail_sections[4]:
                    + (f" · 피어 종합 {_ag*100:.2f}%" if _ag is not None else "")
                    + f" · 적용 σ {t.sig*100:.2f}%")
   else:
+    # 평가에 실제로 쓴 σ — 아래 산출값과 다를 수 있다(산출값은 «이 변동성 적용» 을 눌러야 평가에 들어간다).
+    st.metric("평가에 적용한 변동성 σ", f"{t.sig*100:.2f}%")
     if not st.session_state.prices:
         st.info("「입력·시장자료 → 주가·변동성·금리 자료 → 변동성 산출」에서 주가를 받거나 파일을 넣으십시오. "
                 "야후 파이낸스의 수정종가를 사용합니다.")
@@ -3037,6 +3039,9 @@ if _detail_section == _detail_sections[4]:
             use_container_width=True, hide_index=True)
         st.caption(f"정상범위 {v['lo']*100:.2f}% ~ {v['hi']*100:.2f}% — "
                    "일별 로그수익률의 중앙값에서 중앙값 절대편차의 2.5배를 벗어난 값을 뺍니다.")
+        if abs(v["annual"] - t.sig) > 5e-5:
+            st.caption(f"위 산출값(이상치 제거 {v['annual']*100:.2f}%)과 평가에 적용한 σ({t.sig*100:.2f}%)가 다릅니다 — "
+                       "입력 화면에서 직접 넣었거나 다른 조회 조건으로 산출한 값이면 그 근거를 남기십시오.")
         st.markdown("**최근 10일**")
         st.dataframe(pxdf.tail(10).iloc[::-1].style.format({"종가": "{:,.0f}"}),
                      use_container_width=True, hide_index=True)
@@ -3049,8 +3054,9 @@ if _detail_section == _detail_sections[5]:
     from matplotlib.patches import Patch
     # 한글 글꼴이 없으면 글자가 네모로 나온다. 찾으면 쓰고, 없으면 영문으로 그린다.
     _kf = use_korean_font()
+    # 범례는 상품 용어로 — 신주인수권부사채는 «행사», 우선주는 «상환청구권»·«만료 시 상환» 등.
     _L = (dict(x="스텝", y="주가 수준",
-               lg=["전환", "조기상환", "매도청구", "보유", "만기상환"]) if _kf else
+               lg=[inst_text(t, "전환"), LB["put"], LB["call"], "보유", inst_text(t, "만기상환")]) if _kf else
           dict(x="step", y="stock level",
                lg=["Convert", "Put", "Call", "Hold", "Redeem"]))
     n = t.n
@@ -3161,12 +3167,22 @@ if _detail_section == _detail_sections[6]:
                 f"행사금액 {_ex[1]:,.4f} 를 만기 현금흐름으로 두고 유효이자율을 구합니다. 계약만기 "
                 "현금흐름으로 구하면 첫 조기상환일의 행사금액과 장부금액이 벌어져 이자비용·부채가 "
                 "과소계상됩니다 (B4.3.5(5)(가)의 «행사가격 ≈ 상각후원가» 와 어긋납니다). " + EXPECT_B546)
-    st.dataframe(pd.DataFrame([
-        ["주계약 (옵션 없는 사채)", f"{b0:,.2f}"],
-        [("기대만기 상환금액 (첫 조기상환 가능일 행사금액)" if _ex is not None else "만기상환금액"), f"{red:,.2f}"],
-        ["표면이자 (회당)", f"{100*eff_cpn(t)*t.ipay/12:,.2f}"], ["상각 횟수", f"{nper}회"],
-        ["유효이자율 (연, 이산복리)", f"{r_eir:.2%}"]], columns=["항목", "값"]),
+    # 상각표는 배분표의 최초 장부금액(_ah6)에서 출발한다 — 주계약 공정가치(B0)와 다를 수 있으므로 둘을 함께 싣는다.
+    # 줄 이름은 상품 용어로 (우선주는 «우선주부채», «우선배당», «만료 시 상환»).
+    _hn = LB["host"].split(" (")[0]
+    _amrows = [[f"상각 시작 장부금액 ({_hn} 최초 장부금액)", f"{_ah6:,.2f}"]]
+    if abs(_ah6 - b0) > 5e-3:
+        _amrows.append([f"참고: {_hn} 공정가치 (B0 · 옵션 없음)", f"{b0:,.2f}"])
+    _amrows += [
+        [(inst_text(t, "기대만기 상환금액 (첫 조기상환 가능일 행사금액)") if _ex is not None
+          else inst_text(t, "만기상환금액")), f"{red:,.2f}"],
+        [inst_text(t, "표면이자 (회당)"), f"{100*eff_cpn(t)*t.ipay/12:,.2f}"], ["상각 횟수", f"{nper}회"],
+        ["유효이자율 (연, 이산복리)", f"{r_eir:.2%}"]]
+    st.dataframe(pd.DataFrame(_amrows, columns=["항목", "값"]),
         use_container_width=True, hide_index=True)
+    if abs(_ah6 - b0) > 5e-3:
+        st.caption("상각은 배분표의 최초 장부금액에서 시작합니다. 거래원가, 비분리 조기상환권, 부채로 분류한 "
+                   "전환권, 최초 인식 차이 처리 때문에 공정가치(B0)와 다릅니다.")
     amdf = pd.DataFrame(rows_eir, columns=["회차", "경과연수", "기초 장부금액",
                                            "이자비용", "지급이자", "기말 장부금액"])
     st.dataframe(amdf.style.format({"경과연수": "{:.2f}", "기초 장부금액": "{:,.2f}",

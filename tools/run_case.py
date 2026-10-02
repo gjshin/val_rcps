@@ -44,7 +44,7 @@ def main(argv=None, *, legacy_cli=False):
     p.add_argument('--formula', action='store_true')
     p.add_argument('--detail', action='store_true')
     p.add_argument('--accounting', action='store_true', help='회계처리·분개·상각표 초안 포함')
-    p.add_argument('--no-judgment', action='store_true', help='판단·근거·분리 판단·검산요약·모형검증 시트 제외')
+    p.add_argument('--no-judgment', action='store_true', help='판단·근거·해설·분리 판단 시트 제외')
     p.add_argument('--set', action='append', default=[], metavar='항목=값')
     p.add_argument('--sens', type=Path, help='[{"label":"이름","set":{"S0":100}}] 민감도 파일')
     p.add_argument('--vol', type=Path, help='원본 주가와 조회 조건을 포함한 변동성 패키지')

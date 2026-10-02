@@ -293,7 +293,8 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
                   detail: bool = False, accounting: bool = False, judgment: bool = True) -> bytes:
     """Export the exact run snapshot; refuse implicit approximate formula conversion.
 
-    judgment — 판단·근거 시트와 분리 판단·검산요약·모형검증 시트를 싣는다(기본).
+    judgment — 판단·근거 시트와 해설·분리 판단 시트를 싣는다(기본). 검산은 조서에 싣지 않는다 —
+    평가할 때 돌리고, 걸리면 아래에서 조서를 만들지 않는다.
     """
     terms = copy.deepcopy(run.terms)
     # 계산이 고장 나지 않았는지 본 결과(calculate 가 잰 것). 개발용 점검이라 조서에는

@@ -1003,10 +1003,11 @@ def main():
         current = run is not None and not errors and run.summary['calculation_key'] == calculation_key(case)
         st.download_button('평가 입력파일 저장', json.dumps(case.to_dict(), ensure_ascii=False, indent=2), '평가입력.json', 'application/json')
         st.subheader('계산 조서')
-        st.write('기본 조서: 평가 결과, 적용 입력, 금리·변동성 자료, 산술 검산 및 확인할 사항')
+        st.write('기본 조서: 평가 결과, 적용 입력, 금리·변동성 자료, 평가가정, 조서 정보(계산 기록·자료 출처·확인할 사항)')
+        st.caption('산술 검산과 계산 점검은 앱이 평가할 때 돌립니다. 조서에는 싣지 않고, 이상이 있으면 조서를 만들지 않습니다.')
         option = st.radio('조서 구성', ['기본 값 조서', '상세 계산 값 조서', '상세 계산 수식 조서'])
         accounting = st.checkbox('회계처리·분개·상각표 포함 (초안)', value=False)
-        judgment = st.checkbox('판단·근거 시트 포함 (분리 판정·평가자 판단·근거 원문, 상세 조서는 검산요약·모형검증 포함)', value=True)
+        judgment = st.checkbox('판단·근거 시트 포함 (분리 판정·평가자 판단·근거 원문, 상세 조서는 해설·분리 판단 시트 포함)', value=True)
         if option != '기본 값 조서':
             st.info('상세 조서는 모든 계산 노드를 포함합니다. 주 간격의 장기 평가에서는 생성에 시간이 걸릴 수 있습니다.')
         if not current:
