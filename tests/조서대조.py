@@ -437,6 +437,10 @@ def build(G, over, path):
     for o, nn in mp.items(): wb[o].title = nn
     wb.save(path)
     al, _ = G["allocate"](t, full, b0, b1, b2, ca)
+    # 사전 특정 콜(k_kind=1)은 발행회사의 자산이 아니라 전환권대가에 콜을 더하지 않는다 (4.5.4 접근법 2-2) —
+    # 결과 C23 은 회계상 잔여(100 − 부채요소)이고, 엔진의 conv(콜 포함 구성요소)와 다르다. 배분표의 값과 견준다.
+    if int(getattr(t, "k_kind", 0)) == 1 and t.conv_class == "equity":
+        conv = dict(al).get("전환권대가 · 자본", conv)
     return dict(b0=b0, b1=b1, b2=b2, gs=full["GS"], b3=b3, b3n=b3n, ca=ca, conv=conv,
                 # 발행일 뒤 평가에 전기말 장부금액이 없으면 회계처리 시트가 «공정가치 산출 전용» 이라
                 # 배분표·분개가 없다 — 그때는 공정가치 표 첫 줄(전체 = b2)만 본다
