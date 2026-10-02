@@ -1086,7 +1086,7 @@ def xl_tol(x, y):
 
 
 def xl_decide(cv, pv, kv, hold, kfirst,
-              names=("전환", "상환P", "상환C", "보유"), cresp=True):
+              names=("전환", "상환P", "상환C", "보유"), cresp=True, popen=None):
     """``node_decide`` 와 같은 결정을 엑셀 IF 중첩으로 쓴다.
 
     인자는 숫자가 아니라 **셀 주소 문자열**이다 (``"C12"``, ``"MAX(D5,E5)"`` 처럼
@@ -1097,8 +1097,11 @@ def xl_decide(cv, pv, kv, hold, kfirst,
     트랜치 TF·GS·부채요소·신주인수권부사채 트랜치에 손으로 네 벌 썼다.
     ``cresp`` 는 ``node_decide`` 와 같다 — 거짓이면 매도청구 통지 뒤 전환할 수 없는 계약이다.
     전환이 없는 갈래(``cv=None``)에서는 값이 갈리지 않는다.
+    ``popen`` 은 «그 자리에 상환청구가 열려 있다» 는 조건식이다(예: ``"D$7>0"``). 엔진은 열리지 않은
+    상환청구를 −무한대로 넘기므로, 엑셀은 상환청구가 이기는 조건에 이 식을 AND 로 건다.
     """
     _c, _p, _k, _h = names
+    _P = (lambda cond: f"AND({popen},{cond})") if popen else (lambda cond: cond)
     if cv is not None and not cresp:
         if kfirst:
             # MIN(MAX(전환, 풋, 보유), 콜) — 콜이 풋보다도 전환보다도 먼저다
@@ -1106,24 +1109,24 @@ def xl_decide(cv, pv, kv, hold, kfirst,
             rest = f"MAX({pv},{hold})"
             return (f'IF({top}>{kv}+{xl_tol(top, kv)},"{_k}",'
                     f'IF({cv}>={rest}+{xl_tol(cv, rest)},"{_c}",'
-                    f'IF({pv}>={hold}-{xl_tol(pv, hold)},"{_p}","{_h}")))')
+                    f'IF({_P(f"{pv}>={hold}-{xl_tol(pv, hold)}")},"{_p}","{_h}")))')
         # MAX(풋, MIN(MAX(전환, 보유), 콜)) — 풋은 콜보다 먼저, 전환은 콜에 밀린다
         rest = f"MAX({cv},{hold})"
         lo = f"MIN({rest},{kv})"
-        return (f'IF({pv}>={lo}-{xl_tol(pv, lo)},"{_p}",'
+        return (f'IF({_P(f"{pv}>={lo}-{xl_tol(pv, lo)}")},"{_p}",'
                 f'IF({rest}>{kv}+{xl_tol(rest, kv)},"{_k}",'
                 f'IF({cv}>={hold}+{xl_tol(cv, hold)},"{_c}","{_h}")))')
     if kfirst:
         inv = f"MAX({hold},{pv})"
         lo = f"MIN({inv},{kv})"
         out = (f'IF({inv}>{kv}+{xl_tol(inv, kv)},"{_k}",'
-               f'IF({pv}>={hold}-{xl_tol(pv, hold)},"{_p}","{_h}"))')
+               f'IF({_P(f"{pv}>={hold}-{xl_tol(pv, hold)}")},"{_p}","{_h}"))')
         if cv is not None:
             out = f'IF({cv}>={lo}+{xl_tol(cv, lo)},"{_c}",{out})'
         return out
     inner = f"MIN({hold},{kv})"
     rival = f"MAX({pv},{inner})"
-    out = (f'IF({pv}>={inner}-{xl_tol(pv, inner)},"{_p}",'
+    out = (f'IF({_P(f"{pv}>={inner}-{xl_tol(pv, inner)}")},"{_p}",'
            f'IF({hold}<={kv}+{xl_tol(hold, kv)},"{_h}","{_k}"))')
     if cv is not None:
         out = f'IF({cv}>={rival}+{xl_tol(cv, rival)},"{_c}",{out})'
@@ -2532,7 +2535,10 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
                 # 동점 처리는 아래 일반 만기 노드와 같다 — 주식은 허용오차만큼 앞설 때만.
                 pv = put_a(n)
                 cash = (pv + cpn_at(n)) if pv > 0 else 0.0
-                if cv >= cash + tie_tol(cv, cash):
+                # 상환청구가 열려 있지 않으면 고를 것이 없다 — 주가가 0 에 가까워도 주식이 된다.
+                # (종전에는 전환가치가 허용오차보다 작은 자리를 «상환청구» 로 적어, 상환청구권이
+                # 없는 계약에서 행사 불가능한 자리의 결정으로 잡혔다.)
+                if pv <= 0 or cv >= cash + tie_tol(cv, cash):
                     o = dict(E=cv, B=0.0, V=cv, P=1.0, kind="auto", hold=cv, cv=cv, K=KK)
                 else:
                     o = dict(E=0.0, B=cash, V=cash, P=0.0, kind="put", hold=cv, cv=cv, K=KK, pv=pv)
@@ -2601,7 +2607,8 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
                     # 분리형 — 신주인수권증권이 따로 유통되므로 사채를 상환받아도
                     # 남는다. 두 결정이 서로를 건드리지 않으므로 **사채만** 넘긴다.
                     # 전환은 이 결정에 들어가지 않아 -inf 다.
-                    _kd = node_decide(-math.inf, pv, kv, B, _kf)
+                    # 그 자리에 열리지 않은 조기상환(금액 0)은 후보가 아니다 — 매도청구의 무한대와 같다.
+                    _kd = node_decide(-math.inf, pv if pv > 0 else -math.inf, kv, B, _kf)
                     _bv = {"put": pv, "call": kv, "hold": B}[_kd]
                     o = dict(E=En, B=_bv, V=En+_bv, P=0.0, kind=_kd, wx=_wx, **ex)
                 else:
@@ -2620,7 +2627,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
                     # 몫을 얹어 넘긴다. 보유만 En(행사와 계속보유 중 큰 쪽)이고
                     # 상환 두 갈래는 wv(그 자리 행사가치)다 — 사채가 소멸하는
                     # 순간에는 계속보유라는 선택지가 없기 때문이다.
-                    holdT, putT, callT = B + En, pv + wv, kv + wv
+                    holdT, putT, callT = B + En, (pv + wv) if pv > 0 else -math.inf, kv + wv
                     _cx = 1.0 if wv > 0 else 0.0
                     _kd = node_decide(-math.inf, putT, callT, holdT, _kf)
                     if _kd == "hold":
@@ -2658,7 +2665,12 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
             # 공정가치는 행사가치 이상이어야 한다 — 계속보유로 눌러 두면 값이
             # 과소계상되고, 같은 판단을 하는 GS·수식 조서와도 어긋난다. 그날
             # 행사할 수 없는 권리는 conv_ok·put_a·call_a 가 이미 막는다.
-            _kd = node_decide(cv, pv, kv, hold, _kfirst, _cresp)
+            # 그 자리에 열리지 않은 상환청구(금액 0)는 결정 후보가 아니다 — 매도청구가 열리지 않으면
+            # 무한대로 넘기는 것과 같은 읽기다. 0 으로 넘기면 «풋은 동점이면 이긴다» 규칙 때문에 주가가
+            # 0 에 가까운 자리(전환가치·보유가치가 허용오차 안)에서 상환청구가 골라져, 상환청구권이 없는
+            # 계약에 «행사 불가능한 자리의 결정» 이 생긴다. 가치는 그 자리 값이 1e-9 수준이라 거의 같다.
+            _pvd = pv if pv > 0 else -math.inf
+            _kd = node_decide(cv, _pvd, kv, hold, _kfirst, _cresp)
             if   _kd == "conv": _e, _b = cv, 0.0
             elif _kd == "put":  _e, _b = 0.0, pv
             elif _kd == "call": _e, _b = 0.0, kv
@@ -2666,7 +2678,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
             # 매도청구를 당해 전환으로 대응한 자리인지 함께 적어 둔다. 가치는
             # 자발적 전환과 같지만 정산 분포에서는 갈라 세야 한다.
             ex["forced"] = (_kd == "conv"
-                            and node_decide(cv, pv, math.inf, hold, _kfirst, _cresp) != "conv")
+                            and node_decide(cv, _pvd, math.inf, hold, _kfirst, _cresp) != "conv")
             o = dict(E=_e, B=_b, V=Vg, P=Pg, kind=_kd, **ex)
         memo[key] = o
         return o
@@ -10530,14 +10542,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                         "매도청구금액에도 그 자리의 행사가치를 더해 견준다."),
                      f"다음 열 {S5} · {S6}", call_on=False)
         if _det:
-            _D = lambda L, r, Ln: xl_decide(None, f"{L}$7", f"{L}$8", CB(L, r, Ln), False)
+            _D = lambda L, r, Ln: xl_decide(None, f"{L}$7", f"{L}$8", CB(L, r, Ln), False, popen=f"{L}$7>0")
         else:
             # 매도청구금액에도 행사기회를 더한다 — 발행자가 사채를 매수해 가도
             # 투자자는 그 직전에 신주인수권을 행사해 그 값을 챙기므로, 콜이
             # 투자자 가치를 눌러 내리는지는 «매도청구금액 + 행사가치» 와 견줘야
             # 안다. 조기상환 쪽 «+ 행사가치» 와 같은 읽기다.
             _D = lambda L, r, Ln: xl_decide(None, f"{L}$7+{WV(L, r)}", f"{L}$8+{WV(L, r)}",
-                                            f"{CB(L, r, Ln)}+{CE(L, r, Ln)}", False)
+                                            f"{CB(L, r, Ln)}+{CE(L, r, Ln)}", False, popen=f"{L}$7>0")
         fill(W, lambda i, r, L, Lp, Ln: (
             f'=IF({L}$7>{L}$10+{xl_tol(f"{L}$7", f"{L}$10")},"상환P","만기상환")' if i == n else
             f"={_D(L, r, Ln)}"), txt=True)
@@ -10597,7 +10609,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         _hd9 = lambda L, r: f"{Q(S7)}!{L}{R0+r}"
         _DEC = lambda L, r: (
              f'IF({_cv9(L, r)}>=MAX({L}$7,{_hd9(L, r)})+{xl_tol(_cv9(L, r), f"MAX({L}$7,{_hd9(L, r)})")},"전환",'
-             f'IF({L}$7>={_hd9(L, r)}-{xl_tol(f"{L}$7", _hd9(L, r))},"상환P","보유"))')
+             f'IF(AND({L}$7>0,{L}$7>={_hd9(L, r)}-{xl_tol(f"{L}$7", _hd9(L, r))}),"상환P","보유"))')
         # 만기 — 엔진과 같다: 전환가치가 현금(MAX(조기상환금액, 만기상환금액) + 이자)을 허용오차만큼
         # 앞서면 전환, 아니면 «만기상환». 값 조서와 같은 표시다(예전에는 여기서도 중간 노드 식을 써
         # 조기상환이 닫힌 만기 노드를 «보유» 로 적었다 — 값은 같고 표시만 달랐다).
@@ -10605,7 +10617,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         _MAT = lambda L, r: (f'IF({_cv9(L, r)}>={_cm9(L)}+{xl_tol(_cv9(L, r), _cm9(L))},'
                              f'"전환","만기상환")')
         fill(W, lambda i, r, L, Lp, Ln: (
-             f'=IF({AU}=1,IF({_cv9(L, r)}>={CASH(L)}+{xl_tol(_cv9(L, r), CASH(L))},"자동전환","상환P"),'
+             f'=IF({AU}=1,IF(OR({L}$7<=0,{_cv9(L, r)}>={CASH(L)}+{xl_tol(_cv9(L, r), CASH(L))}),"자동전환","상환P"),'
              f'{_MAT(L, r)})' if i == n else
              "=" + _ipo_if(L, r, '"상장전환"', _DEC(L, r))), txt=True)
 
@@ -10738,14 +10750,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                         #              행사할 기회는 남으므로 세 후보에 행사가치를 얹는다
                         _bwn = ("전환", "상환P", "상환C", "보유")
                         if _det:
-                            _dec = xl_decide(None, f"{L}$7", f"{L}$8", cb, _kfirst, _bwn)
+                            _dec = xl_decide(None, f"{L}$7", f"{L}$8", cb, _kfirst, _bwn, popen=f"{L}$7>0")
                             p(c6, f"={_dec}", tx=True)
                             p(c2, f"=MAX({wv},{ce})")
                             p(c3, "=" + xl_pick(f"{L}{c6+1+r}", f"{L}$7", f"{L}$8", cb,
                                                 names=_bwn))
                         else:
                             _dec = xl_decide(None, f"{L}$7+{wv}", f"{L}$8+{wv}",
-                                             f"{cb}+{ce}", _kfirst, _bwn)
+                                             f"{cb}+{ce}", _kfirst, _bwn, popen=f"{L}$7>0")
                             p(c6, f"={_dec}", tx=True)
                             p(c2, f'=IF(OR({L}{c6+1+r}="상환P",{L}{c6+1+r}="상환C"),{wv},'
                                   f"MAX({wv},{ce}))")
@@ -10769,7 +10781,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                             p(c5, f"=IF({_AU}=1,MAX({L}{c1+1+r},{_CS}),"
                                   f"MAX({L}{c1+1+r},MAX({L}$7,{L}$10)+{L}$9))")
                             _cvm, _cmm = f"{L}{c1+1+r}", f"MAX({L}$7,{L}$10)+{L}$9"
-                            p(c6, f'=IF({_AU}=1,IF({_cvm}>={_CS}+{xl_tol(_cvm, _CS)},"자동전환","상환P"),'
+                            p(c6, f'=IF({_AU}=1,IF(OR({L}$7<=0,{_cvm}>={_CS}+{xl_tol(_cvm, _CS)}),"자동전환","상환P"),'
                                   f'IF({_cvm}>={_cmm}+{xl_tol(_cvm, _cmm)},"전환",'
                                   f'IF({L}$7>={L}$10-{xl_tol(f"{L}$7", f"{L}$10")},"상환P","만기상환")))', tx=True)
                             p(c2, f'=IF(OR({L}{c6+1+r}="전환",{L}{c6+1+r}="자동전환"),{L}{c1+1+r},0)')
@@ -10785,7 +10797,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                         # 값은 xl_value, 결정은 xl_decide 가 만든다 (엔진의 node_decide 와 같은 식).
                         _cvC, _pvC, _kvC = f"{L}{c1+1+r}", f"{L}$7", f"{L}$8"
                         _hdC = f"{L}{c4+1+r}"
-                        _dec = xl_decide(_cvC, _pvC, _kvC, _hdC, _kfirst, cresp=_cresp)
+                        _dec = xl_decide(_cvC, _pvC, _kvC, _hdC, _kfirst, cresp=_cresp, popen=f"{_pvC}>0")
                         _val = xl_value(_cvC, _pvC, _kvC, _hdC, _kfirst, _cresp)
                         p(c5, "=" + _ipo_if(L, r, _cvC,
                                             f"IF({L}$5=1,{_val},MAX({_hdC},{_cvC},{_pvC}))"))
