@@ -9,7 +9,8 @@ from typing import get_type_hints
 import pandas as pd
 import streamlit as st
 from valuation.case import Case, SCHEMA, RIGHT_KINDS, FIELDS, REQUIRED, RCPS_REQUIRED, section_for, import_legacy, inspect_case, compare_cases
-from valuation.legacy import Terms, months_to_date, issuer_day1_cases, inst_text
+from valuation.legacy import (Terms, months_to_date, issuer_day1_cases, inst_text, CALL_HOLDERS, call_holder,
+                              call_holder_fields)
 from valuation.presentation import CHOICES, PERCENT, EVENT_DATES, label, display_value, event_months, issue_rows, choices
 from valuation.service import AMOUNT_LABELS, calculate, calculation_key, refresh_run, export_bundle
 from valuation.analysis import sensitivity
@@ -471,15 +472,20 @@ def input_editor(case, autosave=False):
         fields(['issue_px', 'par', 'mat_mode', 'div_mode', 'div_basis'], edited, case)
     if inst == 'BW':
         fields(['bw_pay', 'bw_detach'], edited, case)
-    st.subheader('계약조건')
-    if inst != 'SHA' or not edited.get('sha_rows'):
-        field('K0', edited, case)
     if inst == 'SHA':
+        st.subheader('계약조건')
+        if not edited.get('sha_rows'):
+            field('K0', edited, case)
         sha_editor(edited, case, draft_errors)
     else:
+        # 권리별로 묶는다 — 각 권리의 계약조건 바로 아래에 그 권리의 회계처리·분리 판단 칸을 둔다.
+        _cv = '신주인수권' if inst == 'BW' else '전환권'
+        st.subheader('이자·만기 상환' if inst != 'RCPS' else '우선배당·만기 상환')
         fields(['cpn', 'ipay'], edited, case)
         if inst != 'RCPS' or edited.get('mat_mode') == 1:
             fields(['ytm', 'ytm_cmp', 'mat_amt', 'm_less_cpn'], edited, case)
+        st.subheader(_cv)
+        field('K0', edited, case)
         if right_period('전환·신주인수권 행사 가능', 'cv_s', 'cv_e', edited, case, [], draft_errors):
             cv_style = st.selectbox('전환·신주인수권 행사방식', ['any', 'single'],
                 index=1 if styles.get('cv') == 'single' else 0,
@@ -491,11 +497,28 @@ def input_editor(case, autosave=False):
                 st.caption('특정일 행사는 위 행사 시작일을 적용합니다. 종료일은 시작일과 같습니다.')
             else:
                 st.caption('전환권은 행사기간 내 모든 계산시점에 행사할 수 있습니다.')
+        # 전환가격(행사가격) 조정은 전환권의 조건이다 — 전환 칸 바로 아래에 둔다.
+        field('rfx_mode', edited, case)
+        if edited.get('rfx_mode'):
+            fields(['rfx_cyc', 'rfx_first', 'floor', 'rfx_round', 'K_cap', 'carry'], edited, case)
+        with st.expander(f'{_cv} 회계 분류'):
+            st.caption('확정 수량의 주식을 확정 금액과 교환하지 못하면(행사가격 조정 등) 자본이 아니라 파생상품부채입니다 '
+                       '(1032 문단 16). 고른 분류에 따라 분리 판단과 배분이 달라집니다.')
+            field('conv_class', edited, case)
+        st.subheader('상환청구권 (투자자)' if inst == 'RCPS' else '조기상환청구권 (투자자 풋)')
         put = right_period('투자자 상환청구권 있음', 'p_s', 'p_e', edited, case, ['p_f', 'p_mode'], draft_errors)
         if put:
             fields(['p_rate'] if edited.get('p_mode') == 'fixed' else ['p_yield', 'p_cmp'], edited, case)
             with st.expander('상환청구금액의 상세 조건'):
                 fields(['p_less_cpn', 'p_cpn_add', 'p_sched'], edited, case)
+            with st.expander('조기상환청구권 회계처리·분리 판단' if inst != 'RCPS' else '상환청구권 회계처리·분리 판단'):
+                st.caption('풋 분리 판단 — 조기상환 행사금액을 자본요소 분리 전 상각후원가와 비교합니다(전환권이 부채면 그 규정을 '
+                           '준용해 전환권을 떼기 전 금액). 비교기준(기본 10%)은 기준서가 정한 수치가 아니므로 회계정책으로 '
+                           '정합니다. 출발 금액은 0 이하로 두면 앱 자동값(발행금액 100, 발행회사가 별개 콜을 함께 샀으면 + 콜 '
+                           '가치)을 쓰고, 실제 회계상 배분액이 다르면 그 금액과 근거를 넣습니다. 평가기준일이 발행일보다 '
+                           '뒤이면 다시 판정하지 않고 최초 인식 때의 결론을 이어 씁니다 (1109 B4.3.11).')
+                fields(['p_sep', 'p_lost_int', 'split_tol', 'split_base_in', 'split_base_why'], edited, case)
+        st.subheader('매도청구권 (콜)' if inst != 'RCPS' else '발행회사 상환권·매도청구권 (콜)')
         if inst == 'RCPS':
             field('issuer_call', edited, case)
             call_on = bool(edited.get('issuer_call'))
@@ -504,15 +527,32 @@ def input_editor(case, autosave=False):
         if call_on:
             old_call = bool(case.facts().get('k_w', 0) or case.facts().get('issuer_call', 0))
             changed_type = inst == 'RCPS' and edited.get('issuer_call') != case.contract.get('issuer_call', 0)
+            linked = ['k_method', 'k_split']
+            if inst != 'RCPS':
+                # 콜 권리자가 첫 선택이다 — 계약서 문구(«발행회사» / «발행회사 또는 발행회사가 지정하는 자» /
+                # 발행 시 정해진 제3자)를 그대로 고르면 저장 칸(제3자 지정 · 콜 유형)과 기본 평가방법·회계처리가 따라온다.
+                rev = st.session_state.get("revision", 0)
+                now_h = call_holder({**DEFAULTS, **case.facts(), **edited})
+                holder = st.selectbox('콜 권리자', list(CALL_HOLDERS), index=now_h,
+                                      format_func=CALL_HOLDERS.get, key=f'input_call_holder_{rev}',
+                                      help='계약서의 매도청구권 행사자 문구를 고르십시오. «발행회사 및 발행회사가 지정하는 자» 이면 '
+                                           '지정 가능, 발행 시 최대주주 등 특정인이 정해져 있으면 사전 특정입니다.')
+                st.session_state.setdefault('_rendered_fields', set()).update({'k_third', 'k_kind'})
+                pol = call_holder_fields(holder, edited.get('model', 'TF'))
+                edited['k_third'], edited['k_kind'] = pol['k_third'], pol['k_kind']
+                changed_type = holder != call_holder({**DEFAULTS, **case.facts()})
+                linked = ['k_method', 'k_split', 'k_sep']
             if not old_call or changed_type:
-                third_party = edited.get('issuer_call') == 2 if inst == 'RCPS' else edited.get('k_third', DEFAULTS['k_third'])
-                initial_method = 2 if third_party and edited.get('model', 'TF') == 'TF' else 0
-                edited['k_method'], edited['k_split'] = initial_method, 1
-                for key in ['k_method', 'k_split']:
+                third_party = edited.get('issuer_call') == 2 if inst == 'RCPS' else bool(edited['k_third'])
+                pol = call_holder_fields(1 if third_party else 0, edited.get('model', 'TF'))
+                for key in linked:
+                    edited[key] = pol[key]
                     widget_key = f'input_{key}_{st.session_state.get("revision", 0)}'
                     if widget_key in st.session_state:
                         st.session_state[widget_key] = edited[key]
-            st.caption('발행자 상환권은 콜 유무 가치 비교, 제3자 콜은 옵션차익 성분 분리할인(주식결제·현금결제)을 초기 설정으로 사용합니다. 기존 평가파일의 선택은 유지하며, 다른 방법을 선택한 경우 근거를 기록하십시오.')
+            st.caption('발행회사 본인만 행사하는 콜(발행자 상환권)은 콜 유무 가치 비교·복합내재파생에 포함, 제3자 콜은 '
+                       '옵션차익 성분 분리할인(주식결제·현금결제)·별도 금융상품을 초기 설정으로 사용합니다. 콜 권리자를 바꾸면 '
+                       '초기 설정으로 다시 맞추고, 기존 평가파일의 선택은 유지합니다. 다른 방법을 선택한 경우 근거를 기록하십시오.')
             fields(['k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp'], edited, case)
             if inst == 'RCPS' and edited.get('issuer_call') == 1:
                 edited['k_w'] = 1.
@@ -531,16 +571,24 @@ def input_editor(case, autosave=False):
                         for key in ['k_method', 'k_split']:
                             st.session_state.pop(f'input_{key}_{st.session_state.get("revision", 0)}', None)
             with st.expander('콜 권리의 상세 조건'):
-                fields(['k_kind', 'k_third', 'k_transfer', 'k_less_cpn', 'k_cpn_add', 'k_sched', 'k_basis', 'pc_order'], edited, case)
+                fields((['k_kind', 'k_third'] if inst == 'RCPS' else []) +
+                       ['k_transfer', 'k_less_cpn', 'k_cpn_add', 'k_sched', 'k_basis', 'pc_order'], edited, case)
+            with st.expander('매도청구권 회계처리'):
+                st.caption('발행회사 본인만 행사하면 거래상대방이 그대로인 내재파생상품이라 전환권·조기상환권과 묶을 수 '
+                           '있고 (1109 B4.3.4), 제3자가 행사할 수 있으면 별도의 금융상품입니다 (1109 문단 4.3.1). '
+                           '콜 권리자를 고르면 기본값이 정해집니다.')
+                field('k_sep', edited, case)
             if edited.get('k_w', 0) <= 0:
                 draft_errors.append('콜 권리가 있으면 콜 대상 비율을 0%보다 크게 입력하십시오.')
             if edited.get('k_s', 0) > edited.get('k_e', float('inf')):
                 draft_errors.append('콜 행사 시작일이 종료일보다 늦습니다.')
         else:
             edited['k_w'] = 0.
-        field('rfx_mode', edited, case)
-        if edited.get('rfx_mode'):
-            fields(['rfx_cyc', 'rfx_first', 'floor', 'K_cap', 'carry'], edited, case)
+        st.subheader('회계 정책 (공통)')
+        st.caption('내재파생 분리 정책은 회사가 고르는 회계정책입니다 (한공회 실무사례 30~32쪽). 접근법 1은 서로 '
+                   '얽힌 권리(전환권·조기상환권·발행회사 콜)를 먼저 묶고 판단하고, 접근법 2는 권리마다 분리 여부를 '
+                   '판단한 뒤 분리 대상끼리 묶습니다. 비슷한 거래에 같은 정책을 쓰십시오. 권리별 처리는 위 각 권리 아래에 있습니다.')
+        fields(['acc_basis', 'emb_approach', 'fvpl_whole'], edited, case)
     with st.expander('IPO 조건·미반영 권리 메모'):
         field('ipo_on', edited, case)
         if edited.get('ipo_on') and inst == 'SHA':
@@ -582,23 +630,9 @@ def input_editor(case, autosave=False):
             field('put_bdt', edited, case)
             if edited.get('put_bdt'):
                 fields(['bdt_sig', 'bdt_base', 'rvol_rating', 'rvol_tenor', 'rvol_how'], edited, case)
-    with st.expander('분해방법·기간 기준'):
-        st.caption('회계분류는 사용자의 가정입니다. 구성요소 차액은 회계상 인식액과 구분하십시오.')
-        if inst != 'SHA':
-            st.caption('내재파생 분리 정책은 회사가 고르는 회계정책입니다 (한공회 실무사례 30~32쪽). 접근법 1은 서로 '
-                       '얽힌 권리(전환권·조기상환권·발행회사 콜)를 먼저 묶고 판단하고, 접근법 2는 권리마다 분리 여부를 '
-                       '판단한 뒤 분리 대상끼리 묶습니다. 비슷한 거래에 같은 정책을 쓰십시오.')
-        if inst != 'SHA':
-            fields(['acc_basis', 'conv_class', 'emb_approach', 'p_sep', 'k_sep', 'p_lost_int', 'fvpl_whole'], edited, case)
-        elif not edited.get('sha_rows'):
+    if inst == 'SHA' and not edited.get('sha_rows'):
+        with st.expander('행사금액 경과기간 기준'):
             field('acc_basis', edited, case)
-        if inst != 'SHA':
-            st.caption('풋 분리 판단 — 조기상환 행사금액을 자본요소 분리 전 상각후원가와 비교합니다(전환권이 부채면 그 규정을 '
-                       '준용해 전환권을 떼기 전 금액). 비교기준(기본 10%)은 기준서가 정한 수치가 아니므로 회계정책으로 '
-                       '정합니다. 출발 금액은 0 이하로 두면 앱 자동값(발행금액 100, 발행회사가 별개 콜을 함께 샀으면 + 콜 '
-                       '가치)을 쓰고, 실제 회계상 배분액이 다르면 그 금액과 근거를 넣습니다. 평가기준일이 발행일보다 '
-                       '뒤이면 다시 판정하지 않고 최초 인식 때의 결론을 이어 씁니다 (1109 B4.3.11).')
-            fields(['split_tol', 'split_base_in', 'split_base_why'], edited, case)
     with st.expander('후속평가·역산·기타 상세 입력'):
         st.caption('기존 모형의 전체 입력항목을 같은 평가파일에서 관리합니다. 여기서 변경한 값도 평가·분석에 직접 적용됩니다.')
         remaining = sorted(FIELDS - st.session_state._rendered_fields - {'inst'})
@@ -720,6 +754,44 @@ def sha_result_panel(run):
         if _h >= 0:
             _used = sum(r['계약 대상 주식'] for r in recon)
             st.caption(f'평가기준일 보유주식 {_h:,.0f}주 · 평가하는 회차의 대상 주식 {_used:,.0f}주 · 이 계약 밖 보유 {_h - _used:,.0f}주')
+
+
+def split_panel(run):
+    """평가 직후 — 내재파생 분리 판단의 결론과 이용자 설정이 맞는지 한 표로 (전환사채·신주인수권부사채·상환전환우선주).
+
+    종전에는 «분석 도구 → 상세 계산·회계 참고표 → 판단·근거» 까지 들어가야 보였다. 근거 문장과 수치는 그대로 그 탭에 있다.
+    """
+    from valuation import legacy as L
+    t, r = run.terms, run.raw
+    if t.inst == 'SHA':
+        return
+    key = run.summary['calculation_key']
+    cache = st.session_state.get('_split_panel')
+    if not cache or cache[0] != key:
+        args = (t, r['full'], r['b0'], r['b1'], r['b2'], r['ca'])
+        ah = L.acc_host(*args)
+        sp = L.split_test(*args, [] if ah is None else L.eir_table(t, ah)[1])
+        rows = []
+        for k, nm in (('warrant', '신주인수권'), ('put', inst_text(t, '조기상환청구권')), ('call', '매도청구권')):
+            d = sp.get(k)
+            if not d or not d.get('있음'):
+                continue
+            if k == 'warrant':
+                rows.append({'권리': nm, '수치 판정': d['결론'], '이용자 설정 (회계처리)': '—', '판정과 설정': '—'})
+                continue
+            cho = dict(L.split_policy_rows(t, k))['선택한 처리 (이 조서의 회계처리)']
+            ok = L.split_compare(t, k, d).split('→', 1)[-1].strip()
+            rows.append({'권리': nm, '수치 판정': d['결론'], '이용자 설정 (회계처리)': cho, '판정과 설정': ok})
+        cache = (key, rows)
+        st.session_state['_split_panel'] = cache
+    if not cache[1]:
+        return
+    st.markdown('**내재파생 분리 판단 — 평가 직후 요약**')
+    st.dataframe(pd.DataFrame(cache[1]), hide_index=True, use_container_width=True)
+    if any(x['판정과 설정'].startswith('검토 필요') for x in cache[1]):
+        st.warning('수치 판정과 이용자 설정이 다른 권리가 있습니다. 계약과 회계정책을 확인하고 근거를 남기십시오.')
+    st.caption('근거 문장·검토용 수치는 아래 분석 도구 «상세 계산·회계 참고표» → 판단·근거에 있습니다. '
+               '설정은 입력화면의 각 권리 아래 «회계처리·분리 판단» 에서 바꿉니다.')
 
 
 def day1_panel(run, case):
@@ -872,6 +944,7 @@ def main():
             if run.terms.inst == 'SHA':
                 sha_result_panel(run)
             day1_panel(run, case)
+            split_panel(run)
             with st.expander('구성요소·원금 100 기준 상세' if run.terms.inst != 'SHA' else '계산기준금액 100 기준 상세'):
                 st.caption('순차 차감에 따른 참고값입니다. 회계상 인식액을 확정한 표가 아닙니다.')
                 st.dataframe(pd.DataFrame([{'항목': AMOUNT_LABELS[k], '총액(원)': values[k], '원금 100 기준': v}

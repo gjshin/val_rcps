@@ -297,7 +297,8 @@ def inspect_case(case: Case) -> list[Issue]:
             add("error", "enum", key, f"지원하는 값: {sorted(allowed)}")
     counts = {"sha_put_cmp", "sha_call_cmp", "cur_periods", "ytm_cmp", "k_cmp", "cmp_rf", "cmp_cr", "p_cmp"}
     multi = {"sha_writer": 2, "sha_disc": 2, "issuer_call": 2, "rfx_mode": 2,
-             "carry": 3, "k_method": 2, "k_less_cpn": 2, "p_less_cpn": 2, "m_less_cpn": 2}
+             "carry": 3, "k_method": 2, "k_less_cpn": 2, "p_less_cpn": 2, "m_less_cpn": 2,
+             "rfx_round": 2}            # 원 단위 미만 0 처리 없음 / 1 절상 / 2 절사
     for key, value in values.items():
         if key == "sha_ipo_kind" and value == -1:
             continue                     # 주주간계약 상장 종료 조건 미선택 — 상장 조항을 켜면 sha_ipo_issues 가 막는다

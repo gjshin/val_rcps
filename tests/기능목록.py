@@ -54,6 +54,7 @@ MANIFEST = {
     "carry":       ("리픽싱 조정일 처리", {1: "경로가중 근사",
                                      2: "위험중립확률 가중 근사", 3: "특정노드 선택 근사"}, P_BOND),
     "rfx_mode":    ("리픽싱 방식", {0: "없음", 1: "하향만", 2: "하향+상향"}, P_BOND),
+    "rfx_round":   ("조정 후 전환가격 원 단위 미만", {0: "처리 없음", 1: "절상", 2: "절사"}, P_BOND),
     # ── 투자자 풋 ──
     "p_mode":      ("조기상환 행사금액 산정", {"fixed": "고정 금액", "accrue": "보장수익률 복리 누적"}, P_BOND),
     "p_cmp":       ("조기상환 보장 복리 횟수", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회", 12: "월"}, P_BOND),
@@ -327,6 +328,7 @@ def collect_coverage(G):
         "test_all_step_risk_neutral_probabilities": [("CB", "curve", True)],
         "test_current_k_and_original_cap": [("CB", "rfx_mode", 2)],
         "test_refix_weighted_average_on_reset_date": [("CB", "carry", 1)],
+        "test_refix_won_rounding": [(p_, "rfx_round", m_) for p_ in ("CB", "RCPS", "BW") for m_ in (1, 2)],
         "test_bw_inherits_engine_fixes": [("BW", "bw_pay", 0), ("BW", "bw_pay", 1),
                                           ("BW", "bw_detach", 0), ("BW", "bw_detach", 1)],
         "test_sha_root_immediate_put": [("SHA", "mid", True), ("SHA", "sha_put", True)],

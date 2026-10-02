@@ -19,6 +19,8 @@ CASES = [
     ("기본 (티사이언티픽)", {}),
     ("리픽싱 없음", dict(rfx_mode=0)),
     ("하향만 리픽싱", dict(rfx_mode=1)),
+    ("리픽싱 원 단위 미만 절상", dict(rfx_round=1)),
+    ("하향만 · 원 단위 미만 절사", dict(rfx_mode=1, rfx_round=2)),
     ("표면 3% · 보장 7%",
      dict(cpn=.03, ytm=.07, ipay=6., ytm_cmp=2, p_mode="accrue", p_yield=.07)),
     ("표면 8% · 매도청구 5%",
@@ -166,6 +168,11 @@ CASES = [
     ("콜 40% · 의무보유 15% · 유무가치", dict(k_w=.40, k_lock_w=.15, k_method=0)),
     ("콜 40% · 의무보유 15% · 방법1", dict(k_w=.40, k_lock_w=.15, k_third=1, k_method=1)),
     ("콜 40% · 의무보유 15% · 방법2 · 전환확률", dict(k_w=.40, k_lock_w=.15, k_third=1, k_method=2, k_split=1)),
+    # 콜 권리자 세 가지의 기본 설정 (call_holder_fields) — 발행회사 본인만 · 지정 가능 · 사전 특정
+    ("콜 권리자 · 발행회사 본인만 · 기본 설정", dict(k_third=0, k_kind=0, k_sep=0, k_method=0, k_split=1)),
+    ("콜 권리자 · 지정 가능 · 기본 설정", dict(k_third=1, k_kind=0, k_sep=1, k_method=2, k_split=1)),
+    ("콜 권리자 · 사전 특정 · 기본 설정", dict(k_third=1, k_kind=1, k_sep=1, k_method=2, k_split=1)),
+    ("신주인수권부사채 · 콜 권리자 · 발행회사 본인만", dict(inst="BW", bw_pay=1, k_third=0, k_kind=0, k_sep=0, k_method=0)),
     # 최초 리픽싱 조정일을 따로 정한 계약 (발행 후 12개월 · 이후 7개월)
     ("월 노드 · 최초 조정 12개월 · 이후 7개월", dict(_gap=1., rfx_first=12., rfx_cyc=7.)),
     # 조기상환권을 BDT 금리격자로 잴 때. 자본·TF 에서만 열린다.
@@ -430,6 +437,10 @@ def build(G, over, path):
     for o, nn in mp.items(): wb[o].title = nn
     wb.save(path)
     al, _ = G["allocate"](t, full, b0, b1, b2, ca)
+    # 사전 특정 콜(k_kind=1)은 발행회사의 자산이 아니라 전환권대가에 콜을 더하지 않는다 (4.5.4 접근법 2-2) —
+    # 결과 C23 은 회계상 잔여(100 − 부채요소)이고, 엔진의 conv(콜 포함 구성요소)와 다르다. 배분표의 값과 견준다.
+    if int(getattr(t, "k_kind", 0)) == 1 and t.conv_class == "equity":
+        conv = dict(al).get("전환권대가 · 자본", conv)
     return dict(b0=b0, b1=b1, b2=b2, gs=full["GS"], b3=b3, b3n=b3n, ca=ca, conv=conv,
                 # 발행일 뒤 평가에 전기말 장부금액이 없으면 회계처리 시트가 «공정가치 산출 전용» 이라
                 # 배분표·분개가 없다 — 그때는 공정가치 표 첫 줄(전체 = b2)만 본다

@@ -19,8 +19,8 @@ warnings.filterwarnings("ignore")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 머리 행 -> 참조해야 하는 가정 항목 (키 이름)
-# 행사일·지급일은 계약서의 날짜를 앱이 노드에 배정한 목록이다(00 격자 공통 20·27행, 9행).
-# 그래서 Flag(조기상환)은 의무보유 시작(pst·pt30)만, Flag(매도청구)는 가정 칸을 보지 않는다.
+# 행사일·지급일·조정일은 «00 계약일 목록» 시트가 계약일을 노드에 배정한다(00 격자 공통 20·27행, 9행, 6행).
+# 머리 행은 그 목록을 볼 뿐 가정 칸을 직접 보지 않는다 — Flag(조기상환)은 의무보유 시작(pst·pt30)만 본다.
 WANT = {
     3:  {"cvs", "cve", "cv30", "auto", "n"},                # Flag(전환) — ⑮ 는 cv30
     4:  {"pst", "pt30"},                       # Flag(조기상환) — 행사일 목록 + 의무보유로 늦춰진 시작
@@ -60,6 +60,18 @@ def formula_wb(G, t, full, b0, b1, b2, ca, conv):
                                    as_workbook=True)
 
 
+def recalc(wb):
+    """수식 조서를 LibreOffice 로 다시 계산해 값으로 연다 — 조정일·행사월이 계약일 목록의 수식이라서다."""
+    import openpyxl, subprocess, tempfile, shutil
+    exe = os.environ.get("VALUATION_SOFFICE") or shutil.which("libreoffice") or shutil.which("soffice")
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "f.xlsx"); wb.save(src)
+        out = os.path.join(d, "out"); os.mkdir(out)
+        subprocess.run([exe, "-env:UserInstallation=file://" + os.path.join(d, "p"), "--headless",
+                        "--convert-to", "xlsx", "--outdir", out, src], capture_output=True, timeout=900)
+        return openpyxl.load_workbook(os.path.join(out, "f.xlsx"), data_only=True)
+
+
 def terms(G, **kw):
     t = G["Terms"]()
     t.rf_curve = [(1, .0226), (3, .0240), (5, .0252)]
@@ -84,7 +96,7 @@ def main():
     # ⑯ 부채요소는 머리 행 구성이 다르므로 뺀다. ⑮ 30% 트랜치의 전환·조기상환 Flag 는
     # 의무보유를 반영한 cv30 · pt30 을 쓰는 것이 맞다.
     trees = [s for s in wb.sheetnames
-             if re.match(r"^\d\d ", s) and not s.startswith("16 ")]
+             if re.match(r"^\d\d ", s) and not s.startswith("16 ") and s != "00 계약일 목록"]
     # 행사금액(7·8행)은 00 격자 공통의 계산 과정 행에서 한 단계씩 계산한다 — 그 행들도 함께 본다.
     STEPS = {7: [20, 21, 22, 23, 24, 25, 26], 8: [27, 28, 29, 30, 31, 32, 33]}
     for row, want in WANT.items():
@@ -144,7 +156,7 @@ def main():
                "조기상환": {i for i in range(0, n+1) if wv.cell(4, 3+i).value == 1},
                "매도청구": {i for i in range(0, n+1) if wv.cell(5, 3+i).value == 1}}
         # 수식 조서 — 리픽싱은 00 격자 공통 6행(앱이 배정한 조정일), 행사일은 행사월 행을 본다
-        wbf = formula_wb(G, t, full, b0, b1, b2, ca, conv)
+        wbf = recalc(formula_wb(G, t, full, b0, b1, b2, ca, conv))
         wf, wc = wbf["가정"], wbf["00 격자 공통"]
         A = {}
         for r in range(3, 120):
@@ -152,8 +164,8 @@ def main():
             if nm2: A[nm2] = wf.cell(r, 3).value
         fm = {
             "리픽싱": {i for i in range(1, n+1) if wc.cell(6, 3+i).value == 1},
-            "조기상환": {i for i in range(0, n+1) if wc.cell(20, 3+i).value not in (None, "")},
-            "매도청구": {i for i in range(0, n+1) if wc.cell(27, 3+i).value not in (None, "")},
+            "조기상환": {i for i in range(0, n+1) if isinstance(wc.cell(20, 3+i).value, (int, float))},
+            "매도청구": {i for i in range(0, n+1) if isinstance(wc.cell(27, 3+i).value, (int, float))},
         }
         marks = []
         for k in ("리픽싱", "조기상환", "매도청구"):

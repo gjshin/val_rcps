@@ -140,6 +140,9 @@ class Terms:
     rfx_first: float = 0.0
     floor: float = 598.0
     par: float = 500.0
+    # 조정 후 전환가격의 원 단위 미만 처리 — 계약서 문구대로. 0 처리 없음 / 1 절상 / 2 절사.
+    # 주가로 새로 정한 가격(정기 조정)과 공모가 × 배수(상장 조정)에 걸고, 그다음 하한·상한을 건다.
+    rfx_round: int = 0
     carry: int = 1              # 1 경로가중치 / 2 확률가중평균 / 3 특정노드선택 (상태확장은 없앴다)
     p_s: float = 24.0
     p_e: float = 57.0
@@ -687,6 +690,9 @@ COMPAT_GS_KMETHOD = ("**GS 에서는 유무가치비교법만 지원합니다.**
                      "(한공회 4.4.3). GS 로 재려면 신용위험 처리를 TF 로 바꾸십시오.")
 COMPAT_KKIND = ("**제3자 기특정 콜옵션은 별도의 금융상품입니다.** 발행 시 제3자가 정해져 있어 거래상대방이 "
                 "발행자가 아니므로 내재파생에 넣을 수 없습니다 (문단 4.3.1). 회계 처리를 «별도 금융상품» 으로 되돌렸습니다.")
+COMPAT_KHOLDER = ("**제3자 사전 특정 콜은 제3자가 행사하는 콜입니다.** «제3자 지정 불가» 와 함께 둘 수 없어 "
+                  "콜 권리자를 «발행 시 정해진 제3자» 로 맞췄습니다. 발행회사만 행사하는 콜이면 콜 권리자를 "
+                  "«발행회사 본인만» 으로 고르십시오.")
 COMPAT_PSEP = ("조기상환권 처리를 «주계약에 포함(분리하지 않음)» 으로 둘 수 없습니다. 분리 정책이 "
                "**접근법 1**(서로 얽힌 권리를 먼저 묶고 판단 — 한공회 실무사례 30~31쪽)이라, 전환권이 부채이거나 "
                "매도청구권을 내재파생에 포함하면 조기상환권은 그 파생상품과 **묶어서 하나의 복합내재파생상품**"
@@ -858,6 +864,8 @@ def compat(tm: Terms):
         out.append(("put_bdt", 0, COMPAT_BDT))
     if int(getattr(tm, "k_kind", 0)) == 1 and int(tm.k_sep) == 0:
         out.append(("k_sep", 1, COMPAT_KKIND))
+    if int(getattr(tm, "k_kind", 0)) == 1 and not int(tm.k_third) and not is_rcps(tm):
+        out.append(("k_third", 1, COMPAT_KHOLDER))
     if (is_rcps(tm) and int(getattr(tm, "div_basis", 0)) == 1
             and not (float(getattr(tm, "issue_px", 0.0)) > 0 and tm.par > 0)):
         out.append(("div_basis", 0, COMPAT_DIVBASIS))
@@ -1741,6 +1749,23 @@ def rfx_any(tm: Terms) -> bool:
     return float(tm.rfx_cyc) <= node_gap_m(tm) + 1e-9
 
 
+K_ROUND_EPS = 1e-9   # 원 단위 처리의 경계 허용오차 — 1,447.0000000001 을 1,448 로 올리지 않는다. 엑셀도 같은 값.
+
+
+def k_round(tm: Terms, x: float) -> float:
+    """조정 후 전환가격의 원 단위 미만 처리 (계약서 문구). 0 그대로 · 1 절상 · 2 절사."""
+    m = int(getattr(tm, "rfx_round", 0))
+    if m == 1: return float(math.ceil(x - K_ROUND_EPS))
+    if m == 2: return float(math.floor(x + K_ROUND_EPS))
+    return x
+
+
+def xl_k_round(x: str, mode_ref: str) -> str:
+    """k_round 의 엑셀 식 — 가정 시트의 처리 칸(mode_ref)을 본다."""
+    return (f"IF({mode_ref}=1,CEILING({x}-{K_ROUND_EPS:.0E},1),"
+            f"IF({mode_ref}=2,FLOOR({x}+{K_ROUND_EPS:.0E},1),{x}))")
+
+
 def refix_steps(tm: Terms, n: int, dt_: float) -> dict:
     """정기 전환가액 조정일 {스텝: 계약 조정월(발행일부터 개월)} — 엔진 · 값 조서 · 수식 조서가 함께 쓴다.
 
@@ -2392,6 +2417,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     S = lambda i, j: tm.S0 * u**j * d**(i-j)
     kcap = k_cap(tm)
     clip = lambda s: min(max(s, tm.floor, tm.par), kcap)
+    rnd = lambda s: k_round(tm, s)
     put_amt = EA["put"]
     # 계약서의 회차별 표를 넣었으면 그 회차가 곧 행사일이다. 의무보유(ps)는 그때도
     # 앞쪽 회차를 막는다 — 표에 있는 날이라도 묶여 있으면 청구할 수 없다.
@@ -2427,7 +2453,7 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
     # 조정도 없다. 강제전환은 만기 자동전환과 같은 규칙으로 전환권이 있는 격자에서만
     # 탄다 (전환권을 뺀 부채는 주식이 될 수 없다).
     ipo_i = (st_lo(tm.ipo_m) if (int(tm.ipo_on) and tm.ipo_px > 0) else -1)
-    ipo_k = tm.ipo_px*tm.ipo_mult
+    ipo_k = rnd(tm.ipo_px*tm.ipo_mult)
     ipo_hit = lambda i, j: (i == ipo_i and 0 < i <= n and S(i, j) > tm.ipo_min)
     ipo_adj = lambda i, j, k: (clip(min(k, ipo_k)) if ipo_hit(i, j) else k)
 
@@ -2465,7 +2491,8 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
             if tm.rfx_mode == 0:
                 kv = prev                        # 주기 조정이 없으면 그대로 이월
             elif is_rfx(i):
-                kv = clip(S(i, j) if tm.rfx_mode == 2 else min(prev, S(i, j)))
+                # 원 단위 처리는 주가로 새로 정한 가격에만 건다 — 이월값(경로 가중 평균)은 그대로 둔다.
+                kv = clip(rnd(S(i, j)) if tm.rfx_mode == 2 else min(prev, rnd(S(i, j))))
             else:
                 kv = prev
             # 상장하면 공모가 × 배수로 자른다. 낮아질 때만 조정된다.
@@ -4119,6 +4146,58 @@ K_HOLDS = {1: "의무보유 있음 — 콜 대상물량이 의무보유 기간 �
 K_KINDS = {0: "제3자 지정 가능 콜 (발행자 보유 · 파생상품자산)",
            1: "제3자 사전 기특정 콜 (4.5.4 접근법 2-2 · 주주간 분배)"}
 
+# 콜 권리자 — 전환사채·신주인수권부사채 콜의 첫 선택. 계약서의 «발행회사», «발행회사 또는 발행회사가
+# 지정하는 자», «○○(최대주주 등)» 문구를 그대로 고른다. 저장은 종전 두 칸(k_third · k_kind)이다.
+CALL_HOLDERS = {0: "발행회사 본인만 — 발행자 콜 (내재파생상품)",
+                1: "발행회사 또는 발행회사가 지정하는 제3자 — 지정 가능 콜 (별도 금융상품)",
+                2: "발행 시 정해진 제3자 — 사전 특정 콜 (4.5.4 접근법 2-2)"}
+
+
+def call_holder(tm) -> int:
+    """콜 권리자 0 발행회사 본인만 / 1 제3자 지정 가능 / 2 제3자 사전 특정. ``tm`` 은 Terms 나 dict."""
+    g = (lambda k, d: tm.get(k, d)) if isinstance(tm, dict) else (lambda k, d: getattr(tm, k, d))
+    if int(g("k_kind", 0)) == 1: return 2
+    return 1 if int(g("k_third", 1)) else 0
+
+
+def call_alloc_note(tm, whole: bool = False) -> str:
+    """회계처리 시트 첫 문단의 매도청구권 문장 — 콜 권리자와 회계처리 설정을 따른다 (두 조서 공통).
+
+    종전에는 콜이 없거나 발행회사만 행사하는 콜에도 «제3자에게 이전될 수 있어 별도의 금융상품» 이라고 적었다.
+    """
+    if tm.k_w <= 0 or is_sha(tm): return ""
+    h, sep = call_holder(tm), int(tm.k_sep) == 1
+    if h == 2:
+        why = ("발행 시 정해진 제3자의 매도청구권은 이 접근법(한공회 실무사례 4.5.4 접근법 2-2)에서 발행회사가 "
+               "옵션 당사자가 아니라고 보아 자산으로 인식하지 않는다")
+    elif h == 1:
+        why = ("매도청구권은 발행회사가 제3자를 지정할 수 있어 거래상대방이 달라지므로 별도의 금융상품이다 "
+               "(제1109호 문단 4.3.1, 회계기준원 질의회신 2022-I-KQA006, 금융위 2022.5.3 감독지침)")
+    elif sep:
+        why = ("발행회사만 행사하는 매도청구권은 내재파생상품이지만 이 조서는 이용자 설정에 따라 별도 금융상품으로 "
+               "처리했다 — 분리 판단 시트의 «판정과 설정 비교» 를 확인한다")
+    else:
+        why = ("발행회사만 행사하는 매도청구권은 거래상대방이 그대로인 내재파생상품이라 전환권·조기상환권과 하나의 "
+               "복합내재파생상품으로 묶는다 (제1109호 문단 B4.3.4)")
+    if whole:
+        return why + (" — 이 지정 밖에 남는다." if (sep and h != 2) else
+                      " — 발행회사의 자산이 아니다." if h == 2 else " — 이 지정 안에 포함된다.")
+    return why + ". "
+
+
+def call_holder_fields(h: int, model: str = "TF") -> dict:
+    """콜 권리자를 고르면 함께 정해지는 값 — 저장 칸과 **기본** 평가방법·회계처리.
+
+    발행회사 본인만: 거래상대방이 그대로라 내재파생 (복합내재파생에 포함, 문단 B4.3.4) · 유무가치비교법 (4.3.2).
+    제3자(지정 가능 · 사전 특정): 별도 금융상품 (문단 4.3.1) · TF 면 옵션차익 성분 분리할인 + 전환확률 분해.
+    평가방법·회계처리는 기본값일 뿐이라 화면에서 바꿀 수 있다 (바꾸면 근거를 남긴다).
+    """
+    h = int(h)
+    third = h in (1, 2)
+    return dict(k_third=1 if third else 0, k_kind=1 if h == 2 else 0,
+                k_sep=1 if third else 0,
+                k_method=(2 if (third and model == "TF") else 0), k_split=1)
+
 
 def call_method_text(tm: Terms) -> str:
     """조서에 적는 매도청구권 평가방법 문안 — 한공회 연구보고서 시리즈 11 문단을 단다."""
@@ -5053,6 +5132,12 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                      근거=["1109 문단 B4.3.11", "실무사례 32쪽"], 지표={}, 설정일치=True)
             d.pop("회차", None)
     return out
+
+
+# 기대만기(첫 조기상환 가능일)로 상각할 때 그날 행사되지 않으면 — 세 화면·조서가 같은 문장을 쓴다.
+EXPECT_B546 = ("첫 조기상환일에 행사되지 않으면 남은 현금흐름(다음 조기상환일 또는 만기)을 다시 추정해 최초 "
+               "유효이자율로 할인한 금액으로 장부금액을 조정하고, 그 차이를 당기손익으로 인식한다 (1109 문단 B5.4.6). "
+               "이 상각표는 첫 조기상환일까지만 보여 준다 — 그 뒤의 조정은 결산 평가에서 따로 한다.")
 
 
 # 분리 판단의 «검토용 수치» 는 판단에만 쓴다 — 분개·상각표의 장부금액이 아니다.
@@ -6152,9 +6237,13 @@ def eir_table(tm: Terms, host, expect=None):
         k += 1
     ts.append(hz)
     nper = len(ts)
+    # 기대만기(첫 조기상환 가능일)에 끝나는 상각표면 마지막 회차의 이자는 계약을 따른다 — «행사일 이자를
+    # 따로 준다» 가 아니면(행사금액에 포함) 그날 이자를 따로 받지 않는다. 격자의 조기상환 갈래(_pcx)와 같다.
+    # 종전에는 늘 이자를 더해, 그 설정에서 상각표의 마지막 현금흐름이 격자보다 이자 한 회분 많았다.
+    cl = c if (expect is None or int(getattr(tm, "p_cpn_add", 0))) else 0.0
     def pv(r):
         return (sum(c*(1+r)**(-t) for t in ts[:-1])
-                + (c + red)*(1+r)**(-hz))
+                + (cl + red)*(1+r)**(-hz))
     # 상한은 넉넉히 잡되 고정하지 않는다 — 만기 한두 달 앞의 중간평가는 연 환산 유효이자율이
     # 수백 % 를 넘을 수 있고, 상한에 걸리면 상각표가 엉뚱한 곳에서 끝난다. 상한에서도
     # 현재가치가 장부금액을 넘으면 상한을 네 배씩 올린다 (1e4 = 연 1,000,000%).
@@ -6167,8 +6256,9 @@ def eir_table(tm: Terms, host, expect=None):
     r = (lo+hi)/2
     rows, bv, prev = [], host, 0.0
     for k, t in enumerate(ts, 1):
-        it = bv*((1+r)**(t-prev) - 1); end = bv + it - c
-        rows.append((k, t, bv, it, c, end)); bv, prev = end, t
+        ck = cl if k == len(ts) else c
+        it = bv*((1+r)**(t-prev) - 1); end = bv + it - ck
+        rows.append((k, t, bv, it, ck, end)); bv, prev = end, t
     return r, rows, red, nper
 
 
@@ -7763,6 +7853,7 @@ def build_xlsx_rate(tm: Terms, sig_how: str = "", wb=None, prefix=""):
                   "시트의 부트스트래핑에서 하고, 현물이자율을 넣었다면 이 열이 곧 "
                   "쓰이는 값이다.", span=6)
     if _lock:
+        I.protection.sheet = True                  # 곡선을 엑셀에서 고치지 못하게 — 기준금리 a 가 이 곡선에 맞춘 고정값이다
         note(I, endr+1, "BDT 금리격자를 쓰는 조서라 이 곡선은 입력칸이 아니다 — BDT 기준금리 a 가 이 곡선과 "
                         "BDT 금리변동성 σ 에 맞춰 앱에서 역산한 고정값이므로, 곡선을 바꾸려면 앱에서 다시 "
                         "평가해 조서를 새로 만든다.", span=6)
@@ -8631,7 +8722,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         + ([("IPO 조항", "반영" if tm.ipo_on and tm.ipo_px > 0 else "없음", None)]
            + ([("예상 상장 시점 (개월)", tm.ipo_m, N0),
                ("공모가액", tm.ipo_px, N2), ("공모가 배수", tm.ipo_mult, P2),
-               ("조정후 전환가격", tm.ipo_px*tm.ipo_mult, N2),
+               ("조정후 전환가격", k_round(tm, tm.ipo_px*tm.ipo_mult), N2),
                ("최소공모가격", tm.ipo_min, N2),
                ("상장 시 강제전환", "예" if tm.ipo_conv else "아니오", None)]
               if (tm.ipo_on and tm.ipo_px > 0) else [])
@@ -8657,7 +8748,8 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
         ("매도청구권 평가방법", K_METHODS[tm.k_method], None),
         ("지분·채권 구분 기준", (K_SPLITS[int(tm.k_split)] if tm.k_method else "해당 없음 (유무가치비교법)"), None),
         ("콜 대상물량 의무보유", (K_HOLDS[int(tm.k_hold)] if tm.k_method else "유무가치비교법은 격자에서 직접 반영"), None),
-        ("콜옵션 유형", K_KINDS[int(tm.k_kind)], None),
+        ("콜 권리자", CALL_HOLDERS[call_holder(tm)], None),
+        ("콜옵션 유형", (K_KINDS[int(tm.k_kind)] if call_holder(tm) else "해당 없음 — 발행회사 본인만 행사"), None),
         ("평가기법", " · ".join(v for k, v in call_method_rows(tm)[:2]) + " — 상세는 결과 시트", None),
         ("풋·콜 우선순위 (조기상환과 매도청구 사이)", pc_order_text(tm), None),
         ("매도청구 통지 뒤 전환 대응", conv_resp_text(tm), None),
@@ -8941,12 +9033,10 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
     title(E, 2, "회계처리", span=6)
     put(E, 3, 2, ("복합계약 **전체**를 당기손익-공정가치 측정 금융부채로 지정했으므로 "
                   "내재파생상품을 분리하지 않고 한 줄로 인식한다 (제1109호 문단 4.2.2 · "
-                  "4.3.3(3)). 요소별 배분도 유효이자율 상각도 없다. 매도청구권은 제3자에게 "
-                  "이전될 수 있어 별도의 금융상품이라(문단 4.3.1) 이 지정 밖에 남는다."
+                  "4.3.3(3)). 요소별 배분도 유효이자율 상각도 없다. " + call_alloc_note(tm, whole=True)
                   if fvpl_on(tm) else
                   "기업회계기준서 제1032호 문단 31·32 — 부채요소를 먼저 정하고 나머지를 자본에 배분한다. "
-                  "매도청구권은 제3자에게 이전될 수 있어 별도의 금융상품이다 (제1109호 문단 4.3.1, "
-                  "회계기준원 질의회신 2022-I-KQA006, 금융위 2022.5.3 감독지침). "
+                  + call_alloc_note(tm) +
                   "전환권이 부채이면 전환권과 조기상환권은 상호의존적이므로 하나의 복합내재파생상품으로 "
                   "전체로서 측정한다 (제1109호 문단 B4.3.4)."),
         color=GREY, size=9)
@@ -9144,7 +9234,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
             "이자 지급주기를 따른다."
             + ("  ※ 조기상환권을 분리하지 않으므로 기대만기 = 첫 조기상환 가능일, 만기 현금흐름 = 그 시점 "
                "행사금액이다. 계약만기로 굴리면 첫 조기상환일의 행사금액과 장부금액이 벌어져 이자비용·부채가 "
-               "과소계상된다 (B4.3.5(5)(가))." if eir_expect(tm) is not None else ""),
+               "과소계상된다 (B4.3.5(5)(가)). " + EXPECT_B546 if eir_expect(tm) is not None else ""),
             color=GREY, size=9)
         sec(M, 4, "유효이자율 역산", span=7)
         for i, (k, v, fm) in enumerate([("주계약 (인식액, 거래원가 차감 후)"
@@ -9438,7 +9528,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _lk_ps_st = max(stp_lo(_lk_ps), _LKEND + 1) if int(tm.k_lock_put) else stp_lo(_lk_ps)
     RF, CR = curves(tm)
     # 조정일은 엔진과 같은 목록이다 (refix_steps). 계약일을 노드에 배정한 결과라 00 격자 공통
-    # 6행에 값으로 싣는다 — 행사일(20·27행)과 같다. 날짜를 바꾸려면 앱에서 조서를 다시 만든다.
+    # 6행이 «00 계약일 목록» 에서 찾아 온다 — 행사일(20·27행)과 같다. 날짜를 바꾸려면 앱에서 조서를 다시 만든다.
     _RFXD = refix_steps(tm, n, dt_)
     REFIXSET = set(_RFXD)
     # 전환가격을 바꾸는 조항은 정기 조정(리픽싱)과 상장(IPO) 조정 둘이다. 둘 다 없으면
@@ -9532,6 +9622,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("만기 지급분 공제 (1 이자 붙여 / 2 받은 금액만 / 0 안 뺌)", "mless",
          ded_of(tm, "m"), N0, True),
         ("최저 조정가액", "flr", tm.floor, N2, True),
+        ("조정 후 전환가격 원 단위 미만 (0 처리 없음 / 1 절상 / 2 절사)", "rround", int(getattr(tm, "rfx_round", 0)), N0, True),
         ("액면가", "par", tm.par, N2, True),
         # 상향 재조정의 상한은 **최초** 전환가액이다. 이미 하향 조정된 상품을
         # 결산 평가하면 현재 전환가액과 갈리므로 따로 받는다.
@@ -9599,13 +9690,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         ("상장 스텝", "ipos", stp_lo(tm.ipo_m), N0, True),
         ("공모가액", "ipopx", tm.ipo_px, N2, True),
         ("공모가 배수", "ipomul", tm.ipo_mult, P2, True),
-        ("조정후 전환가격", "ipok", "@=C{ipopx}*C{ipomul}", N2, False),
+        ("조정후 전환가격", "ipok", "@=" + xl_k_round("C{ipopx}*C{ipomul}", "C{rround}"), N2, False),
         ("최소공모가격", "ipomin", tm.ipo_min, N2, True),
         ("상장 시 강제전환 (1/0)", "ipocv", int(tm.ipo_conv), N0, True),
         ("매도청구권 평가방법 (0 유무가치 / 1 GS식 전환가중확률할인 / 2 TF식 지분-채권 분리할인)",
          "kmeth", tm.k_method, N0, False),
         ("지분·채권 구분 기준 (0 비례균등차감법 / 1 본문 4.3.3 GS 전환확률)",
          "ksplit", int(tm.k_split), N0, False),
+        ("콜 권리자 (앱에서 고른 값)", "kwho", CALL_HOLDERS[call_holder(tm)], None, False),
         ("콜옵션 유형 (0 제3자 지정 가능 / 1 제3자 기특정)", "kkind", int(tm.k_kind), N0, False),
         ("콜 대상물량 의무보유 (1 있음 / 0 없음)", "khold", int(tm.k_hold), N0, False),
         # 의무보유가 살아 있는 마지막 스텝. 없으면 -1 이라 첫 노드부터 소멸 조건이 걸린다.
@@ -9660,7 +9752,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     # 남아 있으면 K 에서 KeyError 가 나므로 조서가 조용히 틀어지지 않는다.
     _unused = {"ipay", "payoff"}           # 지급일은 계약일 목록(pay_steps)이 정한다
     if _kconst:
-        _unused |= {"flr", "cap", "rfxd", "rfx", "up", "mth"}
+        _unused |= {"flr", "cap", "rfxd", "rfx", "up", "mth", "rround"}
         if not is_rcps(tm):
             _unused.add("par")
     if not _ipo_on:
@@ -9696,11 +9788,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _SEC = [("1. 평가 대상 · 기준일", {"d_issue", "d_base", "d_mat", "elm", "T", "remm", "view", "face", "inst"}),
             ("2. 계약 조건 — 이자 · 만기", {"cpn", "cpnc", "dbas", "ipx", "dmode", "ipaym", "txpay", "ytm", "ycm",
                                         "matx", "red", "mless", "accb", "auto"}),
-            ("3. 계약 조건 — 전환", {"K0", "txcv", "cvs", "cve", "flr", "par", "cap", "rfxd", "rfx", "up", "mth",
+            ("3. 계약 조건 — 전환", {"K0", "txcv", "cvs", "cve", "flr", "rround", "par", "cap", "rfxd", "rfx", "up", "mth",
                                  "ipoon", "ipos", "ipopx", "ipomul", "ipok", "ipomin", "ipocv"}),
             ("4. 계약 조건 — 조기상환 (투자자 풋)", {"txput", "pst", "prate", "pcadd", "pmode", "psm", "pyld", "pcmp",
                                               "pless", "psch"}),
-            ("5. 계약 조건 — 매도청구 (콜)", {"txcall", "prem", "kcmp", "kless", "cw", "kcadd", "pcord", "kresp", "cv30", "pt30",
+            ("5. 계약 조건 — 매도청구 (콜)", {"kwho", "txcall", "prem", "kcmp", "kless", "cw", "kcadd", "pcord", "kresp", "cv30", "pt30",
                                         "khold", "lockend", "lkput", "lkw"}),
             ("6. 시장자료", {"S0", "s0src", "sig", "divy", "crsrc", "rfc", "bsig", "rvhow", "bbase"}),
             ("7. 평가방법 (앱에서 고른 값 — 여기서 바꿔도 트리가 따라오지 않는다)",
@@ -9734,6 +9826,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         "auto": {1: "만료 시 보통주 자동전환", 0: "없음"},
         "rfx": {1: "있음", 0: "없음"}, "up": {1: "하향·상향", 0: "하향만"},
         "mth": {1: "경로가중치", 2: "확률가중평균", 3: "특정노드 선택"},
+        "rround": {0: "처리 없음", 1: "원 단위 미만 절상", 2: "원 단위 미만 절사"},
         "eqcls": {1: "자본", 0: "파생상품부채"}, "inst": {0: "CB", 1: "RCPS", 2: "BW"},
         "kmeth": {0: "콜 유무 가치 비교", 1: "옵션차익 혼합할인율", 2: "옵션차익 성분 분리할인 (주식결제·현금결제)"},
         "ksplit": {0: "가치 구성비율", 1: "전환확률 (본문 4.3.3)"},
@@ -9816,6 +9909,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             "적용 금리곡선과 할인계수가 같아지도록」 앱이 역산한 고정 산출값이다. 이 파일에서 σ 만 바꾸면 "
             "격자는 움직이지만 a 는 그대로라 결과가 적용 금리곡선과 맞지 않는다. σ 를 바꾸려면 앱에서 바꾸십시오.",
             color=RED, size=9)
+        # 이 칸을 엑셀에서 바꾸면 기준금리 a 와 어긋난다 — 바뀌면 옆 칸에 바로 경고가 뜬다.
+        _rb = ROWN["bsig"]
+        put(A, _rb, 4, f'=IF(ABS(C{_rb}-{tm.bdt_sig!r})>1E-12,"※ 앱에서 정한 값({tm.bdt_sig:.2%})과 다릅니다 — 기준금리 a 와 '
+                       f'맞지 않으므로 앱에서 다시 평가하십시오","앱에서 정한 값 그대로 (기준금리 a 와 맞음)")', color=RED, size=9)
 
     HEAD = ["날짜", "스텝(노드 번호)", "전환 가능 (1=예)", "조기상환 가능 (1=예)", "매도청구 가능 (1=예)",
             "전환가격 조정일 (1=예)", "조기상환금액", "매도청구금액", "쿠폰", "만기상환금액",
@@ -9885,13 +9982,14 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     _FP = pay_steps(tm, n, dt_)
 
     def x_cpn(i):
-        """스텝 i 에 지급하는 이자·배당 식. 지급일이 아니면 0."""
-        c_ = _FP.get(i, 0)
-        return (f"{c_}*100*{K['cpn']}*{K['ipaym']}/12" if c_ > 1 else
-                f"100*{K['cpn']}*{K['ipaym']}/12" if c_ == 1 else "0")
+        """스텝 i 에 지급하는 이자·배당 식 — 00 격자 공통 9행을 가리킨다 (계약일 목록에서 센 회수 × 이자).
+
+        지급일이 하나도 없는 계약이면 0 이다."""
+        if not _FP: return "0"
+        return f"{COMQ}!{gl(3+i)}$9"
 
     def _cadd(i, key):
-        if i >= n or i not in _FP: return "0"
+        if i >= n or not _FP: return "0"
         return f"IF({K[key]}=1,{x_cpn(i)},0)"
 
     # 개월로 묻는 자리(상각표의 기대만기 · 분리 판단의 첫 조기상환일)도 표를 먼저 본다.
@@ -9920,6 +10018,92 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     CROW = dict(pmo=20, pyr=21, p1=22, p0=23, ppaid=24, pap=25, pamt=26,
                 kmo=27, kyr=28, k1=29, k0=30, kpaid=31, kap=32, kamt=33)
     _common = {}
+    # ── 00 계약일 목록 — 계약서의 날짜를 노드에 배정하는 과정을 수식으로 편다 ──
+    # 정기 조정일 · 이자 지급일 · 조기상환일 · 매도청구일을 한 줄씩 적고 «계약일 이후 첫 노드»
+    # (허용 일수 안에서 앞선 노드는 같은 날 — EXDATE_RULE) 를 COUNTIF 로 센다. 00 격자 공통의
+    # 6행(조정일) · 9행(지급 회수) · 20·27행(행사월)이 이 목록을 본다. 종전에는 앱이 배정한 결과를
+    # 숫자(빨간색)로 넣어 배정이 맞는지 엑셀에서 따라갈 수 없었다. 계약일과 노드 수는 앱이 정한다.
+    DATES = "00 계약일 목록"
+    DQ = f"'{DATES}'"
+    DL = {}                       # 권리 → (첫 행, 끝 행)
+    _dl = lambda key, col: f"{DQ}!${col}${DL[key][0]}:${col}${DL[key][1]}"
+
+    def make_dates():
+        D = wb.create_sheet(DATES); D.sheet_view.showGridLines = False
+        for cc, w_ in (("B", 16), ("C", 9), ("D", 14), ("E", 13), ("F", 16), ("G", 12), ("H", 58)):
+            D.column_dimensions[cc].width = w_
+        title(D, 1, "00 계약일 목록 — 계약서의 날짜를 노드에 배정하는 과정", span=7)
+        put(D, 2, 2, "계약일마다 «계약일 이후 첫 노드» 에 배정한다. 노드 날짜가 계약일보다 허용 일수 안에서 "
+                     "앞서면 같은 날로 본다. 노드 번호 = 노드 날짜가 «계약일 − 허용 일수» 보다 이른 노드의 개수 "
+                     "(COUNTIF). 00 격자 공통 6행(조정일)·9행(지급 회수)·20·27행(행사월)이 이 표를 본다. "
+                     "계약일과 노드 날짜는 앱이 적은 값이다 — 바꾸려면 앱에서 조서를 다시 만든다.",
+            color=GREY, size=9)
+        put(D, 4, 2, "노드 번호", bold=True, size=8, fill=LIGHT, border=True)
+        put(D, 5, 2, "노드 날짜", bold=True, size=8, fill=LIGHT, border=True)
+        # 노드 날짜는 엔진의 node_dates 를 그대로 적는다(앱이 정한 값). 엑셀 ROUND 는 0.5 를 올리고 파이썬 round 는
+        # 짝수로 맞춰, 수식으로 다시 만들면 구간 일수가 정확히 반일인 노드에서 날짜가 하루 갈려 배정이 달라진다.
+        _ndv = node_dates(tm, n, dt_)
+        for i in range(n+1):
+            L_ = gl(3+i); D.column_dimensions[L_].width = max(D.column_dimensions[L_].width or 0, 11)
+            put(D, 4, 3+i, i, fmt=N0, align="center", size=8)
+            put(D, 5, 3+i, _ndv[i], fmt=DATE, align="center", size=8)
+        NROW = f"$C$5:${gl(3+n)}$5"
+        put(D, 6, 2, "허용 일수", bold=True, size=8, fill=LIGHT, border=True)
+        put(D, 6, 3, f"=MIN(5,MAX(1,INT({K['dt']}*365/4)))", fmt=N0, align="center", size=8)
+        TOL = "$C$6"
+        r0 = 8
+        for j, h in enumerate(["권리", "회차", "계약 개월 (발행일부터)", "계약일", "계약일 이후 첫 노드",
+                               "적용 노드", "적용 규칙 (−1 = 이 격자에서 쓰지 않음)"]):
+            put(D, r0, 2+j, h, bold=True, size=8, fill=LIGHT, border=True)
+        r = r0 + 1
+        rem_m = float(getattr(tm, "rem_m", 0.0) or tm.T*12)
+        end = el + rem_m
+        lists = []
+        if not _kconst and int(tm.rfx_mode) and tm.rfx_cyc > 0 and not rfx_any(tm):
+            first = rfx_first_m(tm)
+            k = max(0, math.floor((el - first)/tm.rfx_cyc) + 1) if el >= first - 1e-9 else 0
+            ms = []
+            while first + tm.rfx_cyc*k <= end + 1e-6:
+                ms.append(first + tm.rfx_cyc*k); k += 1
+            lists.append(("rfx", "전환가격 조정일", ms,
+                          lambda rr: f"=IF(AND(D{rr}>{K['elm']}+1E-9,F{rr}>=1,F{rr}<={K['n']}),F{rr},-1)",
+                          "평가기준일 뒤 · 노드 1~n 만. 두 조정일이 한 노드에 오면 한 번 조정한다"))
+        if _FP:
+            k = math.floor(el/tm.ipay + 1e-9) + 1
+            ms = []
+            while k*tm.ipay <= end + 1e-6:
+                ms.append(k*tm.ipay); k += 1
+            lists.append(("pay", inst_text(tm, "이자 지급일"), ms,
+                          lambda rr: f"=IF(F{rr}>=1,MIN(F{rr},{K['n']}),-1)",
+                          "노드 1 부터 · 만기 뒤 지급일은 만기 노드. 두 지급일이 한 노드에 오면 그 노드에서 회수만큼 지급"))
+        for key, nm, cont, rows_, s_, e_, f_, on in (
+                ("put", "조기상환일", _EA["p_cont"], _EA["p_rows"], tm.p_s, tm.p_e, tm.p_f, bool(_EA["p_dates"])),
+                ("call", "매도청구일", _EA["k_cont"], _EA["k_rows"], tm.k_s, tm.k_e, tm.k_f, bool(_EA["k_dates"]))):
+            if cont or not on: continue
+            if rows_:
+                ms = [m for m, _ in rows_]
+            else:
+                ms, k = [], 0
+                while s_ + k*f_ <= e_ + 1e-6:
+                    ms.append(s_ + k*f_); k += 1
+            lists.append((key, inst_text(tm, nm), ms,
+                          lambda rr: f"=IF(OR(D{rr}<{K['elm']}-1E-6,F{rr}>{K['n']}),-1,F{rr})",
+                          "평가기준일 전에 지난 회차 · 만기 뒤는 쓰지 않음. 두 회차가 한 노드에 오면 앞 회차"))
+        for key, nm, ms, gf, rule in lists:
+            a = r
+            for j, m in enumerate(ms):
+                put(D, r, 2, nm if j == 0 else "", size=8, border=True)
+                put(D, r, 3, j+1, fmt=N0, align="center", size=8, border=True)
+                put(D, r, 4, round(m, 6), fmt=N2, align="right", size=8, border=True)
+                put(D, r, 5, months_to_date(tm.d_issue, m), fmt=DATE, align="center", size=8, border=True)
+                put(D, r, 6, f'=COUNTIF({NROW},"<"&(E{r}-{TOL}))', fmt=N0, align="center", size=8, border=True)
+                put(D, r, 7, gf(r), fmt=N0, align="center", size=8, border=True, bold=True)
+                if j == 0: put(D, r, 8, rule, color=GREY, size=8)
+                r += 1
+            DL[key] = (a, r-1)
+            r += 1
+        D.freeze_panes = "C9"
+        return D
 
     def head_formulas(L, Lp, i, cvs, pst, call_on):
         """트리 머리 17행의 식(이 시트 기준). 00 격자 공통과 같은 식이면 참조로 바꾼다."""
@@ -9931,13 +10115,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
              # 표를 넣으면 «표가 정한 회차만» 열린다 (00 행사금액표).
              4: "=" + x_pflag(st, pst),
              5: (0 if not call_on else "=" + x_kflag(st)),
-             # 조정일 표시 — 전환가격을 바꾸는 조항이 없으면 늘 0 이다.
-             # 조정일 표시 — 앱이 계약일을 노드에 배정한 값(refix_steps). 조항이 없으면 늘 0.
-             6: (0 if _kconst else (1 if i in REFIXSET else 0)),
+             # 조정일 표시 — 00 계약일 목록에서 이 노드에 배정된 조정일이 있으면 1 (refix_steps 와 같은 규칙).
+             # 조항이 없으면 늘 0, «언제든지» 조정이면 계약일이 없어 앱이 정한 노드다.
+             6: (0 if _kconst else
+                 f"=IF(COUNTIF({_dl('rfx', 'G')},{st})>0,1,0)" if "rfx" in DL else
+                 (1 if i in REFIXSET else 0)),
              # 금액은 00 격자 공통의 보조 행에서 계산한 값을, 이 시트의 행사 가능 표시로 켠다.
              7: f"=IF({L}$4=1,{COMQ}!{L}${CROW['pamt']},0)",
              8: f"=IF({L}$5=1,{COMQ}!{L}${CROW['kamt']},999999)",
-             9: f"={x_cpn(i)}",
+             9: (f"=COUNTIF({_dl('pay', 'G')},{st})*100*{K['cpn']}*{K['ipaym']}/12" if "pay" in DL else "=0"),
              10: f"=IF({st}={K['n']},{K['red']},0)",
              13: f"={K['sig']}", 14: f"={K['u']}", 15: f"={K['dd']}"}
         if i < n:
@@ -9961,6 +10147,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
 
     def make_common():
         W = wb.create_sheet(COM); W.sheet_view.showGridLines = False
+        make_dates()
         W.column_dimensions["B"].width = 30
         for i in range(n+1): W.column_dimensions[gl(3+i)].width = 9
         title(W, 18, "00 격자 공통 — 모든 트리가 함께 쓰는 날짜·행사일·금액·금리·확률", span=min(n+1, 14))
@@ -9993,46 +10180,52 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             # 계약 행사월은 계약서의 날짜(발행일부터 개월)다. 노드는 그 날 이후 첫
             # 노드이므로 노드 날짜와 며칠 다를 수 있다 — 할인은 노드 날짜로, 금액은
             # 계약일로 한다. 기간 중 언제든지 행사하는 권리는 노드 개월이 곧 행사월이다.
-            if i in _EA["p_dates"]:
-                mo_v = (f"={_MO(st)}" if _EA["p_cont"] else round(_EA["p_dates"][i], 6))
-                put(W, CROW['pmo'], 3+i, mo_v, fmt=N2, align="center", size=8,
-                    color=("000000" if _EA["p_cont"] else RED))
-                mo = c(CROW['pmo'])
-                put(W, CROW['pyr'], 3+i, "=" + _yr(mo), fmt=N4, align="center", size=8)
-                yr = c(CROW['pyr'])
-                put(W, CROW['p1'], 3+i, "=" + xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr), fmt=N6, align="center", size=8)
-                put(W, CROW['p0'], 3+i, "=" + xl_prem(K['pyld'], '0', K['pcmp'], yr), fmt=N6, align="center", size=8)
-                put(W, CROW['ppaid'], 3+i, "=" + _paid(mo), fmt=N6, align="center", size=8)
-                put(W, CROW['pap'], 3+i, (f"=IF({K['pless']}=1,{c(CROW['p1'])},"
-                                          f"MAX(0,{c(CROW['p0'])}-IF({K['pless']}=2,{c(CROW['ppaid'])},0)))"),
-                    fmt=N6, align="center", size=8)
-                pf = f"IF({K['pmode']}=1,100*(1+{c(CROW['pap'])}),{K['prate']})"
-                if i in _EA["p_steps"]:
-                    pf = _pv0(st)
-                put(W, CROW['pamt'], 3+i, f"=({pf}+{_cadd(i, 'pcadd')})", fmt=N4, align="center", size=8)
-            if i in _EA["k_dates"]:
-                mo_v = (f"={_MO(st)}" if _EA["k_cont"] else round(_EA["k_dates"][i], 6))
-                put(W, CROW['kmo'], 3+i, mo_v, fmt=N2, align="center", size=8,
-                    color=("000000" if _EA["k_cont"] else RED))
-                mo = c(CROW['kmo'])
-                put(W, CROW['kyr'], 3+i, "=" + _yr(mo), fmt=N4, align="center", size=8)
-                yr = c(CROW['kyr'])
-                put(W, CROW['k1'], 3+i, "=" + xl_prem(K['prem'], K['cpn'], K['kcmp'], yr), fmt=N6, align="center", size=8)
-                put(W, CROW['k0'], 3+i, "=" + xl_prem(K['prem'], '0', K['kcmp'], yr), fmt=N6, align="center", size=8)
-                put(W, CROW['kpaid'], 3+i, "=" + _paid(mo), fmt=N6, align="center", size=8)
-                put(W, CROW['kap'], 3+i, (f"=IF({K['kless']}=1,{c(CROW['k1'])},"
-                                          f"MAX(0,{c(CROW['k0'])}-IF({K['kless']}=2,{c(CROW['kpaid'])},0)))"),
-                    fmt=N6, align="center", size=8)
-                kf = (f"IF({K['prem']}>0,100*(1+{c(CROW['kap'])}),"
-                      f"100*(1+MAX(0,-{_KC}*{yr})))")
-                if i in _EA["k_steps"]:
-                    kf = _kv0(st)
-                put(W, CROW['kamt'], 3+i, f"=({kf}+{_cadd(i, 'kcadd')})", fmt=N4, align="center", size=8)
+            # 계약일이 따로 있는 권리(정기 행사)는 모든 열에 행사월 식을 둔다 — 00 계약일 목록에서 이 노드에
+            # 배정된 회차의 계약 개월이고, 없으면 빈칸이라 그 열의 금액 행도 빈칸이다 (행사 가능 표시가 0).
+            for key, mrow, dates, cont, steps, kind in (
+                    ("put", CROW['pmo'], _EA["p_dates"], _EA["p_cont"], _EA["p_steps"], "p"),
+                    ("call", CROW['kmo'], _EA["k_dates"], _EA["k_cont"], _EA["k_steps"], "k")):
+                live = (not cont) and key in DL
+                if not (i in dates or live): continue
+                if cont or key not in DL:
+                    mo_v = f"={_MO(st)}"
+                else:
+                    mo_v = (f'=IFERROR(INDEX({_dl(key, "D")},MATCH({st},{_dl(key, "G")},0)),"")')
+                put(W, mrow, 3+i, mo_v, fmt=N2, align="center", size=8)
+                mo = c(mrow)
+                g = (lambda x: f'=IF(ISNUMBER({mo}),{x},"")') if live else (lambda x: "=" + x)
+                if kind == "p":
+                    put(W, CROW['pyr'], 3+i, g(_yr(mo)), fmt=N4, align="center", size=8)
+                    yr = c(CROW['pyr'])
+                    put(W, CROW['p1'], 3+i, g(xl_prem(K['pyld'], K['cpn'], K['pcmp'], yr)), fmt=N6, align="center", size=8)
+                    put(W, CROW['p0'], 3+i, g(xl_prem(K['pyld'], '0', K['pcmp'], yr)), fmt=N6, align="center", size=8)
+                    put(W, CROW['ppaid'], 3+i, g(_paid(mo)), fmt=N6, align="center", size=8)
+                    put(W, CROW['pap'], 3+i, g(f"IF({K['pless']}=1,{c(CROW['p1'])},"
+                                               f"MAX(0,{c(CROW['p0'])}-IF({K['pless']}=2,{c(CROW['ppaid'])},0)))"),
+                        fmt=N6, align="center", size=8)
+                    pf = f"IF({K['pmode']}=1,100*(1+{c(CROW['pap'])}),{K['prate']})"
+                    if i in steps:
+                        pf = _pv0(st)
+                    put(W, CROW['pamt'], 3+i, g(f"({pf}+{_cadd(i, 'pcadd')})"), fmt=N4, align="center", size=8)
+                else:
+                    put(W, CROW['kyr'], 3+i, g(_yr(mo)), fmt=N4, align="center", size=8)
+                    yr = c(CROW['kyr'])
+                    put(W, CROW['k1'], 3+i, g(xl_prem(K['prem'], K['cpn'], K['kcmp'], yr)), fmt=N6, align="center", size=8)
+                    put(W, CROW['k0'], 3+i, g(xl_prem(K['prem'], '0', K['kcmp'], yr)), fmt=N6, align="center", size=8)
+                    put(W, CROW['kpaid'], 3+i, g(_paid(mo)), fmt=N6, align="center", size=8)
+                    put(W, CROW['kap'], 3+i, g(f"IF({K['kless']}=1,{c(CROW['k1'])},"
+                                               f"MAX(0,{c(CROW['k0'])}-IF({K['kless']}=2,{c(CROW['kpaid'])},0)))"),
+                        fmt=N6, align="center", size=8)
+                    kf = (f"IF({K['prem']}>0,100*(1+{c(CROW['kap'])}),"
+                          f"100*(1+MAX(0,-{_KC}*{yr})))")
+                    if i in steps:
+                        kf = _kv0(st)
+                    put(W, CROW['kamt'], 3+i, g(f"({kf}+{_cadd(i, 'kcadd')})"), fmt=N4, align="center", size=8)
         put(W, 35, 2, "트리 시트의 1~17행은 이 시트를 가리킨다. 트리마다 행사 시작일이 다를 때"
             "(매도청구 대상 물량 등)만 그 시트가 행사 가능 표시(3~5행)를 따로 계산한다. "
             "금액(7·8행)은 늘 이 시트 26·33행에서 가져와 그 시트의 행사 가능 표시로 켠다. "
-            "행사일(20·27행 빨간 숫자)은 계약서의 날짜를 앱이 노드에 배정한 것이다 — 날짜를 "
-            "바꾸려면 앱에서 조서를 다시 만든다.", color=GREY, size=9)
+            "조정일(6행)·지급 회수(9행)·행사월(20·27행)은 «00 계약일 목록» 에서 계약일을 노드에 배정한 "
+            "식으로 온다 — 계약일을 바꾸려면 앱에서 조서를 다시 만든다.", color=GREY, size=9)
         put(W, 36, 2, "상환할증률 = (보장수익률 − 차감률) ÷ 보장수익률 × ((1 + 보장수익률/m)^(m·t) − 1). "
             "복리 횟수 m 이 0 이면 (보장수익률 − 차감률) × t.", color=GREY, size=9)
         W.freeze_panes = "C3"
@@ -10169,8 +10362,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         if i == 0: return f"={K['K0']}"
         carry = f"{Q(S2A)}!{L}{R0+r}"
         # 조정일에도 **같은 이월값**을 쓴다 (엔진과 동일).
-        base = (f"IF({K['up']}=1,{Q(S1)}!{L}{R0+r},"
-                f"MIN({carry},{Q(S1)}!{L}{R0+r}))")
+        _px = xl_k_round(f"{Q(S1)}!{L}{R0+r}", K['rround'])
+        base = (f"IF({K['up']}=1,{_px},"
+                f"MIN({carry},{_px}))")
         clip = f"MIN(MAX({base},{K['flr']},{K['par']}),{K['cap']})"
         # 주기 조정이 없으면 이월만 한다 (IPO 조정은 02 에서 그 위에 걸린다).
         return f"=IF({K['rfx']}=0,{carry},IF({L}$6=1,{clip},{carry}))"
@@ -10770,8 +10964,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             W.freeze_panes = f"C{RB}"
 
         W = wb.create_sheet(SB1)
+        # 기준금리 a 는 금리곡선·금리변동성에 맞춰 앱이 역산한 고정값이다 — 엑셀에서 손으로 고치지 못하게
+        # 시트를 보호한다(암호 없음). 바꾸려면 앱에서 곡선·변동성을 바꿔 다시 평가한다.
+        W.protection.sheet = True
         bhead(W, "BDT 단기이자율격자  r(i,j) = a · exp(2σ·j·√Δt)",
-              "로그정규 분포를 따르므로 단기이자율이 음수가 되지 않는다. j 는 금리 상승 횟수이고 클수록 금리가 높다(주가 트리와 달리 표의 아래쪽이 높은 금리). 기준금리 a 는 이 격자로 계산한 할인계수가 적용 금리곡선의 할인계수와 같아지도록 앱이 역산한 값이다. 역산한 값이라 주황색이다 — BDT 변동성 σ 나 금리곡선을 바꾸려면 앱에서 "
+              "로그정규 분포를 따르므로 단기이자율이 음수가 되지 않는다. j 는 금리 상승 횟수이고 클수록 금리가 높다(주가 트리와 달리 표의 아래쪽이 높은 금리). 기준금리 a 는 이 격자로 계산한 할인계수가 적용 금리곡선의 할인계수와 같아지도록 앱이 역산한 값이다. 역산한 값이라 주황색이고, 손으로 고치지 못하게 이 시트는 보호되어 있다 — BDT 변동성 σ 나 금리곡선을 바꾸려면 앱에서 "
               "다시 계산해 조서를 새로 만든다.")
         for i in range(n):
             L = gl(3+i)
@@ -11176,7 +11373,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(M, 3, 2, "주계약(옵션 없는 사채)을 유효이자율법으로 상각한다. "
             "기말 잔액이 만기상환금액과 맞아떨어져야 한다. "
             + ("※ 조기상환권을 분리하지 않으므로 기대만기 = 첫 조기상환 가능일, 만기 현금흐름 = 그 시점 "
-               "행사금액이다 (B4.3.5(5)(가)). " if _exf is not None else "")
+               "행사금액이다 (B4.3.5(5)(가)). " + EXPECT_B546 + " " if _exf is not None else "")
             + "지급일은 계약상 일정이므로 발행일부터 센다. 평가기준일이 발행일보다 뒤이면 "
             "첫 회차만 짧고 나머지는 온전한 한 주기다. 회차 수는 노드가 아니라 "
             "이자 지급주기를 따른다.", color=GREY, size=9)
@@ -11220,7 +11417,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             gap = f"(D{r}" + ("" if i == 0 else f"-D{prev}") + ")"
             put(M, r, 6, f"=E{r}*((1+$C$10)^{gap}-1)", fmt=N2, align="right",
                 border=True, bold=last, fill=fl)
-            put(M, r, 7, "=$C$8", fmt=N2, align="right", border=True, bold=last, fill=fl)
+            # 기대만기(조기상환일)에 끝나면 마지막 회차 이자는 «행사일 이자 별도지급» 칸을 따른다 (eir_table 과 같다).
+            put(M, r, 7, (f"=IF({K['pcadd']}=1,$C$8,0)" if (last and _exf is not None) else "=$C$8"),
+                fmt=N2, align="right", border=True, bold=last, fill=fl)
             put(M, r, 8, f"=E{r}+F{r}-G{r}", fmt=N2, align="right",
                 border=True, bold=last, fill=fl)
         # 기말 잔액이 만기상환금액과 맞는지는 앱이 평가할 때 확인한다 — 조서에 싣지 않는다.
@@ -11241,12 +11440,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     title(E, 2, "회계처리", span=5)
     put(E, 3, 2, ("복합계약 **전체**를 당기손익-공정가치 측정 금융부채로 지정했으므로 "
                   "내재파생상품을 분리하지 않고 한 줄로 인식한다 (제1109호 문단 4.2.2 · "
-                  "4.3.3(3)). 요소별 배분도 유효이자율 상각도 없다. 매도청구권은 제3자에게 "
-                  "이전될 수 있어 별도의 금융상품이라(문단 4.3.1) 이 지정 밖에 남는다."
+                  "4.3.3(3)). 요소별 배분도 유효이자율 상각도 없다. " + call_alloc_note(tm, whole=True)
                   if _FVROW else
                   "기업회계기준서 제1032호 문단 31·32 — 부채요소를 먼저 정하고 나머지를 자본에 배분한다. "
-                  "매도청구권은 제3자에게 이전될 수 있어 별도의 금융상품이다 (제1109호 문단 4.3.1, "
-                  "회계기준원 질의회신 2022-I-KQA006, 금융위 2022.5.3 감독지침). "
+                  + call_alloc_note(tm) +
                   "전환권이 부채이면 전환권과 조기상환권은 상호의존적이므로 하나의 복합내재파생상품으로 "
                   "전체로서 측정한다 (제1109호 문단 B4.3.4)."),
         color=GREY, size=9)
@@ -11563,7 +11760,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(J, _r, 3, _d["평가"].replace("**", ""), border=True); _r += 1
         if _d["지표"]:
             put(J, _r, 2, "분리 검토용 수치", bold=True, border=True)
-            put(J, _r, 3, SPLIT_NUM_NOTE, color=GREY, size=9, border=True); _r += 1
+            put(J, _r, 3, SPLIT_NUM_NOTE + " 이 칸들은 앱에서 생성 당시 계산한 참고값이다 — 가정 시트를 바꾸면 아래 «행사금액과 상각후원가 비교 — 수식» 표가 따라온다.", color=GREY, size=9, border=True); _r += 1
         for _a, _v in _d["지표"].items():
             put(J, _r, 2, _a, border=True)
             put(J, _r, 3, (f"{_v*100:.1f}%" if _a in ("차이", "가장 큰 차이") else
@@ -11740,8 +11937,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                          + ("선도이자율은 IR 시트(입력곡선 → 부트스트래핑 → 현물 → 선도)에서 수식으로 계산되어 "
                             "00 격자 공통 11·12행으로 옵니다. " if _irref else "")
                          + "상각표와 분리 판단의 유효이자율도 수식(앱과 같은 이분법)이라 입력을 바꾸면 따라옵니다.")),
-      ("앱이 정한 날짜", "조기상환·매도청구 행사일(00 격자 공통 20·27행)과 이자 지급일(9행)은 "
-                     "계약서의 날짜를 앱이 노드에 배정한 것입니다 (아래 «행사일 대조» 표와 규칙). 같은 날의 권리는 "
+      ("계약일과 노드 배정", "전환가격 조정일·이자 지급일·조기상환일·매도청구일은 «00 계약일 목록» 시트에 계약일로 "
+                     "적혀 있고, 각 계약일이 어느 노드에 배정되는지는 그 시트의 수식(COUNTIF)이 정합니다. 00 격자 공통 "
+                     "6행(조정일)·9행(지급 회수)·20·27행(행사월)은 그 목록을 찾아 옵니다 (아래 «행사일 대조» 표와 규칙). "
+                     "계약일 자체는 앱이 계약서에서 적은 값이라 바꾸려면 앱에서 조서를 다시 만듭니다. 같은 날의 권리는 "
                      "같은 노드에 배정됩니다. 행사금액은 노드 날짜가 아니라 계약일의 경과기간으로 계산합니다. "
                      "그래서 가정 시트의 이자 지급주기·조기상환 시작은 입력칸(노란색)이 아닙니다."),
       ("각 계산 시트의 공통조건 1~17행", "날짜·스텝·행사 가능 표시·행사금액·이자·만기상환금액·선도이자율·σ·u·d·q 는 "
