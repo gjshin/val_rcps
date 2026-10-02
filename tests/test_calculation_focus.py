@@ -350,3 +350,35 @@ def test_sha_linked_rows_screen_to_excel():
         wb = load_workbook(io.BytesIO(z.read(name)))
     assert {'2·05 행사 판단', '2·03b 풋 (풋만)'} <= set(wb.sheetnames), wb.sheetnames
     assert '1·05 행사 판단' not in wb.sheetnames
+
+
+def test_sha_perf_row_without_price_runs_on_screen():
+    """실적 연동 산식만 있고 주당 기준가격 칸이 빈 회차 — 화면도 엔진처럼 산식 가격으로 평가한다 (가상 수치).
+
+    가격 칸을 산식 값으로 채운 회차와 금액이 같아야 하고, 산식 입력이 모자라면 입력 검사가 막는다."""
+    pf = dict(rev=9e9, ded=1e9, op=-5e8, thr=.10, hi=1.0, lo=1.5, sh=100000., fy=2025, ey=2026, kind='추정')
+    row = dict(name='1차', start='2026-01-01', end='2026-12-31', style='any', rate=0., put_q=10000., call_q=10000.,
+               perf=pf)
+    contract = dict(inst='SHA', d_issue='2022-01-24', d_mat='2026-12-31', K0=120000., face_total=120000.*10000,
+                    rfx_mode=0, cpn=0., cv_s=99., cv_e=0., p_s=99., p_e=0., k_w=0., sha_put_s=99., sha_put_e=0.,
+                    sha_call_s=99., sha_call_e=0., sha_rows=[row])
+    market = dict(S0=100000., sig=.5, rf_curve=[[1, .025], [3, .027]], cr_curve=[[1, .06], [3, .065]])
+    method = dict(d_base='2025-09-30', model='TF', view='issuer', gap_m=1., grid_days=14.)
+    case = Case(name='산식 가격 회차', contract=contract, market=market, method=method)
+    app = AppTest.from_file(str(ROOT/'app.py'), default_timeout=300)
+    app.session_state.case = case; app.run()
+    assert not app.exception and not app.error
+    app.radio(key='_workflow_stage').set_value('평가·분석').run()
+    btn = next(b for b in app.button if b.label == '현재 입력으로 평가')
+    assert not btn.disabled
+    btn.click().run()
+    assert not app.exception
+    run = app.session_state.run
+    priced = calculate(Case(name='가격 채움', contract=dict(contract, sha_rows=[dict(row, price=120000.)]),
+                            market=market, method=method))
+    assert run.summary['amounts_total'] == pytest.approx(priced.summary['amounts_total'], rel=1e-12)
+    assert run.summary['sha_rows'][0]['주당 기준가격'] == pytest.approx(120000.)
+    bad = Case(name='산식 누락', contract=dict(contract, sha_rows=[dict(row, perf=dict(pf, rev=None))]),
+               market=market, method=method)
+    msgs = [i.message for i in inspect_case(bad) if i.severity == 'error']
+    assert any('매출액' in m for m in msgs), msgs
