@@ -59,3 +59,18 @@ def test_assignment_rows_are_formulas_and_match_engine(name, over):
     assert set(got_k) == set(EA["k_dates"]) and all(abs(got_k[i] - EA["k_dates"][i]) < 1e-6 for i in got_k)
     for i in got_p:
         assert abs(V.cell(26, 3+i).value - (EA["put"](i) + (cpn*pay.get(i, 0) if (i < n and t.p_cpn_add) else 0))) < 1e-6
+
+
+def test_node_dates_match_engine_on_half_day():
+    # 구간 일수가 정확히 반일인 노드 — 엔진(파이썬 round, 짝수로)과 조서가 같은 날짜를 써야 배정이 같다.
+    # 10일 · 노드 4개면 2.5일 → 엔진 2일. 조서의 노드 날짜는 엔진 값을 그대로 적는다.
+    t = legacy.Terms(d_issue="2026-01-01", d_base="2026-01-01", d_mat="2026-01-11", grid_days=2.5,
+                     rf_curve=[(1, .03), (3, .03)], cr_curve=[(1, .08), (3, .08)], cv_s=0., cv_e=0., p_s=99., p_e=0., k_w=0.)
+    legacy.derive(t)
+    full, b0, b1, b2, ca, conv = legacy.decompose(t)
+    wb = legacy.build_xlsx_formula(t, full, b0, b1, b2, ca, conv, None, as_workbook=True)
+    D = wb["00 계약일 목록"]
+    nd = legacy.node_dates(t, t.n, t.T/t.n)
+    got = [D.cell(5, 3+i).value for i in range(t.n+1)]
+    got = [g.date() if hasattr(g, "date") else g for g in got]
+    assert got == nd

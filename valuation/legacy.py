@@ -10036,15 +10036,17 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(D, 2, 2, "계약일마다 «계약일 이후 첫 노드» 에 배정한다. 노드 날짜가 계약일보다 허용 일수 안에서 "
                      "앞서면 같은 날로 본다. 노드 번호 = 노드 날짜가 «계약일 − 허용 일수» 보다 이른 노드의 개수 "
                      "(COUNTIF). 00 격자 공통 6행(조정일)·9행(지급 회수)·20·27행(행사월)이 이 표를 본다. "
-                     "계약일은 계약서의 날짜를 앱이 적은 값이다 — 바꾸려면 앱에서 조서를 다시 만든다.",
+                     "계약일과 노드 날짜는 앱이 적은 값이다 — 바꾸려면 앱에서 조서를 다시 만든다.",
             color=GREY, size=9)
         put(D, 4, 2, "노드 번호", bold=True, size=8, fill=LIGHT, border=True)
         put(D, 5, 2, "노드 날짜", bold=True, size=8, fill=LIGHT, border=True)
+        # 노드 날짜는 엔진의 node_dates 를 그대로 적는다(앱이 정한 값). 엑셀 ROUND 는 0.5 를 올리고 파이썬 round 는
+        # 짝수로 맞춰, 수식으로 다시 만들면 구간 일수가 정확히 반일인 노드에서 날짜가 하루 갈려 배정이 달라진다.
+        _ndv = node_dates(tm, n, dt_)
         for i in range(n+1):
             L_ = gl(3+i); D.column_dimensions[L_].width = max(D.column_dimensions[L_].width or 0, 11)
             put(D, 4, 3+i, i, fmt=N0, align="center", size=8)
-            # 엔진의 node_dates 와 같다 — 평가기준일 + 반올림(스텝 × 구간 일수)
-            put(D, 5, 3+i, f"={K['d_base']}+ROUND({L_}4*{K['dt']}*365,0)", fmt=DATE, align="center", size=8)
+            put(D, 5, 3+i, _ndv[i], fmt=DATE, align="center", size=8)
         NROW = f"$C$5:${gl(3+n)}$5"
         put(D, 6, 2, "허용 일수", bold=True, size=8, fill=LIGHT, border=True)
         put(D, 6, 3, f"=MIN(5,MAX(1,INT({K['dt']}*365/4)))", fmt=N0, align="center", size=8)
