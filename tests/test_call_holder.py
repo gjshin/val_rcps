@@ -81,3 +81,33 @@ def test_screen_call_holder_first_choice():
     meth = next(w for w in app.selectbox if w.label.startswith("콜") and "평가방법" in w.label)
     assert meth.value == 0
     assert not any(w.label.startswith("제3자 콜 유형") for w in app.selectbox)   # 상세 조건에서 빠졌다
+
+
+def test_split_panel_after_evaluation():
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    root = Path(__file__).resolve().parents[1]
+    case = import_legacy(dict(BASE, **legacy.call_holder_fields(0, "TF")), "분리 판단 요약 화면")
+    app = AppTest.from_file(str(root / "app.py"), default_timeout=120)
+    app.session_state["case"] = case
+    app.run()
+    app.radio(key="_workflow_stage").set_value("평가·분석").run()
+    next(b for b in app.button if b.label == "현재 입력으로 평가").click().run()
+    assert not app.exception
+    assert any("내재파생 분리 판단" in m.value for m in app.markdown)
+    df = next(d for d in app.dataframe if "판정과 설정" in d.value.columns)
+    assert "매도청구권" in list(df.value["권리"])
+
+
+def test_input_sections_by_right():
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    root = Path(__file__).resolve().parents[1]
+    app = AppTest.from_file(str(root / "app.py"), default_timeout=60)
+    app.session_state["case"] = import_legacy(dict(BASE, **legacy.call_holder_fields(1, "TF")), "입력 구획")
+    app.run()
+    heads = [h.value for h in app.subheader]
+    for h in ("이자·만기 상환", "전환권", "조기상환청구권 (투자자 풋)", "매도청구권 (콜)", "회계 정책 (공통)"):
+        assert h in heads, heads
+    assert heads.index("전환권") < heads.index("조기상환청구권 (투자자 풋)") < heads.index("매도청구권 (콜)")
+    assert not any(e.label == "분해방법·기간 기준" for e in app.expander)
