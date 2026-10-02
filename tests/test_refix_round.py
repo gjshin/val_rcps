@@ -56,3 +56,15 @@ def test_k_round_boundary():
     t.rfx_round = 2
     assert legacy.k_round(t, 1446.9999999999) == 1447.0
     assert legacy.k_round(t, 1446.8320) == 1446.0
+
+
+def test_truncate_choice_not_blocked():
+    # 화면에서 «절사» 를 골라도 입력 점검이 막지 않는다 (종전에는 0/1 만 허용해 절사가 막혔다)
+    from valuation.case import import_legacy
+    from valuation.service import calculate
+    from dataclasses import asdict
+    t = legacy.Terms(rf_curve=[[1, .0226], [3, .0240], [5, .0252]], cr_curve=[[1, .1409], [3, .1740], [5, .1905]],
+                     gap_m=6.0, rfx_round=2)
+    run = calculate(import_legacy({k: v for k, v in asdict(t).items() if k not in ("T", "n", "elapsed_m", "rem_m", "scen_md5")},
+                                  "절사 선택"))
+    assert run.terms.rfx_round == 2
