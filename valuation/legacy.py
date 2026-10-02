@@ -2652,8 +2652,10 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
             Vg = min(max(cv, pv, Vc), max(kv, cv if _cresp else -math.inf,
                                           pv if not _kfirst else -math.inf))
             # GS 의 전환확률은 GS 자신의 판단을 따른다. TF 와 다른 갈래를 고를 수 있다.
-            # GS 도 같은 순서다. 현금이 동점이면 전환확률 0 이다.
-            if (abs(Vg - pv) < tie_tol(Vg, pv)
+            # GS 도 같은 순서다. 현금이 동점이면 전환확률 0 이다. 열리지 않은 상환청구(금액 0)는 현금 갈래가
+            # 아니다 — 아래 결정과 같은 읽기(_pvd)다. 0 과 견주면 값이 0 에 가까운 자리의 전환확률이 0 이 된다.
+            _pvd = pv if pv > 0 else -math.inf
+            if (abs(Vg - _pvd) < tie_tol(Vg, _pvd)
                     or (kv < math.inf and abs(Vg - kv) < tie_tol(Vg, kv))):   Pg = 0.0
             elif cv > 0 and abs(Vg - cv) < tie_tol(Vg, cv):                  Pg = 1.0
             else:                                                            Pg = pr
@@ -2669,7 +2671,6 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
             # 무한대로 넘기는 것과 같은 읽기다. 0 으로 넘기면 «풋은 동점이면 이긴다» 규칙 때문에 주가가
             # 0 에 가까운 자리(전환가치·보유가치가 허용오차 안)에서 상환청구가 골라져, 상환청구권이 없는
             # 계약에 «행사 불가능한 자리의 결정» 이 생긴다. 가치는 그 자리 값이 1e-9 수준이라 거의 같다.
-            _pvd = pv if pv > 0 else -math.inf
             _kd = node_decide(cv, _pvd, kv, hold, _kfirst, _cresp)
             if   _kd == "conv": _e, _b = cv, 0.0
             elif _kd == "put":  _e, _b = 0.0, pv
@@ -10635,7 +10636,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                      f"{S14} · 다음 열 {S11}")
         # 현금(상환P·상환C)이 동점이면 0 이다. 전환은 허용오차만큼 앞설 때만 1 이다.
         _v14 = lambda L, r: f"{Q(S14)}!{L}{R0+r}"
-        _cash = lambda L, r: (f'OR(ABS({_v14(L, r)}-{L}$7)<{xl_tol(_v14(L, r), f"{L}$7")},'
+        # 열리지 않은 상환청구(금액 0)는 현금 갈래가 아니다 — 엔진의 _pvd 와 같은 읽기.
+        _cash = lambda L, r: (f'OR(AND({L}$7>0,ABS({_v14(L, r)}-{L}$7)<{xl_tol(_v14(L, r), f"{L}$7")}),'
                               f'ABS({_v14(L, r)}-{L}$8)<{xl_tol(_v14(L, r), f"{L}$8")})')
         fill(W, lambda i, r, L, Lp, Ln: (
             f'=IF({_cash(L, r)},0,'
@@ -10817,7 +10819,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 # 엔진(Pg)과도 같다. 종전에는 전환을 먼저 보고 등호로만 견주어서,
                 # 전환가치와 상환금액이 같아지는 자리(의무보유로 전환 시작과 조기상환
                 # 시작이 갈릴 때 생긴다)에서 GS 30% 트랜치가 엔진과 어긋났다.
-                _gcash = lambda L, r: (f"OR(ABS({L}{c10+1+r}-{L}$7)<{xl_tol(f'{L}{c10+1+r}', f'{L}$7')},"
+                _gcash = lambda L, r: (f"OR(AND({L}$7>0,ABS({L}{c10+1+r}-{L}$7)<{xl_tol(f'{L}{c10+1+r}', f'{L}$7')}),"
                                        f"ABS({L}{c10+1+r}-{L}$8)<{xl_tol(f'{L}{c10+1+r}', f'{L}$8')})")
                 for i in range(n+1):
                     L = gl(3+i); Lp = gl(2+i) if i > 0 else None; Ln = gl(4+i) if i < n else None

@@ -76,3 +76,40 @@ def test_formula_workbook_decides_same_as_engine(tmp_path):
             if isinstance(c.value, str) and c.value in names and c.column >= 3:
                 xl[(c.column - 3, c.value)] += 1
     assert {k: v for k, v in xl.items() if k[0] <= n} == eng
+
+
+def _recalc(data, tmp_path):
+    import subprocess
+    (tmp_path/"s.xlsx").write_bytes(data); (tmp_path/"o").mkdir(exist_ok=True)
+    subprocess.run([shutil.which("libreoffice") or shutil.which("soffice"),
+                    "-env:UserInstallation=" + (tmp_path/"p").as_uri(), "--headless", "--convert-to", "xlsx",
+                    "--outdir", str(tmp_path/"o"), str(tmp_path/"s.xlsx")], capture_output=True, timeout=1800)
+    return load_workbook(tmp_path/"o"/"s.xlsx", data_only=True)
+
+
+def test_gs_conversion_probability_ignores_closed_put():
+    # 두 번째 모형(전환확률로 할인율을 섞는 모형)의 «현금이 동점이면 전환확률 0» 도 열린 상환청구에만 건다.
+    # 자동전환·상환청구권 없음이면 만기에 늘 주식이 되므로 만기 전환확률은 모든 자리에서 1 이다.
+    run = calculate(case(model="GS"))
+    assert run.raw["integrity"] == []
+    n = run.terms.n
+    assert all(o["P"] == 1.0 for (i, j), o in run.raw["full"]["memo"].items() if i == n)
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_gs_formula_probability_matches_engine(tmp_path):
+    run = calculate(case(model="GS"))
+    data = zipfile.ZipFile(io.BytesIO(export_bundle(run, formula=True, detail=True))).read("formula_review.xlsx")
+    ws = _recalc(data, tmp_path)["11 GS 전환확률"]
+    n = run.terms.n
+    eng, xl = Counter(), Counter()
+    for (i, j), o in run.raw["full"]["memo"].items():
+        eng[(i, round(o["P"], 9))] += 1
+    hdr = next(r for r in range(1, 60) if str(ws.cell(r, 2).value or "").startswith("하락 횟수"))
+    for col in range(3, n + 4):
+        i = ws.cell(hdr, col).value
+        if not isinstance(i, int): continue
+        for r in range(hdr + 1, hdr + 2 + i):
+            v = ws.cell(r, col).value
+            if isinstance(v, (int, float)): xl[(i, round(float(v), 9))] += 1
+    assert xl == eng
