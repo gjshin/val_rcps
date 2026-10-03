@@ -267,7 +267,8 @@ def _sha_row_px(r):
 
 DP_OTHER_COLS = [('name', '상품 이름'), ('rank', '순위'), ('issue', '발행일'), ('face', '발행총액(원)'),
                  ('yld', '상환 보장수익률(연 %)'), ('cmp', '복리 방식'), ('start', '상환청구 시작일'),
-                 ('end', '상환청구 종료일'), ('div', '우선배당률(연 %, 발행가 기준)')]
+                 ('end', '상환청구 종료일'), ('div', '우선배당률(연 %, 발행가 기준)'),
+                 ('delay', '넘긴 상환금 가산율(연 %)')]
 DP_RANK = {'senior': '평가대상이 선순위', 'pari': '동순위 (비율로 나눔)'}
 DP_CMP = {1: '연복리', 0: '단리'}
 
@@ -393,7 +394,7 @@ def dp_editor(edited, errors):
                 c_ = _num(r.get('cmp', 1), _whole, f'{nm} 복리 방식', sl)
                 if c_ is not None and c_ not in DP_CMP: bad.append(f'{nm} 복리 방식'); keep[sl] = r.get('cmp')
                 return DP_CMP.get(c_)
-            if k in ('yld', 'div'):
+            if k in ('yld', 'div', 'delay'):
                 v = _num(r.get(k), float, f'{nm} {t}', sl); return None if v is None else v*100
             if k in ('issue', 'start', 'end'): return _day(r.get(k), f'{nm} {t}', sl)
             if k == 'face': return _num(r.get(k), float, f'{nm} {t}', sl)
@@ -430,7 +431,7 @@ def dp_editor(edited, errors):
                     row[k] = keep[sl]; continue      # 읽을 수 없던 칸을 고치지 않았으면 원래 값을 둔다
                 if k == 'rank': v = back_rank.get(v, 'senior')
                 elif k == 'cmp': v = back_cmp.get(v, 1)
-                elif k in ('yld', 'div'): v = 0.0 if v is None else float(v)/100
+                elif k in ('yld', 'div', 'delay'): v = 0.0 if v is None else float(v)/100
                 elif k in ('issue', 'start', 'end'): v = v.isoformat() if hasattr(v, 'isoformat') else (str(v) if v else '')
                 elif k == 'face': v = None if v is None else float(v)
                 elif k == 'name': v = str(v or '').strip() or f'다른 상품 {len(new_o)+1}'

@@ -857,3 +857,37 @@ def test_shortfall_warning_counts_peer_dividends():
                 start="2028-06-01", end="2030-12-31", div=.10)]
     run = calculate(rcps(cpn=0.0, dp_rows=[{"fy": 2027, "amt": 3e8}], dp_others=oth))
     assert any("2027년 배당가능이익이 우선배당" in m.message for m in run.issues if m.code == "input_check")
+
+
+def test_peer_uses_its_own_delay_rate():
+    # 평가대상 가산율 5% · 동순위 상품 가산율 0%(넣지 않음) — 동순위 남은 상환금은 넘어가도 늘지 않는다.
+    oth = [dict(name="가상 9회차", rank="pari", issue="2026-01-01", face=5e9, yld=0.0, cmp=1,
+                start="2027-01-01", end="2030-12-31", div=0.0)]
+    E, t = ea(calculate(rcps(dp_rows=[{"fy": 2026, "amt": 1e9}, {"fy": 2027, "amt": 1e9}], dp_others=oth, dp_delay=.05)))
+    dt_ = t.T/t.n
+    i = next(i for i in sorted(E["p_dates"]) if legacy.dp_step_dt(t, dt_, i).year == 2027)
+    rows = E["dp"].schedule(i, E["put"](i), "put")["rows"]
+    b0, b1 = rows[0][5], rows[1][5]
+    A = rows[0][4]; q0 = min(50.0, rows[0][3]*50.0/(A + 50.0))
+    assert b1 == pytest.approx(b0 - q0, rel=1e-12)                    # 가산 없음
+    oth[0]["delay"] = .10
+    E2, _ = ea(calculate(rcps(dp_rows=[{"fy": 2026, "amt": 1e9}, {"fy": 2027, "amt": 1e9}], dp_others=oth, dp_delay=.05)))
+    r2 = E2["dp"].schedule(i, E2["put"](i), "put")["rows"]
+    assert r2[1][5] == pytest.approx((b0 - q0)*1.10, rel=1e-12)      # 그 상품의 가산율 10%
+
+
+def test_shortfall_warning_follows_actual_schedule():
+    # 평가대상 우선배당 2% 는 청구한 해에만 뺀다 — 2029년 청구 뒤 넘긴 금액을 갚는 2030년 재원(발생연도 2029 이익 1)은
+    # 우선배당을 빼지 않으므로 배당 부족이 아니다. 청구한 해의 재원(발생연도 2028 이익 1)은 부족하다.
+    rows = [{"fy": 2028, "amt": 1e8}, {"fy": 2029, "amt": 1e8}]
+    run = calculate(rcps(p_s=36., p_e=47., dp_rows=rows))
+    msg = [m.message for m in run.issues if m.code == "input_check" and "우선배당(평가대상과" in m.message]
+    assert msg and "2028" in msg[0] and "2029" not in msg[0].split("년 배당가능이익")[0]
+
+
+def test_half_day_check_ignores_third_party_call():
+    m = 12 + 8/487
+    c = rcps(issuer_call=2, k_s=m, k_e=m + 24, k_f=12., k_prem=.06, k_cmp=1, k_w=1.,
+             dp_rows=[{"fy": 2027, "amt": 1e9}])
+    c.exercise_styles["k_f"] = "periodic"
+    assert not any("반나절" in i.message for i in inspect_case(c))
