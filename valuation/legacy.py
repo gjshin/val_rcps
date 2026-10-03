@@ -10596,7 +10596,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                     pcd=_dp_sb+6, kcd=_dp_sb+7)                # 재원 연도를 정하는 계약상 청구일 (상환청구 · 발행자 상환권)
         _dp_blk = 11 + 3*len(_DPO)                        # k 한 해에 쓰는 줄 수 (머리줄 포함)
         _dp_k0 = _dp_sb + 9
-        _dp_red0 = _dp_k0 + (_DPP.K + 1)*_dp_blk + 4      # 만기상환 일정 구역
+        # 수식 조서는 연도 칸을 엔진보다 한 해 더 둔다 — 노란 칸의 재원 사용 시작일을 바꾸면 재원 연도가 최대 한 해
+        # 당겨지므로, 그때도 마지막 «넣지 않은 해(제한 없음)» 가 들어간다. 원래 입력에서는 여분 칸의 지급이 0 이다.
+        _dp_KX = _DPP.K + 1
+        _dp_red0 = _dp_k0 + (_dp_KX + 1)*_dp_blk + 4      # 만기상환 일정 구역
         _DPRED = f"{DPQ}!$C${_dp_red0 - 1}"
     _common = {}
     # ── 00 계약일 목록 — 계약서의 날짜를 노드에 배정하는 과정을 수식으로 편다 ──
@@ -10893,7 +10896,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             """한 청구 시점(열 L)의 지급 일정. 돌려주는 것은 «지급 × 할인계수» 식 목록."""
             terms, pr = [], None
             y0c = f"{L}${rows_of(base)['yr']}"          # 청구 시점의 재원 연도 (0년 블록)
-            for k in range(_DPP.K + 1):
+            for k in range(_dp_KX + 1):
                 b = base + k*_dp_blk
                 rr = rows_of(b)
                 if labels:

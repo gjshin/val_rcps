@@ -891,3 +891,26 @@ def test_half_day_check_ignores_third_party_call():
              dp_rows=[{"fy": 2027, "amt": 1e9}])
     c.exercise_styles["k_f"] = "periodic"
     assert not any("반나절" in i.message for i in inspect_case(c))
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_survives_fund_start_edit(tmp_path):
+    # 1~3월 청구 · 시작일 01-01 로 만든 수식 조서에서 노란 칸을 04-01 로 바꾸면 청구가 그 전해 재원으로 옮겨진다.
+    # 엔진을 04-01 로 다시 계산한 값과 같아야 한다(연도 칸이 모자라 마지막 제한 없는 해를 잃지 않는다).
+    rows = [{"fy": y, "amt": 5e8} for y in range(2024, 2028)]     # 이어진 발생연도 2024~2027
+    base = dict(p_s=0., p_e=2., dp_rows=rows)                      # 평가기준일(2026-01-01) 근처 1~3월 청구
+    run = calculate(rcps(dp_from="01-01", **base))
+    data = zipfile.ZipFile(io.BytesIO(export_bundle(run, formula=True, detail=True, accounting=True))).read("formula_review.xlsx")
+    wb0 = load_workbook(io.BytesIO(data)); ws = wb0["00 배당가능이익 상환"]
+    ws["C8"] = 4; ws["D8"] = 1
+    buf = io.BytesIO(); wb0.save(buf)
+    (tmp_path/"s.xlsx").write_bytes(buf.getvalue()); (tmp_path/"o").mkdir()
+    subprocess.run([shutil.which("libreoffice") or shutil.which("soffice"),
+                    "-env:UserInstallation=" + (tmp_path/"p").as_uri(), "--headless", "--convert-to", "xlsx",
+                    "--outdir", str(tmp_path/"o"), str(tmp_path/"s.xlsx")], capture_output=True, timeout=1800)
+    wb = load_workbook(tmp_path/"o"/"s.xlsx", data_only=True)
+    E, t = ea(calculate(rcps(dp_from="04-01", **base)))
+    com = wb["00 격자 공통"]
+    for j in range(t.n + 1):
+        if E["p_on"](j):
+            assert com.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j
