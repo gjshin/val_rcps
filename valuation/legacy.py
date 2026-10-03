@@ -2108,6 +2108,8 @@ def dp_other_issues(tm: Terms) -> list:
             out.append(f"{nm}: 발행일·상환청구 시작일·종료일을 YYYY-MM-DD 로 넣으십시오."); continue
         if not (a <= b <= c):
             out.append(f"{nm}: 발행일 ≤ 상환청구 시작일 ≤ 종료일이어야 합니다.")
+        elif (c - a).days > 365*100:          # 연 100% 상한과 함께 상환금 가산이 늘 유한하다
+            out.append(f"{nm}: 발행일부터 상환청구 종료일까지 100년을 넘을 수 없습니다.")
         try:
             v = dp_num(r["face"])
             if not (v > 0 and math.isfinite(v)):
