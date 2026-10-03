@@ -516,3 +516,54 @@ def test_formula_workbook_moved_payment_steps(tmp_path):
         if E["p_on"](i):
             assert ws.cell(7, 3+i).value == pytest.approx(E["put_val"](i), rel=1e-9, abs=1e-9), i
     assert ws.cell(10, 3+t.n).value == pytest.approx(E["red_val"], rel=1e-9)
+
+
+def test_unpaid_at_maturity_lost_option():
+    # 만기(2031-01-01) 현금상환 · 2030년까지 이익 0. 연장(기본)이면 2032년에 전액, «받지 못함» 이면 0.
+    rows = [{"fy": y, "amt": 0.0} for y in range(2026, 2031)]
+    Ea, _ = ea(calculate(rcps(mat_mode=1, p_s=0., p_e=0., dp_rows=rows)))
+    b = calculate(rcps(mat_mode=1, p_s=0., p_e=0., dp_rows=rows, dp_unpaid="lost")); Eb, _ = ea(b)
+    assert Ea["red_val"] > 0 and Eb["red_val"] == 0.0
+    assert any("받지 못하는 것으로" in m.message for m in b.issues if m.code == "input_check")
+    # 만기 전에 갚은 몫은 그대로 — 2028년 청구, 재원 일부만 있으면 만기 전 지급분만 남는다
+    rows2 = [{"fy": y, "amt": 2e9} for y in range(2026, 2031)]
+    Ec, t = ea(calculate(rcps(dp_rows=rows2, dp_unpaid="lost"))); dt_ = t.T/t.n
+    for i in Ec["p_dates"]:
+        sc = Ec["dp"].schedule(i, Ec["put"](i))
+        assert sc["pv"] == pytest.approx(sum(r[6]*r[7] for r in sc["rows"] if r[1] <= t.n), rel=1e-12)
+    assert legacy.dp_issues(legacy.Terms(inst="RCPS", dp_rows=rows, dp_unpaid="convert"))
+
+
+def test_auto_conversion_with_extension_is_flagged():
+    rows = [{"fy": y, "amt": 1e9} for y in range(2026, 2031)]
+    run = calculate(rcps(dp_rows=rows))           # 만기 자동전환(기본) · 연장(기본) · 만기 뒤 지급 있음
+    assert any("만기 자동전환 조건인데" in m.message for m in run.issues if m.code == "input_check")
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_unpaid_lost(tmp_path):
+    oth = [dict(name="가상 2회차", rank="pari", issue="2026-06-01", face=5e9, yld=.04, cmp=0,
+                start="2028-01-01", end="2030-06-30", div=.01)]
+    run = calculate(rcps(mat_mode=1, dp_rows=[{"fy": y, "amt": 1.5e9} for y in range(2026, 2031)],
+                         dp_others=oth, dp_delay=.03, dp_unpaid="lost"))
+    t, R = run.terms, run.raw
+    data, wb = _recalc_formula(run, tmp_path)
+    exp = legacy.formula_key_cells(t, R, legacy.eir_or_none(t, R["full"], R["b0"], R["b1"], R["b2"], R["ca"]))
+    assert all(r[4] == "일치" for r in compare_cells(wb, exp))
+    E, _ = ea(run)
+    ws = wb["00 격자 공통"]
+    for i in range(t.n + 1):
+        if E["p_on"](i):
+            assert ws.cell(7, 3+i).value == pytest.approx(E["put_val"](i), rel=1e-9, abs=1e-9), i
+    assert ws.cell(10, 3+t.n).value == pytest.approx(E["red_val"], rel=1e-9, abs=1e-9)
+
+
+def test_screen_unpaid_option():
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
+    app.session_state.case = rcps(dp_rows=[{"fy": 2027, "amt": 3e9}]); app.run()
+    r = next(x for x in app.radio if x.label == "만기까지 갚지 못한 금액")
+    assert r.value == "extend"
+    r.set_value("lost").run()
+    assert not app.exception and app.session_state.case.contract["dp_unpaid"] == "lost"

@@ -93,6 +93,7 @@ class Terms:
     #   dp_from    재원 사용 시작일 (월-일). 이 날 전의 청구·지급은 그 전해 재원을 쓴다 — 결산 확정(정기주주총회)
     #              전에는 직전 연도 이익을 쓸 수 없다고 볼 때 «04-01» 처럼 넣는다. 기본 01-01 은 1월 1일부터 쓴다.
     dp_from: str = "01-01"
+    dp_unpaid: str = "extend"       # 만기까지 갚지 못한 금액 — extend 상환이 끝날 때까지 연장해 계속 갚음 / lost 받지 못함
     div_mode: int = 0               # RCPS 우선배당 0 상환가액에 가산(전체 부채) / 1 재량(부채 현금흐름 제외)
     # 우선배당률의 기준. 격자는 1주 발행가를 100 으로 재므로 배당률도 발행가 기준이어야
     # 한다. 계약이 「1주당 **액면가액** 기준 연 1%」 라고 쓰면 발행가 기준으로는
@@ -749,7 +750,7 @@ MODEL_LIMITS = (
      '넣지 않으면 계약상 상환일에 즉시 상환된다고 본다. 넣으면 발생연도별 고정값으로 청구 시점마다 지급 일정을 '
      '정한다 — 주가와 이익의 연동, 해마다 한도만큼만 나눠 청구하는 전략, 동순위 상품의 개별 판단(그 재원 연도 안에 '
      '청구 기간이 하루라도 있으면 그 해 함께 청구하고, 평가대상 청구 전에 청구 기간이 끝난 상품은 그 전에 상환을 마쳤다고 본다)은 반영하지 않는다. 넘긴 상환금은 청구일부터 1년 단위의 가장 가까운 계산 시점에 갚고, 만기 '
-     '뒤 지급분은 마지막 구간의 위험 선도이자율로 할인한다. 배당 부족(이익 < 우선배당)은 따로 반영하지 않는다',
+     '뒤 지급분은 마지막 구간의 위험 선도이자율로 할인한다(«받지 못함» 을 고르면 만기 뒤 지급은 0, 만기에 보통주로 바꾸는 조항은 반영하지 않음). 배당 부족(이익 < 우선배당)은 따로 반영하지 않는다',
      ('UNMODELLED_NOTE (조서 표지)', 'README', 'docs/입력안내_RCPS.md')),
     ('전환 희석 미반영',
      '기초주가를 받은 그대로 쓴다. 전환으로 늘어나는 주식수와 사라지는 부채를 주가에 되먹이지 '
@@ -2040,6 +2041,7 @@ def exercise_dates(tm: Terms, n: int, dt_: float, s: float, e: float, f: float, 
 DP_OTHER_KEYS = ("name", "rank", "issue", "face", "yld", "cmp", "start", "end", "div")
 DP_RANKS = {"senior": "평가대상이 선순위 (이 상품은 평가대상 뒤에 상환)",
             "pari": "동순위 (같은 해 상환청구 금액 비율로 나눔)"}
+DP_UNPAID = {"extend": "상환이 끝날 때까지 연장해 계속 갚음", "lost": "받지 못하는 것으로 봄"}
 DP_INF = 1e300
 DP_KMAX = 60
 
@@ -2142,6 +2144,8 @@ def dp_issues(tm: Terms) -> list:
             out.append("이월 상환금 가산율은 0 이상이어야 합니다.")
     except (TypeError, ValueError):
         out.append("이월 상환금 가산율을 숫자로 넣으십시오.")
+    if str(getattr(tm, "dp_unpaid", "extend") or "extend") not in DP_UNPAID:
+        out.append("만기까지 갚지 못한 금액의 처리는 «연장해 계속 갚음» 또는 «받지 못함» 가운데 고르십시오.")
     if dp_from_md(tm) is None:
         out.append("재원 사용 시작일은 «월-일»(예: 04-01) 형식이어야 합니다 (02-29 는 쓸 수 없습니다).")
     if seen and dp_from_md(tm) is not None:
@@ -2171,12 +2175,17 @@ def dp_warnings(tm: Terms) -> list:
     # 금액이 있으면 그 발생연도를 알린다 — 넘긴 금액을 갚는 뒤 해도 포함한다.
     # 만기상환 일정은 만기 자동전환이어도 부채요소(전환권 없는 평가)에 쓰이므로 늘 살핀다
     claims = [(i, EA["put"](i)) for i in sorted(EA["p_dates"])] + [(n, EA["red"])]
-    DP = EA["dp"]; miss = set()
+    DP = EA["dp"]; miss = set(); after = lost = False
     for i, amt in claims:
         y0 = dp_fund_year(tm, dp_step_dt(tm, dt_, i))
-        for k, m, at, cap, be, bo, pe, df in DP.schedule(i, amt)["rows"]:
+        rows = DP.schedule(i, amt)["rows"]
+        for j, (k, m, at, cap, be, bo, pe, df) in enumerate(rows):
             if cap >= DP_INF/10 and be > 1e-12:
                 miss.add(y0 + k - 1)
+            if m > n and pe > 1e-12:
+                after = True                 # 만기 뒤에도 갚는 금액이 있다 (연장)
+            if DP.lost and m > n and j > 0 and rows[j-1][4] - rows[j-1][6] > 1e-12 and rows[j-1][1] <= n:
+                lost = True                  # 만기까지 갚지 못한 금액을 받지 못한 것으로 봤다
     if issuer_redeem(tm):                    # 발행자 상환권 행사일 — 넣지 않은 해는 제한 없이 행사할 수 있다고 본다
         for i in EA["k_dates"]:
             y = dp_fund_year(tm, dp_step_dt(tm, dt_, i)) - 1
@@ -2185,6 +2194,12 @@ def dp_warnings(tm: Terms) -> list:
     if miss:
         w.append("상환청구·만기상환(다음 해로 넘긴 금액 포함)·발행자 상환권에 쓰는 해 중 발생연도 " + ", ".join(str(y) for y in miss) + "년의 배당가능이익을 넣지 않아 "
                  "그 다음 해에는 제한 없이 상환된다고 봤습니다(기본 전제). 추정치가 있으면 넣으십시오.")
+    if after and int(getattr(tm, "mat_mode", 0)) == 0:
+        w.append("만기 자동전환 조건인데, 만기까지 갚지 못한 상환금은 만기 뒤에도 현금으로 계속 갚는다고 봤습니다"
+                 "(«만기까지 갚지 못한 금액» = 연장해 계속 갚음). 계약서상 상환하지 못한 주식도 만기에 보통주로 "
+                 "전환된다면 이 가정과 다릅니다 — 계약서의 상환 미완료 조항을 확인하십시오.")
+    if lost:
+        w.append("만기까지 갚지 못한 상환금은 받지 못하는 것으로 봤습니다(«만기까지 갚지 못한 금액» = 받지 못함).")
     face = float(tm.face_total); de = 100*dp_div_rate(tm)
     low = [y for y, a in sorted(P.items()) if a*100/face < de - 1e-9]
     if low:
@@ -2276,6 +2291,7 @@ class DPPlan:
         self.face = float(tm.face_total)
         self.div_e = 100*dp_div_rate(tm)
         self.g = float(getattr(tm, "dp_delay", 0.0) or 0.0)
+        self.lost = str(getattr(tm, "dp_unpaid", "extend") or "extend") == "lost"   # 만기 뒤 지급은 받지 못함
         self.others = dp_others(tm)
         RF, CR = curves(tm)
         f = [forward_rate(CR, j*dt_, (j+1)*dt_) for j in range(n)]
@@ -2325,6 +2341,8 @@ class DPPlan:
             if k > 0:
                 m = self.pay_step(m, y0 + k)
             at = dp_step_dt(self.tm, self.dt, m)
+            if self.lost and m > self.n:
+                be = 0.0                         # 만기까지 갚지 못한 금액은 받지 못한다 — 그 뒤 재원은 동순위 몫
             ded = self.div_e if k == 0 else 0.0
             for x, o in enumerate(oth):
                 if not joined[x]:
@@ -2404,7 +2422,9 @@ def dp_value_sheet(wb, tm: Terms):
     table(["항목", "값"], [["평가대상 발행총액 (원)", float(tm.face_total)],
                           ["평가대상 우선배당률 (발행가 기준, 연)", dp_div_rate(tm)],
                           ["넘긴 상환금 연 가산율", float(getattr(tm, "dp_delay", 0.0) or 0.0)],
-                          ["재원 사용 시작일 (이 날 전은 그 전해 재원)", f"매년 {_fm}월 {_fd}일"]], [None, "#,##0.####"])
+                          ["재원 사용 시작일 (이 날 전은 그 전해 재원)", f"매년 {_fm}월 {_fd}일"],
+                          ["만기까지 갚지 못한 금액", DP_UNPAID.get(str(getattr(tm, "dp_unpaid", "extend") or "extend"), "")]],
+          [None, "#,##0.####"])
     face = float(tm.face_total)
     table(["발생연도", "배당가능이익 (원)", "재원으로 쓰는 기간", "100 기준", "우선배당 뺀 뒤 (100 기준, 청구한 해)"],
           [[fy, a, f"{fy+1}-{_fm:02d}-{_fd:02d} ~ {fy+2}-{_fm:02d}-{_fd:02d} 전날", a*100/face,
@@ -10729,6 +10749,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(W, 8, 2, "재원 사용 시작일 (월 · 일) — 이 날 전은 그 전해 재원", bold=True, border=True)
         _in(8, 3, _fm, "0"); _in(8, 4, _fd, "0")
         FY = lambda x: f"(YEAR({x})-IF({x}<DATE(YEAR({x}),$C$8,$D$8),1,0))"
+        put(W, 5, 5, "만기까지 갚지 못한 금액 (1 연장해 계속 갚음 / 0 받지 못함)", bold=True, border=True)
+        _in(5, 6, 0 if str(getattr(tm, "dp_unpaid", "extend") or "extend") == "lost" else 1, "0")
         put(W, 9, 2, "발생연도", bold=True, fill=LIGHT, border=True); put(W, 9, 3, "배당가능이익 (원)", bold=True, fill=LIGHT, border=True)
         for k, (fy, amt) in enumerate(_DPY):
             _in(_dp_r_prof + k, 2, fy, "0"); _in(_dp_r_prof + k, 3, amt, N0)
@@ -10827,7 +10849,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                     g_(rr[("B", x)], (f"=IF({q(('J', x))}=1,{grow},0)" if k == 0 else
                                       f"=IF({qp(('J', x))}=1,({qp(('B', x))}-{qp(('Q', x))})*(1+{G}),"
                                       f"IF({q(('J', x))}=1,{grow},0))"))
-                g_(rr["be"], (f"={amt}" if k == 0 else f"=({qp('be')}-{qp('pe')})*(1+{G})"))
+                g_(rr["be"], (f"={amt}" if k == 0 else
+                              f"=IF(AND($F$5=0,{q('m')}>{n}),0,({qp('be')}-{qp('pe')})*(1+{G}))"))
                 g_(rr["tot"], "=" + "+".join([q("be")] + [q(("B", x)) for x in range(nx)]))
                 share = lambda bal: (f"=IF({q('cap')}>=1E+299,{bal},IF({q('tot')}>0,MIN({bal},{q('cap')}*{bal}/{q('tot')}),0))")
                 g_(rr["pe"], share(q("be")))

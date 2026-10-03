@@ -278,7 +278,7 @@ def dp_editor(edited, errors):
     비워 두면 배당이 가능하다는 전제(제한 없음)로 종전과 같이 계산한다.
     """
     rev = st.session_state.get('revision', 0)
-    st.session_state.setdefault('_rendered_fields', set()).update({'dp_rows', 'dp_others', 'dp_delay', 'dp_from'})
+    st.session_state.setdefault('_rendered_fields', set()).update({'dp_rows', 'dp_others', 'dp_delay', 'dp_from', 'dp_unpaid'})
     rows = [r for r in (edited.get('dp_rows') or []) if isinstance(r, dict)]
     # 읽을 수 없는 값 — 표에서는 비워 보여 주고, 사용자가 그 칸을 고치기 전까지 원래 값을 그대로 둔다
     # (그래야 입력 점검의 오류 문장이 남는다). keep[(표, 줄, 칸)] = 원래 값.
@@ -362,6 +362,16 @@ def dp_editor(edited, errors):
         _d = _c2.number_input('재원 사용 시작 (일)', min_value=1, max_value=31, value=_d0, step=1, key=f'dp_from_d_{rev}')
         edited['dp_from'] = (keep[('f',)] if ('f',) in keep and (_m is None or _d is None)
                              else f"{int(_m or 1):02d}-{int(_d or 1):02d}")
+        from valuation.legacy import DP_UNPAID
+        _u0 = edited.get('dp_unpaid') or 'extend'
+        if _u0 not in DP_UNPAID: bad.append('만기까지 갚지 못한 금액')
+        _opts = list(DP_UNPAID)
+        _u = st.radio('만기까지 갚지 못한 금액', _opts, format_func=DP_UNPAID.get, key=f'dp_unpaid_{rev}',
+                      index=_opts.index(_u0) if _u0 in DP_UNPAID else None, horizontal=True,
+                      help='계약서의 상환 미완료 조항을 확인하고 고르십시오. 흔한 조항은 «상환이 끝날 때까지 상환기간을 '
+                           '연장(지연이자)» 입니다. «받지 못함» 은 만기일 뒤로 넘어간 지급을 0 으로 봅니다(그만큼 그 뒤 재원은 '
+                           '동순위 상품 몫). 만기에 보통주로 바꾸는 조항은 아직 반영하지 않습니다.')
+        edited['dp_unpaid'] = _u0 if _u is None else _u
         st.markdown('**같은 배당가능이익을 쓰는 다른 상품** — 기본은 평가대상이 선순위라 다른 상품은 평가대상 상환 뒤에 '
                     '씁니다. «동순위» 로 고른 상품만 그 해 함께 상환청구한다고 보고 남은 상환금 비율로 나눕니다. 상환금은 '
                     '아래 칸(발행일·발행총액·보장수익률)으로 앱이 계산합니다.')
