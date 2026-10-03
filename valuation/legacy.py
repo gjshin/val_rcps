@@ -2279,8 +2279,9 @@ def dp_step_dt(tm: Terms, dt_: float, i: int) -> dt.datetime:
 
 
 def dp_half_even(x: float) -> int:
-    """반올림 — 딱 반(1e-9 안)이면 짝수 쪽. 파이썬 round 와 같고, 반에 아주 가까운 값도 같은 쪽으로 보낸다
-    (리브레오피스·엑셀 ROUND 는 0.4999…를 올리기도 하므로 수식 조서는 이 규칙을 식으로 쓴다)."""
+    """계약일의 남는 날 수 반올림 — 딱 반(1e-9 안)이면 짝수 쪽, 아니면 보통 반올림.
+    수식 조서는 계약 개월을 다른 순서의 식으로 만들어 반 근처에서 10조 분의 1 수준 차이가 날 수 있으므로,
+    그 폭 안은 양쪽 모두 반으로 본다(정확히 반이면 파이썬 round 와 같다)."""
     f = math.floor(x)
     return f + (f % 2) if abs(x - f - 0.5) < 1e-9 else math.floor(x + 0.5)
 
@@ -2296,8 +2297,9 @@ def dp_contract_date(d_issue, m: float) -> dt.datetime:
 
 
 def dp_step_days(dt_: float, i: int) -> int:
-    """평가기준일부터 스텝 i 까지의 날 수 — 반올림, 딱 반이면 짝수 쪽 (파이썬 round · node_dates 와 같다)."""
-    return dp_half_even(i*(dt_*365))                  # node_dates 와 같은 식
+    """평가기준일부터 스텝 i 까지의 날 수 — node_dates 와 같은 식·같은 반올림(파이썬 round, 딱 반이면 짝수 쪽).
+    수식 조서는 같은 곱셈을 하므로 «정확히 반이면 짝수 쪽, 아니면 INT(x+0.5)» 식으로 같은 날이 된다."""
+    return round(i*(dt_*365))
 
 
 def dp_year_step(k: int, dt_: float) -> int:
@@ -10826,9 +10828,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         nx = len(_DPO)
 
         def ndate(m):
-            """스텝 m 의 날짜 — 평가기준일 + 반올림(m × Δt × 365일), 딱 반이면 짝수 쪽 (엔진 dp_step_dt 와 같다)."""
+            """스텝 m 의 날짜 — 평가기준일 + 반올림(m × Δt × 365일), 정확히 반이면 짝수 쪽 (엔진 dp_step_days ·
+            node_dates 의 파이썬 round 와 같다)."""
             y = f"(({m})*({K['dt']}*365))"
-            return (f"({K['d_base']}+IF(ABS({y}-INT({y})-0.5)<1E-9,INT({y})+MOD(INT({y}),2),ROUND({y},0)))")
+            return (f"({K['d_base']}+IF({y}-INT({y})=0.5,INT({y})+MOD(INT({y}),2),INT({y}+0.5)))")
         # 동순위 상품의 그 재원 연도 안 청구 기간 [lo, hi] — 비어 있으면(lo > hi) 그 해 청구하지 않는다
         _lo = lambda x, yr: f"MAX($G${orow[x]},$C${orow[x]},DATE({yr},$C$8,$D$8))"
         _hi = lambda x, yr: f"MIN($H${orow[x]},DATE({yr}+1,$C$8,$D$8)-1)"

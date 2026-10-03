@@ -660,6 +660,21 @@ def test_contract_date_tie_rounds_like_engine():
     assert legacy.dp_half_even(2.5) == 2 and legacy.dp_half_even(3.5) == 4 and legacy.dp_half_even(0.4999999999999) == 0
 
 
+def _near_tie_case():
+    # 남은 기간 375일 · 월 격자(12칸) — 2번째 시점은 62.50000000000001일, 노드 날짜는 63일(2026-03-05).
+    return rcps(d_issue="2026-01-01", d_base="2026-01-01", d_mat="2027-01-11", p_s=1., p_e=12., cv_e=12.,
+                dp_from="03-05", dp_rows=[{"fy": 2025, "amt": 0.0}, {"fy": 2026, "amt": 1e11}])
+
+
+def test_node_date_near_tie_matches_node_dates():
+    run = calculate(_near_tie_case()); t = run.terms; n = t.n; dt_ = t.T/n
+    nd = legacy.node_dates(t, n, dt_)
+    assert n == 12 and nd[2] == dt.date(2026, 3, 5)
+    assert all(legacy.dp_step_dt(t, dt_, i).date() == nd[i] for i in range(n + 1))
+    E, _ = ea(run)
+    assert legacy.dp_fund_year(t, E["dp"].claim_dt(2, "put")) == 2026        # 시작일 당일 — 새 재원 연도
+
+
 @pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
 def test_formula_workbook_contract_date_tie(tmp_path):
     # 계약 행사월 12 + 8/487 — 계약일은 2027-04-03(남는 0.5일은 짝수 쪽 0일). 재원 사용 시작일 4월 4일이면
@@ -713,3 +728,18 @@ def test_screen_keeps_peer_date_with_trailing_text():
     k = app.session_state.case
     assert k.contract["dp_others"][0]["start"] == "2027-01-01 오타"
     assert any("YYYY-MM-DD" in i.message for i in inspect_case(k) if i.severity == "error")
+
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_node_date_near_tie(tmp_path):
+    run = calculate(_near_tie_case())
+    t, R = run.terms, run.raw
+    data, wb = _recalc_formula(run, tmp_path)
+    exp = legacy.formula_key_cells(t, R, legacy.eir_or_none(t, R["full"], R["b0"], R["b1"], R["b2"], R["ca"]))
+    assert all(r[4] == "일치" for r in compare_cells(wb, exp))
+    E, _ = ea(run)
+    ws = wb["00 격자 공통"]
+    for j in range(t.n + 1):
+        if E["p_on"](j):
+            assert ws.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j
