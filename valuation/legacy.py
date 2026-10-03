@@ -2246,11 +2246,15 @@ def dp_div_rate(tm: Terms) -> float:
 
 
 def dp_step_dt(tm: Terms, dt_: float, i: int) -> dt.datetime:
-    """스텝 i 의 날짜 — 평가기준일 + 스텝 × Δt × 365일을 날 단위로 반올림한다(노드 날짜와 같은 날).
+    """스텝 i 의 날짜 — 평가기준일 + 스텝 × Δt × 365일을 날 단위로 반올림한다(node_dates 와 같은 날).
 
-    재원 연도 경계(재원 사용 시작일)를 하루 안쪽 시각 차이로 넘나들지 않게 한다. 수식 조서는 ROUND(…, 0).
+    재원 연도 경계(재원 사용 시작일)를 하루 안쪽 시각 차이로 넘나들지 않게 한다. 딱 반일 때는 짝수 쪽으로
+    (파이썬 round). 수식 조서도 같은 규칙의 식을 쓴다.
     """
-    return dt.datetime.fromisoformat(tm.d_base) + dt.timedelta(days=math.floor(i*dt_*365 + 0.5))
+    y = i*(dt_*365)                                   # node_dates 와 같은 식
+    f = math.floor(y)
+    d = f + (f % 2) if abs(y - f - 0.5) < 1e-9 else math.floor(y + 0.5)   # 딱 반이면 짝수 쪽 (파이썬 round 와 같다)
+    return dt.datetime.fromisoformat(tm.d_base) + dt.timedelta(days=d)
 
 
 def dp_year_step(k: int, dt_: float) -> int:
@@ -2381,6 +2385,7 @@ def dp_value_sheet(wb, tm: Terms):
         for row in rows:
             for c, v in enumerate(row):
                 cl = W.cell(r, 2+c, v)
+                if isinstance(v, str): cl.data_type = 's'    # 입력 문자열(상품 이름 등)은 엑셀 수식으로 읽히지 않는다
                 if fmts[c]: cl.number_format = fmts[c]
             r += 1
         r += 1
@@ -10727,7 +10732,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         orow = {}
         for x, o in enumerate(_DPO):
             r = _dp_r_oth + 1 + x; orow[x] = r
-            put(W, r, 2, o["name"], border=True)
+            _nm = put(W, r, 2, "", border=True); _nm.value = o["name"]; _nm.data_type = 's'   # 수식으로 읽히지 않게
             _in(r, 3, o["issue"].date(), DATE); _in(r, 4, o["face"], N0); _in(r, 5, o["yld"], P2)
             _in(r, 6, int(o["cmp"]), "0"); _in(r, 7, o["start"].date(), DATE); _in(r, 8, o["end"].date(), DATE)
             _in(r, 9, o["div"], P2)
@@ -10744,6 +10749,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                                  f"$I${orow[x]}*$D${orow[x]}*100/{FACE},0)")
         _live = lambda x, y0: f"$H${orow[x]}>=DATE({y0},$C$8,$D$8)"
         nx = len(_DPO)
+
+        def ndate(m):
+            """스텝 m 의 날짜 — 평가기준일 + 반올림(m × Δt × 365일), 딱 반이면 짝수 쪽 (엔진 dp_step_dt 와 같다)."""
+            y = f"(({m})*({K['dt']}*365))"
+            return (f"({K['d_base']}+IF(ABS({y}-INT({y})-0.5)<1E-9,INT({y})+MOD(INT({y}),2),ROUND({y},0)))")
         # 동순위 상품의 그 재원 연도 안 청구 기간 [lo, hi] — 비어 있으면(lo > hi) 그 해 청구하지 않는다
         _lo = lambda x, yr: f"MAX($G${orow[x]},$C${orow[x]},DATE({yr},$C$8,$D$8))"
         _hi = lambda x, yr: f"MIN($H${orow[x]},DATE({yr}+1,$C$8,$D$8)-1)"
@@ -10783,7 +10793,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 cidx = W[f"{L}1"].column
                 g_ = lambda r_, v, fm=N4: put(W, r_, cidx, v, fmt=fm, align="center", size=8)
                 g_(rr["m"], f"={cst}+ROUND({k}/{K['dt']},0)", N0)
-                g_(rr["date"], f"=ROUND({K['d_base']}+{q('m')}*{K['dt']}*365,0)", DATE)
+                g_(rr["date"], "=" + ndate(q('m')), DATE)
                 g_(rr["yr"], f"={FY(cdate)}+{k}", "0")
                 g_(rr["P"], f"=IFERROR(VLOOKUP({q('yr')}-1,{rng},2,FALSE)*100/{FACE},1E+300)")
                 for x in range(nx):
@@ -10819,7 +10829,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             L = gl(3+i); Lp = gl(2+i) if i > 0 else None
             c = lambda r: f"{L}${r}"
             put(W, R["st"], 3+i, f"={COMQ}!{L}$2", fmt=N0, align="center", size=8)
-            put(W, R["date"], 3+i, f"=ROUND({COMQ}!{L}$1,0)", fmt=DATE, align="center", size=8)
+            put(W, R["date"], 3+i, "=" + ndate(c(R["st"])), fmt=DATE, align="center", size=8)
             put(W, R["cum"], 3+i, (0 if i == 0 else f"={Lp}${R['cum']}+{COMQ}!{Lp}$12*{K['dt']}"), fmt=N6, align="center", size=8)
             pa = f"{COMQ}!{L}${CROW['pamt']}"
             put(W, R["amt"], 3+i, f"=IF(ISNUMBER({pa}),{pa}-({_cadd(i, 'pcadd')}),0)", fmt=N4, align="center", size=8)
@@ -10839,7 +10849,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(W, _dp_red0 - 2, 2, "만기상환금액 (계약)", bold=True, fill=LIGHT, border=True)
         put(W, _dp_red0 - 2, 3, f"={K['red']}", fmt=N4, align="center", size=8)
         put(W, _dp_red0 - 1 - 0, 2, "만기상환 가치 — 실제 지급 일정의 현재가치", bold=True, fill=LIGHT, border=True)
-        rterms = chain("C", str(n), f"ROUND({COMQ}!{LN}$1,0)", f"{LN}${R['cum']}", f"$C${_dp_red0 - 2}", _dp_red0 + 1, True)
+        rterms = chain("C", str(n), ndate(str(n)), f"{LN}${R['cum']}", f"$C${_dp_red0 - 2}", _dp_red0 + 1, True)
         put(W, _dp_red0 - 1, 3, "=" + "+".join(rterms), fmt=N4, align="center", size=8)
         W.freeze_panes = f"C{R['st']+1}"
         W.sheet_properties.tabColor = RFXC

@@ -431,3 +431,48 @@ def test_screen_keeps_invalid_cells_when_other_rows_are_deleted():
     assert k.market["dp_rows"] == [{"fy": "이천이십칠", "amt": 3e9}]
     o = k.contract["dp_others"]
     assert len(o) == 1 and (o[0]["yld"], o[0]["cmp"], o[0]["yield_"]) == ("nan", "연복리", .05)
+
+
+def test_tie_day_rounds_like_node_dates():
+    # 2026-10-01 부터 1년 월 격자 — 6번째 시점은 딱 182.5일. 노드 날짜(짝수 쪽 반올림)는 2027-04-01 이다.
+    run = calculate(rcps(d_issue="2026-10-01", d_base="2026-10-01", d_mat="2027-10-01", p_s=1., p_e=11., cv_e=12.,
+                         dp_rows=[{"fy": 2026, "amt": 0.0}], dp_from="04-02"))
+    t = run.terms; n = t.n; dt_ = t.T/n
+    nd = legacy.node_dates(t, n, dt_)
+    assert all(legacy.dp_step_dt(t, dt_, i).date() == nd[i] for i in range(n + 1))
+    i6 = next(i for i in range(n + 1) if nd[i] == dt.date(2027, 4, 1))
+    assert legacy.dp_fund_year(t, legacy.dp_step_dt(t, dt_, i6)) == 2026
+
+
+def _recalc_formula(run, tmp_path):
+    data = zipfile.ZipFile(io.BytesIO(export_bundle(run, formula=True, detail=True, accounting=True))).read("formula_review.xlsx")
+    (tmp_path/"s.xlsx").write_bytes(data); (tmp_path/"o").mkdir()
+    subprocess.run([shutil.which("libreoffice") or shutil.which("soffice"),
+                    "-env:UserInstallation=" + (tmp_path/"p").as_uri(), "--headless", "--convert-to", "xlsx",
+                    "--outdir", str(tmp_path/"o"), str(tmp_path/"s.xlsx")], capture_output=True, timeout=1800)
+    return data, load_workbook(tmp_path/"o"/"s.xlsx", data_only=True)
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_tie_day_and_text_names(tmp_path):
+    # 딱 반일인 시점이 있는 격자에서도 수식 조서가 엔진과 같고, «=» 로 시작하는 상품 이름은 글자로 남는다.
+    oth = [dict(name="=1+1", rank="pari", issue="2026-10-01", face=5e9, yld=.03, cmp=1,
+                start="2027-03-01", end="2027-09-30", div=.01)]
+    run = calculate(rcps(d_issue="2026-10-01", d_base="2026-10-01", d_mat="2027-10-01", p_s=1., p_e=11., cv_e=12.,
+                         dp_rows=[{"fy": 2026, "amt": 2e9}], dp_from="04-02", dp_others=oth))
+    t, R = run.terms, run.raw
+    data, wb = _recalc_formula(run, tmp_path)
+    exp = legacy.formula_key_cells(t, R, legacy.eir_or_none(t, R["full"], R["b0"], R["b1"], R["b2"], R["ca"]))
+    assert all(r[4] == "일치" for r in compare_cells(wb, exp))
+    E, _ = ea(run)
+    ws = wb["00 격자 공통"]
+    for i in range(t.n + 1):
+        if E["p_on"](i):
+            assert ws.cell(7, 3+i).value == pytest.approx(E["put_val"](i), rel=1e-9, abs=1e-9), i
+    raw = load_workbook(io.BytesIO(data))["00 배당가능이익 상환"]
+    cells = [c for row in raw.iter_rows() for c in row if c.value == "=1+1"]
+    assert cells and all(c.data_type == "s" for c in cells)
+    vz = zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, accounting=True)))
+    vs = load_workbook(io.BytesIO(vz.read("value_review.xlsx")))["00 배당가능이익 상환"]
+    vcells = [c for row in vs.iter_rows() for c in row if c.value == "=1+1"]
+    assert vcells and all(c.data_type == "s" for c in vcells)
