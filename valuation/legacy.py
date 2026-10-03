@@ -2104,7 +2104,7 @@ def dp_other_issues(tm: Terms) -> list:
             continue                      # 선순위 가정 — 평가대상 뒤라 다른 칸이 필요 없다
         try:
             a, b, c = (dt.date.fromisoformat(str(r[x])) for x in ("issue", "start", "end"))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             out.append(f"{nm}: 발행일·상환청구 시작일·종료일을 YYYY-MM-DD 로 넣으십시오."); continue
         if not (a <= b <= c):
             out.append(f"{nm}: 발행일 ≤ 상환청구 시작일 ≤ 종료일이어야 합니다.")
@@ -2112,17 +2112,17 @@ def dp_other_issues(tm: Terms) -> list:
             v = dp_num(r["face"])
             if not (v > 0 and math.isfinite(v)):
                 out.append(f"{nm}: 발행총액(원)을 0 보다 크게 넣으십시오.")
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             out.append(f"{nm}: 발행총액(원)을 넣으십시오.")
         for x, lab in (("yld", "상환 보장수익률"), ("div", "우선배당률")):
             try:
                 v = dp_num(r.get(x), 0.0)
                 if not (v >= 0 and math.isfinite(v)): out.append(f"{nm}: {lab}은 0 이상의 유한한 값이어야 합니다.")
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 out.append(f"{nm}: {lab}을 숫자로 넣으십시오.")
         try:
             ok = dp_num(r.get("cmp", 1), 1) in (0.0, 1.0)     # 0.5 를 0 으로 자르지 않는다
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             ok = False
         if not ok:
             out.append(f"{nm}: 복리 방식은 1(연복리) 또는 0(단리)입니다.")
@@ -2152,7 +2152,7 @@ def dp_issues(tm: Terms) -> list:
         _g = dp_num(getattr(tm, "dp_delay", 0.0), 0.0)
         if not (_g >= 0 and math.isfinite(_g)):
             out.append("이월 상환금 가산율은 0 이상이어야 합니다.")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         out.append("이월 상환금 가산율을 숫자로 넣으십시오.")
     if str(getattr(tm, "dp_unpaid", "extend") or "extend") not in DP_UNPAID:
         out.append("만기까지 갚지 못한 금액의 처리는 «연장해 계속 갚음» 또는 «받지 못함» 가운데 고르십시오.")
@@ -2164,7 +2164,7 @@ def dp_issues(tm: Terms) -> list:
             if max(seen) > lim:
                 out.append(f"배당가능이익 발생연도는 {lim}년까지 넣을 수 있습니다 — 지급 일정은 평가기준일부터 "
                            f"{DP_KMAX}년까지만 따라갑니다.")
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             pass
     out += dp_other_issues(tm)
     if seen and int(getattr(tm, "put_bdt", 0) or 0):
@@ -2278,11 +2278,26 @@ def dp_step_dt(tm: Terms, dt_: float, i: int) -> dt.datetime:
     return dt.datetime.fromisoformat(tm.d_base) + dt.timedelta(days=dp_step_days(dt_, i))
 
 
+def dp_half_even(x: float) -> int:
+    """반올림 — 딱 반(1e-9 안)이면 짝수 쪽. 파이썬 round 와 같고, 반에 아주 가까운 값도 같은 쪽으로 보낸다
+    (리브레오피스·엑셀 ROUND 는 0.4999…를 올리기도 하므로 수식 조서는 이 규칙을 식으로 쓴다)."""
+    f = math.floor(x)
+    return f + (f % 2) if abs(x - f - 0.5) < 1e-9 else math.floor(x + 0.5)
+
+
+def dp_contract_date(d_issue, m: float) -> dt.datetime:
+    """계약 행사월 m(발행일부터) → 계약상 날짜. months_to_date 와 같은 식(꽉 찬 달은 달력, 남는 달은 30.4375일)이고
+    남는 날 수의 반올림만 dp_half_even 으로 한다(수식 조서와 같은 날)."""
+    k = int(math.floor(m)); fr = m - k
+    d = _add_months(dt.date.fromisoformat(d_issue) if isinstance(d_issue, str) else d_issue, k)
+    if fr:
+        d = d + dt.timedelta(days=dp_half_even(fr*30.4375))
+    return dt.datetime(d.year, d.month, d.day)
+
+
 def dp_step_days(dt_: float, i: int) -> int:
     """평가기준일부터 스텝 i 까지의 날 수 — 반올림, 딱 반이면 짝수 쪽 (파이썬 round · node_dates 와 같다)."""
-    y = i*(dt_*365)                                   # node_dates 와 같은 식
-    f = math.floor(y)
-    return f + (f % 2) if abs(y - f - 0.5) < 1e-9 else math.floor(y + 0.5)
+    return dp_half_even(i*(dt_*365))                  # node_dates 와 같은 식
 
 
 def dp_year_step(k: int, dt_: float) -> int:
@@ -2324,7 +2339,7 @@ class DPPlan:
         """재원 연도를 정하는 청구일 — 회차가 정해진 행사일은 계약상 날짜(노드가 허용 일수 안에서 앞서도 그 날),
         상시 행사·만기는 노드 날짜."""
         d = (self.cd.get(kind) or {}).get(i)
-        return dt.datetime(d.year, d.month, d.day) if d else dp_step_dt(self.tm, self.dt, i)
+        return d if d else dp_step_dt(self.tm, self.dt, i)
 
     def pay_step(self, m: int, year: int) -> int:
         """넘긴 금액을 갚는 시점 — 청구일 + k년에 가장 가까운 시점이 그 재원 연도 시작일 전이면, 시작일 이후 첫
@@ -2572,8 +2587,8 @@ def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
     if dp_active(tm):
         DP = DPPlan(tm, n, dt_)
         # 재원 연도는 계약상 청구일로 정한다 — 회차가 정해진 행사일만 (상시 행사는 노드 날짜)
-        DP.cd = {"put": ({} if p_cont else {i: months_to_date(tm.d_issue, m) for i, m in p_dates.items()}),
-                 "call": ({} if k_cont else {i: months_to_date(tm.d_issue, m) for i, m in k_dates.items()})}
+        DP.cd = {"put": ({} if p_cont else {i: dp_contract_date(tm.d_issue, m) for i, m in p_dates.items()}),
+                 "call": ({} if k_cont else {i: dp_contract_date(tm.d_issue, m) for i, m in k_dates.items()})}
         _dpv = {i: DP.schedule(i, put(i), "put")["pv"] for i in p_dates}
         put_val = lambda i: _dpv[i] if i in _dpv else put(i)
         # 존속기간 만료 시 상환도 이익으로 한다 — 만기 노드에서 청구한 것과 같은 일정의 현재가치.
@@ -10902,8 +10917,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             pa = f"{COMQ}!{L}${CROW['pamt']}"
             put(W, R["amt"], 3+i, f"=IF(ISNUMBER({pa}),{pa}-({_cadd(i, 'pcadd')}),0)", fmt=N4, align="center", size=8)
             # 계약상 청구일 = 발행일 + 계약 행사월 (엔진 months_to_date: 꽉 찬 달은 달력, 남는 달은 30.4375일)
-            _cdt = lambda mo: (f"IF(ISNUMBER({mo}),EDATE({K['d_issue']},INT({mo}))+ROUND(({mo}-INT({mo}))*30.4375,0),"
-                               f"{c(R['date'])})")
+            def _cdt(mo):
+                x = f"(({mo}-INT({mo}))*30.4375)"      # 남는 달의 날 수 — 딱 반이면 짝수 쪽 (파이썬 round 와 같다)
+                return (f"IF(ISNUMBER({mo}),EDATE({K['d_issue']},INT({mo}))"
+                        f"+IF(ABS({x}-INT({x})-0.5)<1E-9,INT({x})+MOD(INT({x}),2),ROUND({x},0)),{c(R['date'])})")
             put(W, R["pcd"], 3+i, ("=" + _cdt(f"{COMQ}!{L}${CROW['pmo']}") if not _EA["p_cont"] else f"={c(R['date'])}"),
                 fmt=DATE, align="center", size=8)
             terms = chain(L, c(R["st"]), c(R["pcd"]), c(R["cum"]), c(R["amt"]), _dp_k0, i == 0)

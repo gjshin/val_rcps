@@ -641,3 +641,44 @@ def test_boolean_values_are_rejected():
                         start="2027-01-01", end="2028-01-01", cmp=True)]
     msgs = legacy.dp_issues(t)
     assert all(any(k in m for m in msgs) for k in ("발행총액", "상환 보장수익률", "우선배당률", "복리 방식"))
+
+
+def test_huge_integer_carry_rate_reports():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e9}]; t.dp_delay = 10**400
+    assert any("가산율" in m for m in legacy.dp_issues(t))
+    t.dp_delay = 0.0
+    t.dp_others = [dict(name="가상", rank="pari", issue="2026-01-01", face=10**400, yld=10**400, div=0.0,
+                        start="2027-01-01", end="2028-01-01", cmp=10**400)]
+    assert legacy.dp_issues(t)
+
+
+def test_contract_date_tie_rounds_like_engine():
+    # 남는 달 8/487 × 30.4375 = 0.5 일(딱 반) — 엔진(months_to_date, 짝수 쪽)은 0일을 더한다.
+    m = 12 + 8/487
+    assert legacy.months_to_date("2026-04-03", m) == dt.date(2027, 4, 3)
+    assert legacy.dp_contract_date("2026-04-03", m) == dt.datetime(2027, 4, 3)
+    assert legacy.dp_half_even(2.5) == 2 and legacy.dp_half_even(3.5) == 4 and legacy.dp_half_even(0.4999999999999) == 0
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_contract_date_tie(tmp_path):
+    # 계약 행사월 12 + 8/487 — 계약일은 2027-04-03(남는 0.5일은 짝수 쪽 0일). 재원 사용 시작일 4월 4일이면
+    # 엔진은 2027년 재원 전(발생연도 2025 = 넣지 않음)으로 본다. 수식 조서도 같아야 한다.
+    m = 12 + 8/487
+    c = rcps(d_issue="2026-04-03", d_base="2026-04-03", d_mat="2030-04-03", p_s=m, p_e=m + 24, p_f=12.,
+             cv_e=48., dp_from="04-04", issuer_call=1, k_s=m, k_e=m + 24, k_f=12., k_prem=.06, k_cmp=1, k_w=1.,
+             dp_rows=[{"fy": 2026, "amt": 0.0}, {"fy": 2027, "amt": 0.0}, {"fy": 2028, "amt": 0.0}])
+    c.exercise_styles["p_f"] = "periodic"
+    run = calculate(c)
+    t, R = run.terms, run.raw
+    E, _ = ea(run)
+    i = min(E["p_dates"])
+    assert E["dp"].claim_dt(i, "put").date() == dt.date(2027, 4, 3)
+    data, wb = _recalc_formula(run, tmp_path)
+    exp = legacy.formula_key_cells(t, R, legacy.eir_or_none(t, R["full"], R["b0"], R["b1"], R["b2"], R["ca"]))
+    assert all(r[4] == "일치" for r in compare_cells(wb, exp))
+    ws = wb["00 격자 공통"]
+    for j in range(t.n + 1):
+        if E["p_on"](j):
+            assert ws.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j
+        assert int(ws.cell(5, 3+j).value or 0) == (1 if E["k_on"](j) else 0), j
