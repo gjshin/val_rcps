@@ -754,3 +754,19 @@ def test_peer_ending_earlier_in_same_fund_year_shares_that_year():
     i = next(i for i in sorted(E["p_dates"]) if (d := legacy.dp_step_dt(t, dt_, i)).year == 2028 and d.month == 12)
     r0 = E["dp"].schedule(i, E["put"](i), "put")["rows"][0]
     assert r0[5] == pytest.approx(50.0, rel=1e-12)                        # 같은 해 동순위 상환금 50
+
+
+def test_peer_rates_bounded_so_growth_stays_finite():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e9}]
+    t.dp_others = [dict(name="가상", rank="pari", issue="2026-01-01", face=1e9, yld=1e308, div=2.0,
+                        start="2027-01-01", end="2028-01-01", cmp=1)]
+    msgs = legacy.dp_issues(t)
+    assert any("상환 보장수익률은 연 0% 이상 100% 이하" in m for m in msgs)
+    assert any("우선배당률은 연 0% 이상 100% 이하" in m for m in msgs)
+    t.dp_others = []; t.dp_delay = 5.0
+    assert any("가산율은 연 0% 이상 100% 이하" in m for m in legacy.dp_issues(t))
+    # 경계 — 100% 는 받는다
+    t.dp_delay = 1.0
+    t.dp_others = [dict(name="가상", rank="pari", issue="2026-01-01", face=1e9, yld=1.0, div=1.0,
+                        start="2027-01-01", end="2028-01-01", cmp=1)]
+    assert legacy.dp_issues(t) == []

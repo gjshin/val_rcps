@@ -2117,7 +2117,7 @@ def dp_other_issues(tm: Terms) -> list:
         for x, lab in (("yld", "상환 보장수익률"), ("div", "우선배당률")):
             try:
                 v = dp_num(r.get(x), 0.0)
-                if not (v >= 0 and math.isfinite(v)): out.append(f"{nm}: {lab}은 0 이상의 유한한 값이어야 합니다.")
+                if not (0 <= v <= 1): out.append(f"{nm}: {lab}은 연 0% 이상 100% 이하여야 합니다.")
             except (TypeError, ValueError, OverflowError):
                 out.append(f"{nm}: {lab}을 숫자로 넣으십시오.")
         try:
@@ -2150,8 +2150,8 @@ def dp_issues(tm: Terms) -> list:
         if amt < 0 or not math.isfinite(amt): out.append(f"배당가능이익 {fy}년은 0 이상의 금액이어야 합니다.")
     try:
         _g = dp_num(getattr(tm, "dp_delay", 0.0), 0.0)
-        if not (_g >= 0 and math.isfinite(_g)):
-            out.append("이월 상환금 가산율은 0 이상이어야 합니다.")
+        if not (0 <= _g <= 1):
+            out.append("이월 상환금 가산율은 연 0% 이상 100% 이하여야 합니다.")
     except (TypeError, ValueError, OverflowError):
         out.append("이월 상환금 가산율을 숫자로 넣으십시오.")
     if str(getattr(tm, "dp_unpaid", "extend") or "extend") not in DP_UNPAID:
