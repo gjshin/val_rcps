@@ -2151,6 +2151,8 @@ def dp_issues(tm: Terms) -> list:
             fy = int(fy_)
         except (KeyError, TypeError, ValueError, OverflowError):
             out.append(f"배당가능이익 {k}번째 줄 — 발생연도와 금액(원)을 함께 넣으십시오."); continue
+        if fy < 1898:                         # 1900~2200년 계약이 쓸 수 있는 가장 이른 발생연도
+            out.append(f"배당가능이익 발생연도 {fy}년은 너무 이릅니다 — 1898년 이후로 넣으십시오.")
         if fy in seen: out.append(f"배당가능이익 {fy}년이 두 번 있습니다.")
         seen.add(fy)
         if not (0 <= amt <= DP_FACE_MAX):

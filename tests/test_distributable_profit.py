@@ -931,3 +931,10 @@ def test_tiny_target_face_rejected_with_profits():
     assert any("발행총액이 1원 이상" in m for m in legacy.dp_issues(t))
     t.face_total = 1.0
     assert not any("발행총액이 1원 이상" in m for m in legacy.dp_issues(t))
+
+
+def test_fiscal_year_lower_bound():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": -1, "amt": 0.0}]
+    assert any("너무 이릅니다" in m for m in legacy.dp_issues(t))
+    t.dp_rows = [{"fy": 1898, "amt": 0.0}]
+    assert not any("너무 이릅니다" in m for m in legacy.dp_issues(t))
