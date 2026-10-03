@@ -682,3 +682,20 @@ def test_formula_workbook_contract_date_tie(tmp_path):
         if E["p_on"](j):
             assert ws.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j
         assert int(ws.cell(5, 3+j).value or 0) == (1 if E["k_on"](j) else 0), j
+
+
+def test_coarse_grid_never_pays_before_fund_year():
+    # 한 칸이 2.5년인 굵은 격자 — 넘긴 금액도 그 재원 연도 시작일 전에는 갚지 않고, «받지 못함» 이면 만기 뒤 지급은 0.
+    for mode in ("extend", "lost"):
+        c = rcps(d_mat="2036-01-01", gap_m=30., mat_mode=1, p_s=24., p_e=119., cv_e=120., dp_unpaid=mode,
+                 dp_rows=[{"fy": y, "amt": 1e9} for y in range(2026, 2040)])
+        E, t = ea(calculate(c)); dt_ = t.T/t.n
+        assert dt_ > 2
+        claims = [(i, E["put"](i), "put") for i in E["p_dates"]] + [(t.n, E["red"], None)]
+        for i, amt, kind in claims:
+            y0 = legacy.dp_fund_year(t, E["dp"].claim_dt(i, kind))
+            for k, m, at, cap, be, bo, pe, df in E["dp"].schedule(i, amt, kind)["rows"]:
+                if k > 0:
+                    assert at >= legacy.dp_fund_start(t, y0 + k) and m > i
+                if mode == "lost" and m > t.n:
+                    assert pe == 0.0
