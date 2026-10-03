@@ -264,6 +264,112 @@ def _sha_row_px(r):
     return float(r['price']) if r.get('price') else None
 
 
+DP_OTHER_COLS = [('name', '상품 이름'), ('rank', '순위'), ('issue', '발행일'), ('face', '발행총액(원)'),
+                 ('yld', '상환 보장수익률(연 %)'), ('cmp', '복리 방식'), ('start', '상환청구 시작일'),
+                 ('end', '상환청구 종료일'), ('div', '우선배당률(연 %, 발행가 기준)')]
+DP_RANK = {'senior': '평가대상이 선순위', 'pari': '동순위 (비율로 나눔)'}
+DP_CMP = {1: '연복리', 0: '단리'}
+
+
+def dp_editor(edited, errors):
+    """배당가능이익 상환 제약 — 연도별 추정 배당가능이익(발생연도 기준)과 같은 재원을 쓰는 다른 상품.
+
+    비워 두면 배당이 가능하다는 전제(제한 없음)로 종전과 같이 계산한다.
+    """
+    rev = st.session_state.get('revision', 0)
+    st.session_state.setdefault('_rendered_fields', set()).update({'dp_rows', 'dp_others', 'dp_delay'})
+    rows = list(edited.get('dp_rows') or [])
+    with st.expander('배당가능이익에 따른 상환 제약' + (f' — {len(rows)}개 연도 입력' if rows else ' (넣지 않으면 제한 없음)'),
+                     expanded=bool(rows)):
+        st.caption('상환주식은 회사의 이익으로 상환합니다. 연도별 추정 배당가능이익을 **발생연도**(그해 결산 기준)로 넣으면 '
+                   '다음 해의 우선배당·상환 재원으로 씁니다. 우선배당을 먼저 빼고 남는 금액만큼 상환하며, 갚지 못한 금액은 '
+                   '다음 해로 넘깁니다. 넣지 않은 해는 제한이 없습니다(배당이 가능하다는 전제). 발행자 상환권도 같은 '
+                   '재원이 있어야 행사할 수 있고, 제3자 지정 매도청구권은 직접 제한을 받지 않습니다.')
+        frame = st.data_editor(pd.DataFrame([{'발생연도': r.get('fy'), '배당가능이익(원)': r.get('amt')} for r in rows],
+                                            columns=['발생연도', '배당가능이익(원)']),
+                               num_rows='dynamic', hide_index=True, key=f'dp_rows_{rev}',
+                               column_config={'발생연도': st.column_config.NumberColumn(format='%d', step=1),
+                                              '배당가능이익(원)': st.column_config.NumberColumn(format='%,.0f')})
+        new_rows = []
+        for rec in frame.to_dict('records'):
+            fy, amt = rec.get('발생연도'), rec.get('배당가능이익(원)')
+            if (fy is None or pd.isna(fy)) and (amt is None or pd.isna(amt)):
+                continue
+            new_rows.append({'fy': None if fy is None or pd.isna(fy) else int(fy),
+                             'amt': None if amt is None or pd.isna(amt) else float(amt)})
+        edited['dp_rows'] = sorted(new_rows, key=lambda r: (r['fy'] is None, r['fy'] or 0))
+        _g = st.number_input('넘긴 상환금에 붙는 연 가산율 (%)', min_value=0.0, max_value=100.0,
+                             value=float(edited.get('dp_delay') or 0.0)*100, step=0.5, key=f'dp_delay_{rev}',
+                             help='갚지 못해 다음 해로 넘긴 상환금에 계약상 지연이자가 붙으면 넣으십시오. 없으면 0.')
+        edited['dp_delay'] = _g/100
+        st.markdown('**같은 배당가능이익을 쓰는 다른 상품** — 기본은 평가대상이 선순위라 다른 상품은 평가대상 상환 뒤에 '
+                    '씁니다. «동순위» 로 고른 상품만 그 해 함께 상환청구한다고 보고 남은 상환금 비율로 나눕니다. 상환금은 '
+                    '아래 칸(발행일·발행총액·보장수익률)으로 앱이 계산합니다.')
+        others = list(edited.get('dp_others') or [])
+        _of = pd.DataFrame([{t: (DP_RANK.get(r.get('rank') or 'senior') if k == 'rank' else
+                                DP_CMP.get(int(r.get('cmp', 1))) if k == 'cmp' else
+                                (None if r.get(k) in (None, '') else float(r[k])*100) if k in ('yld', 'div') else
+                                (dt.date.fromisoformat(r[k]) if r.get(k) else None) if k in ('issue', 'start', 'end') else
+                                r.get(k)) for k, t in DP_OTHER_COLS} for r in others],
+                           columns=[t for _, t in DP_OTHER_COLS])
+        of = st.data_editor(_of, num_rows='dynamic', hide_index=True, key=f'dp_others_{rev}',
+                            column_config={'순위': st.column_config.SelectboxColumn(options=list(DP_RANK.values())),
+                                           '복리 방식': st.column_config.SelectboxColumn(options=list(DP_CMP.values())),
+                                           '발행일': st.column_config.DateColumn(),
+                                           '상환청구 시작일': st.column_config.DateColumn(),
+                                           '상환청구 종료일': st.column_config.DateColumn(),
+                                           '발행총액(원)': st.column_config.NumberColumn(format='%,.0f')})
+        back_rank = {v: k for k, v in DP_RANK.items()}; back_cmp = {v: k for k, v in DP_CMP.items()}
+        new_o = []
+        for rec in of.to_dict('records'):
+            if all(v is None or (isinstance(v, float) and pd.isna(v)) or v == '' for v in rec.values()):
+                continue
+            row = {}
+            for k, t in DP_OTHER_COLS:
+                v = rec.get(t)
+                if v is None or (isinstance(v, float) and pd.isna(v)): v = None
+                if k == 'rank': v = back_rank.get(v, 'senior')
+                elif k == 'cmp': v = back_cmp.get(v, 1)
+                elif k in ('yld', 'div'): v = 0.0 if v is None else float(v)/100
+                elif k in ('issue', 'start', 'end'): v = v.isoformat() if hasattr(v, 'isoformat') else (str(v) if v else '')
+                elif k == 'face': v = None if v is None else float(v)
+                elif k == 'name': v = str(v or '').strip() or f'다른 상품 {len(new_o)+1}'
+                row[k] = v
+            new_o.append(row)
+        edited['dp_others'] = new_o
+        if new_rows:
+            st.caption('평가 결과의 «확인할 사항» 에 넣지 않은 해·재원이 우선배당보다 작은 해·발행자 상환권이 막힌 행사일이 '
+                       '나옵니다. 상세 조서의 «00 배당가능이익 상환» 시트에 청구 시점별 지급 일정이 실립니다.')
+
+
+def dp_panel(run):
+    """배당가능이익 상환 제약 — 청구 연도별 계약 상환금과 실제 지급 일정의 현재가치 (평가에 쓴 값)."""
+    from valuation import legacy
+    t = run.terms
+    if not legacy.dp_active(t):
+        return
+    n = int(t.n); dt_ = t.T/n
+    EA = legacy.exercise_amounts(t, n, dt_)
+    rows, seen = [], set()
+    for i in sorted(EA["p_dates"]):
+        y = legacy.dp_step_dt(t, dt_, i).year
+        if y in seen:
+            continue
+        seen.add(y)
+        a, v = EA["put"](i), EA["put_val"](i)
+        rows.append({'청구 연도 (첫 청구일)': f"{y} ({legacy.dp_step_dt(t, dt_, i).date()})",
+                     '쓰는 배당가능이익 (발생연도)': (f"{y-1}년 {EA['dp'].P[y-1]:,.0f}원" if (y-1) in EA['dp'].P else f"{y-1}년 — 넣지 않음 (제한 없음)"),
+                     '계약 상환금 (100 기준)': a, '실제 지급 현재가치 (100 기준)': v, '비율': (v/a if a else None)})
+    rows.append({'청구 연도 (첫 청구일)': f"만기 {legacy.dp_step_dt(t, dt_, n).date()} (만기상환)", '쓰는 배당가능이익 (발생연도)': '',
+                 '계약 상환금 (100 기준)': EA['red'], '실제 지급 현재가치 (100 기준)': EA['red_val'],
+                 '비율': (EA['red_val']/EA['red'] if EA['red'] else None)})
+    with st.expander('배당가능이익 반영 — 청구 연도별 상환청구 가치', expanded=False):
+        st.caption('평가에 쓴 상환청구 가치는 계약 상환금이 아니라, 우선배당을 먼저 빼고 남은 배당가능이익만큼 해마다 나눠 받는 '
+                   '일정의 현재가치입니다. 연도마다 첫 청구일만 보여 줍니다 — 전체는 조서의 «00 배당가능이익 상환» 시트에 있습니다.')
+        st.dataframe(pd.DataFrame(rows).style.format({'계약 상환금 (100 기준)': '{:,.4f}', '실제 지급 현재가치 (100 기준)': '{:,.4f}',
+                                                     '비율': '{:.2%}'}, na_rep='—'), hide_index=True, use_container_width=True)
+
+
 def sha_editor(edited, case, errors):
     """주주간계약 입력 — 회차별 표(주식수·원 단위)가 기본이다. 기존 평가파일의 단일 계약 칸도 연다."""
     rev = st.session_state.get('revision', 0)
@@ -533,6 +639,8 @@ def input_editor(case, autosave=False):
                            '가치)을 쓰고, 실제 회계상 배분액이 다르면 그 금액과 근거를 넣습니다. 평가기준일이 발행일보다 '
                            '뒤이면 다시 판정하지 않고 최초 인식 때의 결론을 이어 씁니다 (1109 B4.3.11).')
                 fields(['p_sep', 'p_lost_int', 'split_tol', 'split_base_in', 'split_base_why'], edited, case)
+        if inst == 'RCPS':
+            dp_editor(edited, draft_errors)
         st.subheader('매도청구권 (콜)' if inst != 'RCPS' else '발행회사 상환권·매도청구권 (콜)')
         if inst == 'RCPS':
             field('issuer_call', edited, case)
@@ -960,6 +1068,7 @@ def main():
                 sha_result_panel(run)
             day1_panel(run, case)
             split_panel(run)
+            dp_panel(run)
             with st.expander('구성요소·원금 100 기준 상세' if run.terms.inst != 'SHA' else '계산기준금액 100 기준 상세'):
                 st.caption('순차 차감에 따른 참고값입니다. 회계상 인식액을 확정한 표가 아닙니다.')
                 st.dataframe(pd.DataFrame([{'항목': AMOUNT_LABELS[k], '총액(원)': values[k], '원금 100 기준': v}

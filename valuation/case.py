@@ -20,7 +20,7 @@ MARKET = frozenset({
     "S0", "sig", "rf_curve", "cr_curve", "cr_curve_b", "div_y", "rate_mode",
     "rt_a", "rt_b", "rt_tgt", "cr_src", "s0_src", "s0_date", "s0_raw", "s0_adj",
     "s0_splits", "ticker", "cmp_rf", "cmp_cr", "y_type", "bdt_sig", "bdt_base",
-    "rvol_rating", "rvol_tenor", "rvol_how", "sha_spread",
+    "rvol_rating", "rvol_tenor", "rvol_how", "sha_spread", "dp_rows",
 })
 METHOD = frozenset({
     "d_base", "model", "gap_m", "grid_days", "carry", "view", "conv_class", "emb_approach", "p_sep", "k_sep",
@@ -346,6 +346,10 @@ def inspect_case(case: Case) -> list[Issue]:
         elif not any(i.severity == 'error' for i in issues):
             for k, message in sha_row_issues(Terms(**values)):
                 add('error', 'sha_rows', 'sha_rows', sha_row_issue_text(k, message))
+    if values.get('inst') == 'RCPS' and (values.get('dp_rows') or values.get('dp_others')):
+        from .legacy import dp_issues
+        for message in dp_issues(Terms(**values)):
+            add('error', 'dp_rows', 'dp_rows', message)
     if values.get('inst') == 'SHA' and not values.get('sha_rows') and not any(i.severity == 'error' for i in issues):
         from .legacy import sha_contract_issues
         for message in sha_contract_issues(Terms(**values)):

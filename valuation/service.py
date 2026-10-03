@@ -319,6 +319,8 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
             eir = legacy.eir_or_none(*args) if accounting else None
             wb = (legacy.build_xlsx_formula if formula else legacy.build_xlsx)(
                 *args, r['conv'], eir, attach=attach, as_workbook=True, include_review=judgment)
+    if not formula and legacy.dp_active(terms):
+        legacy.dp_value_sheet(wb, terms)          # 수식 조서는 같은 시트를 수식으로 만든다
     workbook = finish_calculation_workbook(wb, run, formula=formula, accounting=accounting, judgment=judgment)
     md = [f"# {run.case.name} — 계산 결과", "",
           f"- 입력 SHA256: {run.summary['case_sha256']}",
