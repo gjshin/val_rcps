@@ -699,3 +699,17 @@ def test_coarse_grid_never_pays_before_fund_year():
                     assert at >= legacy.dp_fund_start(t, y0 + k) and m > i
                 if mode == "lost" and m > t.n:
                     assert pe == 0.0
+
+
+def test_screen_keeps_peer_date_with_trailing_text():
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    c = rcps(dp_rows=[{"fy": 2027, "amt": 3e9}],
+             dp_others=[dict(name="가상", rank="pari", issue="2026-01-01", face=5e9, yld=.03, cmp=1,
+                             start="2027-01-01 오타", end="2030-12-31", div=.01)])
+    app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
+    app.session_state.case = c; app.run(); app.run()
+    assert not app.exception
+    k = app.session_state.case
+    assert k.contract["dp_others"][0]["start"] == "2027-01-01 오타"
+    assert any("YYYY-MM-DD" in i.message for i in inspect_case(k) if i.severity == "error")

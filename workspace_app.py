@@ -311,7 +311,9 @@ def dp_editor(edited, errors):
         if not v:
             return None
         try:
-            return dt.date.fromisoformat(str(v)[:10])
+            if isinstance(v, dt.date):
+                return v if not isinstance(v, dt.datetime) else v.date()
+            return dt.date.fromisoformat(str(v))          # 입력 점검과 같이 전체를 읽는다 (뒤에 글자가 붙으면 오류)
         except ValueError:
             bad.append(what); keep[slot] = v; return None
     with st.expander('배당가능이익에 따른 상환 제약' + (f' — {len(rows)}개 연도 입력' if rows else ' (넣지 않으면 제한 없음)'),
