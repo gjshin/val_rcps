@@ -10836,8 +10836,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                         names[rr[("J", x)]] = f"{o['name']} 상환청구 (1=예)"
                         names[rr[("B", x)]] = f"{o['name']} 남은 상환금"
                         names[rr[("Q", x)]] = f"{o['name']} 지급"
-                    for r_, t_ in names.items():
-                        put(W, r_, 2, t_, bold=True, fill=LIGHT, border=True, size=8)
+                    for r_, t_ in names.items():   # 행 제목은 늘 글자 — 상품 이름이 «=» 로 시작해도 수식이 아니다
+                        _lb = put(W, r_, 2, "", bold=True, fill=LIGHT, border=True, size=8)
+                        _lb.value = t_; _lb.data_type = 's'
                 q = lambda key: f"{L}${rr[key]}"
                 qp = lambda key: f"{L}${pr[key]}"
                 cidx = W[f"{L}1"].column

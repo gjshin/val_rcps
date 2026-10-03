@@ -470,8 +470,8 @@ def test_formula_workbook_tie_day_and_text_names(tmp_path):
         if E["p_on"](i):
             assert ws.cell(7, 3+i).value == pytest.approx(E["put_val"](i), rel=1e-9, abs=1e-9), i
     raw = load_workbook(io.BytesIO(data))["00 배당가능이익 상환"]
-    cells = [c for row in raw.iter_rows() for c in row if c.value == "=1+1"]
-    assert cells and all(c.data_type == "s" for c in cells)
+    cells = [c for row in raw.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("=1+1")]
+    assert len(cells) > 1 and all(c.data_type == "s" for c in cells)          # 이름 칸과 이름이 든 행 제목 모두
     vz = zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, accounting=True)))
     vs = load_workbook(io.BytesIO(vz.read("value_review.xlsx")))["00 배당가능이익 상환"]
     vcells = [c for row in vs.iter_rows() for c in row if c.value == "=1+1"]
