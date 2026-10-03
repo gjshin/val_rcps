@@ -195,7 +195,7 @@ def test_dividends_first_and_zero_capacity_carries_forward():
     sc = E["dp"].schedule(i, E["put"](i))
     assert sc["rows"][0][3] == 0.0 and sc["rows"][0][6] == 0.0          # 재원 0 · 지급 0
     assert sc["rows"][1][6] == pytest.approx(E["put"](i)*1.04, rel=1e-12)  # 다음 해 가산율 붙여 전액
-    assert any("우선배당보다 작습니다" in m.message for m in run.issues if m.code == "input_check")
+    assert any("우선배당(평가대상과 동순위 상품)보다 작습니다" in m.message for m in run.issues if m.code == "input_check")
 
 
 def test_fiscal_year_mapping_and_unlisted_years_unlimited():
@@ -845,3 +845,11 @@ def test_far_future_contract_dates_are_rejected():
     case = rcps(d_issue="9998-01-01", d_base="9998-01-01", d_mat="9999-01-01", p_s=1., p_e=11., cv_e=12.,
                 dp_rows=[{"fy": 9998, "amt": 0.0}])
     assert any(i.severity == "error" and "2200년" in i.message for i in inspect_case(case))
+
+
+def test_shortfall_warning_counts_peer_dividends():
+    # 평가대상 우선배당 0% · 동순위 상품 우선배당 10%(100 기준 5) — 이익 3(100 기준)이면 그 해 배당이 부족하다고 알린다.
+    oth = [dict(name="가상 8회차", rank="pari", issue="2026-01-01", face=5e9, yld=0.0, cmp=1,
+                start="2028-06-01", end="2030-12-31", div=.10)]
+    run = calculate(rcps(cpn=0.0, dp_rows=[{"fy": 2027, "amt": 3e8}], dp_others=oth))
+    assert any("2027년 배당가능이익이 우선배당" in m.message for m in run.issues if m.code == "input_check")

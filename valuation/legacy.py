@@ -2223,9 +2223,11 @@ def dp_warnings(tm: Terms) -> list:
     if lost:
         w.append("만기까지 갚지 못한 상환금은 받지 못하는 것으로 봤습니다(«만기까지 갚지 못한 금액» = 받지 못함).")
     face = float(tm.face_total); de = 100*dp_div_rate(tm)
-    low = [y for y, a in sorted(P.items()) if a*100/face < de - 1e-9]
+    # 그 재원 연도(발생연도 + 1)에 빼는 우선배당 전체 — 평가대상 + 그 해 남아 있는 동순위 상품
+    divs = lambda y: de + sum(DP.other_div(o, y + 1) for o in DP.live(y + 1))
+    low = [y for y, a in sorted(P.items()) if a*100/face < divs(y) - 1e-9]
     if low:
-        w.append("발생연도 " + ", ".join(str(y) for y in low) + "년 배당가능이익이 평가대상 우선배당보다 작습니다 — "
+        w.append("발생연도 " + ", ".join(str(y) for y in low) + "년 배당가능이익이 우선배당(평가대상과 동순위 상품)보다 작습니다 — "
                  "평가는 우선배당을 계약대로 받는다고 보고 상환 재원만 줄입니다(배당 부족은 따로 반영하지 않음).")
     snr = [str(r.get("name") or "다른 상품") for r in (getattr(tm, "dp_others", None) or [])
            if isinstance(r, dict) and str(r.get("rank") or "senior") != "pari"]
