@@ -379,6 +379,9 @@ def dp_editor(edited, errors):
             if k in ('issue', 'start', 'end'): return _day(r.get(k), f'{nm} {t}', sl)
             if k == 'face': return _num(r.get(k), float, f'{nm} {t}', sl)
             return r.get(k)
+        for r in others:
+            extra = [k for k in r if k not in dict(DP_OTHER_COLS)]
+            if extra: bad.append(f"{r.get('name') or '다른 상품'} 의 알 수 없는 칸({', '.join(map(str, extra))})")
         _of = pd.DataFrame([{t: _cell(x, r, k, t) for k, t in DP_OTHER_COLS} for x, r in enumerate(others)],
                            columns=[t for _, t in DP_OTHER_COLS])
         if bad:
@@ -411,6 +414,8 @@ def dp_editor(edited, errors):
                 elif k == 'face': v = None if v is None else float(v)
                 elif k == 'name': v = str(v or '').strip() or f'다른 상품 {len(new_o)+1}'
                 row[k] = v
+            if _same_o:                              # 모르는 칸은 고칠 때까지 그대로 둔다 (입력 점검 오류가 남는다)
+                row.update({k: v for k, v in others[x].items() if k not in dict(DP_OTHER_COLS)})
             new_o.append(row)
         edited['dp_others'] = new_o + junk_o
         if new_rows:

@@ -365,3 +365,33 @@ def test_screen_lets_user_fix_invalid_carry_rate_with_zero():
     assert not app.exception
     k = app.session_state.case
     assert k.contract["dp_delay"] == 0.0 and k.contract["dp_from"] == "01-01"
+
+
+def test_missing_issuer_call_year_is_warned():
+    # 상환청구권 없음 · 발행자 상환권만 — 행사일(2027~2030년)에 쓰는 해의 이익을 넣지 않았으면 알린다.
+    call = dict(issuer_call=1, k_s=12., k_e=59., k_f=12., k_prem=.06, k_cmp=1, k_w=1., p_s=0., p_e=0.)
+    run = calculate(rcps(dp_rows=[{"fy": 2025, "amt": 1e10}], **call))
+    msg = [m.message for m in run.issues if m.code == "input_check" and "넣지 않아" in m.message]
+    assert msg and "2026" in msg[0] and "발행자 상환권" in msg[0]
+
+
+def test_profit_years_beyond_schedule_horizon_are_rejected():
+    t = legacy.Terms(inst="RCPS", d_base="2026-01-01"); t.dp_rows = [{"fy": 2026 + legacy.DP_KMAX, "amt": 0.0}]
+    assert any("까지 넣을 수 있습니다" in m for m in legacy.dp_issues(t))
+    t.dp_rows = [{"fy": 2026 + legacy.DP_KMAX - 2, "amt": 0.0}]
+    assert not any("까지 넣을 수 있습니다" in m for m in legacy.dp_issues(t))
+
+
+def test_screen_keeps_unknown_peer_fields():
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    c = rcps(dp_rows=[{"fy": 2027, "amt": 3e9}],
+             dp_others=[dict(name="가상", rank="pari", issue="2026-01-01", face=5e9, yield_=.05, cmp=1,
+                             start="2027-01-01", end="2030-12-31", div=.01)])
+    app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
+    app.session_state.case = c; app.run(); app.run()
+    assert not app.exception
+    k = app.session_state.case
+    assert k.contract["dp_others"][0]["yield_"] == .05
+    assert any("알 수 없는 칸" in i.message for i in inspect_case(k) if i.severity == "error")
+    assert any("알 수 없는 칸" in w.value for w in app.warning)

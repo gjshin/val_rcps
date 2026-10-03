@@ -2144,6 +2144,14 @@ def dp_issues(tm: Terms) -> list:
         out.append("이월 상환금 가산율을 숫자로 넣으십시오.")
     if dp_from_md(tm) is None:
         out.append("재원 사용 시작일은 «월-일»(예: 04-01) 형식이어야 합니다 (02-29 는 쓸 수 없습니다).")
+    if seen and dp_from_md(tm) is not None:
+        try:
+            lim = dp_fund_year(tm, dt.datetime.fromisoformat(str(tm.d_base))) + DP_KMAX - 2
+            if max(seen) > lim:
+                out.append(f"배당가능이익 발생연도는 {lim}년까지 넣을 수 있습니다 — 지급 일정은 평가기준일부터 "
+                           f"{DP_KMAX}년까지만 따라갑니다.")
+        except (TypeError, ValueError):
+            pass
     out += dp_other_issues(tm)
     if seen and int(getattr(tm, "put_bdt", 0) or 0):
         out.append("배당가능이익 반영은 금리 이항모형(상환청구권 금리모형)과 함께 쓸 수 없습니다 — 한쪽을 끄십시오.")
@@ -2170,9 +2178,13 @@ def dp_warnings(tm: Terms) -> list:
         for k, m, at, cap, be, bo, pe, df in DP.schedule(i, amt)["rows"]:
             if cap >= DP_INF/10 and be > 1e-12:
                 miss.add(y0 + k - 1)
+    if issuer_redeem(tm):                    # 발행자 상환권 행사일 — 넣지 않은 해는 제한 없이 행사할 수 있다고 본다
+        for i in EA["k_dates"]:
+            y = dp_fund_year(tm, dp_step_dt(tm, dt_, i)) - 1
+            if y not in P: miss.add(y)
     miss = sorted(miss)
     if miss:
-        w.append("상환청구·만기상환(다음 해로 넘긴 금액 포함)에 쓰는 해 중 발생연도 " + ", ".join(str(y) for y in miss) + "년의 배당가능이익을 넣지 않아 "
+        w.append("상환청구·만기상환(다음 해로 넘긴 금액 포함)·발행자 상환권에 쓰는 해 중 발생연도 " + ", ".join(str(y) for y in miss) + "년의 배당가능이익을 넣지 않아 "
                  "그 다음 해에는 제한 없이 상환된다고 봤습니다(기본 전제). 추정치가 있으면 넣으십시오.")
     face = float(tm.face_total); de = 100*dp_div_rate(tm)
     low = [y for y, a in sorted(P.items()) if a*100/face < de - 1e-9]
