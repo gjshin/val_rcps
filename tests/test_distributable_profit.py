@@ -743,3 +743,14 @@ def test_formula_workbook_node_date_near_tie(tmp_path):
     for j in range(t.n + 1):
         if E["p_on"](j):
             assert ws.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j
+
+
+def test_peer_ending_earlier_in_same_fund_year_shares_that_year():
+    # 동순위 상품의 청구 기간이 2028-01-01~03-31 이고 평가대상은 2028년 12월 청구 — 같은 재원 연도라 그 해 재원을
+    # 함께 쓴다(문서: 재원 연도 시작 전에 끝난 상품만 상환을 마쳤다고 본다).
+    oth = [dict(name="가상 7회차", rank="pari", issue="2026-01-01", face=5e9, yld=0.0, cmp=1,
+                start="2028-01-01", end="2028-03-31", div=0.0)]
+    E, t = ea(calculate(rcps(dp_rows=[{"fy": 2027, "amt": 3e9}], dp_others=oth))); dt_ = t.T/t.n
+    i = next(i for i in sorted(E["p_dates"]) if (d := legacy.dp_step_dt(t, dt_, i)).year == 2028 and d.month == 12)
+    r0 = E["dp"].schedule(i, E["put"](i), "put")["rows"][0]
+    assert r0[5] == pytest.approx(50.0, rel=1e-12)                        # 같은 해 동순위 상환금 50
