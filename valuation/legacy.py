@@ -748,7 +748,7 @@ MODEL_LIMITS = (
     ('배당가능이익 상환 제약은 연도별 고정 추정치로만 반영',
      '넣지 않으면 계약상 상환일에 즉시 상환된다고 본다. 넣으면 발생연도별 고정값으로 청구 시점마다 지급 일정을 '
      '정한다 — 주가와 이익의 연동, 해마다 한도만큼만 나눠 청구하는 전략, 동순위 상품의 개별 판단(그 재원 연도 안에 '
-     '청구 기간이 하루라도 있으면 그 해 함께 청구한다고 본다)은 반영하지 않는다. 넘긴 상환금은 청구일부터 1년 단위의 가장 가까운 계산 시점에 갚고, 만기 '
+     '청구 기간이 하루라도 있으면 그 해 함께 청구하고, 평가대상 청구 전에 청구 기간이 끝난 상품은 그 전에 상환을 마쳤다고 본다)은 반영하지 않는다. 넘긴 상환금은 청구일부터 1년 단위의 가장 가까운 계산 시점에 갚고, 만기 '
      '뒤 지급분은 마지막 구간의 위험 선도이자율로 할인한다. 배당 부족(이익 < 우선배당)은 따로 반영하지 않는다',
      ('UNMODELLED_NOTE (조서 표지)', 'README', 'docs/입력안내_RCPS.md')),
     ('전환 희석 미반영',
@@ -2266,17 +2266,23 @@ class DPPlan:
     def other_div(self, o, at: dt.datetime) -> float:
         return o["div"]*o["face"]*100/self.face if at >= o["issue"] else 0.0
 
+    def live(self, y0: int) -> list:
+        """재원 연도 y0 에 아직 남은 동순위 상품 — 청구 기간이 y0 전에 끝났으면 그 전에 청구해 상환을 마쳤다고 본다."""
+        fs = dp_fund_start(self.tm, y0)
+        return [o for o in self.others if o["end"] >= fs]
+
     def schedule(self, i: int, amount: float) -> dict:
         """스텝 i 에 상환청구하면 받는 현금 일정 — {pv, rows=[(k, 스텝, 날짜, 재원, 평가대상 잔액, 동순위 잔액 합, 지급, 할인계수)]}."""
         t0 = dp_step_dt(self.tm, self.dt, i)
         y0 = dp_fund_year(self.tm, t0)          # 청구 시점의 재원 연도 — 넘긴 금액은 y0+1, y0+2 … 해의 재원으로 갚는다
-        be = float(amount); bo = [0.0]*len(self.others); joined = [False]*len(self.others)
+        oth = self.live(y0)
+        be = float(amount); bo = [0.0]*len(oth); joined = [False]*len(oth)
         pv, rows = 0.0, []
         for k in range(self.K + 1):
             m = i + dp_year_step(k, self.dt)
             at = dp_step_dt(self.tm, self.dt, m)
             ded = self.div_e if k == 0 else 0.0
-            for x, o in enumerate(self.others):
+            for x, o in enumerate(oth):
                 if not joined[x]:
                     ded += self.other_div(o, at)
                     c_ = dp_other_claim(self.tm, o, y0 + k, at)
@@ -2302,9 +2308,10 @@ class DPPlan:
         갚을 수 있을 때만 행사한다(비율로 나누면 평가대상 몫이 전액이 되는 조건)."""
         t0 = dp_step_dt(self.tm, self.dt, i)
         y0 = dp_fund_year(self.tm, t0)
-        ded = self.div_e + sum(self.other_div(o, t0) for o in self.others)
+        oth = self.live(y0)
+        ded = self.div_e + sum(self.other_div(o, t0) for o in oth)
         bo = 0.0
-        for o in self.others:
+        for o in oth:
             c_ = dp_other_claim(self.tm, o, y0, t0)
             if c_ is not None:
                 bo += dp_grow(o["face"], o["yld"], o["cmp"], o["issue"], c_)*100/self.face
@@ -2483,11 +2490,8 @@ def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
         # 존속기간 만료 시 상환도 이익으로 한다 — 만기 노드에서 청구한 것과 같은 일정의 현재가치.
         red_val = DP.schedule(n, red)["pv"]
         if issuer_redeem(tm):
-            _pays = pay_steps(tm, n, dt_)
-            _kadd = int(getattr(tm, "k_cpn_add", 0)) == 1
-            _kc = 100*eff_cpn(tm)*tm.ipay/12
-            _kok = {i for i in k_dates
-                    if DP.call_ok(i, call(i) + (_kc*_pays.get(i, 0) if (_kadd and i < n) else 0.0), float(tm.k_w))}
+            # 행사일에 따로 주는 배당(가산분)은 그 해 우선배당으로 재원에서 이미 뺐다 — 상환원금만 비교한다
+            _kok = {i for i in k_dates if DP.call_ok(i, call(i), float(tm.k_w))}
             k_on = lambda i: i in _kok
     return dict(cmonth=cmonth, cyear=cyear, put=put, call=call, put_val=put_val, dp=DP, red_val=red_val,
                 put_at_month=put_at_month, call_at_month=call_at_month,
@@ -10706,7 +10710,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(W, r, 2, t_, bold=True, fill=LIGHT, border=True)
         cumrng = f"$C${R['cum']}:${gl(3+n)}${R['cum']}"
         flast = f"{COMQ}!${gl(3+n-1)}$12"
-        _dv = lambda x, at: f"IF({at}>=$C${orow[x]},$I${orow[x]}*$D${orow[x]}*100/{FACE},0)"
+        _dv = lambda x, at, y0: (f"IF(AND({at}>=$C${orow[x]},$H${orow[x]}>=DATE({y0},$C$8,$D$8)),"
+                                 f"$I${orow[x]}*$D${orow[x]}*100/{FACE},0)")
+        _live = lambda x, y0: f"$H${orow[x]}>=DATE({y0},$C$8,$D$8)"
         nx = len(_DPO)
         # 동순위 상품의 그 재원 연도 안 청구 기간 [lo, hi] — 비어 있으면(lo > hi) 그 해 청구하지 않는다
         _lo = lambda x, yr: f"MAX($G${orow[x]},$C${orow[x]},DATE({yr},$C$8,$D$8))"
@@ -10725,6 +10731,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         def chain(L, cst, cdate, ccum, amt, base, labels):
             """한 청구 시점(열 L)의 지급 일정. 돌려주는 것은 «지급 × 할인계수» 식 목록."""
             terms, pr = [], None
+            y0c = f"{L}${rows_of(base)['yr']}"          # 청구 시점의 재원 연도 (0년 블록)
             for k in range(_DPP.K + 1):
                 b = base + k*_dp_blk
                 rr = rows_of(b)
@@ -10751,10 +10758,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 g_(rr["P"], f"=IFERROR(VLOOKUP({q('yr')}-1,{rng},2,FALSE)*100/{FACE},1E+300)")
                 for x in range(nx):
                     o_ = orow[x]
-                    cond = f"{_lo(x, q('yr'))}<={_hi(x, q('yr'))}"
+                    cond = f"AND({_live(x, y0c)},{_lo(x, q('yr'))}<={_hi(x, q('yr'))})"
                     g_(rr[("J", x)], (f"=IF({cond},1,0)" if k == 0 else f"=IF(OR({qp(('J', x))}=1,{cond}),1,0)"), "0")
                 ded = (f"100*{RATE}" if k == 0 else "0") + "".join(
-                    f"+IF({('0' if k == 0 else qp(('J', x)))}=0,{_dv(x, q('date'))},0)" for x in range(nx))
+                    f"+IF({('0' if k == 0 else qp(('J', x)))}=0,{_dv(x, q('date'), y0c)},0)" for x in range(nx))
                 g_(rr["ded"], "=" + ded)
                 g_(rr["cap"], f"=IF({q('P')}>=1E+299,1E+300,MAX(0,{q('P')}-{q('ded')}))")
                 for x in range(nx):
@@ -10790,10 +10797,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(W, R["pv"], 3+i, "=" + "+".join(terms), fmt=N4, align="center", size=8)
             if issuer_redeem(tm):
                 ka = f"{COMQ}!{L}${CROW['kamt']}"
+                kp = f"({ka}-({_cadd(i, 'kcadd')}))"     # 행사일 배당 가산분은 우선배당으로 이미 뺐다
                 p0 = f"IFERROR(VLOOKUP({FY(c(R['date']))}-1,{rng},2,FALSE)*100/{FACE},1E+300)"
-                d0 = f"100*{RATE}" + "".join(f"+{_dv(x, c(R['date']))}" for x in range(nx))
+                d0 = f"100*{RATE}" + "".join(f"+{_dv(x, c(R['date']), FY(c(R['date'])))}" for x in range(nx))
                 b0 = "".join(f"+{L}${rows_of(_dp_k0)[('B', x)]}" for x in range(nx))   # 0년 블록의 동순위 남은 상환금
-                put(W, R["kok"], 3+i, f"=IF(ISNUMBER({ka}),IF(OR({p0}>=1E+299,MAX(0,{p0}-({d0}))>={ka}*{K['cw']}{b0}-1E-9),1,0),0)",
+                put(W, R["kok"], 3+i, f"=IF(ISNUMBER({ka}),IF(OR({p0}>=1E+299,MAX(0,{p0}-({d0}))>={kp}*{K['cw']}{b0}-1E-9),1,0),0)",
                     fmt=N0, align="center", size=8)
         # ── 만기상환 — 존속기간 만료 시 상환도 이익으로 한다. 만기 노드에서 청구한 것과 같은 일정 (C열) ──
         LN = gl(3+n)

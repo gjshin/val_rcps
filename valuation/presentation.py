@@ -73,7 +73,7 @@ LABELS = {
     'sources': '자료 출처', 'contract': '계약서',
 }
 PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'k_lock_w', 'ytm', 'bdt_sig',
-                     'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue'})
+                     'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue', 'dp_delay'})
 EVENT_DATES = frozenset({'cv_s', 'cv_e', 'p_s', 'p_e', 'k_s', 'k_e', 'k_lock', 'ipo_m', 'rfx_first',
                         'sha_put_s', 'sha_put_e', 'sha_call_s', 'sha_call_e'})
 CHOICES = {

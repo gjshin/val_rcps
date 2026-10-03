@@ -113,6 +113,30 @@ def test_issuer_call_counts_pari_principal_same_year():
     assert not any(Eb["k_on"](i) for i in Eb["k_dates"])
 
 
+def test_peer_whose_window_ended_is_retired():
+    # 청구 기간이 2026년 안에 끝난 동순위 상품 — 평가대상 청구(2027년~)보다 먼저 상환을 마쳤다고 보므로
+    # 배당도 상환금도 빼지 않는다. 다른 상품을 넣지 않은 평가와 같아야 한다.
+    rows = [{"fy": y, "amt": 1.5e9} for y in range(2026, 2031)]
+    oth = [dict(name="가상 5회차", rank="pari", issue="2026-01-01", face=5e9, yld=.03, cmp=1,
+                start="2026-06-01", end="2026-12-31", div=.02)]
+    Ea, _ = ea(calculate(rcps(dp_rows=rows, dp_others=oth))); Eb, _ = ea(calculate(rcps(dp_rows=rows)))
+    assert all(Ea["put_val"](i) == Eb["put_val"](i) for i in Ea["p_dates"]) and Ea["red_val"] == Eb["red_val"]
+    assert any(Ea["put_val"](i) < Ea["put"](i) for i in Ea["p_dates"])
+
+
+def test_call_date_dividend_not_counted_twice():
+    # 행사일 배당을 따로 주는 발행자 상환권 — 그 배당은 우선배당으로 재원에서 이미 뺐다.
+    # 재원 = 우선배당 2 + 상환금 + 1 이면 (배당 2 를 한 번 더 더하지 않으므로) 행사할 수 있다.
+    call = dict(issuer_call=1, k_s=12., k_e=59., k_f=12., k_prem=.06, k_cmp=1, k_w=1., k_cpn_add=1)
+    E0, t = ea(calculate(rcps(**call))); dt_ = t.T/t.n
+    i0 = min(E0["k_dates"]); y = legacy.dp_fund_year(t, legacy.dp_step_dt(t, dt_, i0))
+    amt = (E0["call"](i0) + 2.0 + 1.0)*FACE/100
+    E, _ = ea(calculate(rcps(dp_rows=[{"fy": y - 1, "amt": amt}], **call)))
+    assert E["k_on"](i0)
+    E2, _ = ea(calculate(rcps(dp_rows=[{"fy": y - 1, "amt": amt - 2e8}], **call)))   # 재원이 상환금보다 1 작으면 막힌다
+    assert not E2["k_on"](i0)
+
+
 def test_malformed_numbers_report_instead_of_crash():
     # 숫자가 아닌 칸이 있어도 점검이 멈추지 않고 오류 문장을 낸다 (고치기 전에는 숫자 변환 오류로 멈췄다).
     bad = rcps(dp_rows=[{"fy": "이천이십칠", "amt": "많음"}],
@@ -200,6 +224,7 @@ def test_value_workbooks_carry_schedule_sheet():
                                           (1, "04-01", ("2028-05-01", "2028-08-31"))])
 def test_formula_workbook_matches_engine(tmp_path, call, frm, win):
     kw = dict(issuer_call=1, k_s=12., k_e=59., k_f=12., k_prem=.06, k_cmp=1, k_w=1.) if call else {}
+    if call and win: kw["k_cpn_add"] = 1
     oth = [dict(name="가상 2회차", rank="pari", issue="2026-06-01", face=5e9, yld=.04, cmp=0,
                 start=(win or ("2028-01-01",))[0], end=(win or (None, "2030-06-30"))[1], div=.01)]
     run = calculate(rcps(dp_rows=[{"fy": 2027, "amt": 3e9}, {"fy": 2028, "amt": 2.5e10}, {"fy": 2029, "amt": 4e9}],
