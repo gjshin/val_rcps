@@ -747,8 +747,8 @@ MODEL_LIMITS = (
      ('화면 매도청구권 캡션', 'README 「한계」', 'docs/의사결정규칙.md §29')),
     ('배당가능이익 상환 제약은 연도별 고정 추정치로만 반영',
      '넣지 않으면 계약상 상환일에 즉시 상환된다고 본다. 넣으면 발생연도별 고정값으로 청구 시점마다 지급 일정을 '
-     '정한다 — 주가와 이익의 연동, 해마다 한도만큼만 나눠 청구하는 전략, 동순위 상품의 개별 판단(같은 해 함께 '
-     '청구한다고 본다)은 반영하지 않는다. 넘긴 상환금은 청구일부터 1년 단위의 가장 가까운 계산 시점에 갚고, 만기 '
+     '정한다 — 주가와 이익의 연동, 해마다 한도만큼만 나눠 청구하는 전략, 동순위 상품의 개별 판단(그 재원 연도 안에 '
+     '청구 기간이 하루라도 있으면 그 해 함께 청구한다고 본다)은 반영하지 않는다. 넘긴 상환금은 청구일부터 1년 단위의 가장 가까운 계산 시점에 갚고, 만기 '
      '뒤 지급분은 마지막 구간의 위험 선도이자율로 할인한다. 배당 부족(이익 < 우선배당)은 따로 반영하지 않는다',
      ('UNMODELLED_NOTE (조서 표지)', 'README', 'docs/입력안내_RCPS.md')),
     ('전환 희석 미반영',
@@ -2050,7 +2050,10 @@ def dp_profits(tm: Terms) -> dict:
     for r in getattr(tm, "dp_rows", None) or []:
         if not isinstance(r, dict) or r.get("fy") in (None, "") or r.get("amt") in (None, ""):
             continue
-        out[int(r["fy"])] = float(r["amt"])
+        try:
+            out[int(r["fy"])] = float(r["amt"])
+        except (TypeError, ValueError):
+            continue                      # 숫자가 아닌 줄 — dp_issues 가 오류 문장을 낸다
     return out
 
 
@@ -2076,9 +2079,9 @@ def dp_other_issues(tm: Terms) -> list:
     """다른 상품 표에서 계산을 막아야 하는 입력 — 문장 목록."""
     out = []
     for k, r in enumerate(getattr(tm, "dp_others", None) or [], 1):
-        nm = (r or {}).get("name") or f"{k}번째 상품"
         if not isinstance(r, dict):
             out.append(f"다른 상품 {k}번째 줄의 형식이 올바르지 않습니다."); continue
+        nm = r.get("name") or f"{k}번째 상품"
         if set(r) - set(DP_OTHER_KEYS):
             out.append(f"{nm}: 알 수 없는 칸이 있습니다 ({', '.join(sorted(set(r) - set(DP_OTHER_KEYS)))}).")
         if str(r.get("rank") or "senior") not in DP_RANKS:
@@ -2101,7 +2104,11 @@ def dp_other_issues(tm: Terms) -> list:
                 if float(r.get(x) or 0.0) < 0: out.append(f"{nm}: {lab}은 0 이상이어야 합니다.")
             except (TypeError, ValueError):
                 out.append(f"{nm}: {lab}을 숫자로 넣으십시오.")
-        if int(r.get("cmp", 1)) not in (0, 1):
+        try:
+            ok = int(r.get("cmp", 1)) in (0, 1)
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
             out.append(f"{nm}: 복리 방식은 1(연복리) 또는 0(단리)입니다.")
     return out
 
@@ -2123,12 +2130,15 @@ def dp_issues(tm: Terms) -> list:
         if fy in seen: out.append(f"배당가능이익 {fy}년이 두 번 있습니다.")
         seen.add(fy)
         if amt < 0 or not math.isfinite(amt): out.append(f"배당가능이익 {fy}년은 0 이상의 금액이어야 합니다.")
-    if float(getattr(tm, "dp_delay", 0.0) or 0.0) < 0:
-        out.append("이월 상환금 가산율은 0 이상이어야 합니다.")
+    try:
+        if not float(getattr(tm, "dp_delay", 0.0) or 0.0) >= 0:
+            out.append("이월 상환금 가산율은 0 이상이어야 합니다.")
+    except (TypeError, ValueError):
+        out.append("이월 상환금 가산율을 숫자로 넣으십시오.")
     if dp_from_md(tm) is None:
         out.append("재원 사용 시작일은 «월-일»(예: 04-01) 형식이어야 합니다 (02-29 는 쓸 수 없습니다).")
     out += dp_other_issues(tm)
-    if dp_profits(tm) and int(getattr(tm, "put_bdt", 0)):
+    if seen and int(getattr(tm, "put_bdt", 0) or 0):
         out.append("배당가능이익 반영은 금리 이항모형(상환청구권 금리모형)과 함께 쓸 수 없습니다 — 한쪽을 끄십시오.")
     return out
 
@@ -2181,6 +2191,24 @@ def dp_fund_year(tm: Terms, at) -> int:
     """그 날짜에 쓰는 재원 연도 Y (발생연도 Y−1 의 배당가능이익). 재원 사용 시작일 전이면 한 해 앞이다."""
     m, d = dp_from_md(tm) or (1, 1)
     return at.year if (at.month, at.day) >= (m, d) else at.year - 1
+
+
+def dp_fund_start(tm: Terms, year: int) -> dt.datetime:
+    """재원 연도 year 가 시작하는 날 (재원 사용 시작일)."""
+    m, d = dp_from_md(tm) or (1, 1)
+    return dt.datetime(year, m, d)
+
+
+def dp_other_claim(tm: Terms, o: dict, year: int, at: dt.datetime):
+    """동순위 상품 o 가 재원 연도 year 에 상환청구하는 날 — 그 해 안에 청구 기간(발행 뒤)이 없으면 None.
+
+    그 해 청구 기간 가운데 평가대상 지급일(at)에 가장 가까운 날로 본다(상환금 가산 계산에 쓴다).
+    """
+    lo = max(o["start"], o["issue"], dp_fund_start(tm, year))
+    hi = min(o["end"], dp_fund_start(tm, year + 1) - dt.timedelta(days=1))
+    if lo > hi:
+        return None
+    return min(max(at, lo), hi)
 
 
 def dp_div_rate(tm: Terms) -> float:
@@ -2248,9 +2276,10 @@ class DPPlan:
             for x, o in enumerate(self.others):
                 if not joined[x]:
                     ded += self.other_div(o, at)
-                    if o["start"] <= at <= o["end"] and at >= o["issue"]:
+                    c_ = dp_other_claim(self.tm, o, y0 + k, at)
+                    if c_ is not None:
                         joined[x] = True
-                        bo[x] = dp_grow(o["face"], o["yld"], o["cmp"], o["issue"], at)*100/self.face
+                        bo[x] = dp_grow(o["face"], o["yld"], o["cmp"], o["issue"], c_)*100/self.face
             cap = self.cap(y0 + k, ded)
             tot = be + sum(bo)
             if cap >= DP_INF/10:
@@ -2266,10 +2295,17 @@ class DPPlan:
         return dict(pv=pv, rows=rows, left=be)
 
     def call_ok(self, i: int, amount: float, share: float) -> bool:
-        """발행자 상환권 — 그 해 재원(우선배당을 뺀 뒤)이 상환할 금액 × 한도 이상일 때만 행사할 수 있다."""
+        """발행자 상환권 — 그 해 재원(우선배당을 뺀 뒤)이 상환할 금액 × 한도와 같은 해 동순위 상환금을 함께
+        갚을 수 있을 때만 행사한다(비율로 나누면 평가대상 몫이 전액이 되는 조건)."""
         t0 = dp_step_dt(self.tm, self.dt, i)
+        y0 = dp_fund_year(self.tm, t0)
         ded = self.div_e + sum(self.other_div(o, t0) for o in self.others)
-        return self.cap(dp_fund_year(self.tm, t0), ded) >= amount*share - 1e-9
+        bo = 0.0
+        for o in self.others:
+            c_ = dp_other_claim(self.tm, o, y0, t0)
+            if c_ is not None:
+                bo += dp_grow(o["face"], o["yld"], o["cmp"], o["issue"], c_)*100/self.face
+        return self.cap(y0, ded) >= amount*share + bo - 1e-9
 
 
 def dp_value_sheet(wb, tm: Terms):
@@ -10662,13 +10698,16 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         R = _DPR
         lab = {R["st"]: "청구 스텝", R["date"]: "청구일", R["cum"]: "누적 위험 할인 Σ f·Δt",
                R["amt"]: "상환청구 계약금액 (행사일 이자 제외)", R["pv"]: "상환청구 가치 — 실제 지급 일정의 현재가치"}
-        if issuer_redeem(tm): lab[R["kok"]] = "발행자 상환 가능 (그 해 재원 ≥ 상환금 × 한도, 1=예)"
+        if issuer_redeem(tm): lab[R["kok"]] = "발행자 상환 가능 (그 해 재원 ≥ 상환금 × 한도 + 같은 해 동순위 상환금, 1=예)"
         for r, t_ in lab.items():
             put(W, r, 2, t_, bold=True, fill=LIGHT, border=True)
         cumrng = f"$C${R['cum']}:${gl(3+n)}${R['cum']}"
         flast = f"{COMQ}!${gl(3+n-1)}$12"
         _dv = lambda x, at: f"IF({at}>=$C${orow[x]},$I${orow[x]}*$D${orow[x]}*100/{FACE},0)"
         nx = len(_DPO)
+        # 동순위 상품의 그 재원 연도 안 청구 기간 [lo, hi] — 비어 있으면(lo > hi) 그 해 청구하지 않는다
+        _lo = lambda x, yr: f"MAX($G${orow[x]},$C${orow[x]},DATE({yr},$C$8,$D$8))"
+        _hi = lambda x, yr: f"MIN($H${orow[x]},DATE({yr}+1,$C$8,$D$8)-1)"
 
         def rows_of(b):
             rr = dict(m=b, date=b+1, yr=b+2, P=b+3)
@@ -10709,7 +10748,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 g_(rr["P"], f"=IFERROR(VLOOKUP({q('yr')}-1,{rng},2,FALSE)*100/{FACE},1E+300)")
                 for x in range(nx):
                     o_ = orow[x]
-                    cond = f"AND({q('date')}>=$G${o_},{q('date')}<=$H${o_},{q('date')}>=$C${o_})"
+                    cond = f"{_lo(x, q('yr'))}<={_hi(x, q('yr'))}"
                     g_(rr[("J", x)], (f"=IF({cond},1,0)" if k == 0 else f"=IF(OR({qp(('J', x))}=1,{cond}),1,0)"), "0")
                 ded = (f"100*{RATE}" if k == 0 else "0") + "".join(
                     f"+IF({('0' if k == 0 else qp(('J', x)))}=0,{_dv(x, q('date'))},0)" for x in range(nx))
@@ -10717,7 +10756,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 g_(rr["cap"], f"=IF({q('P')}>=1E+299,1E+300,MAX(0,{q('P')}-{q('ded')}))")
                 for x in range(nx):
                     o_ = orow[x]
-                    tau = f"MAX(0,({q('date')}-$C${o_})/365)"
+                    cl = f"MIN(MAX({q('date')},{_lo(x, q('yr'))}),{_hi(x, q('yr'))})"
+                    tau = f"MAX(0,({cl}-$C${o_})/365)"
                     grow = f"$D${o_}*IF($F${o_}=1,(1+$E${o_})^{tau},1+$E${o_}*{tau})*100/{FACE}"
                     g_(rr[("B", x)], (f"=IF({q(('J', x))}=1,{grow},0)" if k == 0 else
                                       f"=IF({qp(('J', x))}=1,({qp(('B', x))}-{qp(('Q', x))})*(1+{G}),"
@@ -10749,7 +10789,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 ka = f"{COMQ}!{L}${CROW['kamt']}"
                 p0 = f"IFERROR(VLOOKUP({FY(c(R['date']))}-1,{rng},2,FALSE)*100/{FACE},1E+300)"
                 d0 = f"100*{RATE}" + "".join(f"+{_dv(x, c(R['date']))}" for x in range(nx))
-                put(W, R["kok"], 3+i, f"=IF(ISNUMBER({ka}),IF(OR({p0}>=1E+299,MAX(0,{p0}-({d0}))>={ka}*{K['cw']}-1E-9),1,0),0)",
+                b0 = "".join(f"+{L}${rows_of(_dp_k0)[('B', x)]}" for x in range(nx))   # 0년 블록의 동순위 남은 상환금
+                put(W, R["kok"], 3+i, f"=IF(ISNUMBER({ka}),IF(OR({p0}>=1E+299,MAX(0,{p0}-({d0}))>={ka}*{K['cw']}{b0}-1E-9),1,0),0)",
                     fmt=N0, align="center", size=8)
         # ── 만기상환 — 존속기간 만료 시 상환도 이익으로 한다. 만기 노드에서 청구한 것과 같은 일정 (C열) ──
         LN = gl(3+n)

@@ -6,6 +6,7 @@
 · 발행자 상환권은 재원이 있어야 행사, 제3자 매도청구권은 직접 영향 없음, 다른 상품(전환사채)에는 영향 없음.
 · 수식 조서를 리브레오피스로 다시 계산해 엔진과 같은지 본다.
 """
+import datetime as dt
 import io
 import math
 import shutil
@@ -76,6 +77,52 @@ def test_hand_calculation_with_pari_product():
     pv = p1 + p2*math.exp(-f*m1*dt_) + p3*math.exp(-f*m2*dt_)
     assert E["put_val"](i) == pytest.approx(pv, rel=1e-12)
     assert E["put_val"](i) < A
+
+
+def test_pari_window_inside_fund_year_but_off_anniversary():
+    # 동순위 상품의 청구 기간이 2028-03-01~2028-06-30 뿐이어도(평가대상 청구일·1년 뒤 지급일 어디에도 걸리지 않음)
+    # 2028년 재원 연도 안에 있으므로 그 해 함께 청구한다. 상환금은 그 해 청구 기간 중 평가대상 지급일에 가장 가까운 날
+    # (2028-03-01) 기준 — 50 × 1.04^τ.
+    oth = [dict(name="가상 3회차", rank="pari", issue="2026-01-01", face=5e9, yld=.04, cmp=1,
+                start="2028-03-01", end="2028-06-30", div=.01)]
+    run = calculate(rcps(dp_rows=[{"fy": 2027, "amt": 3e9}, {"fy": 2028, "amt": 6e9}], dp_others=oth))
+    E, t = ea(run)
+    dt_ = t.T/t.n
+    i = next(i for i in sorted(E["p_dates"]) if (d := legacy.dp_step_dt(t, dt_, i)).year == 2028 and d.month < 3)
+    A = E["put"](i)
+    RF, CR = legacy.curves(t); f = legacy.forward_rate(CR, 0.0, dt_)
+    B = 50.0*1.04**((dt.datetime(2028, 3, 1) - dt.datetime(2026, 1, 1)).days/365)
+    cap1 = 30.0 - 2.0 - 0.5
+    p1 = min(A, cap1*A/(A + B)); q1 = min(B, cap1*B/(A + B))
+    be, bo = A - p1, B - q1
+    p2 = min(be, 60.0*be/(be + bo))
+    p3 = be - p2
+    m1 = int(math.floor(1/dt_ + .5)); m2 = int(math.floor(2/dt_ + .5))
+    assert E["put_val"](i) == pytest.approx(p1 + p2*math.exp(-f*m1*dt_) + p3*math.exp(-f*m2*dt_), rel=1e-12)
+
+
+def test_issuer_call_counts_pari_principal_same_year():
+    # 재원 200 − 우선배당 2 = 198. 발행자 상환금(약 106~125) 만으로는 되지만 같은 해 동순위 상환금 100 을 더하면 모자란다.
+    call = dict(k_s=12., k_e=59., k_f=12., k_prem=.06, k_cmp=1, k_w=1.)
+    prof = [{"fy": y, "amt": 2e10} for y in range(2026, 2031)]
+    oth = [dict(name="가상 4회차", rank="pari", issue="2026-01-01", face=1e10, yld=0.0, cmp=1,
+                start="2027-01-01", end="2030-12-31", div=0.0)]
+    a = calculate(rcps(issuer_call=1, dp_rows=prof, **call)); Ea, _ = ea(a)
+    b = calculate(rcps(issuer_call=1, dp_rows=prof, dp_others=oth, **call)); Eb, _ = ea(b)
+    assert Ea["k_dates"] and all(Ea["k_on"](i) for i in Ea["k_dates"])
+    assert not any(Eb["k_on"](i) for i in Eb["k_dates"])
+
+
+def test_malformed_numbers_report_instead_of_crash():
+    # 숫자가 아닌 칸이 있어도 점검이 멈추지 않고 오류 문장을 낸다 (고치기 전에는 숫자 변환 오류로 멈췄다).
+    bad = rcps(dp_rows=[{"fy": "이천이십칠", "amt": "많음"}],
+               dp_others=[dict(name="가상", rank="pari", issue="2026-01-01", face=1e9, start="2027-01-01",
+                               end="2028-01-01", cmp="연복리")])
+    msgs = [i.message for i in inspect_case(bad) if i.severity == "error"]
+    assert any("발생연도와 금액" in m for m in msgs) and any("복리 방식" in m for m in msgs)
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e9}]; t.dp_delay = "빠름"
+    assert any("가산율을 숫자로" in m for m in legacy.dp_issues(t))
+    assert not legacy.dp_active(legacy.Terms(inst="RCPS", dp_rows=[{"fy": "x", "amt": "y"}]))
 
 
 def test_dividends_first_and_zero_capacity_carries_forward():
@@ -149,11 +196,12 @@ def test_value_workbooks_carry_schedule_sheet():
 
 
 @pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
-@pytest.mark.parametrize("call,frm", [(0, "01-01"), (1, "01-01"), (0, "04-01")])
-def test_formula_workbook_matches_engine(tmp_path, call, frm):
+@pytest.mark.parametrize("call,frm,win", [(0, "01-01", None), (1, "01-01", None), (0, "04-01", None),
+                                          (1, "04-01", ("2028-05-01", "2028-08-31"))])
+def test_formula_workbook_matches_engine(tmp_path, call, frm, win):
     kw = dict(issuer_call=1, k_s=12., k_e=59., k_f=12., k_prem=.06, k_cmp=1, k_w=1.) if call else {}
     oth = [dict(name="가상 2회차", rank="pari", issue="2026-06-01", face=5e9, yld=.04, cmp=0,
-                start="2028-01-01", end="2030-06-30", div=.01)]
+                start=(win or ("2028-01-01",))[0], end=(win or (None, "2030-06-30"))[1], div=.01)]
     run = calculate(rcps(dp_rows=[{"fy": 2027, "amt": 3e9}, {"fy": 2028, "amt": 2.5e10}, {"fy": 2029, "amt": 4e9}],
                          dp_others=oth, dp_delay=.03, dp_from=frm, **kw))
     t, R = run.terms, run.raw
