@@ -2178,6 +2178,9 @@ def dp_issues(tm: Terms) -> list:
                            f"{DP_KMAX}년까지만 따라갑니다.")
         except (TypeError, ValueError, OverflowError):
             pass
+    if seen and dp_half_day_months(tm):
+        out.append("소수로 넣은 계약 행사월의 남는 날 수가 반나절에 너무 가까워 계약일이 하루 갈릴 수 있습니다 — "
+                   "행사일을 날짜(또는 정수 개월)로 넣으십시오.")
     out += dp_other_issues(tm)
     if seen and int(getattr(tm, "put_bdt", 0) or 0):
         out.append("배당가능이익 반영은 금리 이항모형(상환청구권 금리모형)과 함께 쓸 수 없습니다 — 한쪽을 끄십시오.")
@@ -2292,22 +2295,31 @@ def dp_step_dt(tm: Terms, dt_: float, i: int) -> dt.datetime:
     return dt.datetime.fromisoformat(tm.d_base) + dt.timedelta(days=dp_step_days(dt_, i))
 
 
-def dp_half_even(x: float) -> int:
-    """계약일의 남는 날 수 반올림 — 딱 반(1e-9 안)이면 짝수 쪽, 아니면 보통 반올림.
-    수식 조서는 계약 개월을 다른 순서의 식으로 만들어 반 근처에서 10조 분의 1 수준 차이가 날 수 있으므로,
-    그 폭 안은 양쪽 모두 반으로 본다(정확히 반이면 파이썬 round 와 같다)."""
-    f = math.floor(x)
-    return f + (f % 2) if abs(x - f - 0.5) < 1e-9 else math.floor(x + 0.5)
-
-
 def dp_contract_date(d_issue, m: float) -> dt.datetime:
-    """계약 행사월 m(발행일부터) → 계약상 날짜. months_to_date 와 같은 식(꽉 찬 달은 달력, 남는 달은 30.4375일)이고
-    남는 날 수의 반올림만 dp_half_even 으로 한다(수식 조서와 같은 날)."""
-    k = int(math.floor(m)); fr = m - k
-    d = _add_months(dt.date.fromisoformat(d_issue) if isinstance(d_issue, str) else d_issue, k)
-    if fr:
-        d = d + dt.timedelta(days=dp_half_even(fr*30.4375))
+    """계약 행사월 m(발행일부터) → 계약상 날짜. 노드 배정(step_mapper)과 같은 months_to_date 를 그대로 쓴다.
+    남는 날 수가 반나절에 아주 가까운 소수 개월은 dp_issues 가 막는다(수식 조서와 하루 갈릴 수 있으므로)."""
+    d = months_to_date(d_issue, m)
     return dt.datetime(d.year, d.month, d.day)
+
+
+def dp_half_day_months(tm: Terms) -> list:
+    """회차가 정해진 상환청구·발행자 상환권 가운데 남는 날 수가 반나절(±1e-6일) 근처인 계약 행사월."""
+    try:
+        t2 = Terms(**asdict(tm)); derive(t2)
+        n = int(t2.n); dt_ = t2.T/n
+        out = []
+        for s_, e_, f_, sched in ((t2.p_s, t2.p_e, t2.p_f, getattr(t2, "p_sched", "")),
+                                  (t2.k_s, t2.k_e, t2.k_f, getattr(t2, "k_sched", ""))):
+            ds, _, cont = exercise_dates(t2, n, dt_, s_, e_, f_, sched_rows(sched, t2))
+            if cont:
+                continue
+            for m in ds.values():
+                x = (m - math.floor(m))*30.4375
+                if m != math.floor(m) and abs(x - math.floor(x) - 0.5) < 1e-6:
+                    out.append(m)
+        return out
+    except Exception:
+        return []
 
 
 def dp_step_days(dt_: float, i: int) -> int:
@@ -10943,9 +10955,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(W, R["amt"], 3+i, f"=IF(ISNUMBER({pa}),{pa}-({_cadd(i, 'pcadd')}),0)", fmt=N4, align="center", size=8)
             # 계약상 청구일 = 발행일 + 계약 행사월 (엔진 months_to_date: 꽉 찬 달은 달력, 남는 달은 30.4375일)
             def _cdt(mo):
-                x = f"(({mo}-INT({mo}))*30.4375)"      # 남는 달의 날 수 — 딱 반이면 짝수 쪽 (파이썬 round 와 같다)
+                x = f"(({mo}-INT({mo}))*30.4375)"      # 남는 달의 날 수 — months_to_date 의 파이썬 round (정확히 반이면 짝수 쪽)
                 return (f"IF(ISNUMBER({mo}),EDATE({K['d_issue']},INT({mo}))"
-                        f"+IF(ABS({x}-INT({x})-0.5)<1E-9,INT({x})+MOD(INT({x}),2),ROUND({x},0)),{c(R['date'])})")
+                        f"+IF({x}-INT({x})=0.5,INT({x})+MOD(INT({x}),2),INT({x}+0.5)),{c(R['date'])})")
             put(W, R["pcd"], 3+i, ("=" + _cdt(f"{COMQ}!{L}${CROW['pmo']}") if not _EA["p_cont"] else f"={c(R['date'])}"),
                 fmt=DATE, align="center", size=8)
             terms = chain(L, c(R["st"]), c(R["pcd"]), c(R["cum"]), c(R["amt"]), _dp_k0, i == 0)

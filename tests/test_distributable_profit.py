@@ -654,10 +654,13 @@ def test_huge_integer_carry_rate_reports():
 
 def test_contract_date_tie_rounds_like_engine():
     # 남는 달 8/487 × 30.4375 = 0.5 일(딱 반) — 엔진(months_to_date, 짝수 쪽)은 0일을 더한다.
-    m = 12 + 8/487
-    assert legacy.months_to_date("2026-04-03", m) == dt.date(2027, 4, 3)
-    assert legacy.dp_contract_date("2026-04-03", m) == dt.datetime(2027, 4, 3)
-    assert legacy.dp_half_even(2.5) == 2 and legacy.dp_half_even(3.5) == 4 and legacy.dp_half_even(0.4999999999999) == 0
+    # 계약일은 노드 배정과 같은 months_to_date 그대로 — 남는 날 수가 반나절 근처인 소수 개월은 입력 점검이 막는다.
+    for m in (12 + 8/487, 12 + 0.5000000001/30.4375):
+        assert legacy.dp_contract_date("2026-04-03", m).date() == legacy.months_to_date("2026-04-03", m)
+        c = rcps(d_issue="2026-04-03", d_base="2026-04-03", d_mat="2030-04-03", p_s=m, p_e=m + 24, p_f=12.,
+                 cv_e=48., dp_from="04-04", dp_rows=[{"fy": 2026, "amt": 0.0}])
+        c.exercise_styles["p_f"] = "periodic"
+        assert any("반나절" in i.message for i in inspect_case(c) if i.severity == "error"), m
 
 
 def _near_tie_case():
@@ -677,18 +680,19 @@ def test_node_date_near_tie_matches_node_dates():
 
 @pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
 def test_formula_workbook_contract_date_tie(tmp_path):
-    # 계약 행사월 12 + 8/487 — 계약일은 2027-04-03(남는 0.5일은 짝수 쪽 0일). 재원 사용 시작일 4월 4일이면
-    # 엔진은 2027년 재원 전(발생연도 2025 = 넣지 않음)으로 본다. 수식 조서도 같아야 한다.
-    m = 12 + 8/487
+    # 소수 계약 행사월 12 + 10/30.4375 — 계약일은 2027-04-13. 재원 사용 시작일 4월 13일(그날부터 새 재원)이면
+    # 엔진과 수식 조서가 같은 재원 연도를 써야 한다.
+    m = 12 + 10/30.4375
     c = rcps(d_issue="2026-04-03", d_base="2026-04-03", d_mat="2030-04-03", p_s=m, p_e=m + 24, p_f=12.,
-             cv_e=48., dp_from="04-04", issuer_call=1, k_s=m, k_e=m + 24, k_f=12., k_prem=.06, k_cmp=1, k_w=1.,
+             cv_e=48., dp_from="04-13", issuer_call=1, k_s=m, k_e=m + 24, k_f=12., k_prem=.06, k_cmp=1, k_w=1.,
              dp_rows=[{"fy": 2026, "amt": 0.0}, {"fy": 2027, "amt": 0.0}, {"fy": 2028, "amt": 0.0}])
     c.exercise_styles["p_f"] = "periodic"
     run = calculate(c)
     t, R = run.terms, run.raw
     E, _ = ea(run)
     i = min(E["p_dates"])
-    assert E["dp"].claim_dt(i, "put").date() == dt.date(2027, 4, 3)
+    assert E["dp"].claim_dt(i, "put").date() == dt.date(2027, 4, 13)
+    assert legacy.dp_fund_year(t, E["dp"].claim_dt(i, "put")) == 2027
     data, wb = _recalc_formula(run, tmp_path)
     exp = legacy.formula_key_cells(t, R, legacy.eir_or_none(t, R["full"], R["b0"], R["b1"], R["b2"], R["ca"]))
     assert all(r[4] == "일치" for r in compare_cells(wb, exp))
