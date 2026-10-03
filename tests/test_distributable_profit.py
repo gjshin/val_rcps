@@ -776,6 +776,8 @@ def test_peer_span_bounded_so_growth_stays_finite():
     t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e9}]
     t.dp_others = [dict(name="가상", rank="pari", issue="0999-01-01", face=1e9, yld=1.0, div=0.0,
                         start="2027-01-01", end="2028-01-01", cmp=1)]
+    assert any("1900년부터 2200년" in m for m in legacy.dp_issues(t))     # 날짜 범위가 먼저 막는다
+    t.dp_others[0]["issue"] = "1920-01-01"
     assert any("100년" in m for m in legacy.dp_issues(t))
     t.dp_others[0]["issue"] = "1950-01-01"
     assert legacy.dp_issues(t) == []
@@ -795,3 +797,12 @@ def test_peer_limits_calendar_century_and_face():
     t.dp_others = [dict(base, issue="1928-01-01", end="2028-01-01", face=legacy.DP_FACE_MAX)]
     assert legacy.dp_issues(t) == []
     assert math.isfinite(legacy.dp_grow(legacy.DP_FACE_MAX, 1.0, 1, dt.datetime(1928, 1, 1), dt.datetime(2028, 1, 1)))
+
+
+def test_peer_dates_out_of_range_report():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e9}]
+    t.dp_others = [dict(name="가상", rank="pari", face=1e9, yld=0.0, div=0.0, cmp=1,
+                        issue="9999-01-01", start="9999-01-01", end="9999-01-01")]
+    assert any("1900년부터 2200년" in m for m in legacy.dp_issues(t))
+    case = rcps(dp_rows=[{"fy": 2027, "amt": 1e9}], dp_others=t.dp_others)
+    assert any(i.severity == "error" for i in inspect_case(case))

@@ -2107,7 +2107,9 @@ def dp_other_issues(tm: Terms) -> list:
             a, b, c = (dt.date.fromisoformat(str(r[x])) for x in ("issue", "start", "end"))
         except (KeyError, TypeError, ValueError, OverflowError):
             out.append(f"{nm}: 발행일·상환청구 시작일·종료일을 YYYY-MM-DD 로 넣으십시오."); continue
-        if not (a <= b <= c):
+        if not all(1900 <= x.year <= 2200 for x in (a, b, c)):
+            out.append(f"{nm}: 발행일·상환청구 시작일·종료일은 1900년부터 2200년 사이여야 합니다.")
+        elif not (a <= b <= c):
             out.append(f"{nm}: 발행일 ≤ 상환청구 시작일 ≤ 종료일이어야 합니다.")
         elif c > _add_months(a, 1200):        # 달력으로 100년 — 연 100% 상한과 함께 상환금 가산이 늘 유한하다
             out.append(f"{nm}: 발행일부터 상환청구 종료일까지 100년을 넘을 수 없습니다.")
