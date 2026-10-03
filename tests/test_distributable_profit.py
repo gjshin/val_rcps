@@ -247,7 +247,7 @@ def test_input_errors_block():
     bad = rcps(dp_rows=[{"fy": 2027, "amt": 1e9}, {"fy": 2027, "amt": 2e9}, {"fy": 2028, "amt": -1.0}],
                dp_others=[dict(name="날짜 없음", rank="pari", face=1e9)])
     msgs = [i.message for i in inspect_case(bad) if i.severity == "error"]
-    assert any("두 번" in m for m in msgs) and any("0 이상" in m for m in msgs) and any("YYYY-MM-DD" in m for m in msgs)
+    assert any("두 번" in m for m in msgs) and any("0 이상 100경 원 이하" in m for m in msgs) and any("YYYY-MM-DD" in m for m in msgs)
 
 
 def test_value_workbooks_carry_schedule_sheet():
@@ -914,3 +914,10 @@ def test_formula_workbook_survives_fund_start_edit(tmp_path):
     for j in range(t.n + 1):
         if E["p_on"](j):
             assert com.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j
+
+
+def test_profit_amount_bounded():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e307}]
+    assert any("100경 원" in m for m in legacy.dp_issues(t))
+    t.dp_rows = [{"fy": 2027, "amt": legacy.DP_FACE_MAX}]
+    assert not any("100경 원" in m for m in legacy.dp_issues(t))

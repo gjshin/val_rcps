@@ -2153,7 +2153,8 @@ def dp_issues(tm: Terms) -> list:
             out.append(f"배당가능이익 {k}번째 줄 — 발생연도와 금액(원)을 함께 넣으십시오."); continue
         if fy in seen: out.append(f"배당가능이익 {fy}년이 두 번 있습니다.")
         seen.add(fy)
-        if amt < 0 or not math.isfinite(amt): out.append(f"배당가능이익 {fy}년은 0 이상의 금액이어야 합니다.")
+        if not (0 <= amt <= DP_FACE_MAX):
+            out.append(f"배당가능이익 {fy}년은 0 이상 100경 원 이하의 금액이어야 합니다.")
     try:
         _g = dp_num(getattr(tm, "dp_delay", 0.0), 0.0)
         if not (0 <= _g <= 1):
