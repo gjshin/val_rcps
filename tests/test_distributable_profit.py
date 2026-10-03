@@ -137,6 +137,29 @@ def test_call_date_dividend_not_counted_twice():
     assert not E2["k_on"](i0)
 
 
+def test_peer_issued_later_in_same_fund_year_pays_dividend_first():
+    # 2028년 초 청구 · 동순위 상품은 2028-06-01 발행, 2028-07-01~12-31 청구 → 같은 재원 연도라 그 해 상환금과
+    # 함께 우선배당(5e9 × 2% = 100 기준 1)도 먼저 뺀다. 재원 30 − 평가대상 2 − 1 = 27.
+    oth = [dict(name="가상 6회차", rank="pari", issue="2028-06-01", face=5e9, yld=0.0, cmp=1,
+                start="2028-07-01", end="2028-12-31", div=.02)]
+    E, t = ea(calculate(rcps(dp_rows=[{"fy": 2027, "amt": 3e9}], dp_others=oth))); dt_ = t.T/t.n
+    i = next(i for i in sorted(E["p_dates"]) if (d := legacy.dp_step_dt(t, dt_, i)).year == 2028 and d.month < 6)
+    r0 = E["dp"].schedule(i, E["put"](i))["rows"][0]
+    assert r0[3] == pytest.approx(27.0, rel=1e-12) and r0[5] == pytest.approx(50.0, rel=1e-12)
+
+
+def test_missing_maturity_year_is_warned():
+    # 만기 현금상환 — 만기(2031-01-01)는 발생연도 2030 이익을 쓴다. 상환청구 기간의 해만 넣으면 만기 해를 알린다.
+    rows = [{"fy": y, "amt": 1e10} for y in range(2026, 2030)]
+    run = calculate(rcps(mat_mode=1, dp_rows=rows))
+    assert any("2030" in m.message and "넣지 않아" in m.message for m in run.issues if m.code == "input_check")
+
+
+def test_fractional_fiscal_year_is_rejected():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027.9, "amt": 1e9}]
+    assert any("발생연도와 금액" in m for m in legacy.dp_issues(t)) and not legacy.dp_profits(t)
+
+
 def test_malformed_numbers_report_instead_of_crash():
     # 숫자가 아닌 칸이 있어도 점검이 멈추지 않고 오류 문장을 낸다 (고치기 전에는 숫자 변환 오류로 멈췄다).
     bad = rcps(dp_rows=[{"fy": "이천이십칠", "amt": "많음"}],

@@ -2051,8 +2051,10 @@ def dp_profits(tm: Terms) -> dict:
         if not isinstance(r, dict) or r.get("fy") in (None, "") or r.get("amt") in (None, ""):
             continue
         try:
-            out[int(r["fy"])] = float(r["amt"])
-        except (TypeError, ValueError):
+            fy = float(r["fy"])
+            if not fy.is_integer(): continue  # 소수 연도 — dp_issues 가 오류 문장을 낸다
+            out[int(fy)] = float(r["amt"])
+        except (TypeError, ValueError, OverflowError):
             continue                      # 숫자가 아닌 줄 — dp_issues 가 오류 문장을 낸다
     return out
 
@@ -2126,8 +2128,10 @@ def dp_issues(tm: Terms) -> list:
         if r.get("fy") in (None, "") and r.get("amt") in (None, ""):
             continue
         try:
-            fy = int(r["fy"]); amt = float(r["amt"])
-        except (KeyError, TypeError, ValueError):
+            fy_ = float(r["fy"]); amt = float(r["amt"])
+            if not fy_.is_integer(): raise ValueError
+            fy = int(fy_)
+        except (KeyError, TypeError, ValueError, OverflowError):
             out.append(f"배당가능이익 {k}번째 줄 — 발생연도와 금액(원)을 함께 넣으십시오."); continue
         if fy in seen: out.append(f"배당가능이익 {fy}년이 두 번 있습니다.")
         seen.add(fy)
@@ -2155,10 +2159,11 @@ def dp_warnings(tm: Terms) -> list:
     P = dp_profits(tm)
     EA = exercise_amounts(tm, n, dt_)
     w = []
-    yrs = sorted({dp_fund_year(tm, dp_step_dt(tm, dt_, i)) - 1 for i in EA["p_dates"]})
+    steps = set(EA["p_dates"]) | ({n} if int(getattr(tm, "mat_mode", 0)) == 1 else set())   # 만기에 현금상환이면 만기도
+    yrs = sorted({dp_fund_year(tm, dp_step_dt(tm, dt_, i)) - 1 for i in steps})
     miss = [y for y in yrs if y not in P]
     if miss:
-        w.append("상환청구 기간 중 발생연도 " + ", ".join(str(y) for y in miss) + "년의 배당가능이익을 넣지 않아 "
+        w.append("상환청구 기간(만기 현금상환이면 만기 포함) 중 발생연도 " + ", ".join(str(y) for y in miss) + "년의 배당가능이익을 넣지 않아 "
                  "그 다음 해에는 제한 없이 상환된다고 봤습니다(기본 전제). 추정치가 있으면 넣으십시오.")
     face = float(tm.face_total); de = 100*dp_div_rate(tm)
     low = [y for y, a in sorted(P.items()) if a*100/face < de - 1e-9]
@@ -2263,8 +2268,9 @@ class DPPlan:
         if p is None: return DP_INF
         return max(0.0, p*100/self.face - ded)
 
-    def other_div(self, o, at: dt.datetime) -> float:
-        return o["div"]*o["face"]*100/self.face if at >= o["issue"] else 0.0
+    def other_div(self, o, year: int) -> float:
+        """동순위 상품의 그 재원 연도 우선배당 — 그 해 안에(다음 해 시작일 전) 발행되면 그 해 배당을 먼저 뺀다."""
+        return o["div"]*o["face"]*100/self.face if o["issue"] < dp_fund_start(self.tm, year + 1) else 0.0
 
     def live(self, y0: int) -> list:
         """재원 연도 y0 에 아직 남은 동순위 상품 — 청구 기간이 y0 전에 끝났으면 그 전에 청구해 상환을 마쳤다고 본다."""
@@ -2284,7 +2290,7 @@ class DPPlan:
             ded = self.div_e if k == 0 else 0.0
             for x, o in enumerate(oth):
                 if not joined[x]:
-                    ded += self.other_div(o, at)
+                    ded += self.other_div(o, y0 + k)
                     c_ = dp_other_claim(self.tm, o, y0 + k, at)
                     if c_ is not None:
                         joined[x] = True
@@ -2309,7 +2315,7 @@ class DPPlan:
         t0 = dp_step_dt(self.tm, self.dt, i)
         y0 = dp_fund_year(self.tm, t0)
         oth = self.live(y0)
-        ded = self.div_e + sum(self.other_div(o, t0) for o in oth)
+        ded = self.div_e + sum(self.other_div(o, y0) for o in oth)
         bo = 0.0
         for o in oth:
             c_ = dp_other_claim(self.tm, o, y0, t0)
@@ -10710,7 +10716,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(W, r, 2, t_, bold=True, fill=LIGHT, border=True)
         cumrng = f"$C${R['cum']}:${gl(3+n)}${R['cum']}"
         flast = f"{COMQ}!${gl(3+n-1)}$12"
-        _dv = lambda x, at, y0: (f"IF(AND({at}>=$C${orow[x]},$H${orow[x]}>=DATE({y0},$C$8,$D$8)),"
+        _dv = lambda x, yr, y0: (f"IF(AND($C${orow[x]}<DATE({yr}+1,$C$8,$D$8),$H${orow[x]}>=DATE({y0},$C$8,$D$8)),"
                                  f"$I${orow[x]}*$D${orow[x]}*100/{FACE},0)")
         _live = lambda x, y0: f"$H${orow[x]}>=DATE({y0},$C$8,$D$8)"
         nx = len(_DPO)
@@ -10761,7 +10767,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                     cond = f"AND({_live(x, y0c)},{_lo(x, q('yr'))}<={_hi(x, q('yr'))})"
                     g_(rr[("J", x)], (f"=IF({cond},1,0)" if k == 0 else f"=IF(OR({qp(('J', x))}=1,{cond}),1,0)"), "0")
                 ded = (f"100*{RATE}" if k == 0 else "0") + "".join(
-                    f"+IF({('0' if k == 0 else qp(('J', x)))}=0,{_dv(x, q('date'), y0c)},0)" for x in range(nx))
+                    f"+IF({('0' if k == 0 else qp(('J', x)))}=0,{_dv(x, q('yr'), y0c)},0)" for x in range(nx))
                 g_(rr["ded"], "=" + ded)
                 g_(rr["cap"], f"=IF({q('P')}>=1E+299,1E+300,MAX(0,{q('P')}-{q('ded')}))")
                 for x in range(nx):
@@ -10799,7 +10805,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 ka = f"{COMQ}!{L}${CROW['kamt']}"
                 kp = f"({ka}-({_cadd(i, 'kcadd')}))"     # 행사일 배당 가산분은 우선배당으로 이미 뺐다
                 p0 = f"IFERROR(VLOOKUP({FY(c(R['date']))}-1,{rng},2,FALSE)*100/{FACE},1E+300)"
-                d0 = f"100*{RATE}" + "".join(f"+{_dv(x, c(R['date']), FY(c(R['date'])))}" for x in range(nx))
+                d0 = f"100*{RATE}" + "".join(f"+{_dv(x, FY(c(R['date'])), FY(c(R['date'])))}" for x in range(nx))
                 b0 = "".join(f"+{L}${rows_of(_dp_k0)[('B', x)]}" for x in range(nx))   # 0년 블록의 동순위 남은 상환금
                 put(W, R["kok"], 3+i, f"=IF(ISNUMBER({ka}),IF(OR({p0}>=1E+299,MAX(0,{p0}-({d0}))>={kp}*{K['cw']}{b0}-1E-9),1,0),0)",
                     fmt=N0, align="center", size=8)
