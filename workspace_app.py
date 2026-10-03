@@ -295,6 +295,7 @@ def dp_editor(edited, errors):
         if v in (None, ''):
             return None
         try:
+            if isinstance(v, bool): raise ValueError          # 참·거짓은 숫자가 아니다
             x = f(v)
             if isinstance(x, float) and not math.isfinite(x): raise ValueError
             return x

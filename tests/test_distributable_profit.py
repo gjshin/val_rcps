@@ -629,3 +629,15 @@ def test_pay_step_respects_tie_rounding():
     assert legacy.dp_fund_start(t, 2027) == dt.datetime(2026, 10, 1) + dt.timedelta(days=184)
     P = legacy.DPPlan.__new__(legacy.DPPlan); P.tm, P.dt, P.n = t, dt_, 12
     assert P.pay_step(5, 2027) == 6
+
+
+def test_boolean_values_are_rejected():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": True}]
+    assert any("발생연도와 금액" in m for m in legacy.dp_issues(t)) and not legacy.dp_profits(t)
+    t.dp_rows = [{"fy": True, "amt": 1e9}]
+    assert any("발생연도와 금액" in m for m in legacy.dp_issues(t))
+    t.dp_rows = [{"fy": 2027, "amt": 1e9}]
+    t.dp_others = [dict(name="가상", rank="pari", issue="2026-01-01", face=True, yld=False, div=True,
+                        start="2027-01-01", end="2028-01-01", cmp=True)]
+    msgs = legacy.dp_issues(t)
+    assert all(any(k in m for m in msgs) for k in ("발행총액", "상환 보장수익률", "우선배당률", "복리 방식"))

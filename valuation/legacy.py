@@ -2046,6 +2046,16 @@ DP_INF = 1e300
 DP_KMAX = 60
 
 
+def dp_num(v, empty=None) -> float:
+    """배당가능이익 입력의 숫자 — 참·거짓(True/False)은 숫자로 받지 않는다(float(True) = 1 이 되므로).
+    비었으면 empty (None 이면 오류)."""
+    if isinstance(v, bool):
+        raise ValueError("참·거짓 값은 숫자가 아니다")
+    if v in (None, "") and empty is not None:
+        return float(empty)
+    return float(v)
+
+
 def dp_profits(tm: Terms) -> dict:
     """{발생연도: 배당가능이익(원)} — 비운 줄은 빼고 읽는다."""
     out = {}
@@ -2053,9 +2063,9 @@ def dp_profits(tm: Terms) -> dict:
         if not isinstance(r, dict) or r.get("fy") in (None, "") or r.get("amt") in (None, ""):
             continue
         try:
-            fy = float(r["fy"])
+            fy = dp_num(r["fy"])
             if not fy.is_integer(): continue  # 소수 연도 — dp_issues 가 오류 문장을 낸다
-            out[int(fy)] = float(r["amt"])
+            out[int(fy)] = dp_num(r["amt"])
         except (TypeError, ValueError, OverflowError):
             continue                      # 숫자가 아닌 줄 — dp_issues 가 오류 문장을 낸다
     return out
@@ -2099,19 +2109,19 @@ def dp_other_issues(tm: Terms) -> list:
         if not (a <= b <= c):
             out.append(f"{nm}: 발행일 ≤ 상환청구 시작일 ≤ 종료일이어야 합니다.")
         try:
-            v = float(r["face"])
+            v = dp_num(r["face"])
             if not (v > 0 and math.isfinite(v)):
                 out.append(f"{nm}: 발행총액(원)을 0 보다 크게 넣으십시오.")
         except (KeyError, TypeError, ValueError):
             out.append(f"{nm}: 발행총액(원)을 넣으십시오.")
         for x, lab in (("yld", "상환 보장수익률"), ("div", "우선배당률")):
             try:
-                v = float(r.get(x) or 0.0)
+                v = dp_num(r.get(x), 0.0)
                 if not (v >= 0 and math.isfinite(v)): out.append(f"{nm}: {lab}은 0 이상의 유한한 값이어야 합니다.")
             except (TypeError, ValueError):
                 out.append(f"{nm}: {lab}을 숫자로 넣으십시오.")
         try:
-            ok = float(r.get("cmp", 1)) in (0.0, 1.0)     # 0.5 를 0 으로 자르지 않는다
+            ok = dp_num(r.get("cmp", 1), 1) in (0.0, 1.0)     # 0.5 를 0 으로 자르지 않는다
         except (TypeError, ValueError):
             ok = False
         if not ok:
@@ -2130,7 +2140,7 @@ def dp_issues(tm: Terms) -> list:
         if r.get("fy") in (None, "") and r.get("amt") in (None, ""):
             continue
         try:
-            fy_ = float(r["fy"]); amt = float(r["amt"])
+            fy_ = dp_num(r["fy"]); amt = dp_num(r["amt"])
             if not fy_.is_integer(): raise ValueError
             fy = int(fy_)
         except (KeyError, TypeError, ValueError, OverflowError):
@@ -2139,7 +2149,7 @@ def dp_issues(tm: Terms) -> list:
         seen.add(fy)
         if amt < 0 or not math.isfinite(amt): out.append(f"배당가능이익 {fy}년은 0 이상의 금액이어야 합니다.")
     try:
-        _g = float(getattr(tm, "dp_delay", 0.0) or 0.0)
+        _g = dp_num(getattr(tm, "dp_delay", 0.0), 0.0)
         if not (_g >= 0 and math.isfinite(_g)):
             out.append("이월 상환금 가산율은 0 이상이어야 합니다.")
     except (TypeError, ValueError):
