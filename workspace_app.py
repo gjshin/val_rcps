@@ -287,6 +287,8 @@ def dp_editor(edited, errors):
     junk_p = [r for r in (edited.get('dp_rows') or []) if not isinstance(r, dict)]
     junk_o = [r for r in (edited.get('dp_others') or []) if not isinstance(r, dict)]
     if junk_p: bad.append(f'배당가능이익 표의 형식이 틀린 줄 {len(junk_p)}개')
+    _xk = sorted({str(k) for r in (edited.get('dp_rows') or []) if isinstance(r, dict) for k in r if k not in ('fy', 'amt')})
+    if _xk: bad.append(f"배당가능이익 표의 알 수 없는 칸({', '.join(_xk)})")
     if junk_o: bad.append(f'다른 상품 표의 형식이 틀린 줄 {len(junk_o)}개')
 
     def _num(v, f=float, what='', slot=None):
@@ -337,9 +339,10 @@ def dp_editor(edited, errors):
             if x is not None:                    # 원래 줄 — 읽을 수 없던 칸을 비워 둔 채면 원래 값을 둔다
                 if fy is None: fy = keep.get(('p', x, 'fy'))
                 if amt is None: amt = keep.get(('p', x, 'amt'))
-            if fy is None and amt is None:
+            extra = {k: v for k, v in rows[x].items() if k not in ('fy', 'amt')} if x is not None else {}
+            if fy is None and amt is None and not extra:
                 continue
-            new_rows.append({'fy': fy, 'amt': amt})
+            new_rows.append({'fy': fy, 'amt': amt, **extra})   # 모르는 칸(예: 통화)은 고칠 때까지 그대로 둔다
         edited['dp_rows'] = sorted(new_rows, key=lambda r: (not isinstance(r['fy'], int), r['fy'] if isinstance(r['fy'], int) else 0)) + junk_p
         _g0 = _num(edited.get('dp_delay'), float, '가산율', ('g',))
         if _g0 is not None and not 0 <= _g0 <= 1:
@@ -448,12 +451,12 @@ def dp_panel(run):
     EA = legacy.exercise_amounts(t, n, dt_)
     rows, seen = [], set()
     for i in sorted(EA["p_dates"]):
-        y = legacy.dp_fund_year(t, legacy.dp_step_dt(t, dt_, i))
+        y = legacy.dp_fund_year(t, EA["dp"].claim_dt(i, "put"))
         if y in seen:
             continue
         seen.add(y)
         a, v = EA["put"](i), EA["put_val"](i)
-        rows.append({'청구 연도 (첫 청구일)': f"{y} ({legacy.dp_step_dt(t, dt_, i).date()})",
+        rows.append({'청구 연도 (첫 청구일)': f"{y} ({EA['dp'].claim_dt(i, 'put').date()})",
                      '쓰는 배당가능이익 (발생연도)': (f"{y-1}년 {EA['dp'].P[y-1]:,.0f}원" if (y-1) in EA['dp'].P else f"{y-1}년 — 넣지 않음 (제한 없음)"),
                      '계약 상환금 (100 기준)': a, '실제 지급 현재가치 (100 기준)': v, '비율': (v/a if a else None)})
     rows.append({'청구 연도 (첫 청구일)': f"만기 {legacy.dp_step_dt(t, dt_, n).date()} (만기상환)", '쓰는 배당가능이익 (발생연도)': '',

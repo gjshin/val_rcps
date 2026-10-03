@@ -2174,11 +2174,11 @@ def dp_warnings(tm: Terms) -> list:
     # 청구 시점(만기에 현금상환이면 만기도)마다 지급 일정을 따라가며, 넣지 않은 해(제한 없음)에 갚는다고 본
     # 금액이 있으면 그 발생연도를 알린다 — 넘긴 금액을 갚는 뒤 해도 포함한다.
     # 만기상환 일정은 만기 자동전환이어도 부채요소(전환권 없는 평가)에 쓰이므로 늘 살핀다
-    claims = [(i, EA["put"](i)) for i in sorted(EA["p_dates"])] + [(n, EA["red"])]
+    claims = [(i, EA["put"](i), "put") for i in sorted(EA["p_dates"])] + [(n, EA["red"], None)]
     DP = EA["dp"]; miss = set(); after = lost = False
-    for i, amt in claims:
-        y0 = dp_fund_year(tm, dp_step_dt(tm, dt_, i))
-        rows = DP.schedule(i, amt)["rows"]
+    for i, amt, kind in claims:
+        y0 = dp_fund_year(tm, DP.claim_dt(i, kind))
+        rows = DP.schedule(i, amt, kind)["rows"]
         for j, (k, m, at, cap, be, bo, pe, df) in enumerate(rows):
             if cap >= DP_INF/10 and be > 1e-12:
                 miss.add(y0 + k - 1)
@@ -2188,7 +2188,7 @@ def dp_warnings(tm: Terms) -> list:
                 lost = True                  # 만기까지 갚지 못한 금액을 받지 못한 것으로 봤다
     if issuer_redeem(tm):                    # 발행자 상환권 행사일 — 넣지 않은 해는 제한 없이 행사할 수 있다고 본다
         for i in EA["k_dates"]:
-            y = dp_fund_year(tm, dp_step_dt(tm, dt_, i)) - 1
+            y = dp_fund_year(tm, DP.claim_dt(i, "call")) - 1
             if y not in P: miss.add(y)
     miss = sorted(miss)
     if miss:
@@ -2292,6 +2292,7 @@ class DPPlan:
         self.div_e = 100*dp_div_rate(tm)
         self.g = float(getattr(tm, "dp_delay", 0.0) or 0.0)
         self.lost = str(getattr(tm, "dp_unpaid", "extend") or "extend") == "lost"   # 만기 뒤 지급은 받지 못함
+        self.cd = {}           # {"put"|"call": {스텝: 계약상 청구일}} — 재원 연도는 계약일로 정한다 (exercise_amounts 가 채움)
         self.others = dp_others(tm)
         RF, CR = curves(tm)
         f = [forward_rate(CR, j*dt_, (j+1)*dt_) for j in range(n)]
@@ -2304,6 +2305,12 @@ class DPPlan:
 
     def cum_at(self, m: int) -> float:
         return self.cum[m] if m <= self.n else self.cum[self.n] + (m - self.n)*self.flast*self.dt
+
+    def claim_dt(self, i: int, kind=None) -> dt.datetime:
+        """재원 연도를 정하는 청구일 — 회차가 정해진 행사일은 계약상 날짜(노드가 허용 일수 안에서 앞서도 그 날),
+        상시 행사·만기는 노드 날짜."""
+        d = (self.cd.get(kind) or {}).get(i)
+        return dt.datetime(d.year, d.month, d.day) if d else dp_step_dt(self.tm, self.dt, i)
 
     def pay_step(self, m: int, year: int) -> int:
         """넘긴 금액을 갚는 시점 — 청구일 + k년에 가장 가까운 시점이 그 재원 연도 시작일 전이면, 시작일 이후 첫
@@ -2329,10 +2336,9 @@ class DPPlan:
         fs = dp_fund_start(self.tm, y0)
         return [o for o in self.others if o["end"] >= fs]
 
-    def schedule(self, i: int, amount: float) -> dict:
+    def schedule(self, i: int, amount: float, kind=None) -> dict:
         """스텝 i 에 상환청구하면 받는 현금 일정 — {pv, rows=[(k, 스텝, 날짜, 재원, 평가대상 잔액, 동순위 잔액 합, 지급, 할인계수)]}."""
-        t0 = dp_step_dt(self.tm, self.dt, i)
-        y0 = dp_fund_year(self.tm, t0)          # 청구 시점의 재원 연도 — 넘긴 금액은 y0+1, y0+2 … 해의 재원으로 갚는다
+        y0 = dp_fund_year(self.tm, self.claim_dt(i, kind))   # 청구 시점의 재원 연도 (계약상 청구일 기준) — 넘긴 금액은 y0+1, y0+2 … 해의 재원으로 갚는다
         oth = self.live(y0)
         be = float(amount); bo = [0.0]*len(oth); joined = [False]*len(oth)
         pv, rows = 0.0, []
@@ -2369,7 +2375,7 @@ class DPPlan:
         """발행자 상환권 — 그 해 재원(우선배당을 뺀 뒤)이 상환할 금액 × 한도와 같은 해 동순위 상환금을 함께
         갚을 수 있을 때만 행사한다(비율로 나누면 평가대상 몫이 전액이 되는 조건)."""
         t0 = dp_step_dt(self.tm, self.dt, i)
-        y0 = dp_fund_year(self.tm, t0)
+        y0 = dp_fund_year(self.tm, self.claim_dt(i, "call"))   # 계약상 행사일의 재원 연도
         oth = self.live(y0)
         ded = self.div_e + sum(self.other_div(o, y0) for o in oth)
         bo = 0.0
@@ -2442,9 +2448,9 @@ def dp_value_sheet(wb, tm: Terms):
     W.cell(r, 2, "청구 시점별 상환청구 가치 (100 기준)").font = bold; r += 1
     rows = []
     for i in sorted(EA["p_dates"]):
-        sc = DP.schedule(i, EA["put"](i))
+        sc = DP.schedule(i, EA["put"](i), "put")
         last = max((x[2] for x in sc["rows"] if x[6] > 1e-12), default=None)
-        rows.append([i, dp_step_dt(tm, dt_, i).date(), EA["put"](i), sc["pv"],
+        rows.append([i, DP.claim_dt(i, "put").date(), EA["put"](i), sc["pv"],
                      sc["pv"]/EA["put"](i) if EA["put"](i) else None, last.date() if last else None])
     table(["스텝", "청구일", "계약 상환금", "실제 지급 현재가치", "비율", "마지막 지급일"], rows,
           ["0", "yyyy-mm-dd", "#,##0.0000", "#,##0.0000", "0.00%", "yyyy-mm-dd"])
@@ -2550,7 +2556,10 @@ def exercise_amounts(tm: Terms, n: int, dt_: float) -> dict:
     put_val, DP, red_val = put, None, red
     if dp_active(tm):
         DP = DPPlan(tm, n, dt_)
-        _dpv = {i: DP.schedule(i, put(i))["pv"] for i in p_dates}
+        # 재원 연도는 계약상 청구일로 정한다 — 회차가 정해진 행사일만 (상시 행사는 노드 날짜)
+        DP.cd = {"put": ({} if p_cont else {i: months_to_date(tm.d_issue, m) for i, m in p_dates.items()}),
+                 "call": ({} if k_cont else {i: months_to_date(tm.d_issue, m) for i, m in k_dates.items()})}
+        _dpv = {i: DP.schedule(i, put(i), "put")["pv"] for i in p_dates}
         put_val = lambda i: _dpv[i] if i in _dpv else put(i)
         # 존속기간 만료 시 상환도 이익으로 한다 — 만기 노드에서 청구한 것과 같은 일정의 현재가치.
         red_val = DP.schedule(n, red)["pv"]
@@ -10508,9 +10517,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         _dp_r_prof = 10                                   # 배당가능이익 표 첫 줄
         _dp_r_oth = _dp_r_prof + len(_DPY) + 1            # 다른 상품 표 머리줄
         _dp_sb = _dp_r_oth + len(_DPO) + 3                # 스텝 구역 첫 줄 (스텝)
-        _DPR = dict(st=_dp_sb, date=_dp_sb+1, cum=_dp_sb+2, amt=_dp_sb+3, pv=_dp_sb+4, kok=_dp_sb+5)
+        _DPR = dict(st=_dp_sb, date=_dp_sb+1, cum=_dp_sb+2, amt=_dp_sb+3, pv=_dp_sb+4, kok=_dp_sb+5,
+                    pcd=_dp_sb+6, kcd=_dp_sb+7)                # 재원 연도를 정하는 계약상 청구일 (상환청구 · 발행자 상환권)
         _dp_blk = 11 + 3*len(_DPO)                        # k 한 해에 쓰는 줄 수 (머리줄 포함)
-        _dp_k0 = _dp_sb + 7
+        _dp_k0 = _dp_sb + 9
         _dp_red0 = _dp_k0 + (_DPP.K + 1)*_dp_blk + 4      # 만기상환 일정 구역
         _DPRED = f"{DPQ}!$C${_dp_red0 - 1}"
     _common = {}
@@ -10772,7 +10782,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         R = _DPR
         lab = {R["st"]: "청구 스텝", R["date"]: "청구일", R["cum"]: "누적 위험 할인 Σ f·Δt",
                R["amt"]: "상환청구 계약금액 (행사일 이자 제외)", R["pv"]: "상환청구 가치 — 실제 지급 일정의 현재가치"}
-        if issuer_redeem(tm): lab[R["kok"]] = "발행자 상환 가능 (그 해 재원 ≥ 상환금 × 한도 + 같은 해 동순위 상환금, 1=예)"
+        lab[R["pcd"]] = "재원 연도를 정하는 청구일 (회차가 정해진 상환청구는 계약일)"
+        if issuer_redeem(tm):
+            lab[R["kok"]] = "발행자 상환 가능 (그 해 재원 ≥ 상환금 × 한도 + 같은 해 동순위 상환금, 1=예)"
+            lab[R["kcd"]] = "재원 연도를 정하는 행사일 (회차가 정해진 발행자 상환권은 계약일)"
         for r, t_ in lab.items():
             put(W, r, 2, t_, bold=True, fill=LIGHT, border=True)
         cumrng = f"$C${R['cum']}:${gl(3+n)}${R['cum']}"
@@ -10871,14 +10884,29 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(W, R["cum"], 3+i, (0 if i == 0 else f"={Lp}${R['cum']}+{COMQ}!{Lp}$12*{K['dt']}"), fmt=N6, align="center", size=8)
             pa = f"{COMQ}!{L}${CROW['pamt']}"
             put(W, R["amt"], 3+i, f"=IF(ISNUMBER({pa}),{pa}-({_cadd(i, 'pcadd')}),0)", fmt=N4, align="center", size=8)
-            terms = chain(L, c(R["st"]), c(R["date"]), c(R["cum"]), c(R["amt"]), _dp_k0, i == 0)
+            # 계약상 청구일 = 발행일 + 계약 행사월 (엔진 months_to_date: 꽉 찬 달은 달력, 남는 달은 30.4375일)
+            _cdt = lambda mo: (f"IF(ISNUMBER({mo}),EDATE({K['d_issue']},INT({mo}))+ROUND(({mo}-INT({mo}))*30.4375,0),"
+                               f"{c(R['date'])})")
+            put(W, R["pcd"], 3+i, ("=" + _cdt(f"{COMQ}!{L}${CROW['pmo']}") if not _EA["p_cont"] else f"={c(R['date'])}"),
+                fmt=DATE, align="center", size=8)
+            terms = chain(L, c(R["st"]), c(R["pcd"]), c(R["cum"]), c(R["amt"]), _dp_k0, i == 0)
             put(W, R["pv"], 3+i, "=" + "+".join(terms), fmt=N4, align="center", size=8)
             if issuer_redeem(tm):
                 ka = f"{COMQ}!{L}${CROW['kamt']}"
                 kp = f"({ka}-({_cadd(i, 'kcadd')}))"     # 행사일 배당 가산분은 우선배당으로 이미 뺐다
-                p0 = f"IFERROR(VLOOKUP({FY(c(R['date']))}-1,{rng},2,FALSE)*100/{FACE},1E+300)"
-                d0 = f"100*{RATE}" + "".join(f"+{_dv(x, FY(c(R['date'])), FY(c(R['date'])))}" for x in range(nx))
-                b0 = "".join(f"+{L}${rows_of(_dp_k0)[('B', x)]}" for x in range(nx))   # 0년 블록의 동순위 남은 상환금
+                put(W, R["kcd"], 3+i, ("=" + _cdt(f"{COMQ}!{L}${CROW['kmo']}") if not _EA["k_cont"] else f"={c(R['date'])}"),
+                    fmt=DATE, align="center", size=8)
+                yk = FY(c(R["kcd"]))                      # 계약상 행사일의 재원 연도
+                p0 = f"IFERROR(VLOOKUP({yk}-1,{rng},2,FALSE)*100/{FACE},1E+300)"
+                d0 = f"100*{RATE}" + "".join(f"+{_dv(x, yk, yk)}" for x in range(nx))
+                # 같은 해 동순위 상환금 — 그 재원 연도 안 청구 기간이 있으면 (지급일에 가장 가까운 날 기준 가산)
+                b0 = ""
+                for x in range(nx):
+                    o_ = orow[x]
+                    cl = f"MIN(MAX({c(R['date'])},{_lo(x, yk)}),{_hi(x, yk)})"
+                    tau = f"MAX(0,({cl}-$C${o_})/365)"
+                    grow = f"$D${o_}*IF($F${o_}=1,(1+$E${o_})^{tau},1+$E${o_}*{tau})*100/{FACE}"
+                    b0 += f"+IF(AND({_live(x, yk)},{_lo(x, yk)}<={_hi(x, yk)}),{grow},0)"
                 put(W, R["kok"], 3+i, f"=IF(ISNUMBER({ka}),IF(OR({p0}>=1E+299,MAX(0,{p0}-({d0}))>={kp}*{K['cw']}{b0}-1E-9),1,0),0)",
                     fmt=N0, align="center", size=8)
         # ── 만기상환 — 존속기간 만료 시 상환도 이익으로 한다. 만기 노드에서 청구한 것과 같은 일정 (C열) ──

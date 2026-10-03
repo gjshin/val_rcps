@@ -567,3 +567,54 @@ def test_screen_unpaid_option():
     assert r.value == "extend"
     r.set_value("lost").run()
     assert not app.exception and app.session_state.case.contract["dp_unpaid"] == "lost"
+
+
+def _leap(**o):
+    # 2026-04-03 발행 · 해마다 4월 3일 상환청구·발행자 상환권. 2028년은 윤년이라 계약일 2028-04-03 이
+    # 하루 앞 노드(2028-04-02)에 배정된다. 재원 사용 시작일 4월 3일.
+    c = rcps(d_issue="2026-04-03", d_base="2026-04-03", d_mat="2030-04-03", p_s=12., p_e=36., p_f=12.,
+             cv_e=48., dp_from="04-03", dp_rows=[{"fy": 2026, "amt": 0.0}, {"fy": 2027, "amt": 1e11},
+                                                 {"fy": 2028, "amt": 0.0}], **o)
+    c.exercise_styles["p_f"] = "periodic"          # 해마다 정해진 날 (상시 행사가 아님)
+    return c
+
+
+def test_fund_year_uses_contract_claim_date():
+    call = dict(issuer_call=1, k_s=12., k_e=36., k_f=12., k_prem=.06, k_cmp=1, k_w=1.)
+    E, t = ea(calculate(_leap(**call))); dt_ = t.T/t.n
+    i = next(i for i in E["p_dates"] if legacy.node_dates(t, t.n, dt_)[i] == dt.date(2028, 4, 2))
+    assert E["dp"].claim_dt(i, "put").date() == dt.date(2028, 4, 3)
+    assert legacy.dp_fund_year(t, E["dp"].claim_dt(i, "put")) == 2028
+    assert E["put_val"](i) == pytest.approx(E["put"](i), rel=1e-12)    # 2028년 재원(발생연도 2027)으로 전액
+    assert i in E["k_dates"] and E["k_on"](i)
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_contract_claim_date(tmp_path):
+    call = dict(issuer_call=1, k_s=12., k_e=36., k_f=12., k_prem=.06, k_cmp=1, k_w=1.)
+    oth = [dict(name="가상 2회차", rank="pari", issue="2026-04-03", face=5e9, yld=.04, cmp=1,
+                start="2027-06-01", end="2029-06-30", div=.01)]
+    run = calculate(_leap(dp_others=oth, **call))
+    t, R = run.terms, run.raw
+    data, wb = _recalc_formula(run, tmp_path)
+    exp = legacy.formula_key_cells(t, R, legacy.eir_or_none(t, R["full"], R["b0"], R["b1"], R["b2"], R["ca"]))
+    assert all(r[4] == "일치" for r in compare_cells(wb, exp))
+    E, _ = ea(run)
+    ws = wb["00 격자 공통"]
+    for i in range(t.n + 1):
+        if E["p_on"](i):
+            assert ws.cell(7, 3+i).value == pytest.approx(E["put_val"](i), rel=1e-9, abs=1e-9), i
+        assert int(ws.cell(5, 3+i).value or 0) == (1 if E["k_on"](i) else 0), i
+
+
+def test_screen_keeps_unknown_profit_row_fields():
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    c = rcps(dp_rows=[{"fy": 2027, "amt": 1e6, "currency": "USD"}])
+    app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
+    app.session_state.case = c; app.run(); app.run()
+    assert not app.exception
+    k = app.session_state.case
+    assert k.market["dp_rows"] == [{"fy": 2027, "amt": 1e6, "currency": "USD"}]
+    assert any(i.severity == "error" for i in inspect_case(k))
+    assert any("알 수 없는 칸" in w.value for w in app.warning)
