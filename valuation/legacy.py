@@ -2042,6 +2042,7 @@ DP_OTHER_KEYS = ("name", "rank", "issue", "face", "yld", "cmp", "start", "end", 
 DP_RANKS = {"senior": "평가대상이 선순위 (이 상품은 평가대상 뒤에 상환)",
             "pari": "동순위 (같은 해 상환청구 금액 비율로 나눔)"}
 DP_UNPAID = {"extend": "상환이 끝날 때까지 연장해 계속 갚음", "lost": "받지 못하는 것으로 봄"}
+DP_FACE_MAX = 1e18          # 동순위 상품 발행총액 상한 (100경 원) — 상환금 가산이 유한하게
 DP_INF = 1e300
 DP_KMAX = 60
 
@@ -2108,12 +2109,12 @@ def dp_other_issues(tm: Terms) -> list:
             out.append(f"{nm}: 발행일·상환청구 시작일·종료일을 YYYY-MM-DD 로 넣으십시오."); continue
         if not (a <= b <= c):
             out.append(f"{nm}: 발행일 ≤ 상환청구 시작일 ≤ 종료일이어야 합니다.")
-        elif (c - a).days > 365*100:          # 연 100% 상한과 함께 상환금 가산이 늘 유한하다
+        elif c > _add_months(a, 1200):        # 달력으로 100년 — 연 100% 상한과 함께 상환금 가산이 늘 유한하다
             out.append(f"{nm}: 발행일부터 상환청구 종료일까지 100년을 넘을 수 없습니다.")
         try:
             v = dp_num(r["face"])
-            if not (v > 0 and math.isfinite(v)):
-                out.append(f"{nm}: 발행총액(원)을 0 보다 크게 넣으십시오.")
+            if not (0 < v <= DP_FACE_MAX):
+                out.append(f"{nm}: 발행총액(원)은 0 보다 크고 100경 원 이하여야 합니다.")
         except (KeyError, TypeError, ValueError, OverflowError):
             out.append(f"{nm}: 발행총액(원)을 넣으십시오.")
         for x, lab in (("yld", "상환 보장수익률"), ("div", "우선배당률")):

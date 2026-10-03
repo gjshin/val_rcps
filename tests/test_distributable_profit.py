@@ -781,3 +781,17 @@ def test_peer_span_bounded_so_growth_stays_finite():
     assert legacy.dp_issues(t) == []
     legacy.derive(t)                                   # 100년 안이면 계산이 넘치지 않는다
     assert math.isfinite(legacy.dp_grow(1e9, 1.0, 1, dt.datetime(1950, 1, 1), dt.datetime(2028, 1, 1)))
+
+
+def test_peer_limits_calendar_century_and_face():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e9}]
+    base = dict(name="가상", rank="pari", face=1e9, yld=1.0, div=0.0, start="2027-01-01", cmp=1)
+    t.dp_others = [dict(base, issue="1928-01-01", end="2028-01-01")]            # 윤년 포함 정확히 100년 — 받는다
+    assert legacy.dp_issues(t) == []
+    t.dp_others = [dict(base, issue="1928-01-01", end="2028-01-02")]
+    assert any("100년" in m for m in legacy.dp_issues(t))
+    t.dp_others = [dict(base, issue="2026-01-01", end="2028-01-01", face=1e308)]
+    assert any("100경 원" in m for m in legacy.dp_issues(t))
+    t.dp_others = [dict(base, issue="1928-01-01", end="2028-01-01", face=legacy.DP_FACE_MAX)]
+    assert legacy.dp_issues(t) == []
+    assert math.isfinite(legacy.dp_grow(legacy.DP_FACE_MAX, 1.0, 1, dt.datetime(1928, 1, 1), dt.datetime(2028, 1, 1)))
