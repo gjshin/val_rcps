@@ -618,3 +618,14 @@ def test_screen_keeps_unknown_profit_row_fields():
     assert k.market["dp_rows"] == [{"fy": 2027, "amt": 1e6, "currency": "USD"}]
     assert any(i.severity == "error" for i in inspect_case(k))
     assert any("알 수 없는 칸" in w.value for w in app.warning)
+
+
+def test_pay_step_respects_tie_rounding():
+    # 한 칸 = 183.5/6 일인 격자 — 6번째 시점은 딱 183.5일이라 짝수 쪽 184일. 시작일까지 D=184 일이면
+    # 그 시점(6)에서 바로 갚을 수 있다(한 칸 더 미루지 않는다 — 고치기 전에는 7).
+    dt_ = 183.5/(6*365)
+    t = legacy.Terms(inst="RCPS", d_base="2026-10-01", dp_from="04-03")
+    assert legacy.dp_step_days(dt_, 6) == 184
+    assert legacy.dp_fund_start(t, 2027) == dt.datetime(2026, 10, 1) + dt.timedelta(days=184)
+    P = legacy.DPPlan.__new__(legacy.DPPlan); P.tm, P.dt, P.n = t, dt_, 12
+    assert P.pay_step(5, 2027) == 6

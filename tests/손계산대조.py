@@ -2792,6 +2792,29 @@ def test_lock_share_split():
     chk_bool("lock_share — 의무보유 없음이면 0", G["lock_share"](Terms(k_w=.3, k_hold=0)) == 0.)
 
 
+def test_dp_unpaid_hand():
+    """배당가능이익 — 만기까지 갚지 못한 상환금 (상환전환우선주, 만기 현금상환).
+
+    발행·평가 2026-01-01 · 만기 2031-01-01 · 발행총액 100억 · 우선배당 연 2%(발행가 기준) · 이자율 모두 0%.
+    만기(2031-01-01)는 2031년 재원 = 발생연도 2030 이익 40억 → 100 기준 40 − 우선배당 2 = 38 을 만기에 갚는다.
+    남은 금액(만기상환금 − 38)은
+        연장(기본)  — 2032년 재원(발생연도 2031, 넣지 않음 → 제한 없음)으로 전액. 할인 0% 라 만기상환 가치 = 만기상환금.
+        받지 못함   — 0. 만기상환 가치 = 38.
+    """
+    print("\n[배당가능이익 — 만기까지 갚지 못한 상환금]")
+    for mode in ("extend", "lost"):
+        t = Terms(inst="RCPS", d_issue="2026-01-01", d_base="2026-01-01", d_mat="2031-01-01",
+                  S0=20000., K0=60000., issue_px=60000., face_total=1e10, sig=.35, par=500.,
+                  cpn=.02, div_basis=0, div_mode=0, ipay=12., mat_mode=1, ytm=.05, ytm_cmp=1,
+                  p_mode="accrue", p_yield=.05, p_cmp=1, p_s=0., p_e=0., p_f=0., rfx_mode=0, issuer_call=0,
+                  cv_s=1., cv_e=60., view="issuer", gap_m=1., rf_curve=[[1, 0.0], [10, 0.0]],
+                  cr_curve=[[1, 0.0], [10, 0.0]], dp_rows=[{"fy": 2030, "amt": 4e9}], dp_unpaid=mode)
+        derive(t)
+        EA = G["exercise_amounts"](t, t.n, t.T/t.n)
+        want = EA["red"] if mode == "extend" else 38.0
+        chk(f"만기상환 가치 ({'연장' if mode == 'extend' else '받지 못함'})", EA["red_val"], want, 1e-9)
+
+
 def main():
     print("손계산 기대값 대조 — 기대값은 계약에서 센 값이다. 갱신하지 말 것.")
     test_coupon_schedule_after_elapsed_months()
@@ -2846,6 +2869,7 @@ def main():
     test_lock_end_same_node_as_last_call()
     test_lock_share_split()
     test_refix_won_rounding()
+    test_dp_unpaid_hand()
     print()
     if FAIL:
         print(f"★ 어긋남 {len(FAIL)}건")

@@ -56,6 +56,8 @@ MANIFEST = {
     "rfx_mode":    ("리픽싱 방식", {0: "없음", 1: "하향만", 2: "하향+상향"}, P_BOND),
     "rfx_round":   ("조정 후 전환가격 원 단위 미만", {0: "처리 없음", 1: "절상", 2: "절사"}, P_BOND),
     # ── 투자자 풋 ──
+    "dp_unpaid":   ("배당가능이익 — 만기까지 갚지 못한 상환금", {"extend": "상환이 끝날 때까지 연장해 계속 갚음",
+                                                    "lost": "받지 못하는 것으로 봄"}, ("RCPS",)),
     "p_mode":      ("조기상환 행사금액 산정", {"fixed": "고정 금액", "accrue": "보장수익률 복리 누적"}, P_BOND),
     "p_cmp":       ("조기상환 보장 복리 횟수", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회", 12: "월"}, P_BOND),
     "p_sep":       ("조기상환권 회계", {1: "분리 · 파생상품부채", 0: "주계약에 포함 (분리하지 않음)"}, P_BOND),
@@ -208,7 +210,9 @@ def terms_enum_fields(G):
                  # 표시·기록 전용 — 회차 표시와 「평가에 반영하지 않은 권리」 문안
                  "tranche", "unmod_note",
                  # 최초 인식 차이의 분개 표기 전용 — 값에 영향 없음 (tests/test_judgment_sources.py 가 시험)
-                 "d1_pl", "d1_reason", "split_base_why"): continue
+                 "d1_pl", "d1_reason", "split_base_why",
+                 # 배당가능이익 재원 사용 시작일 — «월-일» 날짜 입력이다 (갈래가 아니다)
+                 "dp_from"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty
@@ -339,6 +343,8 @@ def collect_coverage(G):
         "test_sha_mutual_kill_probabilities_sum_to_one": [("SHA", "sha_kill", 0), ("SHA", "sha_kill", 1),
                                                           ("SHA", "sha_call", True)],
         "test_dividend_yield_and_zero_vol": [("CB", "inst", "CB")],
+        # 배당가능이익 — 만기까지 갚지 못한 상환금 (연장 · 받지 못함)
+        "test_dp_unpaid_hand": [("RCPS", "dp_unpaid", "extend"), ("RCPS", "dp_unpaid", "lost")],
         "test_backsolve_net_target": [("CB", "bs_net", 0), ("CB", "bs_net", 1)],
         "test_fvpl_whole_flows_to_accounting": [("CB", "fvpl_whole", 1), ("CB", "fvpl_whole", 0),
                                                 ("CB", "conv_class", "liability"), ("CB", "cost", True)],

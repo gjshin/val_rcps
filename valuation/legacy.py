@@ -2265,10 +2265,14 @@ def dp_step_dt(tm: Terms, dt_: float, i: int) -> dt.datetime:
     재원 연도 경계(재원 사용 시작일)를 하루 안쪽 시각 차이로 넘나들지 않게 한다. 딱 반일 때는 짝수 쪽으로
     (파이썬 round). 수식 조서도 같은 규칙의 식을 쓴다.
     """
+    return dt.datetime.fromisoformat(tm.d_base) + dt.timedelta(days=dp_step_days(dt_, i))
+
+
+def dp_step_days(dt_: float, i: int) -> int:
+    """평가기준일부터 스텝 i 까지의 날 수 — 반올림, 딱 반이면 짝수 쪽 (파이썬 round · node_dates 와 같다)."""
     y = i*(dt_*365)                                   # node_dates 와 같은 식
     f = math.floor(y)
-    d = f + (f % 2) if abs(y - f - 0.5) < 1e-9 else math.floor(y + 0.5)   # 딱 반이면 짝수 쪽 (파이썬 round 와 같다)
-    return dt.datetime.fromisoformat(tm.d_base) + dt.timedelta(days=d)
+    return f + (f % 2) if abs(y - f - 0.5) < 1e-9 else math.floor(y + 0.5)
 
 
 def dp_year_step(k: int, dt_: float) -> int:
@@ -2319,7 +2323,8 @@ class DPPlan:
         if dp_step_dt(self.tm, self.dt, m) >= fs:
             return m
         D = (fs - dt.datetime.fromisoformat(self.tm.d_base)).days
-        return max(m, int(math.floor((D - 0.5)/(self.dt*365))) + 1)
+        f = int(math.floor((D - 0.5)/(self.dt*365)))   # 이 시점은 딱 반이면 짝수 쪽으로 D 에 닿을 수 있다
+        return max(m, f if dp_step_days(self.dt, f) >= D else f + 1)
 
     def cap(self, year: int, ded: float) -> float:
         """year 년에 쓸 수 있는 재원(평가대상 100 기준) — 넣지 않은 해(발생연도 year−1)는 무한대."""
@@ -10842,7 +10847,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 else:                            # 그 재원 연도 시작일 전이면 시작일 이후 첫 시점으로 (엔진 pay_step)
                     m0 = f"({cst}+ROUND({k}/{K['dt']},0))"
                     bd = f"DATE({q('yr')},$C$8,$D$8)"
-                    g_(rr["m"], f"=IF({ndate(m0)}<{bd},MAX({m0},INT(({bd}-{K['d_base']}-0.5)/({K['dt']}*365))+1),{m0})", N0)
+                    f0 = f"INT(({bd}-{K['d_base']}-0.5)/({K['dt']}*365))"
+                    g_(rr["m"], f"=IF({ndate(m0)}<{bd},MAX({m0},IF({ndate(f0)}>={bd},{f0},{f0}+1)),{m0})", N0)
                 g_(rr["date"], "=" + ndate(q('m')), DATE)
                 g_(rr["yr"], f"={FY(cdate)}+{k}", "0")
                 g_(rr["P"], f"=IFERROR(VLOOKUP({q('yr')}-1,{rng},2,FALSE)*100/{FACE},1E+300)")
