@@ -2095,13 +2095,15 @@ def dp_other_issues(tm: Terms) -> list:
         if not (a <= b <= c):
             out.append(f"{nm}: 발행일 ≤ 상환청구 시작일 ≤ 종료일이어야 합니다.")
         try:
-            if not float(r["face"]) > 0:
+            v = float(r["face"])
+            if not (v > 0 and math.isfinite(v)):
                 out.append(f"{nm}: 발행총액(원)을 0 보다 크게 넣으십시오.")
         except (KeyError, TypeError, ValueError):
             out.append(f"{nm}: 발행총액(원)을 넣으십시오.")
         for x, lab in (("yld", "상환 보장수익률"), ("div", "우선배당률")):
             try:
-                if float(r.get(x) or 0.0) < 0: out.append(f"{nm}: {lab}은 0 이상이어야 합니다.")
+                v = float(r.get(x) or 0.0)
+                if not (v >= 0 and math.isfinite(v)): out.append(f"{nm}: {lab}은 0 이상의 유한한 값이어야 합니다.")
             except (TypeError, ValueError):
                 out.append(f"{nm}: {lab}을 숫자로 넣으십시오.")
         try:
@@ -2131,7 +2133,8 @@ def dp_issues(tm: Terms) -> list:
         seen.add(fy)
         if amt < 0 or not math.isfinite(amt): out.append(f"배당가능이익 {fy}년은 0 이상의 금액이어야 합니다.")
     try:
-        if not float(getattr(tm, "dp_delay", 0.0) or 0.0) >= 0:
+        _g = float(getattr(tm, "dp_delay", 0.0) or 0.0)
+        if not (_g >= 0 and math.isfinite(_g)):
             out.append("이월 상환금 가산율은 0 이상이어야 합니다.")
     except (TypeError, ValueError):
         out.append("이월 상환금 가산율을 숫자로 넣으십시오.")

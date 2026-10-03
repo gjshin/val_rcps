@@ -242,3 +242,32 @@ def test_screen_keeps_inputs_and_matches_engine():
     assert case.contract["dp_others"][0]["rank"] == "pari"
     assert app.session_state.run.summary["amounts_total"] == calculate(case).summary["amounts_total"]
     assert any("배당가능이익 반영" in x.label for x in app.expander)
+
+
+def test_non_finite_peer_rates_block():
+    for v in ("nan", "inf", float("nan")):
+        t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e9}]
+        t.dp_others = [dict(name="가상", rank="pari", issue="2026-01-01", face=1e9, yld=v, div=v,
+                            start="2027-01-01", end="2028-01-01", cmp=1)]
+        msgs = legacy.dp_issues(t)
+        assert any("상환 보장수익률" in m for m in msgs) and any("우선배당률" in m for m in msgs), v
+
+
+def test_screen_survives_unreadable_uploaded_values():
+    # 불러온 파일에 읽을 수 없는 값이 있어도 입력 화면이 멈추지 않고, 비워 둔 칸을 알린다.
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    c = rcps(dp_rows=[{"fy": "이천이십칠", "amt": "많음"}], dp_from="13-40",
+             dp_others=[dict(name="가상", rank="pari", issue="날짜아님", face="큼", yld="nan", div="높음",
+                             start="2027-01-01", end="2028-01-01", cmp="연복리")])
+    app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
+    app.session_state.case = c; app.run()
+    for _ in range(2):                       # 한 번 더 그려도 원래 값과 안내가 남는다 (고치기 전에는 멈췄다)
+        assert not app.exception
+        assert any("읽을 수 없는 값" in w.value for w in app.warning)
+        k = app.session_state.case
+        assert k.market["dp_rows"] == [{"fy": "이천이십칠", "amt": "많음"}] and k.contract["dp_from"] == "13-40"
+        o = k.contract["dp_others"][0]
+        assert (o["issue"], o["face"], o["yld"], o["div"], o["cmp"]) == ("날짜아님", "큼", "nan", "높음", "연복리")
+        assert any(i.severity == "error" for i in inspect_case(k))
+        app.run()

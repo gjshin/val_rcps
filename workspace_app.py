@@ -3,6 +3,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import math
 import zipfile
 from dataclasses import asdict
 from typing import get_type_hints
@@ -278,50 +279,100 @@ def dp_editor(edited, errors):
     """
     rev = st.session_state.get('revision', 0)
     st.session_state.setdefault('_rendered_fields', set()).update({'dp_rows', 'dp_others', 'dp_delay', 'dp_from'})
-    rows = list(edited.get('dp_rows') or [])
+    rows = [r for r in (edited.get('dp_rows') or []) if isinstance(r, dict)]
+    # 읽을 수 없는 값 — 표에서는 비워 보여 주고, 사용자가 그 칸을 고치기 전까지 원래 값을 그대로 둔다
+    # (그래야 입력 점검의 오류 문장이 남는다). keep[(표, 줄, 칸)] = 원래 값.
+    bad, keep = [], {}
+
+    def _num(v, f=float, what='', slot=None):
+        if v in (None, ''):
+            return None
+        try:
+            x = f(v)
+            if isinstance(x, float) and not math.isfinite(x): raise ValueError
+            return x
+        except (TypeError, ValueError, OverflowError):
+            bad.append(what); keep[slot] = v; return None
+
+    def _day(v, what='', slot=None):
+        if not v:
+            return None
+        try:
+            return dt.date.fromisoformat(str(v)[:10])
+        except ValueError:
+            bad.append(what); keep[slot] = v; return None
     with st.expander('배당가능이익에 따른 상환 제약' + (f' — {len(rows)}개 연도 입력' if rows else ' (넣지 않으면 제한 없음)'),
                      expanded=bool(rows)):
         st.caption('상환주식은 회사의 이익으로 상환합니다. 연도별 추정 배당가능이익을 **발생연도**(그해 결산 기준)로 넣으면 '
                    '다음 해의 우선배당·상환 재원으로 씁니다. 우선배당을 먼저 빼고 남는 금액만큼 상환하며, 갚지 못한 금액은 '
                    '다음 해로 넘깁니다. 넣지 않은 해는 제한이 없습니다(배당이 가능하다는 전제). 발행자 상환권도 같은 '
                    '재원이 있어야 행사할 수 있고, 제3자 지정 매도청구권은 직접 제한을 받지 않습니다.')
-        frame = st.data_editor(pd.DataFrame([{'발생연도': r.get('fy'), '배당가능이익(원)': r.get('amt')} for r in rows],
+        frame = st.data_editor(pd.DataFrame([{'발생연도': _num(r.get('fy'), int, '발생연도', ('p', x, 'fy')),
+                                              '배당가능이익(원)': _num(r.get('amt'), float, '배당가능이익', ('p', x, 'amt'))}
+                                             for x, r in enumerate(rows)],
                                             columns=['발생연도', '배당가능이익(원)']),
                                num_rows='dynamic', hide_index=True, key=f'dp_rows_{rev}',
                                column_config={'발생연도': st.column_config.NumberColumn(format='%d', step=1),
                                               '배당가능이익(원)': st.column_config.NumberColumn(format='%,.0f')})
         new_rows = []
-        for rec in frame.to_dict('records'):
+        _same = len(frame) == len(rows)          # 줄을 더하거나 지우지 않았을 때만 원래 값을 줄 번호로 되살린다
+        nan = lambda v: v is None or (isinstance(v, float) and pd.isna(v))
+        for x, rec in enumerate(frame.to_dict('records')):
             fy, amt = rec.get('발생연도'), rec.get('배당가능이익(원)')
-            if (fy is None or pd.isna(fy)) and (amt is None or pd.isna(amt)):
+            fy = None if nan(fy) else int(fy)
+            amt = None if nan(amt) else float(amt)
+            if _same:                            # 읽을 수 없던 칸을 비워 둔 채면 원래 값을 둔다
+                if fy is None: fy = keep.get(('p', x, 'fy'))
+                if amt is None: amt = keep.get(('p', x, 'amt'))
+            if fy is None and amt is None:
                 continue
-            new_rows.append({'fy': None if fy is None or pd.isna(fy) else int(fy),
-                             'amt': None if amt is None or pd.isna(amt) else float(amt)})
-        edited['dp_rows'] = sorted(new_rows, key=lambda r: (r['fy'] is None, r['fy'] or 0))
+            new_rows.append({'fy': fy, 'amt': amt})
+        edited['dp_rows'] = sorted(new_rows, key=lambda r: (not isinstance(r['fy'], int), r['fy'] if isinstance(r['fy'], int) else 0))
+        _g0 = _num(edited.get('dp_delay'), float, '가산율', ('g',))
+        if _g0 is not None and not 0 <= _g0 <= 1:
+            bad.append('가산율'); keep[('g',)] = edited.get('dp_delay'); _g0 = None
         _g = st.number_input('넘긴 상환금에 붙는 연 가산율 (%)', min_value=0.0, max_value=100.0,
-                             value=float(edited.get('dp_delay') or 0.0)*100, step=0.5, key=f'dp_delay_{rev}',
+                             value=min(100.0, max(0.0, (_g0 or 0.0)*100)),
+                             step=0.5, key=f'dp_delay_{rev}',
                              help='갚지 못해 다음 해로 넘긴 상환금에 계약상 지연이자가 붙으면 넣으십시오. 없으면 0.')
-        edited['dp_delay'] = _g/100
+        edited['dp_delay'] = keep[('g',)] if ('g',) in keep and _g == 0 else _g/100
         try:
             _m0, _d0 = (int(x) for x in str(edited.get('dp_from') or '01-01').split('-'))
-        except ValueError:
-            _m0, _d0 = 1, 1
+            dt.date(2001, _m0, _d0)
+        except (TypeError, ValueError):
+            bad.append('재원 사용 시작일'); keep[('f',)] = edited.get('dp_from'); _m0, _d0 = 1, 1
         _c1, _c2 = st.columns(2)
         _m = _c1.number_input('재원 사용 시작 (월)', min_value=1, max_value=12, value=_m0, step=1, key=f'dp_from_m_{rev}',
                               help='이 날 전의 청구·지급은 그 전해 재원을 씁니다. 결산 확정(정기주주총회) 뒤부터 직전 연도 이익을 '
                                    '쓴다고 보려면 예를 들어 4월 1일을 넣으십시오. 기본 1월 1일은 해가 바뀌면 바로 씁니다.')
         _d = _c2.number_input('재원 사용 시작 (일)', min_value=1, max_value=31, value=_d0, step=1, key=f'dp_from_d_{rev}')
-        edited['dp_from'] = f"{int(_m):02d}-{int(_d):02d}"
+        edited['dp_from'] = (keep[('f',)] if ('f',) in keep and (int(_m), int(_d)) == (1, 1)
+                             else f"{int(_m):02d}-{int(_d):02d}")
         st.markdown('**같은 배당가능이익을 쓰는 다른 상품** — 기본은 평가대상이 선순위라 다른 상품은 평가대상 상환 뒤에 '
                     '씁니다. «동순위» 로 고른 상품만 그 해 함께 상환청구한다고 보고 남은 상환금 비율로 나눕니다. 상환금은 '
                     '아래 칸(발행일·발행총액·보장수익률)으로 앱이 계산합니다.')
-        others = list(edited.get('dp_others') or [])
-        _of = pd.DataFrame([{t: (DP_RANK.get(r.get('rank') or 'senior') if k == 'rank' else
-                                DP_CMP.get(int(r.get('cmp', 1))) if k == 'cmp' else
-                                (None if r.get(k) in (None, '') else float(r[k])*100) if k in ('yld', 'div') else
-                                (dt.date.fromisoformat(r[k]) if r.get(k) else None) if k in ('issue', 'start', 'end') else
-                                r.get(k)) for k, t in DP_OTHER_COLS} for r in others],
+        others = [r for r in (edited.get('dp_others') or []) if isinstance(r, dict)]
+
+        def _cell(x, r, k, t):
+            nm = r.get('name') or '다른 상품'
+            sl = ('o', x, k)
+            if k == 'rank':
+                if (r.get('rank') or 'senior') not in DP_RANK: bad.append(f'{nm} 순위'); keep[sl] = r.get('rank')
+                return DP_RANK.get(r.get('rank') or 'senior')
+            if k == 'cmp':
+                c_ = _num(r.get('cmp', 1), int, f'{nm} 복리 방식', sl)
+                if c_ is not None and c_ not in DP_CMP: bad.append(f'{nm} 복리 방식'); keep[sl] = r.get('cmp')
+                return DP_CMP.get(c_)
+            if k in ('yld', 'div'):
+                v = _num(r.get(k), float, f'{nm} {t}', sl); return None if v is None else v*100
+            if k in ('issue', 'start', 'end'): return _day(r.get(k), f'{nm} {t}', sl)
+            if k == 'face': return _num(r.get(k), float, f'{nm} {t}', sl)
+            return r.get(k)
+        _of = pd.DataFrame([{t: _cell(x, r, k, t) for k, t in DP_OTHER_COLS} for x, r in enumerate(others)],
                            columns=[t for _, t in DP_OTHER_COLS])
+        if bad:
+            st.warning('불러온 파일에 읽을 수 없는 값이 있어 표에서 비워 두었습니다 — 확인하고 다시 넣으십시오: '
+                       + ', '.join(dict.fromkeys(bad)))
         of = st.data_editor(_of, num_rows='dynamic', hide_index=True, key=f'dp_others_{rev}',
                             column_config={'순위': st.column_config.SelectboxColumn(options=list(DP_RANK.values())),
                                            '복리 방식': st.column_config.SelectboxColumn(options=list(DP_CMP.values())),
@@ -331,13 +382,17 @@ def dp_editor(edited, errors):
                                            '발행총액(원)': st.column_config.NumberColumn(format='%,.0f')})
         back_rank = {v: k for k, v in DP_RANK.items()}; back_cmp = {v: k for k, v in DP_CMP.items()}
         new_o = []
-        for rec in of.to_dict('records'):
+        _same_o = len(of) == len(others)
+        for x, rec in enumerate(of.to_dict('records')):
             if all(v is None or (isinstance(v, float) and pd.isna(v)) or v == '' for v in rec.values()):
                 continue
             row = {}
             for k, t in DP_OTHER_COLS:
                 v = rec.get(t)
                 if v is None or (isinstance(v, float) and pd.isna(v)): v = None
+                sl = ('o', x, k)
+                if _same_o and sl in keep and (v is None or (k == 'rank' and back_rank.get(v) == 'senior')):
+                    row[k] = keep[sl]; continue      # 읽을 수 없던 칸을 고치지 않았으면 원래 값을 둔다
                 if k == 'rank': v = back_rank.get(v, 'senior')
                 elif k == 'cmp': v = back_cmp.get(v, 1)
                 elif k in ('yld', 'div'): v = 0.0 if v is None else float(v)/100
