@@ -51,6 +51,8 @@ LABELS = {
     'sha_call_k': '콜 주당 기준가격(원, -1은 풋과 같음)', 'sha_put_q': '풋 대상 주식수(-1은 계산기준금액 ÷ 기준가격)',
     'sha_call_q': '콜 대상 주식수(-1은 계산기준금액 ÷ 기준가격)', 'sha_side': '순액을 보는 관점',
     'sha_rows': '주주간계약 회차별 표',
+    'dp_rows': '연도별 추정 배당가능이익 (발생연도 기준)', 'dp_others': '같은 배당가능이익을 쓰는 다른 상품',
+    'dp_delay': '넘긴 상환금 연 가산율', 'dp_from': '재원 사용 시작일 (월-일)', 'dp_unpaid': '만기까지 갚지 못한 금액',
     'sha_writer': '풋 행사 시 주식매수 의무자', 'sha_disc': '주주간계약 풋 할인 방식', 'sha_spread': '주주간계약 신용스프레드(%p)',
     'sha_qipo_kill': '적격상장 시 소멸 권리', 'sha_kill': '한쪽 행사 시 같은 주식의 상대 권리',
     'sha_link_q': '같은 주식에 붙은 풋·콜 물량(주, -1은 미입력)',
@@ -71,12 +73,13 @@ LABELS = {
     'sources': '자료 출처', 'contract': '계약서',
 }
 PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'k_lock_w', 'ytm', 'bdt_sig',
-                     'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue'})
+                     'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue', 'dp_delay'})
 EVENT_DATES = frozenset({'cv_s', 'cv_e', 'p_s', 'p_e', 'k_s', 'k_e', 'k_lock', 'ipo_m', 'rfx_first',
                         'sha_put_s', 'sha_put_e', 'sha_call_s', 'sha_call_e'})
 CHOICES = {
     'model': {'TF': 'TF', 'GS': 'GS'}, 'view': {'holder': '투자자', 'issuer': '발행자'},
     'mat_mode': {0: '보통주 자동전환', 1: '현금상환'},
+    'dp_unpaid': {'extend': '상환이 끝날 때까지 연장해 계속 갚음', 'lost': '받지 못하는 것으로 봄'},
     'div_mode': {0: '상환가액에 가산', 1: '재량배당으로 부채 현금흐름에서 제외'},
     'div_basis': {0: '발행가 기준', 1: '액면가 기준'},
     'issuer_call': {0: '없음', 1: '발행자 상환권', 2: '제3자 지정 매도청구권'},

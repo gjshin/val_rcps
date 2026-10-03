@@ -3,6 +3,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import math
 import zipfile
 from dataclasses import asdict
 from typing import get_type_hints
@@ -262,6 +263,214 @@ def _sha_row_px(r):
         except (KeyError, TypeError, ValueError, ZeroDivisionError):
             return None
     return float(r['price']) if r.get('price') else None
+
+
+DP_OTHER_COLS = [('name', '상품 이름'), ('rank', '순위'), ('issue', '발행일'), ('face', '발행총액(원)'),
+                 ('yld', '상환 보장수익률(연 %)'), ('cmp', '복리 방식'), ('start', '상환청구 시작일'),
+                 ('end', '상환청구 종료일'), ('div', '우선배당률(연 %, 발행가 기준)'),
+                 ('delay', '넘긴 상환금 가산율(연 %)')]
+DP_RANK = {'senior': '평가대상이 선순위', 'pari': '동순위 (비율로 나눔)'}
+DP_CMP = {1: '연복리', 0: '단리'}
+
+
+def dp_editor(edited, errors):
+    """배당가능이익 상환 제약 — 연도별 추정 배당가능이익(발생연도 기준)과 같은 재원을 쓰는 다른 상품.
+
+    비워 두면 배당이 가능하다는 전제(제한 없음)로 종전과 같이 계산한다.
+    """
+    rev = st.session_state.get('revision', 0)
+    st.session_state.setdefault('_rendered_fields', set()).update({'dp_rows', 'dp_others', 'dp_delay', 'dp_from', 'dp_unpaid'})
+    rows = [r for r in (edited.get('dp_rows') or []) if isinstance(r, dict)]
+    # 읽을 수 없는 값 — 표에서는 비워 보여 주고, 사용자가 그 칸을 고치기 전까지 원래 값을 그대로 둔다
+    # (그래야 입력 점검의 오류 문장이 남는다). keep[(표, 줄, 칸)] = 원래 값.
+    bad, keep = [], {}
+    # 형식이 틀린 줄(사전이 아닌 값)은 표에 보이지 않지만 지우지 않고 그대로 둔다 — 입력 점검 오류가 남는다
+    junk_p = [r for r in (edited.get('dp_rows') or []) if not isinstance(r, dict)]
+    junk_o = [r for r in (edited.get('dp_others') or []) if not isinstance(r, dict)]
+    if junk_p: bad.append(f'배당가능이익 표의 형식이 틀린 줄 {len(junk_p)}개')
+    _xk = sorted({str(k) for r in (edited.get('dp_rows') or []) if isinstance(r, dict) for k in r if k not in ('fy', 'amt')})
+    if _xk: bad.append(f"배당가능이익 표의 알 수 없는 칸({', '.join(_xk)})")
+    if junk_o: bad.append(f'다른 상품 표의 형식이 틀린 줄 {len(junk_o)}개')
+
+    def _num(v, f=float, what='', slot=None):
+        if v in (None, ''):
+            return None
+        try:
+            if isinstance(v, bool): raise ValueError          # 참·거짓은 숫자가 아니다
+            x = f(v)
+            if isinstance(x, float) and not math.isfinite(x): raise ValueError
+            return x
+        except (TypeError, ValueError, OverflowError):
+            bad.append(what); keep[slot] = v; return None
+
+    def _whole(v):                            # 정수 값만 — 2027.9 를 2027 로 바꾸지 않는다
+        x = float(v)
+        if not x.is_integer(): raise ValueError
+        return int(x)
+
+    def _day(v, what='', slot=None):
+        if not v:
+            return None
+        try:
+            if isinstance(v, dt.date):
+                return v if not isinstance(v, dt.datetime) else v.date()
+            return dt.date.fromisoformat(str(v))          # 입력 점검과 같이 전체를 읽는다 (뒤에 글자가 붙으면 오류)
+        except ValueError:
+            bad.append(what); keep[slot] = v; return None
+    with st.expander('배당가능이익에 따른 상환 제약' + (f' — {len(rows)}개 연도 입력' if rows else ' (넣지 않으면 제한 없음)'),
+                     expanded=bool(rows)):
+        st.caption('상환주식은 회사의 이익으로 상환합니다. 연도별 추정 배당가능이익을 **발생연도**(그해 결산 기준)로 넣으면 '
+                   '다음 해의 우선배당·상환 재원으로 씁니다. 우선배당을 먼저 빼고 남는 금액만큼 상환하며, 갚지 못한 금액은 '
+                   '다음 해로 넘깁니다. 넣지 않은 해는 제한이 없습니다(배당이 가능하다는 전제). 발행자 상환권도 같은 '
+                   '재원이 있어야 행사할 수 있고, 제3자 지정 매도청구권은 직접 제한을 받지 않습니다.')
+        # 숨은 줄 번호(_id) — 줄을 더하거나 지워도 읽을 수 없던 칸이 어느 원래 줄의 것인지 안다
+        frame = st.data_editor(pd.DataFrame([{'_id': x, '발생연도': _num(r.get('fy'), _whole, '발생연도', ('p', x, 'fy')),
+                                              '배당가능이익(원)': _num(r.get('amt'), float, '배당가능이익', ('p', x, 'amt'))}
+                                             for x, r in enumerate(rows)],
+                                            columns=['_id', '발생연도', '배당가능이익(원)']),
+                               num_rows='dynamic', hide_index=True, key=f'dp_rows_{rev}',
+                               column_order=['발생연도', '배당가능이익(원)'],
+                               column_config={'발생연도': st.column_config.NumberColumn(format='%d', step=1),
+                                              '배당가능이익(원)': st.column_config.NumberColumn(format='%,.0f')})
+        new_rows = []
+        nan = lambda v: v is None or (isinstance(v, float) and pd.isna(v))
+        _rid = lambda rec, n_: (int(rec['_id']) if not nan(rec.get('_id')) and 0 <= int(rec['_id']) < n_ else None)
+        for rec in frame.to_dict('records'):
+            x = _rid(rec, len(rows))
+            fy, amt = rec.get('발생연도'), rec.get('배당가능이익(원)')
+            fy = None if nan(fy) else int(fy)
+            amt = None if nan(amt) else float(amt)
+            if x is not None:                    # 원래 줄 — 읽을 수 없던 칸을 비워 둔 채면 원래 값을 둔다
+                if fy is None: fy = keep.get(('p', x, 'fy'))
+                if amt is None: amt = keep.get(('p', x, 'amt'))
+            extra = {k: v for k, v in rows[x].items() if k not in ('fy', 'amt')} if x is not None else {}
+            if fy is None and amt is None and not extra:
+                continue
+            new_rows.append({'fy': fy, 'amt': amt, **extra})   # 모르는 칸(예: 통화)은 고칠 때까지 그대로 둔다
+        edited['dp_rows'] = sorted(new_rows, key=lambda r: (not isinstance(r['fy'], int), r['fy'] if isinstance(r['fy'], int) else 0)) + junk_p
+        _g0 = _num(edited.get('dp_delay'), float, '가산율', ('g',))
+        if _g0 is not None and not 0 <= _g0 <= 1:
+            bad.append('가산율'); keep[('g',)] = edited.get('dp_delay'); _g0 = None
+        # 읽을 수 없던 값은 칸을 비워 둔다 — 비운 채면 원래 값을 두고, 무엇이든(0 포함) 넣으면 그 값을 쓴다
+        _g = st.number_input('넘긴 상환금에 붙는 연 가산율 (%)', min_value=0.0, max_value=100.0,
+                             value=None if ('g',) in keep else min(100.0, max(0.0, (_g0 or 0.0)*100)),
+                             step=0.5, key=f'dp_delay_{rev}',
+                             help='갚지 못해 다음 해로 넘긴 상환금에 계약상 지연이자가 붙으면 넣으십시오. 없으면 0.')
+        edited['dp_delay'] = keep[('g',)] if _g is None and ('g',) in keep else (_g or 0.0)/100
+        try:
+            _m0, _d0 = (int(x) for x in str(edited.get('dp_from') or '01-01').split('-'))
+            dt.date(2001, _m0, _d0)
+        except (TypeError, ValueError):
+            bad.append('재원 사용 시작일'); keep[('f',)] = edited.get('dp_from'); _m0, _d0 = None, None
+        _c1, _c2 = st.columns(2)
+        _m = _c1.number_input('재원 사용 시작 (월)', min_value=1, max_value=12, value=_m0, step=1, key=f'dp_from_m_{rev}',
+                              help='이 날 전의 청구·지급은 그 전해 재원을 씁니다. 결산 확정(정기주주총회) 뒤부터 직전 연도 이익을 '
+                                   '쓴다고 보려면 예를 들어 4월 1일을 넣으십시오. 기본 1월 1일은 해가 바뀌면 바로 씁니다.')
+        _d = _c2.number_input('재원 사용 시작 (일)', min_value=1, max_value=31, value=_d0, step=1, key=f'dp_from_d_{rev}')
+        edited['dp_from'] = (keep[('f',)] if ('f',) in keep and (_m is None or _d is None)
+                             else f"{int(_m or 1):02d}-{int(_d or 1):02d}")
+        from valuation.legacy import DP_UNPAID
+        _u0 = edited.get('dp_unpaid') or 'extend'
+        if _u0 not in DP_UNPAID: bad.append('만기까지 갚지 못한 금액')
+        _opts = list(DP_UNPAID)
+        _u = st.radio('만기까지 갚지 못한 금액', _opts, format_func=DP_UNPAID.get, key=f'dp_unpaid_{rev}',
+                      index=_opts.index(_u0) if _u0 in DP_UNPAID else None, horizontal=True,
+                      help='계약서의 상환 미완료 조항을 확인하고 고르십시오. 흔한 조항은 «상환이 끝날 때까지 상환기간을 '
+                           '연장(지연이자)» 입니다. «받지 못함» 은 만기일 뒤로 넘어간 지급을 0 으로 봅니다(그만큼 그 뒤 재원은 '
+                           '동순위 상품 몫). 만기에 보통주로 바꾸는 조항은 아직 반영하지 않습니다.')
+        edited['dp_unpaid'] = _u0 if _u is None else _u
+        st.markdown('**같은 배당가능이익을 쓰는 다른 상품** — 기본은 평가대상이 선순위라 다른 상품은 평가대상 상환 뒤에 '
+                    '씁니다. «동순위» 로 고른 상품만 그 해 함께 상환청구한다고 보고 남은 상환금 비율로 나눕니다. 상환금은 '
+                    '아래 칸(발행일·발행총액·보장수익률)으로 앱이 계산합니다.')
+        others = [r for r in (edited.get('dp_others') or []) if isinstance(r, dict)]
+
+        def _cell(x, r, k, t):
+            nm = r.get('name') or '다른 상품'
+            sl = ('o', x, k)
+            if k == 'rank':
+                if (r.get('rank') or 'senior') not in DP_RANK: bad.append(f'{nm} 순위'); keep[sl] = r.get('rank')
+                return DP_RANK.get(r.get('rank') or 'senior')
+            if k == 'cmp':
+                c_ = _num(r.get('cmp', 1), _whole, f'{nm} 복리 방식', sl)
+                if c_ is not None and c_ not in DP_CMP: bad.append(f'{nm} 복리 방식'); keep[sl] = r.get('cmp')
+                return DP_CMP.get(c_)
+            if k in ('yld', 'div', 'delay'):
+                v = _num(r.get(k), float, f'{nm} {t}', sl); return None if v is None else v*100
+            if k in ('issue', 'start', 'end'): return _day(r.get(k), f'{nm} {t}', sl)
+            if k == 'face': return _num(r.get(k), float, f'{nm} {t}', sl)
+            return r.get(k)
+        for r in others:
+            extra = [k for k in r if k not in dict(DP_OTHER_COLS)]
+            if extra: bad.append(f"{r.get('name') or '다른 상품'} 의 알 수 없는 칸({', '.join(map(str, extra))})")
+        _of = pd.DataFrame([{'_id': x, **{t: _cell(x, r, k, t) for k, t in DP_OTHER_COLS}} for x, r in enumerate(others)],
+                           columns=['_id'] + [t for _, t in DP_OTHER_COLS])
+        if bad:
+            st.warning('불러온 파일에 읽을 수 없는 값이 있어 표에서 비워 두었습니다(원래 값은 고칠 때까지 그대로 둡니다) — 확인하고 다시 넣으십시오: '
+                       + ', '.join(dict.fromkeys(bad)))
+        of = st.data_editor(_of, num_rows='dynamic', hide_index=True, key=f'dp_others_{rev}',
+                            column_order=[t for _, t in DP_OTHER_COLS],
+                            column_config={'순위': st.column_config.SelectboxColumn(options=list(DP_RANK.values())),
+                                           '복리 방식': st.column_config.SelectboxColumn(options=list(DP_CMP.values())),
+                                           '발행일': st.column_config.DateColumn(),
+                                           '상환청구 시작일': st.column_config.DateColumn(),
+                                           '상환청구 종료일': st.column_config.DateColumn(),
+                                           '발행총액(원)': st.column_config.NumberColumn(format='%,.0f')})
+        back_rank = {v: k for k, v in DP_RANK.items()}; back_cmp = {v: k for k, v in DP_CMP.items()}
+        new_o = []
+        for rec in of.to_dict('records'):
+            x = _rid(rec, len(others))
+            _same_o = x is not None                  # 원래 줄이면 읽을 수 없던 칸·모르는 칸을 되살린다
+            if all(v is None or (isinstance(v, float) and pd.isna(v)) or v == '' for c_, v in rec.items() if c_ != '_id'):
+                continue
+            row = {}
+            for k, t in DP_OTHER_COLS:
+                v = rec.get(t)
+                if v is None or (isinstance(v, float) and pd.isna(v)): v = None
+                sl = ('o', x, k)
+                if _same_o and sl in keep and v is None:
+                    row[k] = keep[sl]; continue      # 읽을 수 없던 칸을 고치지 않았으면 원래 값을 둔다
+                if k == 'rank': v = back_rank.get(v, 'senior')
+                elif k == 'cmp': v = back_cmp.get(v, 1)
+                elif k in ('yld', 'div', 'delay'): v = 0.0 if v is None else float(v)/100
+                elif k in ('issue', 'start', 'end'): v = v.isoformat() if hasattr(v, 'isoformat') else (str(v) if v else '')
+                elif k == 'face': v = None if v is None else float(v)
+                elif k == 'name': v = str(v or '').strip() or f'다른 상품 {len(new_o)+1}'
+                row[k] = v
+            if _same_o:                              # 모르는 칸은 고칠 때까지 그대로 둔다 (입력 점검 오류가 남는다)
+                row.update({k: v for k, v in others[x].items() if k not in dict(DP_OTHER_COLS)})
+            new_o.append(row)
+        edited['dp_others'] = new_o + junk_o
+        if new_rows:
+            st.caption('평가 결과의 «확인할 사항» 에 넣지 않은 해·재원이 우선배당보다 작은 해·발행자 상환권이 막힌 행사일이 '
+                       '나옵니다. 상세 조서의 «00 배당가능이익 상환» 시트에 청구 시점별 지급 일정이 실립니다.')
+
+
+def dp_panel(run):
+    """배당가능이익 상환 제약 — 청구 연도별 계약 상환금과 실제 지급 일정의 현재가치 (평가에 쓴 값)."""
+    from valuation import legacy
+    t = run.terms
+    if not legacy.dp_active(t):
+        return
+    n = int(t.n); dt_ = t.T/n
+    EA = legacy.exercise_amounts(t, n, dt_)
+    rows, seen = [], set()
+    for i in sorted(EA["p_dates"]):
+        y = legacy.dp_fund_year(t, EA["dp"].claim_dt(i, "put"))
+        if y in seen:
+            continue
+        seen.add(y)
+        a, v = EA["put"](i), EA["put_val"](i)
+        rows.append({'청구 연도 (첫 청구일)': f"{y} ({EA['dp'].claim_dt(i, 'put').date()})",
+                     '쓰는 배당가능이익 (발생연도)': (f"{y-1}년 {EA['dp'].P[y-1]:,.0f}원" if (y-1) in EA['dp'].P else f"{y-1}년 — 넣지 않음 (제한 없음)"),
+                     '계약 상환금 (100 기준)': a, '실제 지급 현재가치 (100 기준)': v, '비율': (v/a if a else None)})
+    rows.append({'청구 연도 (첫 청구일)': f"만기 {legacy.dp_step_dt(t, dt_, n).date()} (만기상환)", '쓰는 배당가능이익 (발생연도)': '',
+                 '계약 상환금 (100 기준)': EA['red'], '실제 지급 현재가치 (100 기준)': EA['red_val'],
+                 '비율': (EA['red_val']/EA['red'] if EA['red'] else None)})
+    with st.expander('배당가능이익 반영 — 청구 연도별 상환청구 가치', expanded=False):
+        st.caption('평가에 쓴 상환청구 가치는 계약 상환금이 아니라, 우선배당을 먼저 빼고 남은 배당가능이익만큼 해마다 나눠 받는 '
+                   '일정의 현재가치입니다. 연도마다 첫 청구일만 보여 줍니다 — 전체는 조서의 «00 배당가능이익 상환» 시트에 있습니다.')
+        st.dataframe(pd.DataFrame(rows).style.format({'계약 상환금 (100 기준)': '{:,.4f}', '실제 지급 현재가치 (100 기준)': '{:,.4f}',
+                                                     '비율': '{:.2%}'}, na_rep='—'), hide_index=True, use_container_width=True)
 
 
 def sha_editor(edited, case, errors):
@@ -533,6 +742,8 @@ def input_editor(case, autosave=False):
                            '가치)을 쓰고, 실제 회계상 배분액이 다르면 그 금액과 근거를 넣습니다. 평가기준일이 발행일보다 '
                            '뒤이면 다시 판정하지 않고 최초 인식 때의 결론을 이어 씁니다 (1109 B4.3.11).')
                 fields(['p_sep', 'p_lost_int', 'split_tol', 'split_base_in', 'split_base_why'], edited, case)
+        if inst == 'RCPS':
+            dp_editor(edited, draft_errors)
         st.subheader('매도청구권 (콜)' if inst != 'RCPS' else '발행회사 상환권·매도청구권 (콜)')
         if inst == 'RCPS':
             field('issuer_call', edited, case)
@@ -960,6 +1171,7 @@ def main():
                 sha_result_panel(run)
             day1_panel(run, case)
             split_panel(run)
+            dp_panel(run)
             with st.expander('구성요소·원금 100 기준 상세' if run.terms.inst != 'SHA' else '계산기준금액 100 기준 상세'):
                 st.caption('순차 차감에 따른 참고값입니다. 회계상 인식액을 확정한 표가 아닙니다.')
                 st.dataframe(pd.DataFrame([{'항목': AMOUNT_LABELS[k], '총액(원)': values[k], '원금 100 기준': v}
