@@ -837,3 +837,11 @@ def test_formula_workbook_carry_anniversary(tmp_path):
         if E["p_on"](j):
             assert ws.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j
     assert ws.cell(10, 3+t.n).value == pytest.approx(E["red_val"], rel=1e-9, abs=1e-9)
+
+
+def test_far_future_contract_dates_are_rejected():
+    t = legacy.Terms(inst="RCPS", d_base="9998-01-01", d_mat="9999-01-01"); t.dp_rows = [{"fy": 9998, "amt": 0.0}]
+    assert any("2200년 이전" in m for m in legacy.dp_issues(t))
+    case = rcps(d_issue="9998-01-01", d_base="9998-01-01", d_mat="9999-01-01", p_s=1., p_e=11., cv_e=12.,
+                dp_rows=[{"fy": 9998, "amt": 0.0}])
+    assert any(i.severity == "error" and "2200년" in i.message for i in inspect_case(case))
