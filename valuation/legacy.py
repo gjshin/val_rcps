@@ -2071,7 +2071,7 @@ def dp_others(tm: Terms) -> list:
             continue
         out.append(dict(name=str(r.get("name") or "다른 상품"),
                         issue=dt.datetime.fromisoformat(str(r["issue"])),
-                        face=float(r["face"]), yld=float(r.get("yld") or 0.0), cmp=int(r.get("cmp", 1)),
+                        face=float(r["face"]), yld=float(r.get("yld") or 0.0), cmp=int(float(r.get("cmp", 1))),
                         start=dt.datetime.fromisoformat(str(r["start"])),
                         end=dt.datetime.fromisoformat(str(r["end"])), div=float(r.get("div") or 0.0)))
     return out

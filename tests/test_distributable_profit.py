@@ -336,3 +336,32 @@ def test_screen_survives_unreadable_uploaded_values():
         assert (o["issue"], o["face"], o["yld"], o["div"], o["cmp"]) == ("날짜아님", "큼", "nan", "높음", "연복리")
         assert any(i.severity == "error" for i in inspect_case(k))
         app.run()
+
+
+def test_decimal_string_compounding_mode_calculates():
+    base = dict(name="가상", rank="pari", issue="2026-01-01", face=5e9, yld=.03, start="2027-01-01",
+                end="2030-12-31", div=.01)
+    rows = [{"fy": 2027, "amt": 3e9}]
+    a = calculate(rcps(dp_rows=rows, dp_others=[dict(base, cmp="1.0")]))
+    b = calculate(rcps(dp_rows=rows, dp_others=[dict(base, cmp=1)]))
+    assert a.summary["amounts_100"] == b.summary["amounts_100"]
+
+
+def test_screen_lets_user_fix_invalid_carry_rate_with_zero():
+    # 읽을 수 없는 가산율은 칸을 비워 보여 준다 — 비운 채면 원래 값을 두고, 0 을 넣으면 0 으로 고쳐진다.
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    c = rcps(dp_rows=[{"fy": 2027, "amt": 3e9}], dp_delay="빠름", dp_from="13-40")
+    app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
+    app.session_state.case = c; app.run()
+    assert not app.exception
+    k = app.session_state.case
+    assert k.contract["dp_delay"] == "빠름" and k.contract["dp_from"] == "13-40"
+    g = next(x for x in app.number_input if "가산율" in x.label)
+    m = next(x for x in app.number_input if "재원 사용 시작 (월)" in x.label)
+    d = next(x for x in app.number_input if "재원 사용 시작 (일)" in x.label)
+    assert g.value is None and m.value is None and d.value is None
+    g.set_value(0.0); m.set_value(1); d.set_value(1); app.run()
+    assert not app.exception
+    k = app.session_state.case
+    assert k.contract["dp_delay"] == 0.0 and k.contract["dp_from"] == "01-01"

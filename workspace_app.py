@@ -341,23 +341,24 @@ def dp_editor(edited, errors):
         _g0 = _num(edited.get('dp_delay'), float, '가산율', ('g',))
         if _g0 is not None and not 0 <= _g0 <= 1:
             bad.append('가산율'); keep[('g',)] = edited.get('dp_delay'); _g0 = None
+        # 읽을 수 없던 값은 칸을 비워 둔다 — 비운 채면 원래 값을 두고, 무엇이든(0 포함) 넣으면 그 값을 쓴다
         _g = st.number_input('넘긴 상환금에 붙는 연 가산율 (%)', min_value=0.0, max_value=100.0,
-                             value=min(100.0, max(0.0, (_g0 or 0.0)*100)),
+                             value=None if ('g',) in keep else min(100.0, max(0.0, (_g0 or 0.0)*100)),
                              step=0.5, key=f'dp_delay_{rev}',
                              help='갚지 못해 다음 해로 넘긴 상환금에 계약상 지연이자가 붙으면 넣으십시오. 없으면 0.')
-        edited['dp_delay'] = keep[('g',)] if ('g',) in keep and _g == 0 else _g/100
+        edited['dp_delay'] = keep[('g',)] if _g is None and ('g',) in keep else (_g or 0.0)/100
         try:
             _m0, _d0 = (int(x) for x in str(edited.get('dp_from') or '01-01').split('-'))
             dt.date(2001, _m0, _d0)
         except (TypeError, ValueError):
-            bad.append('재원 사용 시작일'); keep[('f',)] = edited.get('dp_from'); _m0, _d0 = 1, 1
+            bad.append('재원 사용 시작일'); keep[('f',)] = edited.get('dp_from'); _m0, _d0 = None, None
         _c1, _c2 = st.columns(2)
         _m = _c1.number_input('재원 사용 시작 (월)', min_value=1, max_value=12, value=_m0, step=1, key=f'dp_from_m_{rev}',
                               help='이 날 전의 청구·지급은 그 전해 재원을 씁니다. 결산 확정(정기주주총회) 뒤부터 직전 연도 이익을 '
                                    '쓴다고 보려면 예를 들어 4월 1일을 넣으십시오. 기본 1월 1일은 해가 바뀌면 바로 씁니다.')
         _d = _c2.number_input('재원 사용 시작 (일)', min_value=1, max_value=31, value=_d0, step=1, key=f'dp_from_d_{rev}')
-        edited['dp_from'] = (keep[('f',)] if ('f',) in keep and (int(_m), int(_d)) == (1, 1)
-                             else f"{int(_m):02d}-{int(_d):02d}")
+        edited['dp_from'] = (keep[('f',)] if ('f',) in keep and (_m is None or _d is None)
+                             else f"{int(_m or 1):02d}-{int(_d or 1):02d}")
         st.markdown('**같은 배당가능이익을 쓰는 다른 상품** — 기본은 평가대상이 선순위라 다른 상품은 평가대상 상환 뒤에 '
                     '씁니다. «동순위» 로 고른 상품만 그 해 함께 상환청구한다고 보고 남은 상환금 비율로 나눕니다. 상환금은 '
                     '아래 칸(발행일·발행총액·보장수익률)으로 앱이 계산합니다.')
@@ -401,7 +402,7 @@ def dp_editor(edited, errors):
                 v = rec.get(t)
                 if v is None or (isinstance(v, float) and pd.isna(v)): v = None
                 sl = ('o', x, k)
-                if _same_o and sl in keep and (v is None or (k == 'rank' and back_rank.get(v) == 'senior')):
+                if _same_o and sl in keep and v is None:
                     row[k] = keep[sl]; continue      # 읽을 수 없던 칸을 고치지 않았으면 원래 값을 둔다
                 if k == 'rank': v = back_rank.get(v, 'senior')
                 elif k == 'cmp': v = back_cmp.get(v, 1)
