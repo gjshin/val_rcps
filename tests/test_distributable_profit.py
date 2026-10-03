@@ -155,6 +155,14 @@ def test_missing_maturity_year_is_warned():
     assert any("2030" in m.message and "넣지 않아" in m.message for m in run.issues if m.code == "input_check")
 
 
+def test_missing_year_for_carried_balance_is_warned():
+    # 만기(2031-01-01) 현금상환 · 발생연도 2030 이익 0 → 전액이 2032년 재원(발생연도 2031, 넣지 않음)으로 넘어간다.
+    rows = [{"fy": y, "amt": 1e10} for y in range(2026, 2030)] + [{"fy": 2030, "amt": 0.0}]
+    run = calculate(rcps(mat_mode=1, dp_rows=rows))
+    msg = [m.message for m in run.issues if m.code == "input_check" and "넣지 않아" in m.message]
+    assert msg and "2031" in msg[0] and "2030" not in msg[0].split("년의")[0]
+
+
 def test_fractional_fiscal_year_is_rejected():
     t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027.9, "amt": 1e9}]
     assert any("발생연도와 금액" in m for m in legacy.dp_issues(t)) and not legacy.dp_profits(t)
@@ -305,7 +313,7 @@ def test_screen_survives_unreadable_uploaded_values():
     # 불러온 파일에 읽을 수 없는 값이 있어도 입력 화면이 멈추지 않고, 비워 둔 칸을 알린다.
     from pathlib import Path
     from streamlit.testing.v1 import AppTest
-    c = rcps(dp_rows=[{"fy": "이천이십칠", "amt": "많음"}], dp_from="13-40",
+    c = rcps(dp_rows=[{"fy": "이천이십칠", "amt": "많음"}, {"fy": 2027.9, "amt": 1e9}], dp_from="13-40",
              dp_others=[dict(name="가상", rank="pari", issue="날짜아님", face="큼", yld="nan", div="높음",
                              start="2027-01-01", end="2028-01-01", cmp="연복리")])
     app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
@@ -314,7 +322,8 @@ def test_screen_survives_unreadable_uploaded_values():
         assert not app.exception
         assert any("읽을 수 없는 값" in w.value for w in app.warning)
         k = app.session_state.case
-        assert k.market["dp_rows"] == [{"fy": "이천이십칠", "amt": "많음"}] and k.contract["dp_from"] == "13-40"
+        assert sorted(map(str, (r["fy"] for r in k.market["dp_rows"]))) == ["2027.9", "이천이십칠"]
+        assert k.contract["dp_from"] == "13-40"
         o = k.contract["dp_others"][0]
         assert (o["issue"], o["face"], o["yld"], o["div"], o["cmp"]) == ("날짜아님", "큼", "nan", "높음", "연복리")
         assert any(i.severity == "error" for i in inspect_case(k))

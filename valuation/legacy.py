@@ -2159,11 +2159,20 @@ def dp_warnings(tm: Terms) -> list:
     P = dp_profits(tm)
     EA = exercise_amounts(tm, n, dt_)
     w = []
-    steps = set(EA["p_dates"]) | ({n} if int(getattr(tm, "mat_mode", 0)) == 1 else set())   # 만기에 현금상환이면 만기도
-    yrs = sorted({dp_fund_year(tm, dp_step_dt(tm, dt_, i)) - 1 for i in steps})
-    miss = [y for y in yrs if y not in P]
+    # 청구 시점(만기에 현금상환이면 만기도)마다 지급 일정을 따라가며, 넣지 않은 해(제한 없음)에 갚는다고 본
+    # 금액이 있으면 그 발생연도를 알린다 — 넘긴 금액을 갚는 뒤 해도 포함한다.
+    claims = [(i, EA["put"](i)) for i in sorted(EA["p_dates"])]
+    if int(getattr(tm, "mat_mode", 0)) == 1:
+        claims.append((n, EA["red"]))
+    DP = EA["dp"]; miss = set()
+    for i, amt in claims:
+        y0 = dp_fund_year(tm, dp_step_dt(tm, dt_, i))
+        for k, m, at, cap, be, bo, pe, df in DP.schedule(i, amt)["rows"]:
+            if cap >= DP_INF/10 and be > 1e-12:
+                miss.add(y0 + k - 1)
+    miss = sorted(miss)
     if miss:
-        w.append("상환청구 기간(만기 현금상환이면 만기 포함) 중 발생연도 " + ", ".join(str(y) for y in miss) + "년의 배당가능이익을 넣지 않아 "
+        w.append("상환청구·만기상환(다음 해로 넘긴 금액 포함)에 쓰는 해 중 발생연도 " + ", ".join(str(y) for y in miss) + "년의 배당가능이익을 넣지 않아 "
                  "그 다음 해에는 제한 없이 상환된다고 봤습니다(기본 전제). 추정치가 있으면 넣으십시오.")
     face = float(tm.face_total); de = 100*dp_div_rate(tm)
     low = [y for y, a in sorted(P.items()) if a*100/face < de - 1e-9]

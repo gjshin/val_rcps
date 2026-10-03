@@ -294,6 +294,11 @@ def dp_editor(edited, errors):
         except (TypeError, ValueError, OverflowError):
             bad.append(what); keep[slot] = v; return None
 
+    def _whole(v):                            # 정수 값만 — 2027.9 를 2027 로 바꾸지 않는다
+        x = float(v)
+        if not x.is_integer(): raise ValueError
+        return int(x)
+
     def _day(v, what='', slot=None):
         if not v:
             return None
@@ -307,7 +312,7 @@ def dp_editor(edited, errors):
                    '다음 해의 우선배당·상환 재원으로 씁니다. 우선배당을 먼저 빼고 남는 금액만큼 상환하며, 갚지 못한 금액은 '
                    '다음 해로 넘깁니다. 넣지 않은 해는 제한이 없습니다(배당이 가능하다는 전제). 발행자 상환권도 같은 '
                    '재원이 있어야 행사할 수 있고, 제3자 지정 매도청구권은 직접 제한을 받지 않습니다.')
-        frame = st.data_editor(pd.DataFrame([{'발생연도': _num(r.get('fy'), int, '발생연도', ('p', x, 'fy')),
+        frame = st.data_editor(pd.DataFrame([{'발생연도': _num(r.get('fy'), _whole, '발생연도', ('p', x, 'fy')),
                                               '배당가능이익(원)': _num(r.get('amt'), float, '배당가능이익', ('p', x, 'amt'))}
                                              for x, r in enumerate(rows)],
                                             columns=['발생연도', '배당가능이익(원)']),
@@ -360,7 +365,7 @@ def dp_editor(edited, errors):
                 if (r.get('rank') or 'senior') not in DP_RANK: bad.append(f'{nm} 순위'); keep[sl] = r.get('rank')
                 return DP_RANK.get(r.get('rank') or 'senior')
             if k == 'cmp':
-                c_ = _num(r.get('cmp', 1), int, f'{nm} 복리 방식', sl)
+                c_ = _num(r.get('cmp', 1), _whole, f'{nm} 복리 방식', sl)
                 if c_ is not None and c_ not in DP_CMP: bad.append(f'{nm} 복리 방식'); keep[sl] = r.get('cmp')
                 return DP_CMP.get(c_)
             if k in ('yld', 'div'):
