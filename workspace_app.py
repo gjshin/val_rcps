@@ -277,7 +277,7 @@ def dp_editor(edited, errors):
     비워 두면 배당이 가능하다는 전제(제한 없음)로 종전과 같이 계산한다.
     """
     rev = st.session_state.get('revision', 0)
-    st.session_state.setdefault('_rendered_fields', set()).update({'dp_rows', 'dp_others', 'dp_delay'})
+    st.session_state.setdefault('_rendered_fields', set()).update({'dp_rows', 'dp_others', 'dp_delay', 'dp_from'})
     rows = list(edited.get('dp_rows') or [])
     with st.expander('배당가능이익에 따른 상환 제약' + (f' — {len(rows)}개 연도 입력' if rows else ' (넣지 않으면 제한 없음)'),
                      expanded=bool(rows)):
@@ -302,6 +302,16 @@ def dp_editor(edited, errors):
                              value=float(edited.get('dp_delay') or 0.0)*100, step=0.5, key=f'dp_delay_{rev}',
                              help='갚지 못해 다음 해로 넘긴 상환금에 계약상 지연이자가 붙으면 넣으십시오. 없으면 0.')
         edited['dp_delay'] = _g/100
+        try:
+            _m0, _d0 = (int(x) for x in str(edited.get('dp_from') or '01-01').split('-'))
+        except ValueError:
+            _m0, _d0 = 1, 1
+        _c1, _c2 = st.columns(2)
+        _m = _c1.number_input('재원 사용 시작 (월)', min_value=1, max_value=12, value=_m0, step=1, key=f'dp_from_m_{rev}',
+                              help='이 날 전의 청구·지급은 그 전해 재원을 씁니다. 결산 확정(정기주주총회) 뒤부터 직전 연도 이익을 '
+                                   '쓴다고 보려면 예를 들어 4월 1일을 넣으십시오. 기본 1월 1일은 해가 바뀌면 바로 씁니다.')
+        _d = _c2.number_input('재원 사용 시작 (일)', min_value=1, max_value=31, value=_d0, step=1, key=f'dp_from_d_{rev}')
+        edited['dp_from'] = f"{int(_m):02d}-{int(_d):02d}"
         st.markdown('**같은 배당가능이익을 쓰는 다른 상품** — 기본은 평가대상이 선순위라 다른 상품은 평가대상 상환 뒤에 '
                     '씁니다. «동순위» 로 고른 상품만 그 해 함께 상환청구한다고 보고 남은 상환금 비율로 나눕니다. 상환금은 '
                     '아래 칸(발행일·발행총액·보장수익률)으로 앱이 계산합니다.')
@@ -352,7 +362,7 @@ def dp_panel(run):
     EA = legacy.exercise_amounts(t, n, dt_)
     rows, seen = [], set()
     for i in sorted(EA["p_dates"]):
-        y = legacy.dp_step_dt(t, dt_, i).year
+        y = legacy.dp_fund_year(t, legacy.dp_step_dt(t, dt_, i))
         if y in seen:
             continue
         seen.add(y)

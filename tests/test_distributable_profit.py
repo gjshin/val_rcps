@@ -31,7 +31,7 @@ def rcps(**o):
                      p_mode="accrue", p_yield=.05, p_cmp=1, p_s=12., p_e=59., p_f=0.,
                      rfx_mode=0, issuer_call=0, k_w=0., cv_s=1., cv_e=60., view="issuer", gap_m=1.,
                      rf_curve=[[1, .03], [10, .03]], cr_curve=[[1, .08], [10, .08]])
-    extra = {k: o.pop(k) for k in list(o) if k in ("dp_rows", "dp_others", "dp_delay")}
+    extra = {k: o.pop(k) for k in list(o) if k in ("dp_rows", "dp_others", "dp_delay", "dp_from")}
     for k, v in o.items(): setattr(t, k, v)
     c = import_legacy(asdict(t), "가상 우선주")
     c.exercise_styles = {"p_f": "any", "cv": "any"}
@@ -97,6 +97,25 @@ def test_fiscal_year_mapping_and_unlisted_years_unlimited():
     assert any("넣지 않아" in m.message for m in run.issues if m.code == "input_check")
 
 
+def test_fund_start_date_moves_year_boundary():
+    # 재원 사용 시작일 4월 1일 — 2028년 2월 청구는 아직 2027년 재원(발생연도 2026 이익)을 쓴다.
+    # 발생연도 2026 이익 0 → 그 해 지급 0. 1월 1일(기본)이면 2028년 재원(발생연도 2027, 넣지 않음 → 제한 없음).
+    rows = [{"fy": 2026, "amt": 0.0}]
+    a = calculate(rcps(dp_rows=rows, dp_from="04-01")); b = calculate(rcps(dp_rows=rows))
+    Ea, t = ea(a); Eb, _ = ea(b); dt_ = t.T/t.n
+    feb = [i for i in sorted(Ea["p_dates"]) if (d := legacy.dp_step_dt(t, dt_, i)).year == 2028 and d.month < 4]
+    may = [i for i in sorted(Ea["p_dates"]) if (d := legacy.dp_step_dt(t, dt_, i)).year == 2028 and d.month >= 4]
+    assert feb and may
+    for i in feb:
+        assert legacy.dp_fund_year(t, legacy.dp_step_dt(t, dt_, i)) == 2027
+        assert Ea["dp"].schedule(i, Ea["put"](i))["rows"][0][6] == 0.0
+        assert Ea["put_val"](i) < Ea["put"](i) and Eb["put_val"](i) == Eb["put"](i)
+    for i in may:
+        assert Ea["put_val"](i) == pytest.approx(Ea["put"](i), rel=1e-15)
+    bad = [x.message for x in inspect_case(rcps(dp_rows=rows, dp_from="13-40")) if x.severity == "error"]
+    assert bad
+
+
 def test_issuer_call_needs_capacity_third_party_does_not():
     call = dict(k_s=12., k_e=59., k_f=12., k_prem=.06, k_cmp=1, k_w=1.)
     prof = [{"fy": y, "amt": 1e9} for y in range(2026, 2031)]
@@ -130,13 +149,13 @@ def test_value_workbooks_carry_schedule_sheet():
 
 
 @pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
-@pytest.mark.parametrize("call", [0, 1])
-def test_formula_workbook_matches_engine(tmp_path, call):
+@pytest.mark.parametrize("call,frm", [(0, "01-01"), (1, "01-01"), (0, "04-01")])
+def test_formula_workbook_matches_engine(tmp_path, call, frm):
     kw = dict(issuer_call=1, k_s=12., k_e=59., k_f=12., k_prem=.06, k_cmp=1, k_w=1.) if call else {}
     oth = [dict(name="가상 2회차", rank="pari", issue="2026-06-01", face=5e9, yld=.04, cmp=0,
                 start="2028-01-01", end="2030-06-30", div=.01)]
     run = calculate(rcps(dp_rows=[{"fy": 2027, "amt": 3e9}, {"fy": 2028, "amt": 2.5e10}, {"fy": 2029, "amt": 4e9}],
-                         dp_others=oth, dp_delay=.03, **kw))
+                         dp_others=oth, dp_delay=.03, dp_from=frm, **kw))
     t, R = run.terms, run.raw
     data = zipfile.ZipFile(io.BytesIO(export_bundle(run, formula=True, detail=True, accounting=True))).read("formula_review.xlsx")
     (tmp_path/"s.xlsx").write_bytes(data); (tmp_path/"o").mkdir()

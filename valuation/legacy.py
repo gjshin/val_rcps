@@ -90,6 +90,9 @@ class Terms:
     dp_rows: list = field(default_factory=list)
     dp_others: list = field(default_factory=list)
     dp_delay: float = 0.0
+    #   dp_from    재원 사용 시작일 (월-일). 이 날 전의 청구·지급은 그 전해 재원을 쓴다 — 결산 확정(정기주주총회)
+    #              전에는 직전 연도 이익을 쓸 수 없다고 볼 때 «04-01» 처럼 넣는다. 기본 01-01 은 1월 1일부터 쓴다.
+    dp_from: str = "01-01"
     div_mode: int = 0               # RCPS 우선배당 0 상환가액에 가산(전체 부채) / 1 재량(부채 현금흐름 제외)
     # 우선배당률의 기준. 격자는 1주 발행가를 100 으로 재므로 배당률도 발행가 기준이어야
     # 한다. 계약이 「1주당 **액면가액** 기준 연 1%」 라고 쓰면 발행가 기준으로는
@@ -2122,6 +2125,8 @@ def dp_issues(tm: Terms) -> list:
         if amt < 0 or not math.isfinite(amt): out.append(f"배당가능이익 {fy}년은 0 이상의 금액이어야 합니다.")
     if float(getattr(tm, "dp_delay", 0.0) or 0.0) < 0:
         out.append("이월 상환금 가산율은 0 이상이어야 합니다.")
+    if dp_from_md(tm) is None:
+        out.append("재원 사용 시작일은 «월-일»(예: 04-01) 형식이어야 합니다 (02-29 는 쓸 수 없습니다).")
     out += dp_other_issues(tm)
     if dp_profits(tm) and int(getattr(tm, "put_bdt", 0)):
         out.append("배당가능이익 반영은 금리 이항모형(상환청구권 금리모형)과 함께 쓸 수 없습니다 — 한쪽을 끄십시오.")
@@ -2137,7 +2142,7 @@ def dp_warnings(tm: Terms) -> list:
     P = dp_profits(tm)
     EA = exercise_amounts(tm, n, dt_)
     w = []
-    yrs = sorted({dp_step_dt(tm, dt_, i).year - 1 for i in EA["p_dates"]})
+    yrs = sorted({dp_fund_year(tm, dp_step_dt(tm, dt_, i)) - 1 for i in EA["p_dates"]})
     miss = [y for y in yrs if y not in P]
     if miss:
         w.append("상환청구 기간 중 발생연도 " + ", ".join(str(y) for y in miss) + "년의 배당가능이익을 넣지 않아 "
@@ -2160,6 +2165,22 @@ def dp_warnings(tm: Terms) -> list:
         w.append("제3자 지정 매도청구권은 제3자가 자기 돈으로 사므로 배당가능이익 제한을 직접 받지 않습니다 — "
                  "상환청구 가치가 바뀌어 행사 판단만 달라집니다.")
     return w
+
+
+def dp_from_md(tm: Terms):
+    """재원 사용 시작일 (월, 일). 형식이 틀리면 None — dp_issues 가 막는다."""
+    try:
+        m, d = (int(x) for x in str(getattr(tm, "dp_from", "01-01") or "01-01").split("-"))
+        dt.date(2001, m, d)                    # 윤년이 아닌 해에 있는 날만 (02-29 는 받지 않는다)
+        return m, d
+    except (TypeError, ValueError):
+        return None
+
+
+def dp_fund_year(tm: Terms, at) -> int:
+    """그 날짜에 쓰는 재원 연도 Y (발생연도 Y−1 의 배당가능이익). 재원 사용 시작일 전이면 한 해 앞이다."""
+    m, d = dp_from_md(tm) or (1, 1)
+    return at.year if (at.month, at.day) >= (m, d) else at.year - 1
 
 
 def dp_div_rate(tm: Terms) -> float:
@@ -2199,7 +2220,7 @@ class DPPlan:
         for j in range(n): self.cum.append(self.cum[-1] + f[j]*dt_)
         self.flast = f[-1] if f else 0.0
         mx = max(self.P) if self.P else 0
-        y0 = dp_step_dt(tm, dt_, 0).year
+        y0 = dp_fund_year(tm, dp_step_dt(tm, dt_, 0))
         self.K = max(0, min(DP_KMAX, mx + 2 - y0))        # 이 뒤 해는 넣지 않았으므로 제한이 없다
 
     def cum_at(self, m: int) -> float:
@@ -2216,7 +2237,8 @@ class DPPlan:
 
     def schedule(self, i: int, amount: float) -> dict:
         """스텝 i 에 상환청구하면 받는 현금 일정 — {pv, rows=[(k, 스텝, 날짜, 재원, 평가대상 잔액, 동순위 잔액 합, 지급, 할인계수)]}."""
-        t0 = dp_step_dt(self.tm, self.dt, i); y0 = t0.year
+        t0 = dp_step_dt(self.tm, self.dt, i)
+        y0 = dp_fund_year(self.tm, t0)          # 청구 시점의 재원 연도 — 넘긴 금액은 y0+1, y0+2 … 해의 재원으로 갚는다
         be = float(amount); bo = [0.0]*len(self.others); joined = [False]*len(self.others)
         pv, rows = 0.0, []
         for k in range(self.K + 1):
@@ -2247,7 +2269,7 @@ class DPPlan:
         """발행자 상환권 — 그 해 재원(우선배당을 뺀 뒤)이 상환할 금액 × 한도 이상일 때만 행사할 수 있다."""
         t0 = dp_step_dt(self.tm, self.dt, i)
         ded = self.div_e + sum(self.other_div(o, t0) for o in self.others)
-        return self.cap(t0.year, ded) >= amount*share - 1e-9
+        return self.cap(dp_fund_year(self.tm, t0), ded) >= amount*share - 1e-9
 
 
 def dp_value_sheet(wb, tm: Terms):
@@ -2271,7 +2293,7 @@ def dp_value_sheet(wb, tm: Terms):
         W.column_dimensions[col].width = w
     r = 2
     W.cell(r, 2, "배당가능이익 상환 — 청구 시점마다 실제로 받는 현금의 현재가치").font = Font(bold=True, size=13); r += 1
-    W.cell(r, 2, "발생연도 Y 의 배당가능이익은 Y+1 년의 재원이다. 우선배당을 먼저 빼고, 평가대상이 선순위(기본)이며 동순위 "
+    W.cell(r, 2, "발생연도 Y 의 배당가능이익은 Y+1 년(재원 사용 시작일부터)의 재원이다. 우선배당을 먼저 빼고, 평가대상이 선순위(기본)이며 동순위 "
                  "상품과는 남은 상환금 비율로 나눈다. 갚지 못한 금액은 다음 해(청구일 + 1년에 가장 가까운 계산 시점)로 넘긴다. "
                  "넣지 않은 해는 제한이 없다. 할인은 위험 선도이자율(만기 뒤는 마지막 구간 값).").font = grey
     r += 2
@@ -2287,12 +2309,15 @@ def dp_value_sheet(wb, tm: Terms):
             r += 1
         r += 1
     W.cell(r, 2, "입력").font = bold; r += 1
+    _fm, _fd = dp_from_md(tm) or (1, 1)
     table(["항목", "값"], [["평가대상 발행총액 (원)", float(tm.face_total)],
                           ["평가대상 우선배당률 (발행가 기준, 연)", dp_div_rate(tm)],
-                          ["넘긴 상환금 연 가산율", float(getattr(tm, "dp_delay", 0.0) or 0.0)]], [None, "#,##0.####"])
+                          ["넘긴 상환금 연 가산율", float(getattr(tm, "dp_delay", 0.0) or 0.0)],
+                          ["재원 사용 시작일 (이 날 전은 그 전해 재원)", f"매년 {_fm}월 {_fd}일"]], [None, "#,##0.####"])
     face = float(tm.face_total)
-    table(["발생연도", "배당가능이익 (원)", "재원으로 쓰는 해", "100 기준", "우선배당 뺀 뒤 (100 기준, 청구한 해)"],
-          [[fy, a, fy + 1, a*100/face, max(0.0, a*100/face - 100*dp_div_rate(tm))] for fy, a in sorted(DP.P.items())],
+    table(["발생연도", "배당가능이익 (원)", "재원으로 쓰는 기간", "100 기준", "우선배당 뺀 뒤 (100 기준, 청구한 해)"],
+          [[fy, a, f"{fy+1}-{_fm:02d}-{_fd:02d} ~ {fy+2}-{_fm:02d}-{_fd:02d} 전날", a*100/face,
+            max(0.0, a*100/face - 100*dp_div_rate(tm))] for fy, a in sorted(DP.P.items())],
           ["0", "#,##0", "0", "#,##0.0000", "#,##0.0000"])
     if DP.others:
         table(["동순위 상품", "발행일", "발행총액 (원)", "상환 보장수익률", "복리", "상환청구 시작일", "상환청구 종료일", "우선배당률"],
@@ -10604,7 +10629,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         W.column_dimensions["B"].width = 34
         for i in range(n+1): W.column_dimensions[gl(3+i)].width = 11
         title(W, 2, "00 배당가능이익 상환 — 청구 시점마다 실제로 받는 현금과 그 현재가치", span=min(n+1, 12))
-        put(W, 3, 2, "발생연도 Y 의 배당가능이익은 Y+1 년의 재원이다. 우선배당을 먼저 빼고, 동순위 상품과 남은 상환금 비율로 "
+        put(W, 3, 2, "발생연도 Y 의 배당가능이익은 Y+1 년(재원 사용 시작일부터)의 재원이다. 우선배당을 먼저 빼고, 동순위 상품과 남은 상환금 비율로 "
             "나누며, 갚지 못한 금액은 다음 해(청구일 + 1년에 가장 가까운 계산 시점)로 넘긴다. 넣지 않은 해는 제한이 없다. "
             "할인은 00 격자 공통 12행(위험 선도이자율)이고 만기 뒤는 마지막 구간 값으로 잇는다.", color=GREY, size=9)
         _in = lambda r, c, v, fm=None: put(W, r, c, v, fmt=fm, fill=INPUT_FILL, border=True, align="right")
@@ -10612,6 +10637,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(W, 5, 3, f"={K['face']}", fmt=N0, border=True, align="right")
         put(W, 6, 2, "평가대상 우선배당률 (발행가 기준, 연)", bold=True, border=True); _in(6, 3, dp_div_rate(tm), P2)
         put(W, 7, 2, "넘긴 상환금 연 가산율", bold=True, border=True); _in(7, 3, float(getattr(tm, "dp_delay", 0.0) or 0.0), P2)
+        _fm, _fd = dp_from_md(tm) or (1, 1)
+        put(W, 8, 2, "재원 사용 시작일 (월 · 일) — 이 날 전은 그 전해 재원", bold=True, border=True)
+        _in(8, 3, _fm, "0"); _in(8, 4, _fd, "0")
+        FY = lambda x: f"(YEAR({x})-IF({x}<DATE(YEAR({x}),$C$8,$D$8),1,0))"
         put(W, 9, 2, "발생연도", bold=True, fill=LIGHT, border=True); put(W, 9, 3, "배당가능이익 (원)", bold=True, fill=LIGHT, border=True)
         for k, (fy, amt) in enumerate(_DPY):
             _in(_dp_r_prof + k, 2, fy, "0"); _in(_dp_r_prof + k, 3, amt, N0)
@@ -10676,7 +10705,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 g_ = lambda r_, v, fm=N4: put(W, r_, cidx, v, fmt=fm, align="center", size=8)
                 g_(rr["m"], f"={cst}+ROUND({k}/{K['dt']},0)", N0)
                 g_(rr["date"], f"={K['d_base']}+{q('m')}*{K['dt']}*365", DATE)
-                g_(rr["yr"], f"=YEAR({cdate})+{k}", "0")
+                g_(rr["yr"], f"={FY(cdate)}+{k}", "0")
                 g_(rr["P"], f"=IFERROR(VLOOKUP({q('yr')}-1,{rng},2,FALSE)*100/{FACE},1E+300)")
                 for x in range(nx):
                     o_ = orow[x]
@@ -10718,7 +10747,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             put(W, R["pv"], 3+i, "=" + "+".join(terms), fmt=N4, align="center", size=8)
             if issuer_redeem(tm):
                 ka = f"{COMQ}!{L}${CROW['kamt']}"
-                p0 = f"IFERROR(VLOOKUP(YEAR({c(R['date'])})-1,{rng},2,FALSE)*100/{FACE},1E+300)"
+                p0 = f"IFERROR(VLOOKUP({FY(c(R['date']))}-1,{rng},2,FALSE)*100/{FACE},1E+300)"
                 d0 = f"100*{RATE}" + "".join(f"+{_dv(x, c(R['date']))}" for x in range(nx))
                 put(W, R["kok"], 3+i, f"=IF(ISNUMBER({ka}),IF(OR({p0}>=1E+299,MAX(0,{p0}-({d0}))>={ka}*{K['cw']}-1E-9),1,0),0)",
                     fmt=N0, align="center", size=8)
