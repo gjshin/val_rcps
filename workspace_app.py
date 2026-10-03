@@ -317,21 +317,24 @@ def dp_editor(edited, errors):
                    '다음 해의 우선배당·상환 재원으로 씁니다. 우선배당을 먼저 빼고 남는 금액만큼 상환하며, 갚지 못한 금액은 '
                    '다음 해로 넘깁니다. 넣지 않은 해는 제한이 없습니다(배당이 가능하다는 전제). 발행자 상환권도 같은 '
                    '재원이 있어야 행사할 수 있고, 제3자 지정 매도청구권은 직접 제한을 받지 않습니다.')
-        frame = st.data_editor(pd.DataFrame([{'발생연도': _num(r.get('fy'), _whole, '발생연도', ('p', x, 'fy')),
+        # 숨은 줄 번호(_id) — 줄을 더하거나 지워도 읽을 수 없던 칸이 어느 원래 줄의 것인지 안다
+        frame = st.data_editor(pd.DataFrame([{'_id': x, '발생연도': _num(r.get('fy'), _whole, '발생연도', ('p', x, 'fy')),
                                               '배당가능이익(원)': _num(r.get('amt'), float, '배당가능이익', ('p', x, 'amt'))}
                                              for x, r in enumerate(rows)],
-                                            columns=['발생연도', '배당가능이익(원)']),
+                                            columns=['_id', '발생연도', '배당가능이익(원)']),
                                num_rows='dynamic', hide_index=True, key=f'dp_rows_{rev}',
+                               column_order=['발생연도', '배당가능이익(원)'],
                                column_config={'발생연도': st.column_config.NumberColumn(format='%d', step=1),
                                               '배당가능이익(원)': st.column_config.NumberColumn(format='%,.0f')})
         new_rows = []
-        _same = len(frame) == len(rows)          # 줄을 더하거나 지우지 않았을 때만 원래 값을 줄 번호로 되살린다
         nan = lambda v: v is None or (isinstance(v, float) and pd.isna(v))
-        for x, rec in enumerate(frame.to_dict('records')):
+        _rid = lambda rec, n_: (int(rec['_id']) if not nan(rec.get('_id')) and 0 <= int(rec['_id']) < n_ else None)
+        for rec in frame.to_dict('records'):
+            x = _rid(rec, len(rows))
             fy, amt = rec.get('발생연도'), rec.get('배당가능이익(원)')
             fy = None if nan(fy) else int(fy)
             amt = None if nan(amt) else float(amt)
-            if _same:                            # 읽을 수 없던 칸을 비워 둔 채면 원래 값을 둔다
+            if x is not None:                    # 원래 줄 — 읽을 수 없던 칸을 비워 둔 채면 원래 값을 둔다
                 if fy is None: fy = keep.get(('p', x, 'fy'))
                 if amt is None: amt = keep.get(('p', x, 'amt'))
             if fy is None and amt is None:
@@ -382,12 +385,13 @@ def dp_editor(edited, errors):
         for r in others:
             extra = [k for k in r if k not in dict(DP_OTHER_COLS)]
             if extra: bad.append(f"{r.get('name') or '다른 상품'} 의 알 수 없는 칸({', '.join(map(str, extra))})")
-        _of = pd.DataFrame([{t: _cell(x, r, k, t) for k, t in DP_OTHER_COLS} for x, r in enumerate(others)],
-                           columns=[t for _, t in DP_OTHER_COLS])
+        _of = pd.DataFrame([{'_id': x, **{t: _cell(x, r, k, t) for k, t in DP_OTHER_COLS}} for x, r in enumerate(others)],
+                           columns=['_id'] + [t for _, t in DP_OTHER_COLS])
         if bad:
             st.warning('불러온 파일에 읽을 수 없는 값이 있어 표에서 비워 두었습니다(원래 값은 고칠 때까지 그대로 둡니다) — 확인하고 다시 넣으십시오: '
                        + ', '.join(dict.fromkeys(bad)))
         of = st.data_editor(_of, num_rows='dynamic', hide_index=True, key=f'dp_others_{rev}',
+                            column_order=[t for _, t in DP_OTHER_COLS],
                             column_config={'순위': st.column_config.SelectboxColumn(options=list(DP_RANK.values())),
                                            '복리 방식': st.column_config.SelectboxColumn(options=list(DP_CMP.values())),
                                            '발행일': st.column_config.DateColumn(),
@@ -396,9 +400,10 @@ def dp_editor(edited, errors):
                                            '발행총액(원)': st.column_config.NumberColumn(format='%,.0f')})
         back_rank = {v: k for k, v in DP_RANK.items()}; back_cmp = {v: k for k, v in DP_CMP.items()}
         new_o = []
-        _same_o = len(of) == len(others)
-        for x, rec in enumerate(of.to_dict('records')):
-            if all(v is None or (isinstance(v, float) and pd.isna(v)) or v == '' for v in rec.values()):
+        for rec in of.to_dict('records'):
+            x = _rid(rec, len(others))
+            _same_o = x is not None                  # 원래 줄이면 읽을 수 없던 칸·모르는 칸을 되살린다
+            if all(v is None or (isinstance(v, float) and pd.isna(v)) or v == '' for c_, v in rec.items() if c_ != '_id'):
                 continue
             row = {}
             for k, t in DP_OTHER_COLS:

@@ -395,3 +395,39 @@ def test_screen_keeps_unknown_peer_fields():
     assert k.contract["dp_others"][0]["yield_"] == .05
     assert any("알 수 없는 칸" in i.message for i in inspect_case(k) if i.severity == "error")
     assert any("알 수 없는 칸" in w.value for w in app.warning)
+
+
+def test_fund_year_uses_rounded_node_date():
+    # 2026-03-01 ~ 2028-03-01 월 격자 — 13번째 시점은 2027-03-31 23시 무렵이지만 노드 날짜는 2027-04-01 이다.
+    # 재원 사용 시작일 4월 1일이면 그날은 2027년 재원(발생연도 2026)을 쓴다.
+    run = calculate(rcps(d_issue="2026-03-01", d_base="2026-03-01", d_mat="2028-03-01", p_e=23., cv_e=24.,
+                         dp_rows=[{"fy": 2026, "amt": 0.0}], dp_from="04-01"))
+    t = run.terms; n = t.n; dt_ = t.T/n
+    nd = legacy.node_dates(t, n, dt_)
+    hits = [i for i in range(n + 1) if nd[i] == dt.date(2027, 4, 1)]
+    assert hits
+    for i in hits:
+        assert legacy.dp_step_dt(t, dt_, i).date() == nd[i]
+        assert legacy.dp_fund_year(t, legacy.dp_step_dt(t, dt_, i)) == 2027
+    assert all(legacy.dp_step_dt(t, dt_, i).date() == nd[i] for i in range(n + 1))
+
+
+def test_screen_keeps_invalid_cells_when_other_rows_are_deleted():
+    # 다른 줄을 지워도(줄 수가 바뀌어도) 남은 줄의 읽을 수 없는 칸·모르는 칸은 원래 값이 그대로 남는다.
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    ok = dict(name="정상", rank="pari", issue="2026-01-01", face=5e9, yld=.03, cmp=1, start="2027-01-01",
+              end="2030-12-31", div=.01)
+    badrow = dict(ok, name="가상", yld="nan", cmp="연복리", yield_=.05)
+    c = rcps(dp_rows=[{"fy": 2026, "amt": 1e9}, {"fy": "이천이십칠", "amt": 3e9}], dp_others=[ok, badrow])
+    app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
+    app.session_state.case = c; app.run()
+    rev = app.session_state["revision"] if "revision" in app.session_state else 0
+    app.session_state[f"dp_others_{rev}"] = {"edited_rows": {}, "added_rows": [], "deleted_rows": [0]}
+    app.session_state[f"dp_rows_{rev}"] = {"edited_rows": {}, "added_rows": [], "deleted_rows": [0]}
+    app.run()
+    assert not app.exception
+    k = app.session_state.case
+    assert k.market["dp_rows"] == [{"fy": "이천이십칠", "amt": 3e9}]
+    o = k.contract["dp_others"]
+    assert len(o) == 1 and (o[0]["yld"], o[0]["cmp"], o[0]["yield_"]) == ("nan", "연복리", .05)

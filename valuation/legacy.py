@@ -2246,8 +2246,11 @@ def dp_div_rate(tm: Terms) -> float:
 
 
 def dp_step_dt(tm: Terms, dt_: float, i: int) -> dt.datetime:
-    """스텝 i 의 날짜 — 수식 조서 1행(평가기준일 + 스텝 × Δt × 365일)과 같은 식."""
-    return dt.datetime.fromisoformat(tm.d_base) + dt.timedelta(days=i*dt_*365)
+    """스텝 i 의 날짜 — 평가기준일 + 스텝 × Δt × 365일을 날 단위로 반올림한다(노드 날짜와 같은 날).
+
+    재원 연도 경계(재원 사용 시작일)를 하루 안쪽 시각 차이로 넘나들지 않게 한다. 수식 조서는 ROUND(…, 0).
+    """
+    return dt.datetime.fromisoformat(tm.d_base) + dt.timedelta(days=math.floor(i*dt_*365 + 0.5))
 
 
 def dp_year_step(k: int, dt_: float) -> int:
@@ -10780,7 +10783,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 cidx = W[f"{L}1"].column
                 g_ = lambda r_, v, fm=N4: put(W, r_, cidx, v, fmt=fm, align="center", size=8)
                 g_(rr["m"], f"={cst}+ROUND({k}/{K['dt']},0)", N0)
-                g_(rr["date"], f"={K['d_base']}+{q('m')}*{K['dt']}*365", DATE)
+                g_(rr["date"], f"=ROUND({K['d_base']}+{q('m')}*{K['dt']}*365,0)", DATE)
                 g_(rr["yr"], f"={FY(cdate)}+{k}", "0")
                 g_(rr["P"], f"=IFERROR(VLOOKUP({q('yr')}-1,{rng},2,FALSE)*100/{FACE},1E+300)")
                 for x in range(nx):
@@ -10816,7 +10819,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             L = gl(3+i); Lp = gl(2+i) if i > 0 else None
             c = lambda r: f"{L}${r}"
             put(W, R["st"], 3+i, f"={COMQ}!{L}$2", fmt=N0, align="center", size=8)
-            put(W, R["date"], 3+i, f"={COMQ}!{L}$1", fmt=DATE, align="center", size=8)
+            put(W, R["date"], 3+i, f"=ROUND({COMQ}!{L}$1,0)", fmt=DATE, align="center", size=8)
             put(W, R["cum"], 3+i, (0 if i == 0 else f"={Lp}${R['cum']}+{COMQ}!{Lp}$12*{K['dt']}"), fmt=N6, align="center", size=8)
             pa = f"{COMQ}!{L}${CROW['pamt']}"
             put(W, R["amt"], 3+i, f"=IF(ISNUMBER({pa}),{pa}-({_cadd(i, 'pcadd')}),0)", fmt=N4, align="center", size=8)
@@ -10836,7 +10839,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         put(W, _dp_red0 - 2, 2, "만기상환금액 (계약)", bold=True, fill=LIGHT, border=True)
         put(W, _dp_red0 - 2, 3, f"={K['red']}", fmt=N4, align="center", size=8)
         put(W, _dp_red0 - 1 - 0, 2, "만기상환 가치 — 실제 지급 일정의 현재가치", bold=True, fill=LIGHT, border=True)
-        rterms = chain("C", str(n), f"{COMQ}!{LN}$1", f"{LN}${R['cum']}", f"$C${_dp_red0 - 2}", _dp_red0 + 1, True)
+        rterms = chain("C", str(n), f"ROUND({COMQ}!{LN}$1,0)", f"{LN}${R['cum']}", f"$C${_dp_red0 - 2}", _dp_red0 + 1, True)
         put(W, _dp_red0 - 1, 3, "=" + "+".join(rterms), fmt=N4, align="center", size=8)
         W.freeze_panes = f"C{R['st']+1}"
         W.sheet_properties.tabColor = RFXC
