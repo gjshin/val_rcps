@@ -921,3 +921,10 @@ def test_profit_amount_bounded():
     assert any("100경 원" in m for m in legacy.dp_issues(t))
     t.dp_rows = [{"fy": 2027, "amt": legacy.DP_FACE_MAX}]
     assert not any("100경 원" in m for m in legacy.dp_issues(t))
+
+
+def test_tiny_target_face_rejected_with_profits():
+    t = legacy.Terms(inst="RCPS", face_total=1e-289); t.dp_rows = [{"fy": 2027, "amt": 5e17}]
+    assert any("발행총액이 1원 이상" in m for m in legacy.dp_issues(t))
+    t.face_total = 1.0
+    assert not any("발행총액이 1원 이상" in m for m in legacy.dp_issues(t))

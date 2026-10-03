@@ -2167,6 +2167,11 @@ def dp_issues(tm: Terms) -> list:
         out.append("재원 사용 시작일은 «월-일»(예: 04-01) 형식이어야 합니다 (02-29 는 쓸 수 없습니다).")
     if seen:
         try:
+            if not float(tm.face_total) >= 1:   # 100 기준 환산(× 100 ÷ 발행총액)이 유한하도록
+                out.append("배당가능이익을 반영하려면 평가대상 발행총액이 1원 이상이어야 합니다.")
+        except (TypeError, ValueError, OverflowError):
+            pass                              # 형식 오류는 기본 점검이 알린다
+        try:
             if any(dt.date.fromisoformat(str(x)).year > 2200 for x in (tm.d_base, tm.d_mat)):
                 out.append("배당가능이익을 반영하려면 평가기준일과 만기가 2200년 이전이어야 합니다 "
                            "(넘긴 금액의 지급일을 만기 뒤 60년까지 따라간다).")
