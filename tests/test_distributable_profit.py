@@ -163,6 +163,13 @@ def test_missing_year_for_carried_balance_is_warned():
     assert msg and "2031" in msg[0] and "2030" not in msg[0].split("년의")[0]
 
 
+def test_fractional_compounding_mode_is_rejected():
+    t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027, "amt": 1e9}]
+    t.dp_others = [dict(name="가상", rank="pari", issue="2026-01-01", face=1e9, start="2027-01-01",
+                        end="2028-01-01", cmp=0.5)]
+    assert any("복리 방식" in m for m in legacy.dp_issues(t))
+
+
 def test_fractional_fiscal_year_is_rejected():
     t = legacy.Terms(inst="RCPS"); t.dp_rows = [{"fy": 2027.9, "amt": 1e9}]
     assert any("발생연도와 금액" in m for m in legacy.dp_issues(t)) and not legacy.dp_profits(t)
@@ -313,7 +320,7 @@ def test_screen_survives_unreadable_uploaded_values():
     # 불러온 파일에 읽을 수 없는 값이 있어도 입력 화면이 멈추지 않고, 비워 둔 칸을 알린다.
     from pathlib import Path
     from streamlit.testing.v1 import AppTest
-    c = rcps(dp_rows=[{"fy": "이천이십칠", "amt": "많음"}, {"fy": 2027.9, "amt": 1e9}], dp_from="13-40",
+    c = rcps(dp_rows=[{"fy": "이천이십칠", "amt": "많음"}, {"fy": 2027.9, "amt": 1e9}, 42], dp_from="13-40",
              dp_others=[dict(name="가상", rank="pari", issue="날짜아님", face="큼", yld="nan", div="높음",
                              start="2027-01-01", end="2028-01-01", cmp="연복리")])
     app = AppTest.from_file(str(Path(__file__).parent.parent/"app.py"), default_timeout=300)
@@ -322,7 +329,8 @@ def test_screen_survives_unreadable_uploaded_values():
         assert not app.exception
         assert any("읽을 수 없는 값" in w.value for w in app.warning)
         k = app.session_state.case
-        assert sorted(map(str, (r["fy"] for r in k.market["dp_rows"]))) == ["2027.9", "이천이십칠"]
+        assert 42 in k.market["dp_rows"]
+        assert sorted(str(r["fy"]) for r in k.market["dp_rows"] if isinstance(r, dict)) == ["2027.9", "이천이십칠"]
         assert k.contract["dp_from"] == "13-40"
         o = k.contract["dp_others"][0]
         assert (o["issue"], o["face"], o["yld"], o["div"], o["cmp"]) == ("날짜아님", "큼", "nan", "높음", "연복리")

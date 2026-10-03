@@ -2109,7 +2109,7 @@ def dp_other_issues(tm: Terms) -> list:
             except (TypeError, ValueError):
                 out.append(f"{nm}: {lab}을 숫자로 넣으십시오.")
         try:
-            ok = int(r.get("cmp", 1)) in (0, 1)
+            ok = float(r.get("cmp", 1)) in (0.0, 1.0)     # 0.5 를 0 으로 자르지 않는다
         except (TypeError, ValueError):
             ok = False
         if not ok:

@@ -283,6 +283,11 @@ def dp_editor(edited, errors):
     # 읽을 수 없는 값 — 표에서는 비워 보여 주고, 사용자가 그 칸을 고치기 전까지 원래 값을 그대로 둔다
     # (그래야 입력 점검의 오류 문장이 남는다). keep[(표, 줄, 칸)] = 원래 값.
     bad, keep = [], {}
+    # 형식이 틀린 줄(사전이 아닌 값)은 표에 보이지 않지만 지우지 않고 그대로 둔다 — 입력 점검 오류가 남는다
+    junk_p = [r for r in (edited.get('dp_rows') or []) if not isinstance(r, dict)]
+    junk_o = [r for r in (edited.get('dp_others') or []) if not isinstance(r, dict)]
+    if junk_p: bad.append(f'배당가능이익 표의 형식이 틀린 줄 {len(junk_p)}개')
+    if junk_o: bad.append(f'다른 상품 표의 형식이 틀린 줄 {len(junk_o)}개')
 
     def _num(v, f=float, what='', slot=None):
         if v in (None, ''):
@@ -332,7 +337,7 @@ def dp_editor(edited, errors):
             if fy is None and amt is None:
                 continue
             new_rows.append({'fy': fy, 'amt': amt})
-        edited['dp_rows'] = sorted(new_rows, key=lambda r: (not isinstance(r['fy'], int), r['fy'] if isinstance(r['fy'], int) else 0))
+        edited['dp_rows'] = sorted(new_rows, key=lambda r: (not isinstance(r['fy'], int), r['fy'] if isinstance(r['fy'], int) else 0)) + junk_p
         _g0 = _num(edited.get('dp_delay'), float, '가산율', ('g',))
         if _g0 is not None and not 0 <= _g0 <= 1:
             bad.append('가산율'); keep[('g',)] = edited.get('dp_delay'); _g0 = None
@@ -376,7 +381,7 @@ def dp_editor(edited, errors):
         _of = pd.DataFrame([{t: _cell(x, r, k, t) for k, t in DP_OTHER_COLS} for x, r in enumerate(others)],
                            columns=[t for _, t in DP_OTHER_COLS])
         if bad:
-            st.warning('불러온 파일에 읽을 수 없는 값이 있어 표에서 비워 두었습니다 — 확인하고 다시 넣으십시오: '
+            st.warning('불러온 파일에 읽을 수 없는 값이 있어 표에서 비워 두었습니다(원래 값은 고칠 때까지 그대로 둡니다) — 확인하고 다시 넣으십시오: '
                        + ', '.join(dict.fromkeys(bad)))
         of = st.data_editor(_of, num_rows='dynamic', hide_index=True, key=f'dp_others_{rev}',
                             column_config={'순위': st.column_config.SelectboxColumn(options=list(DP_RANK.values())),
@@ -406,7 +411,7 @@ def dp_editor(edited, errors):
                 elif k == 'name': v = str(v or '').strip() or f'다른 상품 {len(new_o)+1}'
                 row[k] = v
             new_o.append(row)
-        edited['dp_others'] = new_o
+        edited['dp_others'] = new_o + junk_o
         if new_rows:
             st.caption('평가 결과의 «확인할 사항» 에 넣지 않은 해·재원이 우선배당보다 작은 해·발행자 상환권이 막힌 행사일이 '
                        '나옵니다. 상세 조서의 «00 배당가능이익 상환» 시트에 청구 시점별 지급 일정이 실립니다.')
