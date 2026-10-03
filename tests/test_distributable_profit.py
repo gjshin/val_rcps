@@ -476,3 +476,43 @@ def test_formula_workbook_tie_day_and_text_names(tmp_path):
     vs = load_workbook(io.BytesIO(vz.read("value_review.xlsx")))["00 배당가능이익 상환"]
     vcells = [c for row in vs.iter_rows() for c in row if c.value == "=1+1"]
     assert vcells and all(c.data_type == "s" for c in vcells)
+
+
+def _grid3(**o):
+    return rcps(d_mat="2029-01-01", p_s=12., p_e=35., cv_e=36., dp_from="04-03",
+                dp_rows=[{"fy": y, "amt": 1e8} for y in range(2026, 2030)], **o)
+
+
+def test_carried_payment_waits_for_fund_year_start():
+    # 지급 시점이 그 재원 연도 시작일(4월 3일) 전날에 걸리면 시작일 이후 첫 시점으로 미룬다.
+    run = calculate(_grid3()); E, t = ea(run); dt_ = t.T/t.n
+    moved = 0
+    for i in E["p_dates"]:
+        y0 = legacy.dp_fund_year(t, legacy.dp_step_dt(t, dt_, i))
+        for k, m, at, *_ in E["dp"].schedule(i, E["put"](i))["rows"]:
+            if k > 0:
+                assert at >= legacy.dp_fund_start(t, y0 + k), (i, k, at)
+                moved += m != i + legacy.dp_year_step(k, dt_)
+    assert moved
+
+
+def test_maturity_year_warned_even_with_auto_conversion():
+    # 만기 자동전환이어도 부채요소는 만기 현금상환 일정을 쓴다 — 만기에 쓰는 해(발생연도 2030)를 넣지 않았으면 알린다.
+    run = calculate(rcps(p_s=0., p_e=0., dp_rows=[{"fy": 2026, "amt": 1e10}]))
+    msg = [m.message for m in run.issues if m.code == "input_check" and "넣지 않아" in m.message]
+    assert msg and "2030" in msg[0]
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_moved_payment_steps(tmp_path):
+    run = calculate(_grid3(dp_delay=.02))
+    t, R = run.terms, run.raw
+    data, wb = _recalc_formula(run, tmp_path)
+    exp = legacy.formula_key_cells(t, R, legacy.eir_or_none(t, R["full"], R["b0"], R["b1"], R["b2"], R["ca"]))
+    assert all(r[4] == "일치" for r in compare_cells(wb, exp))
+    E, _ = ea(run)
+    ws = wb["00 격자 공통"]
+    for i in range(t.n + 1):
+        if E["p_on"](i):
+            assert ws.cell(7, 3+i).value == pytest.approx(E["put_val"](i), rel=1e-9, abs=1e-9), i
+    assert ws.cell(10, 3+t.n).value == pytest.approx(E["red_val"], rel=1e-9)

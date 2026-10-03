@@ -2169,9 +2169,8 @@ def dp_warnings(tm: Terms) -> list:
     w = []
     # 청구 시점(만기에 현금상환이면 만기도)마다 지급 일정을 따라가며, 넣지 않은 해(제한 없음)에 갚는다고 본
     # 금액이 있으면 그 발생연도를 알린다 — 넘긴 금액을 갚는 뒤 해도 포함한다.
-    claims = [(i, EA["put"](i)) for i in sorted(EA["p_dates"])]
-    if int(getattr(tm, "mat_mode", 0)) == 1:
-        claims.append((n, EA["red"]))
+    # 만기상환 일정은 만기 자동전환이어도 부채요소(전환권 없는 평가)에 쓰이므로 늘 살핀다
+    claims = [(i, EA["put"](i)) for i in sorted(EA["p_dates"])] + [(n, EA["red"])]
     DP = EA["dp"]; miss = set()
     for i, amt in claims:
         y0 = dp_fund_year(tm, dp_step_dt(tm, dt_, i))
@@ -2290,6 +2289,15 @@ class DPPlan:
     def cum_at(self, m: int) -> float:
         return self.cum[m] if m <= self.n else self.cum[self.n] + (m - self.n)*self.flast*self.dt
 
+    def pay_step(self, m: int, year: int) -> int:
+        """넘긴 금액을 갚는 시점 — 청구일 + k년에 가장 가까운 시점이 그 재원 연도 시작일 전이면, 시작일 이후 첫
+        시점으로 미룬다(아직 쓸 수 없는 재원으로 갚지 않는다). 수식 조서와 같은 식."""
+        fs = dp_fund_start(self.tm, year)
+        if dp_step_dt(self.tm, self.dt, m) >= fs:
+            return m
+        D = (fs - dt.datetime.fromisoformat(self.tm.d_base)).days
+        return max(m, int(math.floor((D - 0.5)/(self.dt*365))) + 1)
+
     def cap(self, year: int, ded: float) -> float:
         """year 년에 쓸 수 있는 재원(평가대상 100 기준) — 넣지 않은 해(발생연도 year−1)는 무한대."""
         p = self.P.get(year - 1)
@@ -2314,6 +2322,8 @@ class DPPlan:
         pv, rows = 0.0, []
         for k in range(self.K + 1):
             m = i + dp_year_step(k, self.dt)
+            if k > 0:
+                m = self.pay_step(m, y0 + k)
             at = dp_step_dt(self.tm, self.dt, m)
             ded = self.div_e if k == 0 else 0.0
             for x, o in enumerate(oth):
@@ -2374,7 +2384,7 @@ def dp_value_sheet(wb, tm: Terms):
     r = 2
     W.cell(r, 2, "배당가능이익 상환 — 청구 시점마다 실제로 받는 현금의 현재가치").font = Font(bold=True, size=13); r += 1
     W.cell(r, 2, "발생연도 Y 의 배당가능이익은 Y+1 년(재원 사용 시작일부터)의 재원이다. 우선배당을 먼저 빼고, 평가대상이 선순위(기본)이며 동순위 "
-                 "상품과는 남은 상환금 비율로 나눈다. 갚지 못한 금액은 다음 해(청구일 + 1년에 가장 가까운 계산 시점)로 넘긴다. "
+                 "상품과는 남은 상환금 비율로 나눈다. 갚지 못한 금액은 다음 해(청구일 + 1년에 가장 가까운 계산 시점, 그 시점이 그 해 재원 사용 시작일 전이면 시작일 이후 첫 시점)로 넘긴다. "
                  "넣지 않은 해는 제한이 없다. 할인은 위험 선도이자율(만기 뒤는 마지막 구간 값).").font = grey
     r += 2
     def table(head, rows, fmts):
@@ -10708,7 +10718,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         for i in range(n+1): W.column_dimensions[gl(3+i)].width = 11
         title(W, 2, "00 배당가능이익 상환 — 청구 시점마다 실제로 받는 현금과 그 현재가치", span=min(n+1, 12))
         put(W, 3, 2, "발생연도 Y 의 배당가능이익은 Y+1 년(재원 사용 시작일부터)의 재원이다. 우선배당을 먼저 빼고, 동순위 상품과 남은 상환금 비율로 "
-            "나누며, 갚지 못한 금액은 다음 해(청구일 + 1년에 가장 가까운 계산 시점)로 넘긴다. 넣지 않은 해는 제한이 없다. "
+            "나누며, 갚지 못한 금액은 다음 해(청구일 + 1년에 가장 가까운 계산 시점, 그 시점이 그 해 재원 사용 시작일 전이면 시작일 이후 첫 시점)로 넘긴다. 넣지 않은 해는 제한이 없다. "
             "할인은 00 격자 공통 12행(위험 선도이자율)이고 만기 뒤는 마지막 구간 값으로 잇는다.", color=GREY, size=9)
         _in = lambda r, c, v, fm=None: put(W, r, c, v, fmt=fm, fill=INPUT_FILL, border=True, align="right")
         put(W, 5, 2, "평가대상 발행총액 (원)", bold=True, border=True)
@@ -10792,7 +10802,12 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 qp = lambda key: f"{L}${pr[key]}"
                 cidx = W[f"{L}1"].column
                 g_ = lambda r_, v, fm=N4: put(W, r_, cidx, v, fmt=fm, align="center", size=8)
-                g_(rr["m"], f"={cst}+ROUND({k}/{K['dt']},0)", N0)
+                if k == 0:
+                    g_(rr["m"], f"={cst}", N0)
+                else:                            # 그 재원 연도 시작일 전이면 시작일 이후 첫 시점으로 (엔진 pay_step)
+                    m0 = f"({cst}+ROUND({k}/{K['dt']},0))"
+                    bd = f"DATE({q('yr')},$C$8,$D$8)"
+                    g_(rr["m"], f"=IF({ndate(m0)}<{bd},MAX({m0},INT(({bd}-{K['d_base']}-0.5)/({K['dt']}*365))+1),{m0})", N0)
                 g_(rr["date"], "=" + ndate(q('m')), DATE)
                 g_(rr["yr"], f"={FY(cdate)}+{k}", "0")
                 g_(rr["P"], f"=IFERROR(VLOOKUP({q('yr')}-1,{rng},2,FALSE)*100/{FACE},1E+300)")
