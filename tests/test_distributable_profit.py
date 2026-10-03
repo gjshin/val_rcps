@@ -806,3 +806,34 @@ def test_peer_dates_out_of_range_report():
     assert any("1900년부터 2200년" in m for m in legacy.dp_issues(t))
     case = rcps(dp_rows=[{"fy": 2027, "amt": 1e9}], dp_others=t.dp_others)
     assert any(i.severity == "error" for i in inspect_case(case))
+
+
+def _anniv_case():
+    # 발행 2028-10-02 · 평가 2030-08-02 · 만기 2037-09-02 · 계약 행사월 27.3 (2031-01-11) — 노드는 2031-02-01 에 배정된다.
+    c = rcps(d_issue="2028-10-02", d_base="2030-08-02", d_mat="2037-09-02", p_s=27.3, p_e=27.3 + 48, p_f=12.,
+             cv_s=1., cv_e=107., dp_rows=[{"fy": y, "amt": 1e8} for y in range(2030, 2036)])
+    c.exercise_styles["p_f"] = "periodic"
+    return c
+
+
+def test_carry_anniversary_from_contract_date():
+    E, t = ea(calculate(_anniv_case())); dt_ = t.T/t.n
+    i = min(E["p_dates"])
+    assert E["dp"].claim_dt(i, "put").date() == dt.date(2031, 1, 11)
+    rows = E["dp"].schedule(i, E["put"](i), "put")["rows"]
+    assert rows[1][2].date() == dt.date(2032, 1, 2)          # 2032-01-11 에 가장 가까운 노드 (2032-02-01 이 아니다)
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_carry_anniversary(tmp_path):
+    run = calculate(_anniv_case())
+    t, R = run.terms, run.raw
+    data, wb = _recalc_formula(run, tmp_path)
+    exp = legacy.formula_key_cells(t, R, legacy.eir_or_none(t, R["full"], R["b0"], R["b1"], R["b2"], R["ca"]))
+    assert all(r[4] == "일치" for r in compare_cells(wb, exp))
+    E, _ = ea(run)
+    ws = wb["00 격자 공통"]
+    for j in range(t.n + 1):
+        if E["p_on"](j):
+            assert ws.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j
+    assert ws.cell(10, 3+t.n).value == pytest.approx(E["red_val"], rel=1e-9, abs=1e-9)

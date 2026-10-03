@@ -2348,6 +2348,12 @@ class DPPlan:
         d = (self.cd.get(kind) or {}).get(i)
         return d if d else dp_step_dt(self.tm, self.dt, i)
 
+    def anniv_step(self, cdt: dt.datetime, k: int) -> int:
+        """청구일(계약상 날짜)에서 달력으로 k 년 뒤 날짜에 가장 가까운 시점 — 날 수 ÷ 한 칸 일수를 반올림
+        (파이썬 round). 수식 조서는 EDATE(청구일, 12k) 로 같은 식."""
+        D = (dt.datetime.combine(_add_months(cdt.date(), 12*k), dt.time()) - dt.datetime.fromisoformat(self.tm.d_base)).days
+        return round(D/(self.dt*365))
+
     def pay_step(self, m: int, year: int) -> int:
         """넘긴 금액을 갚는 시점 — 청구일 + k년에 가장 가까운 시점이 그 재원 연도 시작일 전이면, 시작일 이후 첫
         시점으로 미룬다(아직 쓸 수 없는 재원으로 갚지 않는다). 수식 조서와 같은 식."""
@@ -2379,8 +2385,9 @@ class DPPlan:
         oth = self.live(y0)
         be = float(amount); bo = [0.0]*len(oth); joined = [False]*len(oth)
         pv, rows = 0.0, []
+        cdt = self.claim_dt(i, kind)
         for k in range(self.K + 1):
-            m = i + dp_year_step(k, self.dt)
+            m = i if k == 0 else max(i, self.anniv_step(cdt, k))
             if k > 0:
                 m = self.pay_step(m, y0 + k)
             at = dp_step_dt(self.tm, self.dt, m)
@@ -2445,7 +2452,7 @@ def dp_value_sheet(wb, tm: Terms):
     r = 2
     W.cell(r, 2, "배당가능이익 상환 — 청구 시점마다 실제로 받는 현금의 현재가치").font = Font(bold=True, size=13); r += 1
     W.cell(r, 2, "발생연도 Y 의 배당가능이익은 Y+1 년(재원 사용 시작일부터)의 재원이다. 우선배당을 먼저 빼고, 평가대상이 선순위(기본)이며 동순위 "
-                 "상품과는 남은 상환금 비율로 나눈다. 갚지 못한 금액은 다음 해(청구일 + 1년에 가장 가까운 계산 시점, 그 시점이 그 해 재원 사용 시작일 전이면 시작일 이후 첫 시점)로 넘긴다. "
+                 "상품과는 남은 상환금 비율로 나눈다. 갚지 못한 금액은 다음 해(청구일(계약상 날짜)에서 달력으로 1년 뒤 날짜에 가장 가까운 계산 시점, 그 시점이 그 해 재원 사용 시작일 전이면 시작일 이후 첫 시점)로 넘긴다. "
                  "넣지 않은 해는 제한이 없다. 할인은 위험 선도이자율(만기 뒤는 마지막 구간 값).").font = grey
     r += 2
     def table(head, rows, fmts):
@@ -10785,7 +10792,7 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         for i in range(n+1): W.column_dimensions[gl(3+i)].width = 11
         title(W, 2, "00 배당가능이익 상환 — 청구 시점마다 실제로 받는 현금과 그 현재가치", span=min(n+1, 12))
         put(W, 3, 2, "발생연도 Y 의 배당가능이익은 Y+1 년(재원 사용 시작일부터)의 재원이다. 우선배당을 먼저 빼고, 동순위 상품과 남은 상환금 비율로 "
-            "나누며, 갚지 못한 금액은 다음 해(청구일 + 1년에 가장 가까운 계산 시점, 그 시점이 그 해 재원 사용 시작일 전이면 시작일 이후 첫 시점)로 넘긴다. 넣지 않은 해는 제한이 없다. "
+            "나누며, 갚지 못한 금액은 다음 해(청구일(계약상 날짜)에서 달력으로 1년 뒤 날짜에 가장 가까운 계산 시점, 그 시점이 그 해 재원 사용 시작일 전이면 시작일 이후 첫 시점)로 넘긴다. 넣지 않은 해는 제한이 없다. "
             "할인은 00 격자 공통 12행(위험 선도이자율)이고 만기 뒤는 마지막 구간 값으로 잇는다.", color=GREY, size=9)
         _in = lambda r, c, v, fm=None: put(W, r, c, v, fmt=fm, fill=INPUT_FILL, border=True, align="right")
         put(W, 5, 2, "평가대상 발행총액 (원)", bold=True, border=True)
@@ -10878,8 +10885,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 g_ = lambda r_, v, fm=N4: put(W, r_, cidx, v, fmt=fm, align="center", size=8)
                 if k == 0:
                     g_(rr["m"], f"={cst}", N0)
-                else:                            # 그 재원 연도 시작일 전이면 시작일 이후 첫 시점으로 (엔진 pay_step)
-                    m0 = f"({cst}+ROUND({k}/{K['dt']},0))"
+                else:                            # 청구일 + k년(달력)에 가장 가까운 시점, 그 재원 연도 시작일 전이면 시작일 이후 첫 시점 (엔진 anniv_step · pay_step)
+                    x = f"((EDATE({cdate},{12*k})-{K['d_base']})/({K['dt']}*365))"
+                    m0 = f"MAX({cst},IF({x}-INT({x})=0.5,INT({x})+MOD(INT({x}),2),INT({x}+0.5)))"
                     bd = f"DATE({q('yr')},$C$8,$D$8)"
                     f0 = f"INT(({bd}-{K['d_base']}-0.5)/({K['dt']}*365))"
                     g_(rr["m"], f"=IF({ndate(m0)}<{bd},MAX({m0},IF({ndate(f0)}>={bd},{f0},{f0}+1)),{m0})", N0)
