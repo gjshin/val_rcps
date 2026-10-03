@@ -2172,8 +2172,8 @@ def dp_issues(tm: Terms) -> list:
         except (TypeError, ValueError, OverflowError):
             pass                              # 형식 오류는 기본 점검이 알린다
         try:
-            if any(dt.date.fromisoformat(str(x)).year > 2200 for x in (tm.d_base, tm.d_mat)):
-                out.append("배당가능이익을 반영하려면 평가기준일과 만기가 2200년 이전이어야 합니다 "
+            if not all(1900 <= dt.date.fromisoformat(str(x)).year <= 2200 for x in (tm.d_issue, tm.d_base, tm.d_mat)):
+                out.append("배당가능이익을 반영하려면 발행일·평가기준일·만기가 1900년부터 2200년 사이여야 합니다 "
                            "(넘긴 금액의 지급일을 만기 뒤 60년까지 따라간다).")
         except (TypeError, ValueError):
             pass                              # 날짜 형식 오류는 기본 점검이 알린다

@@ -845,10 +845,13 @@ def test_formula_workbook_carry_anniversary(tmp_path):
 
 def test_far_future_contract_dates_are_rejected():
     t = legacy.Terms(inst="RCPS", d_base="9998-01-01", d_mat="9999-01-01"); t.dp_rows = [{"fy": 9998, "amt": 0.0}]
-    assert any("2200년 이전" in m for m in legacy.dp_issues(t))
+    assert any("1900년부터 2200년" in m for m in legacy.dp_issues(t))
     case = rcps(d_issue="9998-01-01", d_base="9998-01-01", d_mat="9999-01-01", p_s=1., p_e=11., cv_e=12.,
                 dp_rows=[{"fy": 9998, "amt": 0.0}])
     assert any(i.severity == "error" and "2200년" in i.message for i in inspect_case(case))
+    t2 = legacy.Terms(inst="RCPS", d_issue="0001-01-01", d_base="0001-01-01", d_mat="0005-01-01", dp_from="04-01")
+    t2.dp_rows = [{"fy": 1, "amt": 0.0}]
+    assert any("1900년부터 2200년" in m for m in legacy.dp_issues(t2))
 
 
 def test_shortfall_warning_counts_peer_dividends():
