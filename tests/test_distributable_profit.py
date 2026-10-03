@@ -655,7 +655,8 @@ def test_huge_integer_carry_rate_reports():
 def test_contract_date_tie_rounds_like_engine():
     # 남는 달 8/487 × 30.4375 = 0.5 일(딱 반) — 엔진(months_to_date, 짝수 쪽)은 0일을 더한다.
     # 계약일은 노드 배정과 같은 months_to_date 그대로 — 남는 날 수가 반나절 근처인 소수 개월은 입력 점검이 막는다.
-    for m in (12 + 8/487, 12 + 0.5000000001/30.4375):
+    # 세 번째 값은 수식 조서가 소수 여섯째 자리로 적는 개월(12.016427)로 바꾸면 반나절 아래로 내려가 하루가 갈린다.
+    for m in (12 + 8/487, 12 + 0.5000000001/30.4375, 12 + 0.500002/30.4375):
         assert legacy.dp_contract_date("2026-04-03", m).date() == legacy.months_to_date("2026-04-03", m)
         c = rcps(d_issue="2026-04-03", d_base="2026-04-03", d_mat="2030-04-03", p_s=m, p_e=m + 24, p_f=12.,
                  cv_e=48., dp_from="04-04", dp_rows=[{"fy": 2026, "amt": 0.0}])

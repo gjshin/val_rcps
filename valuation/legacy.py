@@ -2311,7 +2311,8 @@ def dp_contract_date(d_issue, m: float) -> dt.datetime:
 
 
 def dp_half_day_months(tm: Terms) -> list:
-    """회차가 정해진 상환청구·발행자 상환권 가운데 남는 날 수가 반나절(±1e-6일) 근처인 계약 행사월."""
+    """회차가 정해진 상환청구·발행자 상환권 가운데 남는 날 수가 반나절(±1e-6일) 근처이거나,
+    소수 여섯째 자리로 줄인 값(수식 조서에 적는 개월)과 계약일이 갈리는 계약 행사월."""
     try:
         t2 = Terms(**asdict(tm)); derive(t2)
         n = int(t2.n); dt_ = t2.T/n
@@ -2324,8 +2325,10 @@ def dp_half_day_months(tm: Terms) -> list:
             if cont:
                 continue
             for m in ds.values():
-                x = (m - math.floor(m))*30.4375
-                if m != math.floor(m) and abs(x - math.floor(x) - 0.5) < 1e-6:
+                # 수식 조서는 개월을 소수 여섯째 자리로 적으므로 그 값으로도 같은 날이 나와야 한다.
+                m6 = round(m, 6)
+                tie = lambda v: v != math.floor(v) and abs((v - math.floor(v))*30.4375 % 1 - 0.5) < 1e-6
+                if tie(m) or tie(m6) or months_to_date(t2.d_issue, m) != months_to_date(t2.d_issue, m6):
                     out.append(m)
         return out
     except Exception:
