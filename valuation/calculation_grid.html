@@ -13,6 +13,9 @@
 const D=JSON.parse(document.getElementById('worksheet-data').textContent), $=id=>document.getElementById(id);
 const fmt=v=>v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Object.is(v,-0)?0:v);
 const pct=v=>v==null?'—':fmt(v*100)+'%';
+// 수식창의 대입값 — 다시 계산하면 결과가 나오도록 금액·배수는 소수 6자리, 금리·확률은 % 소수 4자리까지 (끝의 0은 지운다).
+const fx=v=>v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:6}).format(Object.is(v,-0)?0:v);
+const px=v=>v==null?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:4}).format(v*100)+'%';
 const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let metric='value', curve=0, rowStart=0, selected=null, lastFocus=null;
 const nodeFields=[['stock','주가','원'],['P','전환확률','%'],['kind','의사결정',''],['hold','보유가치','원금 100'],['value','본체가치','원금 100'],...(D.model==='TF'?[['E','주식결제분','원금 100'],['B','현금결제분','원금 100'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%']]:[['ya','상승 할인율','%'],['yb','하락 할인율','%'],['df_up','상승 할인계수','%'],['df_down','하락 할인계수','%']])];
@@ -35,8 +38,8 @@ function render(){
  }else if(D.mode==='schedule'){
   let out=head(columns(),'적용 항목')+'<tbody>';scheduleFields.forEach(([key,label,unit],r)=>{out+='<tr><th scope="row">'+label+(unit==='원금 100'?' (100)':'')+'</th>';D.steps.forEach((s,i)=>{let v=key==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(key)?D[key]:s[key];out+=cell(showVal(v,unit),i,r);});out+='</tr>';});$('grid').innerHTML=out+'</tbody>';
  }else{
-  const c=D.curves[curve];$('input-note').hidden=false;$('input-note').textContent='입력 곡선: '+c.inputs.map(p=>fmt(p[0])+'년 '+pct(p[1])).join(' · ')+` | 연 ${c.m}회 복리`;
-  $('grid').innerHTML='<thead><tr>'+['만기(년)','적용 수익률','회당 이율','이전 이표 PV 합(%)','할인계수(%)','연속복리 현물금리','산출 구분'].map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+c.rows.map((r,i)=>'<tr>'+[fmt(r.t),pct(r.y),pct(r.c),pct(r.pv),pct(r.df),pct(r.spot),kindLabel(r.kind)].map(v=>'<td><button class="cell" data-boot="'+i+'" aria-label="'+fmt(r.t)+'년 · '+safe(v)+'">'+safe(v)+'</button></td>').join('')+'</tr>').join('')+'</tbody>';
+  const c=D.curves[curve];$('input-note').hidden=false;$('input-note').textContent='입력 곡선: '+c.inputs.map(p=>fx(p[0])+'년 '+px(p[1])).join(' · ')+` | 연 ${c.m}회 복리`;
+  $('grid').innerHTML='<thead><tr>'+['만기(년)','적용 수익률','회당 이율','이전 이표 PV 합(%)','할인계수(%)','연속복리 현물금리','산출 구분'].map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+c.rows.map((r,i)=>'<tr>'+[fx(r.t),px(r.y),px(r.c),px(r.pv),px(r.df),px(r.spot),kindLabel(r.kind)].map(v=>'<td><button class="cell" data-boot="'+i+'" aria-label="'+fx(r.t)+'년 · '+safe(v)+'">'+safe(v)+'</button></td>').join('')+'</tr>').join('')+'</tbody>';
  }
  $('scroll').scrollLeft=scrollLeft;$('scroll').scrollTop=scrollTop;
 }
@@ -48,28 +51,28 @@ function nodeDetail(key,focus=true){
  const n=D.nodes[key];if(!n)return;selected=key;rowStart=Math.floor(n.down/40)*40;$('rows').value=String(rowStart);render();
  const s=D.steps[n.i],a=n.up?D.nodes[n.up[0]+','+(n.up[0]-n.up[1])]:null,b=n.dn?D.nodes[n.dn[0]+','+(n.dn[0]-n.dn[1])]:null;
  const f=nodeFields.find(x=>x[0]===metric),v=val(n,metric);let text='', rr=[];
- const eh=()=>`E 보유 = [p × E↑ + (1−p) × E↓] × exp(−Rf × Δt)\n= [${pct(s.q)} × ${fmt(a.E)} + ${pct(1-s.q)} × ${fmt(b.E)}] × exp(−${pct(s.rf)} × ${fmt(D.delta)})\n= ${fmt(n.equity_hold)}`;
- const bh=()=>`B 보유 = [p × B↑ + (1−p) × B↓] × exp(−Kd × Δt) + C\n= [${pct(s.q)} × ${fmt(a.B)} + ${pct(1-s.q)} × ${fmt(b.B)}] × exp(−${pct(s.cr)} × ${fmt(D.delta)}) + ${fmt(s.coupon)}\n= ${fmt(n.debt_hold)}`;
- const gh=()=>`r↑ = π↑ × Rf + (1−π↑) × Kd = ${pct(n.ya)}\nr↓ = π↓ × Rf + (1−π↓) × Kd = ${pct(n.yb)}\nH = p × V↑ × exp(−r↑ × Δt) + (1−p) × V↓ × exp(−r↓ × Δt) + C\n= ${pct(s.q)} × ${fmt(a.value)} × ${pct(n.df_up)} + ${pct(1-s.q)} × ${fmt(b.value)} × ${pct(n.df_down)} + ${fmt(s.coupon)}\n= ${fmt(n.hold)}`;
- const hold=()=>D.model==='GS'?gh():eh()+'\n\n'+bh()+`\n\nH = E 보유 + B 보유 = ${fmt(n.hold)}`;
- if(metric==='stock'){text=`S(i,j) = S₀ × uʲ × d⁽ⁱ⁻ʲ⁾\n= ${fmt(D.S0)} × ${fmt(D.u)}^${n.j} × ${fmt(D.d)}^${n.down}\n= ${fmt(n.stock)} 원\n\nu = exp(σ × √Δt), d = 1 ÷ u`;rr=[['최초 주가 S₀',fmt(D.S0)+' 원'],['연 변동성 σ',pct(D.sig)],['구간 Δt',fmt(D.delta)+' 년'],['상승 / 하락 횟수',n.j+' / '+n.down]];}
- else if(metric==='P'){text=n.terminal||n.probability_kind!=='계속 보유'?`전환확률 π = ${pct(n.P)}\n전환·강제전환이면 100.00%, 현금상환이면 0.00%입니다.\nGS 확률 처리: ${n.probability_kind}`:`π = p × π↑ + (1−p) × π↓\n= ${pct(s.q)} × ${pct(a.P)} + ${pct(1-s.q)} × ${pct(b.P)}\n= ${pct(n.P)}`;if(a)rr=[['상승 노드 전환확률 π↑',pct(a.P)],['하락 노드 전환확률 π↓',pct(b.P)],['상승 확률 p',pct(s.q)]];text+='\n전환확률은 GS의 가치 선택을 기준으로 계산한 확률입니다.';}
+ const eh=()=>`E 보유 = [p × E↑ + (1−p) × E↓] × exp(−Rf × Δt)\n= [${px(s.q)} × ${fx(a.E)} + ${px(1-s.q)} × ${fx(b.E)}] × exp(−${px(s.rf)} × ${fx(D.delta)})\n= ${fx(n.equity_hold)}`;
+ const bh=()=>`B 보유 = [p × B↑ + (1−p) × B↓] × exp(−Kd × Δt) + C\n= [${px(s.q)} × ${fx(a.B)} + ${px(1-s.q)} × ${fx(b.B)}] × exp(−${px(s.cr)} × ${fx(D.delta)}) + ${fx(s.coupon)}\n= ${fx(n.debt_hold)}`;
+ const gh=()=>`r↑ = π↑ × Rf + (1−π↑) × Kd = ${px(n.ya)}\nr↓ = π↓ × Rf + (1−π↓) × Kd = ${px(n.yb)}\nH = p × V↑ × exp(−r↑ × Δt) + (1−p) × V↓ × exp(−r↓ × Δt) + C\n= ${px(s.q)} × ${fx(a.value)} × ${px(n.df_up)} + ${px(1-s.q)} × ${fx(b.value)} × ${px(n.df_down)} + ${fx(s.coupon)}\n= ${fx(n.hold)}`;
+ const hold=()=>D.model==='GS'?gh():eh()+'\n\n'+bh()+`\n\nH = E 보유 + B 보유 = ${fx(n.hold)}`;
+ if(metric==='stock'){text=`S(i,j) = S₀ × uʲ × d⁽ⁱ⁻ʲ⁾\n= ${fx(D.S0)} × ${fx(D.u)}^${n.j} × ${fx(D.d)}^${n.down}\n= ${fx(n.stock)} 원\n\nu = exp(σ × √Δt), d = 1 ÷ u`;rr=[['최초 주가 S₀',fx(D.S0)+' 원'],['연 변동성 σ',px(D.sig)],['구간 Δt',fx(D.delta)+' 년'],['상승 / 하락 횟수',n.j+' / '+n.down]];}
+ else if(metric==='P'){text=n.terminal||n.probability_kind!=='계속 보유'?`전환확률 π = ${px(n.P)}\n전환·강제전환이면 100.00%, 현금상환이면 0.00%입니다.\nGS 확률 처리: ${n.probability_kind}`:`π = p × π↑ + (1−p) × π↓\n= ${px(s.q)} × ${px(a.P)} + ${px(1-s.q)} × ${px(b.P)}\n= ${px(n.P)}`;if(a)rr=[['상승 노드 전환확률 π↑',px(a.P)],['하락 노드 전환확률 π↓',px(b.P)],['상승 확률 p',px(s.q)]];text+='\n전환확률은 GS의 가치 선택을 기준으로 계산한 확률입니다.';}
  else if(['df_rf','df_cr','df_up','df_down','ya','yb'].includes(metric)){
   if(n.terminal){text='종료 노드에는 다음 구간이 없어 할인율·할인계수를 적용하지 않습니다.';}
   else{let rate=['df_rf'].includes(metric)?s.rf:['df_cr'].includes(metric)?s.cr:['df_up','ya'].includes(metric)?n.ya:n.yb;const cp=['df_up','ya'].includes(metric)?a.P:b.P;
-   text=['df_rf','df_cr'].includes(metric)?`DF = exp(−${metric==='df_rf'?'Rf':'Kd'} × Δt)`:`r = π자식 × Rf + (1−π자식) × Kd\n= ${pct(cp)} × ${pct(s.rf)} + ${pct(1-cp)} × ${pct(s.cr)} = ${pct(rate)}\n\nDF = exp(−r × Δt)`;
-   text+=`\n= exp(−${pct(rate)} × ${fmt(D.delta)})\n= ${pct(Math.exp(-rate*D.delta))}`;rr=[['무위험 선도금리 Rf',pct(s.rf)],['위험 선도금리 Kd',pct(s.cr)],['구간 Δt',fmt(D.delta)+' 년'],['참조 전환확률',D.model==='GS'?pct(cp):'TF는 결제 성격별 할인']];}
+   text=['df_rf','df_cr'].includes(metric)?`DF = exp(−${metric==='df_rf'?'Rf':'Kd'} × Δt)`:`r = π자식 × Rf + (1−π자식) × Kd\n= ${px(cp)} × ${px(s.rf)} + ${px(1-cp)} × ${px(s.cr)} = ${px(rate)}\n\nDF = exp(−r × Δt)`;
+   text+=`\n= exp(−${px(rate)} × ${fx(D.delta)})\n= ${px(Math.exp(-rate*D.delta))}`;rr=[['무위험 선도금리 Rf',px(s.rf)],['위험 선도금리 Kd',px(s.cr)],['구간 Δt',fx(D.delta)+' 년'],['참조 전환확률',D.model==='GS'?px(cp):'TF는 결제 성격별 할인']];}
  }else if(metric==='hold'){text=n.terminal?'만기 또는 강제전환으로 종료되어 다음 시점의 계속보유 계산이 없습니다.':hold();}
  else if(['E','B'].includes(metric)){
-  text=n.terminal?`종료 시 선택한 결제금액\nE = ${fmt(n.E)}, B = ${fmt(n.B)}\nV = E + B = ${fmt(n.E+n.B)}`: (metric==='E'?eh():bh())+`\n\n위 금액은 행사 전 보유분입니다.\n${n.kind} 반영 후 ${metric} = ${fmt(v)}`;
+  text=n.terminal?`종료 시 선택한 결제금액\nE = ${fx(n.E)}, B = ${fx(n.B)}\nV = E + B = ${fx(n.E+n.B)}`: (metric==='E'?eh():bh())+`\n\n위 금액은 행사 전 보유분입니다.\n${n.kind} 반영 후 ${metric} = ${fx(v)}`;
  }else{
-  if(n.terminal)text=`종료 시 선택한 가치 = ${fmt(n.value)}\n처리: ${n.kind}\n주식결제분 E ${fmt(n.E)} + 현금결제분 B ${fmt(n.B)} = ${fmt(n.E+n.B)}`;
-  else if(D.bw_cash)text=hold()+`\n\n현금납입 BW: 신주인수권과 사채를 구분합니다.\n신주인수권 행사가치 = MAX(100 × S ÷ K − 100, 0)\n권리의 ${D.bw_detach?'분리형':'비분리형'} 조건과 사채 행사순서를 반영한 E + B = ${fmt(n.value)}`;
-  else text=hold()+`\n\nV = MIN(MAX(전환, 상환청구, H), 콜 대응가치)\n콜 대응가치 = MAX(콜금액${D.conv_resp?', 전환':''}${!D.pc_order?', 상환청구':''})\n행사 불가 후보는 제외합니다. 본체 내 콜이 없으면 첫 MAX만 적용합니다.\n선택: ${n.kind} → ${fmt(n.value)}`;
+  if(n.terminal)text=`종료 시 선택한 가치 = ${fx(n.value)}\n처리: ${n.kind}\n주식결제분 E ${fx(n.E)} + 현금결제분 B ${fx(n.B)} = ${fx(n.E+n.B)}`;
+  else if(D.bw_cash)text=hold()+`\n\n현금납입 BW: 신주인수권과 사채를 구분합니다.\n신주인수권 행사가치 = MAX(100 × S ÷ K − 100, 0)\n권리의 ${D.bw_detach?'분리형':'비분리형'} 조건과 사채 행사순서를 반영한 E + B = ${fx(n.value)}`;
+  else text=hold()+`\n\nV = MIN(MAX(전환, 상환청구, H), 콜 대응가치)\n콜 대응가치 = MAX(콜금액${D.conv_resp?', 전환':''}${!D.pc_order?', 상환청구':''})\n행사 불가 후보는 제외합니다. 본체 내 콜이 없으면 첫 MAX만 적용합니다.\n선택: ${n.kind} → ${fx(n.value)}`;
  }
- if(metric!=='stock')rr.push(['주가 S',fmt(n.stock)+' 원'],['전환가액 K',fmt(n.K)+' 원'],['전환가치 100 × S ÷ K',fmt(n.cv)],['상환청구 후보',fmt(n.pv)],['본체 내 콜 후보',fmt(n.kv)],['당기 이자·배당 C',fmt(s.coupon)]);
+ if(metric!=='stock')rr.push(['주가 S',fx(n.stock)+' 원'],['전환가액 K',fx(n.K)+' 원'],['전환가치 100 × S ÷ K',fx(n.cv)],['상환청구 후보',fx(n.pv)],['본체 내 콜 후보',fx(n.kv)],['당기 이자·배당 C',fx(s.coupon)]);
  let body='<span class="badge">'+safe(f[2]||'의사결정')+'</span><div class="result">'+safe(showVal(v,f[2]))+'</div>'+formula(text)+refs(rr);
- if(a&&b&&dependencies(n).length){const prob=['P','ya','yb','df_up','df_down'].includes(metric), refValue=x=>prob?pct(x.P):fmt(metric==='E'?x.E:metric==='B'?x.B:x.value), refName=prob?'전환확률':metric==='E'?'주식결제분':metric==='B'?'현금결제분':'본체가치';
+ if(a&&b&&dependencies(n).length){const prob=['P','ya','yb','df_up','df_down'].includes(metric), refValue=x=>prob?px(x.P):fx(metric==='E'?x.E:metric==='B'?x.B:x.value), refName=prob?'전환확률':metric==='E'?'주식결제분':metric==='B'?'현금결제분':'본체가치';
   const children=[['상승',a],['하락',b]].filter((_,idx)=>dependencies(n).some(k=>k&&k[0]===[a,b][idx].i&&k[1]===[a,b][idx].j));
   body+='<div class="section-title">다음 시점의 '+refName+' · 버튼으로 참조 위치 이동</div><div class="flow"><div class="current">현재 '+n.i+' / '+n.down+'<br><strong>'+safe(showVal(v,f[2]))+'</strong></div><span>←</span><div class="children">'+children.map(([label,x])=>'<button '+(x.i>D.end?'disabled ':'')+'data-node="'+x.i+','+x.down+'">'+label+' '+x.i+' / '+x.down+' · '+refValue(x)+'</button>').join('')+'</div></div>';}
  if(a&&a.i>D.end)body+='<p class="sub">다음 참조 노드를 열려면 위의 계산표 시점 구간을 다음 구간으로 변경하세요.</p>';
@@ -77,26 +80,26 @@ function nodeDetail(key,focus=true){
  openDetail(metricLabel()+' 계산내역',`${D.model} · 시점 ${n.i} / 하락 ${n.down} · ${s.date}`,body);if(focus)$('close').focus({preventScroll:true});
 }
 function scheduleDetail(i,row){const s=D.steps[i],[k,label,unit]=scheduleFields[row];let v=k==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(k)?D[k]:s[k],text='';
- if(['rf','cr'].includes(k))text='f(t₀,t₁) = [z(t₁) × t₁ − z(t₀) × t₀] ÷ (t₁−t₀)\n입력곡선의 연속복리 현물금리에서 구간 선도금리를 계산합니다.\n현재 열 → 다음 열 구간 적용값 = '+pct(v);
- else if(['q','down_q'].includes(k))text=`p = [exp((Rf − 배당수익률) × Δt) − d] ÷ (u−d)\n= [exp((${pct(s.rf)} − ${pct(D.div_y)}) × ${fmt(D.delta)}) − ${fmt(D.d)}] ÷ (${fmt(D.u)} − ${fmt(D.d)})\n상승 p = ${pct(s.q)}, 하락 1−p = ${s.q==null?'—':pct(1-s.q)}`;
- else if(['df_rf','df_cr'].includes(k))text=`DF = exp(−구간 선도금리 × Δt)\n= exp(−${pct(k==='df_rf'?s.rf:s.cr)} × ${fmt(D.delta)})\n= ${pct(v)}`;
- else if(['u','d'].includes(k))text=`u = exp(σ × √Δt) = exp(${pct(D.sig)} × √${fmt(D.delta)}) = ${fmt(D.u)}\nd = 1 ÷ u = ${fmt(D.d)}`;
- else if(k==='coupon')text=`C = 100 × 적용 이자·배당률 × 지급주기(개월) ÷ 12 × 배정 지급 횟수\n= 100 × ${pct(D.cpn)} × ${fmt(D.ipay)} ÷ 12 × ${s.pays}\n= ${fmt(v)}`;
- else if(k==='host')text=i===D.n?`주계약 만기 가치 = 만기 지급가치 + 당기 이자·배당\n= ${fmt(s.redemption)} + ${fmt(s.coupon)} = ${fmt(v)}`:`H(i) = H(i+1) × DF_Kd(i) + C(i)\n= ${fmt(D.steps[i+1].host)} × ${pct(s.df_cr)} + ${fmt(s.coupon)} = ${fmt(v)}\n전환·상환청구·콜을 제외하고 동일 지급일정과 위험 할인율로 역산합니다.`;
+ if(['rf','cr'].includes(k))text='f(t₀,t₁) = [z(t₁) × t₁ − z(t₀) × t₀] ÷ (t₁−t₀)\n입력곡선의 연속복리 현물금리에서 구간 선도금리를 계산합니다.\n현재 열 → 다음 열 구간 적용값 = '+px(v);
+ else if(['q','down_q'].includes(k))text=`p = [exp((Rf − 배당수익률) × Δt) − d] ÷ (u−d)\n= [exp((${px(s.rf)} − ${px(D.div_y)}) × ${fx(D.delta)}) − ${fx(D.d)}] ÷ (${fx(D.u)} − ${fx(D.d)})\n상승 p = ${px(s.q)}, 하락 1−p = ${s.q==null?'—':px(1-s.q)}`;
+ else if(['df_rf','df_cr'].includes(k))text=`DF = exp(−구간 선도금리 × Δt)\n= exp(−${px(k==='df_rf'?s.rf:s.cr)} × ${fx(D.delta)})\n= ${px(v)}`;
+ else if(['u','d'].includes(k))text=`u = exp(σ × √Δt) = exp(${px(D.sig)} × √${fx(D.delta)}) = ${fx(D.u)}\nd = 1 ÷ u = ${fx(D.d)}`;
+ else if(k==='coupon')text=`C = 100 × 적용 이자·배당률 × 지급주기(개월) ÷ 12 × 배정 지급 횟수\n= 100 × ${px(D.cpn)} × ${fx(D.ipay)} ÷ 12 × ${s.pays}\n= ${fx(v)}`;
+ else if(k==='host')text=i===D.n?`주계약 만기 가치 = 만기 지급가치 + 당기 이자·배당\n= ${fx(s.redemption)} + ${fx(s.coupon)} = ${fx(v)}`:`H(i) = H(i+1) × DF_Kd(i) + C(i)\n= ${fx(D.steps[i+1].host)} × ${px(s.df_cr)} + ${fx(s.coupon)} = ${fx(v)}\n전환·상환청구·콜을 제외하고 동일 지급일정과 위험 할인율로 역산합니다.`;
  else if(k==='ipo')text='계약의 IPO 예정일을 격자에 배정한 시점입니다. 실제 조정·강제전환은 해당 노드의 주가와 IPO 조건을 함께 충족할 때만 적용합니다.';
  else if(k==='put_value')text='지급 제약 반영 상환가치 = Σ(실제 지급액 × 지급시점까지의 위험 할인계수)\n배당가능이익 제약이 없으면 계약 상환청구금액과 같습니다. 행사일 이자 별도 지급 여부는 노드의 행사 후보에서 추가 반영합니다.';
  else text='계약상 행사기간·회차별 행사일·의무보유·지급조건을 실제 격자일에 배정한 값입니다.\n콜 행사는 계약 일정이며, 본체와 별도 평가한 콜 차감액은 평가금액 구성에서 확인합니다.';
  if(i===D.n&&['rf','cr','q','down_q','df_rf','df_cr'].includes(k))text='만기 열에는 다음 구간이 없으므로 적용값을 표시하지 않습니다.';
- openDetail(label+' 계산내역',`시점 ${i} · ${s.date}`,`<div class="result">${safe(showVal(v,unit))}</div>`+formula(text)+refs([['현재 격자일',s.date],['다음 격자일',D.steps[i+1]?.date||'만기'],['경과연수',fmt(s.time)],['구간 Δt',fmt(D.delta)+' 년']])+'<p class="sub">금리와 확률은 현재 열에서 다음 열로 가는 구간 값입니다. 날짜는 격자일이며 계약상 원래 날짜와 차이가 있을 수 있습니다.</p>');$('close').focus({preventScroll:true});}
+ openDetail(label+' 계산내역',`시점 ${i} · ${s.date}`,`<div class="result">${safe(showVal(v,unit))}</div>`+formula(text)+refs([['현재 격자일',s.date],['다음 격자일',D.steps[i+1]?.date||'만기'],['경과연수',fx(s.time)],['구간 Δt',fx(D.delta)+' 년']])+'<p class="sub">금리와 확률은 현재 열에서 다음 열로 가는 구간 값입니다. 날짜는 격자일이며 계약상 원래 날짜와 차이가 있을 수 있습니다.</p>');$('close').focus({preventScroll:true});}
 function bootDetail(idx){const c=D.curves[curve],r=c.rows[idx];let eq='';
- if(r.kind==='spot')eq=`z = m × ln(1 + y ÷ m)\n= ${c.m} × ln(1 + ${pct(r.y)} ÷ ${c.m}) = ${pct(r.spot)}\nDF = exp(−z × t) = ${pct(r.df)}\n입력값이 현물금리이므로 이표채 부트스트래핑을 수행하지 않습니다.`;
- else if(r.kind==='zero')eq=`DF = (1 + y ÷ m)^(−m × t)\n= (1 + ${pct(r.y)} ÷ ${c.m})^(−${c.m} × ${fmt(r.t)})\n= ${pct(r.df)}\n첫 이표일 전 만기는 만기 일시지급으로 계산합니다.`;
- else eq=`c = y ÷ m = ${pct(r.c)}\nDF(t) = [1 − 이전 이표 현금흐름의 PV 합] ÷ (1+c)\n= (1 − ${pct(r.pv)}) ÷ (1 + ${pct(r.c)})\n= ${pct(r.df)}\n${r.kind==='grid'?'이전 이표 PV = c × 이전 정규 이표일 DF 합':'이전 이표 PV = Σ[c × 기간비율 × DF(이표일)]\n짧은 첫 이표를 반영하고, 이미 구한 연속복리 현물을 선형보간합니다.'}`;
- eq+=`\n\nz(t) = −ln(DF(t)) ÷ t\n= −ln(${pct(r.df)}) ÷ ${fmt(r.t)} = ${pct(r.spot)}`;
- let body='<span class="badge">'+kindLabel(r.kind)+'</span><div class="result">DF '+pct(r.df)+'</div>'+formula(eq)+refs([['만기',fmt(r.t)+' 년'],['적용 수익률',pct(r.y)],['연 복리 횟수',String(c.m)],['이전 이표 PV 합',pct(r.pv)],['연속복리 현물금리',pct(r.spot)],['이전 정규 이표 DF 합(배)',fmt(r.acc)]]);
- if(r.refs.length)body+='<div class="section-title">참조한 이전 이표 · 짧은 첫 이표는 기간비율 반영</div>'+refs(r.refs.map(x=>[fmt(x.t)+'년 × 기간비율 '+fmt(x.weight),'DF '+pct(x.df)]));
+ if(r.kind==='spot')eq=`z = m × ln(1 + y ÷ m)\n= ${c.m} × ln(1 + ${px(r.y)} ÷ ${c.m}) = ${px(r.spot)}\nDF = exp(−z × t) = ${px(r.df)}\n입력값이 현물금리이므로 이표채 부트스트래핑을 수행하지 않습니다.`;
+ else if(r.kind==='zero')eq=`DF = (1 + y ÷ m)^(−m × t)\n= (1 + ${px(r.y)} ÷ ${c.m})^(−${c.m} × ${fx(r.t)})\n= ${px(r.df)}\n첫 이표일 전 만기는 만기 일시지급으로 계산합니다.`;
+ else eq=`c = y ÷ m = ${px(r.c)}\nDF(t) = [1 − 이전 이표 현금흐름의 PV 합] ÷ (1+c)\n= (1 − ${px(r.pv)}) ÷ (1 + ${px(r.c)})\n= ${px(r.df)}\n${r.kind==='grid'?'이전 이표 PV = c × 이전 정규 이표일 DF 합':'이전 이표 PV = Σ[c × 기간비율 × DF(이표일)]\n짧은 첫 이표를 반영하고, 이미 구한 연속복리 현물을 선형보간합니다.'}`;
+ eq+=`\n\nz(t) = −ln(DF(t)) ÷ t\n= −ln(${px(r.df)}) ÷ ${fx(r.t)} = ${px(r.spot)}`;
+ let body='<span class="badge">'+kindLabel(r.kind)+'</span><div class="result">DF '+px(r.df)+'</div>'+formula(eq)+refs([['만기',fx(r.t)+' 년'],['적용 수익률',px(r.y)],['연 복리 횟수',String(c.m)],['이전 이표 PV 합',px(r.pv)],['연속복리 현물금리',px(r.spot)],['이전 정규 이표 DF 합(배)',fx(r.acc)]]);
+ if(r.refs.length)body+='<div class="section-title">참조한 이전 이표 · 짧은 첫 이표는 기간비율 반영</div>'+refs(r.refs.map(x=>[fx(x.t)+'년 × 기간비율 '+fx(x.weight),'DF '+px(x.df)]));
  body+='<p class="sub">입력 만기 사이 수익률은 선형보간하며 범위 밖은 끝점 값을 사용합니다. 모든 참조값은 반올림 전 원값으로 계산합니다.</p>';
- openDetail('부트스트래핑 계산내역',c.name+' · '+fmt(r.t)+'년',body);$('close').focus({preventScroll:true});}
+ openDetail('부트스트래핑 계산내역',c.name+' · '+fx(r.t)+'년',body);$('close').focus({preventScroll:true});}
 if(D.mode==='nodes'){
  $('heading').textContent=D.model+' 모형 · 노드 계산표';nodeFields.forEach(f=>tabButton(f[1],f[0],f[0]===metric));
  for(let r=0;r<=D.end;r+=40){const o=document.createElement('option');o.value=r;o.textContent=r+'–'+Math.min(D.end,r+39);$('rows').appendChild(o);}

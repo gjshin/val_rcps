@@ -149,6 +149,17 @@ def label(key, inst=None):
     return LABELS.get(key, key)
 
 
+def exact_number(value):
+    """천 단위 쉼표만 붙이고 자릿수는 그대로 — 6000000000.0 → 6,000,000,000 · 12.016427 → 12.016427."""
+    text = repr(float(value))
+    if 'e' in text or 'n' in text:
+        return text
+    whole, _, frac = text.partition('.')
+    sign = '-' if whole.startswith('-') else ''
+    whole = f'{int(whole.lstrip("-")):,}'
+    return sign + whole + ('' if frac in ('', '0') else '.' + frac)
+
+
 def display_value(key, value, issue_date=None, inst=None):
     if value is None:
         return '미입력'
@@ -162,10 +173,11 @@ def display_value(key, value, issue_date=None, inst=None):
         return '주기와 같음 (발행일 + 주기)'
     if key in EVENT_DATES and issue_date:
         return months_to_date(issue_date, value).isoformat()
+    # 조서·검토표의 입력 기록이다 — 반올림하지 않는다 (2.125% 를 2.12% 로 적지 않는다).
     if key in PERCENT:
-        return f'{value * 100:,.2f}%'
+        return f'{value * 100:,.10g}%'
     if isinstance(value, float):
-        return f'{value:,.2f}'
+        return exact_number(value)
     if isinstance(value, (list, dict)):
         return str(value)
     return str(value)

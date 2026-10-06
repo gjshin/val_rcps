@@ -37,6 +37,9 @@ def rcps(**o):
     c = import_legacy(asdict(t), "가상 우선주")
     c.exercise_styles = {"p_f": "any", "cv": "any"}
     if "dp_rows" in extra: c.market["dp_rows"] = extra.pop("dp_rows")
+    # 비워 둔 발생연도는 제한 없이 갚는다고 보는 근거 — 없으면 조서 출력이 막힌다 (test_missing_year_blocks_export).
+    c.sources["dp_missing_assumption"] = "가상 시험: 넣지 않은 발생연도는 재원이 충분하다고 가정"
+
     c.contract.update(extra)
     return c
 
@@ -251,9 +254,7 @@ def test_input_errors_block():
 
 
 def test_value_workbooks_carry_schedule_sheet():
-    case = rcps(dp_rows=[{"fy": 2027, "amt": 3e9}])
-    case.sources['dp_missing_assumption'] = '합성 시험: 미입력 연도는 지급재원이 충분하다고 가정'
-    run = calculate(case)
+    run = calculate(rcps(dp_rows=[{"fy": 2027, "amt": 3e9}]))
     for detail in (False, True):
         z = zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=detail, accounting=True)))
         assert "00 배당가능이익 상환" in load_workbook(io.BytesIO(z.read("value_review.xlsx"))).sheetnames
@@ -941,3 +942,34 @@ def test_fiscal_year_lower_bound():
     assert any("너무 이릅니다" in m for m in legacy.dp_issues(t))
     t.dp_rows = [{"fy": 1898, "amt": 0.0}]
     assert not any("너무 이릅니다" in m for m in legacy.dp_issues(t))
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")), reason="LibreOffice 없음")
+def test_formula_workbook_open_inputs_follow_excel_edits(tmp_path):
+    # 수식 조서에서 열어 둔 칸(연도별 배당가능이익·넘긴 상환금 가산율·만기 미상환 처리·가정 시트의 우선배당률)을
+    # 엑셀에서 바꾸고 다시 계산하면, 같은 입력으로 앱이 새로 계산한 값과 같아야 한다. 가상 수치다.
+    rows = [{"fy": y, "amt": 3e8} for y in range(2026, 2031)]
+    base = dict(p_s=12., p_e=59., p_f=12., cv_e=60.)
+    run = calculate(rcps(dp_rows=rows, dp_delay=.05, **base))
+    data = zipfile.ZipFile(io.BytesIO(export_bundle(run, formula=True, detail=True))).read("formula_review.xlsx")
+    wb0 = load_workbook(io.BytesIO(data)); dp = wb0["00 배당가능이익 상환"]; ga = wb0["가정"]
+    row = next(r for r in range(10, 40) if dp.cell(r, 2).value == 2027)
+    cpn = next(r for r in range(1, ga.max_row + 1) if ga.cell(r, 2).value == "우선배당률 (계약)")
+    for c in (dp.cell(row, 3), dp["C7"], dp["F5"], ga.cell(cpn, 3)):
+        assert not c.protection.locked, c.coordinate                  # 열어 둔 칸
+    assert dp.cell(row, 2).protection.locked and dp["C6"].data_type == "f"   # 발생연도는 잠그고 우선배당률은 수식
+    dp.cell(row, 3).value = 1e8; dp["C7"] = .10; dp["F5"] = 0; ga.cell(cpn, 3).value = .03
+    buf = io.BytesIO(); wb0.save(buf)
+    (tmp_path/"s.xlsx").write_bytes(buf.getvalue()); (tmp_path/"o").mkdir()
+    subprocess.run([shutil.which("libreoffice") or shutil.which("soffice"),
+                    "-env:UserInstallation=" + (tmp_path/"p").as_uri(), "--headless", "--convert-to", "xlsx",
+                    "--outdir", str(tmp_path/"o"), str(tmp_path/"s.xlsx")], capture_output=True, timeout=1800)
+    wb = load_workbook(tmp_path/"o"/"s.xlsx", data_only=True)
+    rows2 = [dict(r, amt=1e8) if r["fy"] == 2027 else r for r in rows]
+    E, t = ea(calculate(rcps(dp_rows=rows2, dp_delay=.10, dp_unpaid="lost", cpn=.03, **base)))
+    assert wb["00 배당가능이익 상환"]["C6"].value == pytest.approx(legacy.dp_div_rate(t), rel=1e-12)
+    com = wb["00 격자 공통"]; seen = 0
+    for j in range(t.n + 1):
+        if E["p_on"](j):
+            assert com.cell(7, 3+j).value == pytest.approx(E["put_val"](j), rel=1e-9, abs=1e-9), j; seen += 1
+    assert seen

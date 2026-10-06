@@ -11,8 +11,51 @@ KINDS = {'hold': '계속 보유', 'conv': '전환', 'put': '상환청구', 'call
          'mat': '만기상환', 'auto': '만기 자동전환', 'ipo': '상장 강제전환'}
 
 
+# 메모 주제마다 «판단을 바꿀 수 있는 입력» 만 본다. 주가·변동성·평가기준일처럼 분기마다 바뀌는 시장자료는
+# 계약 판단(콜 방법·우선순위·분리 등)을 바꾸지 않으므로 넣지 않는다 — 넣으면 분기마다 모든 메모가
+# «재확인 필요» 가 된다. 최초 인식 원인 점검만 시장자료를 본다.
+_SPLIT = ['conv_class', 'p_sep', 'k_sep', 'emb_approach', 'fvpl_whole', 'split_tol', 'split_base_in',
+          'p_lost_int', 'k_third', 'k_transfer', 'p_s', 'p_e', 'p_f', 'p_mode', 'p_rate', 'p_yield', 'p_cmp',
+          'k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp', 'cpn', 'ytm', 'mat_mode', 'd_issue', 'd_mat']
+MEMO_FIELDS = {
+    'call_method': ['k_method', 'k_split', 'k_w', 'k_lock', 'k_hold', 'k_conv_resp', 'k_third', 'issuer_call', 'model'],
+    'conv_resp': ['k_conv_resp', 'cv_s', 'cv_e', 'k_s', 'k_e', 'k_lock', 'k_hold'],
+    'priority': ['pc_order', 'p_s', 'p_e', 'k_s', 'k_e'],
+    'rcps_equity': ['inst', 'view', 'conv_class', 'issuer_call', 'mat_mode'],
+    'bdt': ['put_bdt', 'bdt_sig', 'bdt_base', 'model', 'conv_class', 'p_s', 'p_e'],
+    'split_put': _SPLIT, 'split_call': _SPLIT, 'split_conv': _SPLIT,
+    'day1_mode': ['d1_pl', 'view', 'd_issue', 'd_base', 'S0', 'sig', 'rf_curve', 'cr_curve'],
+}
+_DAY1 = ['view', 'd_issue', 'd_base', 'S0', 'sig', 'rf_curve', 'cr_curve', 'base_shares', 'dil_shares']
+
+
+def memo_fields(topic):
+    """그 메모의 판단에 쓰인 입력 항목. 모르는 주제는 계약 조항 전체(시장자료 제외)를 본다."""
+    if topic in MEMO_FIELDS:
+        return MEMO_FIELDS[topic]
+    if topic.startswith('day1'):
+        return _DAY1
+    from .evidence import TOPICS
+    for tp in TOPICS:
+        if tp['id'] == topic:
+            keep = tp['id'] == 'fair_value_inputs'          # 시장자료 자체를 판단하는 주제만 시장자료를 본다
+            return [f for f in tp.get('fields', []) if keep or f not in ('S0', 'sig', 'rf_curve', 'cr_curve', 'd_base')] or ['inst']
+    return None
+
+
 def memo_key(case, topic):
     """Conservative dependency signature; metadata and other memos do not reprice."""
+    values = {**asdict(L.Terms()), **case.effective()}
+    fields = memo_fields(topic)
+    if fields is None:
+        from .case import section_for
+        fields = sorted(k for k in values if section_for(k) == 'contract')
+    inputs = {k: values.get(k) for k in fields}
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+
+
+def _memo_key_v21(case, topic):
+    """2026.10.06 판(v2.1~2.2)이 저장한 식별값 — 그 판에서 저장한 메모를 공연히 «재확인 필요» 로 만들지 않는다."""
     values = {**asdict(L.Terms()), **case.effective()}
     groups = {
         'call_method': ['k_method', 'k_w', 'k_lock', 'k_hold', 'k_conv_resp', 'issuer_call', 'model', 'd_base'],
@@ -20,8 +63,11 @@ def memo_key(case, topic):
         'priority': ['pc_order', 'p_s', 'p_e', 'k_s', 'k_e', 'd_base'],
         'rcps_equity': ['inst', 'view', 'conv_class', 'issuer_call', 'mat_mode'],
     }
-    inputs = {k: values[k] for k in groups.get(topic, sorted(values))}
-    return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    try:
+        inputs = {k: values[k] for k in groups.get(topic, sorted(values))}
+        return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    except (KeyError, TypeError):
+        return None
 
 
 def memo_status(case, topic):
@@ -30,7 +76,8 @@ def memo_status(case, topic):
     old = case.memo_context.get(topic)
     if not old:
         return '작성 당시 조건 미확인'
-    return '현재 조건의 기록' if old == memo_key(case, topic) else '이전 조건의 기록 · 재확인 필요'
+    current = old == memo_key(case, topic) or old == _memo_key_v21(case, topic)
+    return '현재 조건의 기록' if current else '이전 조건의 기록 · 재확인 필요'
 
 
 def put_diagnostic(t):
@@ -80,8 +127,10 @@ def export_blockers(run):
     blockers = []
     missing = run.summary.get('dp_missing_years', [])
     if missing and not run.case.sources.get('dp_missing_assumption', '').strip():
-        blockers.append('배당가능이익 미입력 발생연도 ' + ', '.join(map(str, missing)) +
-                        '년: 연도별 재원을 보완하거나, 미입력 연도를 제한 없이 상환하는 가정과 근거를 입력하십시오.')
+        blockers.append('배당가능이익을 넣지 않은 발생연도 ' + ', '.join(map(str, missing)) +
+                        '년의 재원이 실제 지급에 쓰였습니다. «입력 → 계약·평가 입력 → 상환청구권 → 배당가능이익에 따른 '
+                        '상환 제약» 에서 그 해의 배당가능이익을 표에 넣거나, 표 아래 «넣지 않은 발생연도의 재원 가정·근거» '
+                        '를 적고 저장하십시오.')
     for row in run.case.additional_rights:
         if row.get('treatment') == 'unresolved':
             blockers.append('직접 반영되지 않은 계약조건이 미해결입니다: ' + str(row.get('clause', row.get('kind'))))

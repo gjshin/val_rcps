@@ -19,8 +19,8 @@ def main():
     from v2_workspace import CSS
     st.markdown(CSS, unsafe_allow_html=True)
     st.session_state._app_embedded = True
-    with st.sidebar.expander('업무 선택'):
-        page = st.radio('업무 선택', PAGES, key='_app_page')
+    # 업무 선택은 접지 않고 맨 위에 둔다 — 여러 회차·변동 분석으로 가는 길이 숨지 않게.
+    page = st.sidebar.radio('업무 선택', PAGES, key='_app_page')
     if page == PAGES[0]:
         from v2_workspace import main as workspace
         workspace()

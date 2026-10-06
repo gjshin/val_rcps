@@ -45,7 +45,7 @@ def test_call_response_input_changes_the_saved_case():
 def test_analysis_tools_drop_contract_scenarios():
     app = _evaluate(_app(sample()))
     tool = next(w for w in app.selectbox if w.label == '분석 도구')
-    assert list(tool.options) == ['결과 요약', '상세 계산·회계 참고표']
+    assert list(tool.options) == ['열지 않음', '상세 계산·회계 참고표']
 
 
 def test_review_topics_live_in_sources_screen():
