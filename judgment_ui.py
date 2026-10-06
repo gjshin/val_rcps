@@ -1,4 +1,4 @@
-"""판단·근거 탭 — 분리 판정·권리표·우선순위·행사 진단·BDT·콜 방법·추가 검토.
+"""판단·근거 탭 — 분리 판정·권리표·우선순위·행사 진단·BDT·콜 방법. 추가 검토 항목은 출처·평가가정 화면에 있다.
 
 원칙
 - 한 줄 판정 + 숫자 + [원문]. 긴 설명은 펼침 안에 둔다.
@@ -300,33 +300,22 @@ TOPIC_SOURCE = {'fair_value_inputs': 'fair_value_inputs', 'classification': 'cla
                 'embedded': 'embedded', 'residual': 'residual', 'third_party_call': 'third_party_call',
                 'bdt': 'bdt', 'refixing': 'refixing', 'dilution_backsolve': 'dilution_backsolve',
                 'method_change': 'method_change'}
-# 분리 판정·BDT·콜 절에서 이미 다루는 주제는 추가 검토 목록에서 뺀다.
+# 분리 판정·BDT·콜 절(판단·근거 탭)에서 이미 다루는 주제는 추가 검토 목록에서 뺀다.
 COVERED = {'embedded', 'third_party_call', 'bdt'}
 
 
-def extra_topics(run):
-    """추가 검토 항목 — 해당하는 주제만 한 줄 질문 + [원문] + 판단 한 줄."""
-    if run is None:
-        return
-    from valuation.evidence import TOPICS, applicable
-    values = run.case.effective()
-    rows = [tp for tp in TOPICS if tp['id'] not in COVERED and applicable(tp, values)]
-    if values.get('inst') == 'RCPS' and values.get('view') == 'issuer':
-        rows.append(dict(id='rcps_equity', title='일반기업회계기준 적용 발행자라면 RCPS를 자본으로 보나요?',
-                         questions=['회사가 일반기업회계기준을 적용합니까? (GKQA09-024: 발행 시 자본)']))
-    day1 = run.summary.get('day1')
-    if day1 and abs(day1['diff']) >= 0.005:
-        rows += [dict(id='day1_rights', title='[최초 인식 차이] 모형이 빠뜨린 권리가 있나요?',
-                      questions=['잔여재산 우선분배, 주주간계약 풋, 조건부 매수청구권 등']),
-                 dict(id='day1_inputs', title='[최초 인식 차이] 입력값이 거래 당시와 맞나요?',
-                      questions=['희석 반영 여부, 할인율, 변동성']),
-                 dict(id='day1_price', title='[최초 인식 차이] 거래가격이 공정가치가 아닐 수 있나요?',
-                      questions=['특수관계자·이해관계인 거래, 다른 권리와 묶인 거래 (1113 B4)']),
-                 dict(id='day1_nonfin', title='[최초 인식 차이] 차이가 금융상품이 아닌 다른 것의 대가인가요?',
-                      questions=['제3자에게 준 콜·용역 대가 등 — 자산 요건을 못 채우면 비용 (1109 B5.1.1 · 질의회신 2019-I-KQA018)'])]
-    if not rows:
-        return
-    st.markdown('#### 추가 검토 항목')
+DAY1_CHECKS = [dict(id='day1_rights', title='[최초 인식 차이] 모형이 빠뜨린 권리가 있나요?',
+                   questions=['잔여재산 우선분배, 주주간계약 풋, 조건부 매수청구권 등']),
+              dict(id='day1_inputs', title='[최초 인식 차이] 입력값이 거래 당시와 맞나요?',
+                   questions=['희석 반영 여부, 할인율, 변동성']),
+              dict(id='day1_price', title='[최초 인식 차이] 거래가격이 공정가치가 아닐 수 있나요?',
+                   questions=['특수관계자·이해관계인 거래, 다른 권리와 묶인 거래 (1113 B4)']),
+              dict(id='day1_nonfin', title='[최초 인식 차이] 차이가 금융상품이 아닌 다른 것의 대가인가요?',
+                   questions=['제3자에게 준 콜·용역 대가 등 — 자산 요건을 못 채우면 비용 (1109 B5.1.1 · 질의회신 2019-I-KQA018)'])]
+
+
+def _topic_rows(rows, owner):
+    """주제마다 한 줄 질문 + [원문] + 평가자 판단 한 줄. owner 가 None 이면(단독 상세앱) 판단을 저장하지 않는다."""
     for tp in rows:
         c1, c2 = st.columns([5, 1])
         c1.markdown(f"**{tp['title']}**")
@@ -334,7 +323,30 @@ def extra_topics(run):
             c1.caption(' / '.join(tp['questions'][:3]))
         with c2:
             source('day1' if tp['id'].startswith('day1') else TOPIC_SOURCE.get(tp['id'], tp['id']))
-        memo(tp['id'], run)
+        memo(tp['id'], owner)
+
+
+def review_topics(case):
+    """추가 검토 항목 — 계약에 해당하는 주제만 (출처·평가가정 화면). 분리 판정·BDT·콜은 판단·근거 탭이 다룬다."""
+    from valuation.evidence import TOPICS, applicable
+    values = case.effective()
+    rows = [tp for tp in TOPICS if tp['id'] not in COVERED and applicable(tp, values)]
+    if values.get('inst') == 'RCPS' and values.get('view') == 'issuer':
+        rows.append(dict(id='rcps_equity', title='일반기업회계기준 적용 발행자라면 RCPS를 자본으로 보나요?',
+                         questions=['회사가 일반기업회계기준을 적용합니까? (GKQA09-024: 발행 시 자본)']))
+    if not rows:
+        st.caption('이 계약에 해당하는 추가 검토 항목이 없습니다.')
+        return
+    st.caption('숫자는 바뀌지 않는 검토 점검표입니다. 주제마다 판단과 근거 한 줄을 저장하면 조서 「판단·근거」에 실립니다.')
+    _topic_rows(rows, case)
+
+
+def day1_checks(run):
+    """최초 인식 차이가 있을 때 원인 점검 4항목 — 최초 인식 결과 바로 아래."""
+    day1 = run.summary.get('day1')
+    if day1 and abs(day1['diff']) >= 0.005:
+        with st.expander('최초 인식 차이 — 원인 점검 4항목'):
+            _topic_rows(DAY1_CHECKS, run)
 
 
 def render(t, full, b0, b1, b2, ca, conv, LB, run=None):
@@ -350,7 +362,6 @@ def render(t, full, b0, b1, b2, ca, conv, LB, run=None):
     cresp_section(t, ca, conv, run)
     bdt_section(t, full, b0, b1, b2, ca, run)
     allocation_section(t, full, b0, b1, b2, ca)
-    extra_topics(run)
     with st.expander('조서에 옮길 분리 판단 문안'):
         st.code(L.inst_text(t, L.split_memo(sp)), language=None)
     return sp

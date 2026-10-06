@@ -59,8 +59,9 @@ def test_judgment_tab_is_light_until_buttons(monkeypatch):
     app = open_tab(call_case())
     assert not app.exception, app.exception
     text = ' '.join(m.value for m in app.markdown)
-    for head in ('분리 판정', '조기상환 행사 진단', '매도청구권 평가방법', '풋·콜 우선순위', '이자율모형(BDT) 검토', '추가 검토 항목'):
+    for head in ('분리 판정', '조기상환 행사 진단', '매도청구권 평가방법', '풋·콜 우선순위', '이자율모형(BDT) 검토'):
         assert head in text, head
+    assert '추가 검토 항목' not in text            # 출처·평가가정 화면으로 옮겼다 (tests/test_screen_cleanup.py)
     boxes = ' '.join(str(w.value) for kind in ('success', 'info') for w in app.get(kind))
     # 평가기준일이 발행일보다 뒤다 — 다시 판정하지 않고 최초 판단을 이어 쓴다 (1109 B4.3.11).
     assert '최초 인식 판단 이어 적용' in boxes and '상각후원가' not in boxes
