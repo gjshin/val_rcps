@@ -9,7 +9,7 @@ from dataclasses import asdict
 from typing import get_type_hints
 import pandas as pd
 import streamlit as st
-from valuation.case import Case, SCHEMA, RIGHT_KINDS, FIELDS, REQUIRED, RCPS_REQUIRED, section_for, import_legacy, inspect_case, compare_cases
+from valuation.case import Case, SCHEMA, RIGHT_KINDS, REQUIRED, RCPS_REQUIRED, section_for, import_legacy, inspect_case, compare_cases
 from valuation.legacy import (Terms, months_to_date, issuer_day1_cases, inst_text, CALL_HOLDERS, call_holder,
                               call_holder_fields)
 from valuation.presentation import CHOICES, PERCENT, EVENT_DATES, label, display_value, event_months, issue_rows, choices
@@ -798,7 +798,7 @@ def input_editor(case, autosave=False):
                             st.session_state.pop(f'input_{key}_{st.session_state.get("revision", 0)}', None)
             with st.expander('콜 권리의 상세 조건'):
                 fields((['k_kind', 'k_third'] if inst == 'RCPS' else []) +
-                       ['k_transfer', 'k_less_cpn', 'k_cpn_add', 'k_sched', 'k_basis', 'pc_order'], edited, case)
+                       ['k_transfer', 'k_less_cpn', 'k_cpn_add', 'k_sched', 'k_basis', 'pc_order', 'k_conv_resp'], edited, case)
             with st.expander('매도청구권 회계처리'):
                 st.caption('발행회사 본인만 행사하면 거래상대방이 그대로인 내재파생상품이라 전환권·조기상환권과 묶을 수 '
                            '있고 (1109 B4.3.4), 제3자가 행사할 수 있으면 별도의 금융상품입니다 (1109 문단 4.3.1). '
@@ -815,6 +815,10 @@ def input_editor(case, autosave=False):
                    '얽힌 권리(전환권·조기상환권·발행회사 콜)를 먼저 묶고 판단하고, 접근법 2는 권리마다 분리 여부를 '
                    '판단한 뒤 분리 대상끼리 묶습니다. 비슷한 거래에 같은 정책을 쓰십시오. 권리별 처리는 위 각 권리 아래에 있습니다.')
         fields(['acc_basis', 'emb_approach', 'fvpl_whole'], edited, case)
+    with st.expander('회계 처리 입력 — 거래원가·전기 장부금액'):
+        st.caption('평가금액에는 영향이 없고 회계 참고표(배분·상각·분개)에만 쓰입니다. 전기 장부금액을 넣으면 후속평가 '
+                   '분개를, 상환·재매입 지급대가를 넣으면 제거 분개를 만듭니다. 없는 항목은 비워 두십시오(−1).')
+        fields(['issue_cost', 'eir_issue', 'prev_host', 'prev_deriv', 'prev_hold', 'cur_periods', 'settle_amt'], edited, case)
     with st.expander('IPO 조건·미반영 권리 메모'):
         field('ipo_on', edited, case)
         if edited.get('ipo_on') and inst == 'SHA':
@@ -859,15 +863,6 @@ def input_editor(case, autosave=False):
     if inst == 'SHA' and not edited.get('sha_rows'):
         with st.expander('행사금액 경과기간 기준'):
             field('acc_basis', edited, case)
-    with st.expander('후속평가·역산·기타 상세 입력'):
-        st.caption('기존 모형의 전체 입력항목을 같은 평가파일에서 관리합니다. 여기서 변경한 값도 평가·분석에 직접 적용됩니다.')
-        remaining = sorted(FIELDS - st.session_state._rendered_fields - {'inst'})
-        selected = st.multiselect('추가로 표시할 입력항목', remaining, format_func=label, key='additional_input_fields')
-        for key in selected:
-            if TYPES[key] is list:
-                curve_editor(key, edited)
-            else:
-                field(key, edited, case)
     st.session_state.pop('_editing_styles', None)
     candidate = Case.from_dict(case.to_dict())
     for group in ['contract', 'market', 'method']:
@@ -904,6 +899,9 @@ def evidence_editor(case, pending=False):
                 candidate = Case.from_dict(case.to_dict())
                 candidate.sources, candidate.notes = sources, notes
                 save_case(candidate)
+    with st.expander('추가 검토 항목'):
+        from judgment_ui import review_topics
+        review_topics(case)
     with st.expander('계약조건과 다른 평가가정'):
         st.caption('계약 원본은 유지하고 계산에 사용할 별도 가정과 근거를 기록합니다.')
         for idx, row in enumerate(case.assumptions):
@@ -1036,6 +1034,8 @@ def day1_panel(run, case):
                "(주가 역산 등 · 1113 문단 64). 보정하지 않으면 아래에서 차이 처리를 고릅니다.")
     with c2:
         source('day1')
+    from judgment_ui import day1_checks
+    day1_checks(run)
     if day1.get('view') == 'issuer':
         # 세 갈래(자본 흡수 · 당기손익 · 이연)를 나란히 보이고 이 평가가 어느 쪽인지 표시한다.
         _cases = issuer_day1_cases(dict(hybrid=bool(day1.get('choice')), pl=day1.get('mode') == '당기손익'))
@@ -1063,10 +1063,10 @@ def day1_panel(run, case):
         st.caption(("현재 처리 — 당기손익: 주계약을 공정가치로 두고 차이를 «최초 인식 손익» 으로 분개합니다. "
                     if day1['mode'] == '당기손익' else
                     "현재 처리 — 이연: 주계약 장부금액에서 차이를 빼 두고 유효이자율로 기간에 걸쳐 인식합니다. ")
-                   + '회계기준원 질의회신 2019-I-KQA018. 원인 점검 항목은 상세 계산 → 판단·근거 탭에 있습니다.')
+                   + '회계기준원 질의회신 2019-I-KQA018. 원인 점검 항목은 위 «원인 점검 4항목» 에 있습니다.')
         return
     st.caption(f"현재 분개 표기 — {'금융자산평가이익(손실) — 최초 인식 차이' if day1['mode'] == '당기손익' else '최초 인식 차이 — 이연'}. "
-               '원인 점검 3항목은 상세 계산 → 판단·근거 탭에 있습니다.')
+               '원인 점검 항목은 위 «원인 점검 4항목» 에 있습니다.')
 
 
 def main():
@@ -1199,13 +1199,10 @@ def main():
                     st.dataframe(table, hide_index=True)
                     st.download_button('민감도 결과 저장', table.to_csv(index=False).encode('utf-8-sig'), '민감도.csv', 'text/csv')
         if current:
-            analysis_mode = st.selectbox('분석 도구', ['결과 요약', '상세 계산·회계 참고표', '계약조건 시나리오'])
+            analysis_mode = st.selectbox('분석 도구', ['결과 요약', '상세 계산·회계 참고표'])
             if analysis_mode == '상세 계산·회계 참고표':
                 from application import detailed
                 detailed(run)
-            elif analysis_mode == '계약조건 시나리오':
-                import scenario_ui
-                scenario_ui.main()
         if previous:
             with st.expander('전기 대비 입력 변경'):
                 st.dataframe(pd.DataFrame([{'항목': label(r['field']), '전기': str(r['previous']), '당기': str(r['current'])}
