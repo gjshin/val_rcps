@@ -47,9 +47,15 @@ def memo(topic, run, title='평가자 판단'):
         from workspace_app import save_case
         candidate = Case.from_dict(case.to_dict())
         candidate.memos[topic] = dict(decision=decision, reason=reason.strip())
+        from valuation.explain import memo_key
+        candidate.memo_context[topic] = memo_key(candidate, topic)
         save_case(candidate)
     if old:
-        st.caption(f"저장됨 — {old['decision']} · {old['reason']}")
+        from valuation.explain import memo_status
+        status = memo_status(case, topic)
+        if status != '현재 조건의 기록':
+            st.warning(status + ' — 내용을 확인한 뒤 저장하면 현재 조건과 연결됩니다.')
+        st.caption(f"{status} — {old['decision']} · {old['reason']}")
 
 
 def _fmt(v):
@@ -93,7 +99,7 @@ def split_section(t, full, b0, b1, b2, ca, LB, run):
             if d['근거']:
                 st.caption('근거 · ' + ' · '.join(d['근거']))
             st.write('평가방법 — ' + L.inst_text(t, d['평가']))
-            if key == 'put' and d['지표'] and d.get('회차'):
+            if d['지표'] and d.get('회차'):
                 # 행사일마다 견준 표 — 조서 «분리 판단» 시트의 행사일별 표와 같은 값이다.
                 st.dataframe(pd.DataFrame([[round(m, 2), max(0.0, (m - t.elapsed_m)/12), pv, bv, f'{g*100:.1f}%']
                                            for m, pv, bv, g in d['회차']], columns=L.SPLIT_DATE_COLS),
@@ -128,40 +134,21 @@ def put_exercise_section(t):
     """조기상환 행사 진단 — 옵션 없는 격자 한 장(가벼움)으로 행사금액과 계속보유가치를 견준다."""
     if not (t.p_s <= t.p_e and t.T > 0) or t.conv_class != 'equity':
         return
-    r0 = L.engine(t, conv=False, put=False, call=False)
-    n, dtx = int(t.n), t.T/int(t.n)
-    lo, hi = L.step_mapper(t, n, dtx)
-    period = max(1, int(round(t.p_f*n/(t.T*12))))
-    s, e = lo(t.p_s), hi(t.p_e)
-    ea = L.exercise_amounts(t, n, dtx)
-    is_open = ea['p_on'] if ea['p_on'] else (lambda i: max(s, 0) <= i <= e and (i - s) % period == 0)
-    at = {}
-    for k, v in r0['memo'].items():
-        at.setdefault(k[0], v)
-    rows = []
-    for i in range(max(s, 0), e+1):
-        if is_open(i) and i in at:
-            hold = at[i]['E'] + at[i]['B']
-            rows.append([i, round(ea['cmonth'](i)), ea['put'](i), hold, ea['put'](i)/max(hold, 1e-9)])
-    if not rows:
+    from valuation.explain import put_diagnostic
+    rows = put_diagnostic(t)
+    ratios = [r['비율'] for r in rows if r['비율'] is not None]
+    if not ratios:
         return
-    ratios = [r[-1] for r in rows]
-    atm = sum(1 for x in ratios if .97 <= x <= 1.03)
-    otm = sum(1 for x in ratios if x < .97)
     st.markdown('#### 조기상환 행사 진단')
-    line = f'행사금액 ÷ 계속보유가치 {min(ratios):.3f} ~ {max(ratios):.3f} · 행사일 {len(ratios)}회 중 등가격 {atm} · 외가격 {otm}'
-    if otm == len(ratios):
-        st.warning(line + ' — 앱 판정(초안): 전부 외가격이라 확정금리 격자는 조기상환권을 0에 가깝게 잡습니다. 금리모형(BDT) 검토 대상입니다.')
-    elif atm + otm:
-        st.warning(line + ' — 앱 판정(초안): 금리에 따라 행사 여부가 갈릴 수 있습니다. BDT 적용 검토로 차이를 확인하십시오.')
-    else:
-        st.success(line + ' — 앱 판정(초안): 행사가 확정적이라 확정금리 격자로 충분할 가능성이 큽니다.')
-    c1, c2 = st.columns([5, 1])
-    with c1.expander('행사일별 표'):
-        st.dataframe(pd.DataFrame(rows, columns=['스텝', '발행 후 개월', '행사금액', '계속보유가치', '비율']).style.format(
-            {'행사금액': '{:,.2f}', '계속보유가치': '{:,.2f}', '비율': '{:.3f}'}), hide_index=True, use_container_width=True)
-    with c2:
-        source('put_exercise')
+    st.write(f'지급 제약·이자 반영 청구가치 ÷ 계속보유가치 {min(ratios):.3f} ~ {max(ratios):.3f}')
+    st.caption('계약 청구액과 실제 지급 일정의 현재가치를 구분합니다. 원금 100 기준이며 단독 채권의 행사 유인을 보는 참고표입니다.')
+    if L.dp_active(t):
+        st.info('배당가능이익으로 지급이 지연되는 가치를 반영했습니다. 현재 지원범위에서는 배당가능이익 제약과 BDT를 함께 적용할 수 없습니다.')
+    elif min(ratios) <= 1.03:
+        st.info('금리에 따라 행사 여부가 달라질 수 있습니다. 지원범위와 금리모형 적용 근거를 확인하십시오.')
+    with st.expander('행사일별 표'):
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    source('put_exercise')
 
 
 def call_section(t, full, b2, sp, run):
@@ -327,18 +314,16 @@ def _topic_rows(rows, owner):
 
 
 def review_topics(case):
-    """추가 검토 항목 — 계약에 해당하는 주제만 (출처·평가가정 화면). 분리 판정·BDT·콜은 판단·근거 탭이 다룬다."""
-    from valuation.evidence import TOPICS, applicable
-    values = case.effective()
-    rows = [tp for tp in TOPICS if tp['id'] not in COVERED and applicable(tp, values)]
-    if values.get('inst') == 'RCPS' and values.get('view') == 'issuer':
-        rows.append(dict(id='rcps_equity', title='일반기업회계기준 적용 발행자라면 RCPS를 자본으로 보나요?',
-                         questions=['회사가 일반기업회계기준을 적용합니까? (GKQA09-024: 발행 시 자본)']))
-    if not rows:
-        st.caption('이 계약에 해당하는 추가 검토 항목이 없습니다.')
-        return
-    st.caption('숫자는 바뀌지 않는 검토 점검표입니다. 주제마다 판단과 근거 한 줄을 저장하면 조서 「판단·근거」에 실립니다.')
-    _topic_rows(rows, case)
+    """Optional notes preserve legacy records without a mandatory questionnaire."""
+    from valuation.evidence import TOPICS
+    titles={tp['id']: tp['title'] for tp in TOPICS}
+    titles.update(rcps_equity='일반기업회계기준 RCPS', conv_resp='매도청구 통지 뒤 전환 대응')
+    titles.update({key:key for key in case.memos if key not in titles})
+    st.caption('필요한 주제만 기록합니다. 메모는 평가금액을 바꾸지 않으며, 조건 변경은 관련 입력에서 반영해야 합니다. 과거 기록은 보존됩니다.')
+    topic=st.selectbox('메모 주제',list(titles),format_func=titles.get)
+    memo(topic,case)
+    if topic in TOPIC_SOURCE:
+        source(TOPIC_SOURCE[topic])
 
 
 def day1_checks(run):

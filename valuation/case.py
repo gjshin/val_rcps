@@ -83,6 +83,7 @@ class Case:
     notes: str = ""
     memos: dict = field(default_factory=dict)
     calibration: dict = field(default_factory=dict)
+    memo_context: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, obj: dict) -> "Case":
@@ -108,6 +109,8 @@ class Case:
         for key, row in case.memos.items():
             if not isinstance(key, str) or not isinstance(row, dict) or set(row) != {'decision', 'reason'} or not all(isinstance(v, str) for v in row.values()):
                 raise ValueError('평가자 판단 기록은 판단(decision)과 근거(reason) 문자열이 필요합니다.')
+        if not isinstance(case.memo_context, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in case.memo_context.items()):
+            raise ValueError('메모의 적용 조건 식별값이 올바르지 않습니다.')
         validate_calibration(case.calibration)
         from .exercise import validate_styles
         validate_styles(case.exercise_styles)
@@ -373,6 +376,17 @@ def inspect_case(case: Case) -> list[Issue]:
             ok = all(curve[i][0] < curve[i+1][0] for i in range(len(curve)-1))
         if not ok:
             add("error", "curve", key, "만기·금리 쌍을 2개 이상, 만기 오름차순·중복 없이 입력하십시오.")
+        elif not any(i.severity == 'error' for i in issues):
+            from .legacy import bootstrap_df, spot_from_zero
+            try:
+                horizon = (dt.date.fromisoformat(values['d_mat']) - dt.date.fromisoformat(values['d_base'])).days / 365
+                comp = values.get('cmp_rf' if key == 'rf_curve' else 'cmp_cr', 1)
+                if values.get('y_type', 'par') == 'spot':
+                    spot_from_zero(curve, comp)
+                else:
+                    bootstrap_df(curve, horizon, comp)
+            except (ValueError, OverflowError, ZeroDivisionError) as exc:
+                add('error', 'curve_discount', key, f'금리 자료의 {key}: {exc}')
     if values.get('d1_pl', 0) == 1 and not str(values.get('d1_reason', '')).strip():
         add('error', 'day1_reason', 'd1_reason', '최초 인식 차이를 당기손익으로 처리하려면 관측 가능한 시장자료만 사용했다는 근거를 적으십시오 (1109 B5.1.2A(1)).')
     if values.get('grid_days', 0) not in (0, 7, 14):

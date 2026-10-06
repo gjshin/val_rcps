@@ -52,10 +52,11 @@ def test_review_topics_live_in_sources_screen():
     app = _app(call_case())
     app.radio(key='_input_area').set_value('출처·평가가정').run()
     assert not app.exception, app.exception
-    assert '추가 검토 항목' in [e.label for e in app.expander]
+    assert '평가자 메모 · 선택 기록' in [e.label for e in app.expander]
     text = ' '.join(m.value for m in app.markdown)
-    assert '**전환가액 조정 조항**' in text and '**주당가치 역산 및 희석 반영**' in text
-    assert '제3자 콜의 식별 및 평가방법' not in text            # 판단·근거 탭이 다루는 주제는 빼 둔다
+    topics = next(w for w in app.selectbox if w.label == '메모 주제').options
+    assert '전환가액 조정 조항' in topics and '주당가치 역산 및 희석 반영' in topics
+    assert '**전환가액 조정 조항**' not in text  # 일반 질문 목록을 자동으로 펼치지 않는다.
 
 
 def test_day1_checks_sit_under_day1_result():

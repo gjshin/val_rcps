@@ -251,7 +251,9 @@ def test_input_errors_block():
 
 
 def test_value_workbooks_carry_schedule_sheet():
-    run = calculate(rcps(dp_rows=[{"fy": 2027, "amt": 3e9}]))
+    case = rcps(dp_rows=[{"fy": 2027, "amt": 3e9}])
+    case.sources['dp_missing_assumption'] = '합성 시험: 미입력 연도는 지급재원이 충분하다고 가정'
+    run = calculate(case)
     for detail in (False, True):
         z = zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=detail, accounting=True)))
         assert "00 배당가능이익 상환" in load_workbook(io.BytesIO(z.read("value_review.xlsx"))).sheetnames

@@ -143,7 +143,7 @@ def calculation_sheets_only(data, *, accounting=False, judgment=False):
                 'V2_추가권리', '판단근거', '확정상태', '계약반영표', '독립검산대사', '시장자료확인',
                 '기본값확인', '계약검토안', '추가확인자료', '별도계약조건', '평가자확인'}
     if not judgment:
-        unwanted |= JUDGMENT_SHEETS
+        unwanted |= {'해설', '검산요약', '99_모형검증'}
     if not accounting:
         unwanted |= {'회계처리', '상각표'}
     removed = unwanted & set(wb.sheetnames)
@@ -389,11 +389,17 @@ def judgment_rows(run):
     t, r = run.terms, run.raw
     memos = run.case.memos
     head = [['구분', '항목', '앱 판정(초안)', '핵심 수치', '평가자 판단', '평가자 근거', '근거 문단']]
-    rows, used = [], []
+    rows, used, exported_memos = [], [], set()
 
     def add(kind, item, verdict, nums, memo_key, topic):
         m = memos.get(memo_key, {})
-        rows.append([kind, item, verdict, nums, m.get('decision', '미답'), m.get('reason', ''), sources.cite(topic)])
+        from .explain import memo_status
+        state = memo_status(run.case, memo_key) if m else ''
+        decision = m.get('decision', '미작성')
+        if m and state != '현재 조건의 기록':
+            decision = state + ' / ' + decision
+        rows.append([kind, item, verdict, nums, decision, m.get('reason', ''), sources.cite(topic)])
+        exported_memos.add(memo_key)
         used.append(topic)
 
     if not legacy.is_sha(t):
@@ -417,9 +423,9 @@ def judgment_rows(run):
         add('평가방법', '이자율모형(BDT)', '적용' if legacy.put_bdt_on(t) else '확정금리 격자', '', 'bdt', 'bdt')
     values = run.case.effective()
     for tp in TOPICS:
-        if tp['id'] in {'embedded', 'third_party_call', 'bdt'} or not applicable(tp, values):
+        if tp['id'] in {'embedded', 'third_party_call', 'bdt'} or not applicable(tp, values) or not memos.get(tp['id']):
             continue
-        add('추가 검토', tp['title'], ' / '.join(tp.get('questions', [])[:3]), '', tp['id'], tp['id'])
+        add('평가자 메모', tp['title'], '기록만 · 계산 설정은 입력에서 변경', '', tp['id'], tp['id'])
     day1 = run.summary.get('day1')
     if day1:
         add('최초 인식', '최초 인식 차이 처리', day1['verdict'], day1['nums'], 'day1_mode', 'day1')
@@ -427,6 +433,10 @@ def judgment_rows(run):
         if abs(day1['diff']) >= 0.005:
             for key, label_ in DAY1_TOPICS:
                 add('최초 인식 · 원인 점검', label_, '', '', key, 'day1')
+    for key, m in memos.items():
+        if key not in exported_memos:
+            title = {'conv_resp': '매도청구 통지 뒤 전환 대응', 'rcps_equity': '일반기업회계기준 RCPS 메모'}.get(key, key)
+            add('보관 메모', title, '기록만 · 적용 조건을 확인하십시오', '', key, key if key in sources.REFS else 'embedded')
     # 근거는 출처(자료명·문단·쪽)만 적는다 — 기준서·실무사례 원문은 조서에 싣지 않는다.
     return head + rows
 
@@ -465,6 +475,8 @@ def finish_calculation_workbook(wb, run, *, formula=False, accounting=False, jud
             if cell.data_type == 'f' and len(cell.value)-1 > 8192:
                 raise ValueError(f'Excel 수식 길이 한도 초과: {ws.title}!{cell.coordinate} ({len(cell.value)-1:,}자)')
     from openpyxl.workbook.properties import CalcProperties
+    from .workpaper_v2 import add_workpaper_guide
+    add_workpaper_guide(wb, run, formula=formula)
     wb.calculation = CalcProperties(calcMode='auto', fullCalcOnLoad=True)
     out = io.BytesIO()
     wb.save(out)
