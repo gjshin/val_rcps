@@ -11,6 +11,7 @@ from dataclasses import asdict
 
 import pandas as pd
 import streamlit as st
+from ui_format import dataframe
 
 from valuation import legacy as L
 from valuation import sources
@@ -60,7 +61,7 @@ def memo(topic, run, title='평가자 판단'):
 
 def _fmt(v):
     return (f'{v*100:.1f}%' if isinstance(v, float) and abs(v) < 1.5 else
-            '예' if v is True else '아니오' if v is False else v if isinstance(v, str) else f'{v:,.4f}')
+            '예' if v is True else '아니오' if v is False else v if isinstance(v, str) else f'{v:,.2f}')
 
 
 def _headline(nm, d):
@@ -101,7 +102,7 @@ def split_section(t, full, b0, b1, b2, ca, LB, run):
             st.write('평가방법 — ' + L.inst_text(t, d['평가']))
             if d['지표'] and d.get('회차'):
                 # 행사일마다 견준 표 — 조서 «분리 판단» 시트의 행사일별 표와 같은 값이다.
-                st.dataframe(pd.DataFrame([[round(m, 2), max(0.0, (m - t.elapsed_m)/12), pv, bv, f'{g*100:.1f}%']
+                dataframe(pd.DataFrame([[round(m, 2), max(0.0, (m - t.elapsed_m)/12), pv, bv, f'{g*100:.1f}%']
                                            for m, pv, bv, g in d['회차']], columns=L.SPLIT_DATE_COLS),
                              hide_index=True, use_container_width=True)
                 st.caption('행사일마다 행사금액과 같은 시점 상각후원가를 견주고, 가장 큰 차이로 판정합니다. '
@@ -124,7 +125,7 @@ def facts_section(t, run):
             ['매도청구권을 독립적으로 양도할 수 있다', t.k_transfer, '1109 4.3.1'],
             ['조기상환 행사금액이 상실이자 보상 수준이다', t.p_lost_int, '1109 B4.3.5(5)(나)'],
             ['복합계약 전체를 당기손익-공정가치로 지정했다', t.fvpl_whole, '1109 4.3.5']]
-    st.dataframe(pd.DataFrame([[a, '예' if b else '아니오', c] for a, b, c in rows],
+    dataframe(pd.DataFrame([[a, '예' if b else '아니오', c] for a, b, c in rows],
                               columns=['조항', '입력', '근거']), hide_index=True, use_container_width=True)
     if run is not None:
         st.caption('바꾸려면 「입력·시장자료 → 분해방법·기간 기준」 또는 콜 권리의 상세 조건에서 수정합니다.')
@@ -140,14 +141,14 @@ def put_exercise_section(t):
     if not ratios:
         return
     st.markdown('#### 조기상환 행사 진단')
-    st.write(f'지급 제약·이자 반영 청구가치 ÷ 계속보유가치 {min(ratios):.3f} ~ {max(ratios):.3f}')
+    st.write(f'지급 제약·이자 반영 청구가치 ÷ 계속보유가치 {min(ratios):.2f} ~ {max(ratios):.2f}')
     st.caption('계약 청구액과 실제 지급 일정의 현재가치를 구분합니다. 원금 100 기준이며 단독 채권의 행사 유인을 보는 참고표입니다.')
     if L.dp_active(t):
         st.info('배당가능이익으로 지급이 지연되는 가치를 반영했습니다. 현재 지원범위에서는 배당가능이익 제약과 BDT를 함께 적용할 수 없습니다.')
     elif min(ratios) <= 1.03:
         st.info('금리에 따라 행사 여부가 달라질 수 있습니다. 지원범위와 금리모형 적용 근거를 확인하십시오.')
     with st.expander('행사일별 표'):
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
     source('put_exercise')
 
 
@@ -166,22 +167,22 @@ def call_section(t, full, b2, sp, run):
     if got:
         cmp_rows, rec, tr = got
         base = next((v for nm, _, v, _ in cmp_rows if nm.startswith('유무가치비교법 (')), None)
-        st.dataframe(pd.DataFrame([[nm, sp_, v, (v - base) if base else 0., '◀ 적용' if on else '']
+        dataframe(pd.DataFrame([[nm, sp_, v, (v - base) if base else 0., '◀ 적용' if on else '']
                                    for nm, sp_, v, on in cmp_rows],
                                   columns=['방법', '지분·채권 구분', '값', '유무가치 대비', '']).style.format(
-            {'값': '{:,.4f}', '유무가치 대비': '{:+,.4f}'}), hide_index=True, use_container_width=True)
+            {'값': '{:,.2f}', '유무가치 대비': '{:+,.2f}'}), hide_index=True, use_container_width=True)
         st.caption(L.call_compare_note(t))
         if tr:
             # 유무가치비교법 차액의 구성 — 음수여도 0 으로 덮지 않고 원인을 나눠 보인다 (조서 결과 시트와 같은 표)
-            st.dataframe(pd.DataFrame(L.wow_trace_rows(tr), columns=['유무가치비교법 차액의 구성', '값']).style.format(
-                {'값': '{:,.4f}'}), hide_index=True, use_container_width=True)
+            dataframe(pd.DataFrame(L.wow_trace_rows(tr), columns=['유무가치비교법 차액의 구성', '값']).style.format(
+                {'값': '{:,.2f}'}), hide_index=True, use_container_width=True)
             (st.warning if (tr['A'] < 0 or tr['A0'] < 0) else st.caption)(L.wow_trace_note(tr))
         if rec:
             # 조서 결과 시트와 같은 분해 — 마지막 줄이 ① + ② 이자 실제 차이다.
             _dA = rec['유무가치비교법 (적용 계약)'] - rec['옵션차익법 (적용 산식·적용 설정)']
-            st.dataframe(pd.DataFrame([[k, v] for k, v in rec.items()]
+            dataframe(pd.DataFrame([[k, v] for k, v in rec.items()]
                                       + [['차이 (유무가치 − 옵션차익) = ① + ②', _dA]],
-                                      columns=['차이 분해', '값']).style.format({'값': '{:,.4f}'}),
+                                      columns=['차이 분해', '값']).style.format({'값': '{:,.2f}'}),
                          hide_index=True, use_container_width=True)
             st.caption(L.CALL_REC_NOTE)
     with st.expander('같은 날 겹치는 사건의 처리 (세 평가방법 공통)'):
@@ -211,9 +212,9 @@ def priority_section(t, ca, conv, run):
     got = _saved('jd_pc', t)
     if got is not None:
         rows = got or [['투자자 조기상환 우선', ca, conv, int(t.pc_order) == 0], ['발행자 매도청구 우선', ca, conv, int(t.pc_order) == 1]]
-        st.dataframe(pd.DataFrame([[a, b, c, '◀ 적용' if on else ''] for a, b, c, on in rows],
+        dataframe(pd.DataFrame([[a, b, c, '◀ 적용' if on else ''] for a, b, c, on in rows],
                                   columns=['우선순위', '매도청구권', '전환권대가', '']).style.format(
-            {'매도청구권': '{:,.4f}', '전환권대가': '{:,.4f}'}), hide_index=True, use_container_width=True)
+            {'매도청구권': '{:,.2f}', '전환권대가': '{:,.2f}'}), hide_index=True, use_container_width=True)
     memo('priority', run, '우선순위 조항')
 
 
@@ -234,9 +235,9 @@ def cresp_section(t, ca, conv, run):
             st.session_state.jd_cr = (_key(t), L.cresp_compare(t))
     got = _saved('jd_cr', t)
     if got is not None:
-        st.dataframe(pd.DataFrame([[a, b, c, '◀ 적용' if on else ''] for a, b, c, on in got],
+        dataframe(pd.DataFrame([[a, b, c, '◀ 적용' if on else ''] for a, b, c, on in got],
                                   columns=['통지 뒤 전환', '매도청구권', '전환권대가', '']).style.format(
-            {'매도청구권': '{:,.4f}', '전환권대가': '{:,.4f}'}), hide_index=True, use_container_width=True)
+            {'매도청구권': '{:,.2f}', '전환권대가': '{:,.2f}'}), hide_index=True, use_container_width=True)
     memo('conv_resp', run, '매도청구 조항')
 
 
@@ -260,14 +261,14 @@ def bdt_section(t, full, b0, b1, b2, ca, run):
     got = _saved('jd_bdt', t)
     if got:
         sig, bd, compare = got
-        st.dataframe(pd.DataFrame([[n_, q_, v_, '판단 필요' if ok_ is None else '예' if ok_ else '아니오']
+        dataframe(pd.DataFrame([[n_, q_, v_, '판단 필요' if ok_ is None else '예' if ok_ else '아니오']
                                    for n_, q_, v_, ok_, _ in bd['관문']],
                                   columns=['번호', '검토사항', '값', '상태']), hide_index=True, use_container_width=True)
         st.info(f"**{bd['결론']}** — {bd['사유']}")
         st.caption(f"민감도(전체 대비) — 금리 ±1%p {abs(sig['dl'])/max(b2, 1e-9):.2%} · 스프레드 ±1%p "
                    f"{abs(sig['ds'])/max(b2, 1e-9):.2%} · 변동성 ±10%p {abs(sig['dv'])/max(b2, 1e-9):.2%}")
         if compare:
-            st.caption(f'부채요소 — TF 확정금리 {compare[0]:,.4f} · BDT {compare[1]:,.4f} · 차이 {compare[1]-compare[0]:+,.4f}')
+            st.caption(f'부채요소 — TF 확정금리 {compare[0]:,.2f} · BDT {compare[1]:,.2f} · 차이 {compare[1]-compare[0]:+,.2f}')
         with st.expander('조서 문안'):
             st.code(bd['문안'], language=None)
     memo('bdt', run, 'BDT 판단')
@@ -276,9 +277,9 @@ def bdt_section(t, full, b0, b1, b2, ca, run):
 def allocation_section(t, full, b0, b1, b2, ca):
     with st.expander('판정대로 배분하면'):
         rows, note = L.allocate(t, full, b0, b1, b2, ca)
-        st.dataframe(pd.DataFrame([[k, v, fv] for k, v, fv in L.allocate_full(t, rows)],
+        dataframe(pd.DataFrame([[k, v, fv] for k, v, fv in L.allocate_full(t, rows)],
                                   columns=['항목', '100 기준', '전액 기준 (원)']).style.format(
-            {'100 기준': '{:,.4f}', '전액 기준 (원)': '{:,.0f}'}), hide_index=True, use_container_width=True)
+            {'100 기준': '{:,.2f}', '전액 기준 (원)': '{:,.0f}'}), hide_index=True, use_container_width=True)
         st.caption(note)
 
 
@@ -338,7 +339,7 @@ def render(t, full, b0, b1, b2, ca, conv, LB, run=None):
     if L.holder_on(t):
         st.caption('투자자 관점 — 아래 분리 판정은 발행자 기준입니다. 투자자는 복합계약 전체를 당기손익-공정가치로 측정합니다 (1109 4.3.2).')
     with st.expander('계약상 권리 (격자 의사결정 설계도)'):
-        st.dataframe(pd.DataFrame(L.rights_table(t), columns=L.RIGHT_COLS), hide_index=True, use_container_width=True)
+        dataframe(pd.DataFrame(L.rights_table(t), columns=L.RIGHT_COLS), hide_index=True, use_container_width=True)
     facts_section(t, run)
     sp = split_section(t, full, b0, b1, b2, ca, LB, run)
     put_exercise_section(t)

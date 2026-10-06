@@ -5,7 +5,7 @@ import streamlit as st
 
 ROOT = Path(__file__).parent
 PAGES = ['평가 작업', '여러 회차·변동 분석']
-APP_VERSION = '2026.10.06-v2.1-preview'
+APP_VERSION = '2026.10.06-v2.2'
 
 
 def detailed(run):
@@ -16,6 +16,8 @@ def detailed(run):
 
 def main():
     st.set_page_config(page_title='복합금융상품 평가', layout='wide')
+    from v2_workspace import CSS
+    st.markdown(CSS, unsafe_allow_html=True)
     st.session_state._app_embedded = True
     with st.sidebar.expander('업무 선택'):
         page = st.radio('업무 선택', PAGES, key='_app_page')

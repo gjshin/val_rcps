@@ -1,0 +1,118 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--ink:#202939;--muted:#657187;--purple:#5145cd;--line:#e3e7ef;--zoom:1}*{box-sizing:border-box}body{margin:0;font:14px/1.55 system-ui,-apple-system,'Malgun Gothic',sans-serif;color:var(--ink);background:white}button,select,input{font:inherit;color:inherit}button,select{border:1px solid #d5dbe7;background:white;border-radius:6px;padding:6px 10px;cursor:pointer}button:hover{background:#f0eefb}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #867af0;outline-offset:1px}button[aria-pressed=true]{background:#5145cd;border-color:#5145cd;color:white}.shell{border:1px solid var(--line);border-radius:10px;overflow:hidden}.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--line)}.toolbar h2{font-size:16px;margin:0 12px 0 0}.tabs{display:flex;flex-wrap:wrap;gap:5px}.tabs button{font-size:12px}.tools{padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}.tools p{margin:0;color:var(--muted);font-size:12px}.tools label{font-size:12px}.scroll{height:492px;overflow:auto;position:relative;overscroll-behavior:contain}.grid{border-collapse:separate;border-spacing:0;font-size:calc(12px * var(--zoom));font-variant-numeric:tabular-nums;min-width:100%;white-space:nowrap}.grid th,.grid td{border-right:1px solid #f0f2f6;border-bottom:1px solid #edf0f5;padding:0;text-align:right;height:calc(31px * var(--zoom));min-width:calc(116px * var(--zoom))}.grid th{padding:6px 10px;font-weight:500;background:#f8f9fc;color:#647086}.grid thead{position:sticky;top:0;z-index:3}.grid thead tr:nth-child(2) th{background:#f0eefb;color:#5145cd;font-weight:600}.grid tbody th,.grid thead th:first-child{position:sticky;left:0;z-index:2;text-align:left;background:#fafbfe;min-width:94px;max-width:250px}.grid thead th:first-child{z-index:4}.grid .cell{border:0;border-radius:0;background:transparent;width:100%;height:100%;font-size:inherit;padding:5px 10px;min-height:30px;text-align:right;display:block}.grid .cell:hover{background:#eeeafd}.grid .cell.selected{background:#e5dfff;box-shadow:inset 0 0 0 2px #6754dc;color:#32256f;font-weight:700}.grid .cell.reference{background:#e2f2ee;box-shadow:inset 0 0 0 1px #479982}.grid .empty{color:#9aa3b3;background:#fcfcfe;padding-right:10px}.grid .decision-conv{color:#2852a2;background:#eff5ff}.grid .decision-put{color:#915019;background:#fff5e9}.foot{border-top:1px solid var(--line);padding:10px 14px;color:var(--muted);font-size:12px}.legend{display:flex;gap:16px;flex-wrap:wrap}.dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}.drawer{position:fixed;right:10px;top:10px;bottom:10px;width:min(510px,calc(100% - 20px));background:white;border:1px solid #d5dbe7;border-radius:10px;box-shadow:0 12px 44px #18223830;z-index:10;overflow:auto;padding:20px}.drawer[hidden]{display:none}.drawer header{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;position:sticky;top:-20px;background:white;padding:12px 0;z-index:2}.drawer h3{font-size:17px;margin:0}.sub{font-size:12px;color:var(--muted)}.badge{display:inline-block;padding:4px 8px;border-radius:5px;color:#493c9f;background:#f1eefd;font-size:12px}.formula{background:#f7f6fc;border:1px solid #e6e1f5;border-radius:8px;padding:13px 14px;margin:12px 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.9;font-variant-numeric:tabular-nums}.result{font-size:23px;font-weight:700;color:#332968;margin:6px 0}.refs{display:grid;grid-template-columns:1fr 1fr;gap:6px}.ref{padding:8px;background:#f7f8fb;border-radius:5px;overflow-wrap:anywhere}.ref span{font-size:11px;color:var(--muted);display:block}.ref strong{font-size:13px;font-weight:600}.section-title{font-size:12px;color:var(--muted);margin:16px 0 7px}.links{display:flex;gap:8px;flex-wrap:wrap}.links button{font-size:12px;text-align:left;flex:1;min-width:150px}.flow{display:flex;align-items:center;gap:12px;margin:14px 0}.flow .current{background:#eeebfb;border:1px solid #d6cef7;padding:12px;border-radius:7px;min-width:120px}.flow .children{display:grid;gap:9px;flex:1}.flow button{font-size:12px;text-align:left}.input-note{padding:8px 14px;background:#fafbfe;font-size:12px;color:#5d687c;white-space:normal}.status{color:#356d58;font-size:12px}.muted{color:var(--muted)}
+@media(max-width:600px){.toolbar{padding:10px}.toolbar h2{width:100%}.tools{padding:8px}.scroll{height:420px}.drawer{padding:14px}.drawer header{top:-14px}.refs{grid-template-columns:1fr 1fr}.foot{font-size:11px}.tabs button{padding:5px 8px}.flow{gap:6px}.flow .current{min-width:90px}}
+</style></head><body>
+<div class="shell"><div class="toolbar"><h2 id="heading"></h2><div class="tabs" id="tabs" role="group" aria-label="계산표 항목"></div></div>
+<div class="tools"><p id="instruction"></p><div><label id="rows-label">하락 횟수 <select id="rows" aria-label="표시할 하락 횟수"></select></label> <label>확대 <select id="zoom" aria-label="계산표 확대"><option value="0.85">85%</option><option value="1" selected>100%</option><option value="1.2">120%</option></select></label> <button id="root">처음으로</button></div></div>
+<div id="input-note" class="input-note" hidden></div><div class="scroll" id="scroll" tabindex="0" aria-label="계산표 가로·세로 스크롤"><table class="grid" id="grid" aria-label="전체 노드 계산표"></table></div>
+<div class="foot"><div class="legend"><span><i class="dot" style="background:#b8a6f5"></i>선택한 셀</span><span id="ref-legend"><i class="dot" style="background:#87c6b7"></i>다음 시점 참조 셀</span><span id="scope"></span></div><div>소수점 둘째 자리 표시 · 할인계수 99.79%는 0.9979배 · 계산은 반올림 전 원값을 사용합니다. 셀 선택은 평가금액과 입력을 변경하지 않습니다.</div></div></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="false" aria-labelledby="detail-title" hidden><header><div><h3 id="detail-title">계산내역</h3><div id="detail-sub" class="sub"></div></div><button id="close" aria-label="계산내역 닫기">닫기 ×</button></header><div id="detail"></div></aside>
+<script id="worksheet-data" type="application/json">__PAYLOAD__</script><script>
+'use strict';
+const D=JSON.parse(document.getElementById('worksheet-data').textContent), $=id=>document.getElementById(id);
+const fmt=v=>v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Object.is(v,-0)?0:v);
+const pct=v=>v==null?'—':fmt(v*100)+'%';
+const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let metric='value', curve=0, rowStart=0, selected=null, lastFocus=null;
+const nodeFields=[['stock','주가','원'],['P','전환확률','%'],['kind','의사결정',''],['hold','보유가치','원금 100'],['value','본체가치','원금 100'],...(D.model==='TF'?[['E','주식결제분','원금 100'],['B','현금결제분','원금 100'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%']]:[['ya','상승 할인율','%'],['yb','하락 할인율','%'],['df_up','상승 할인계수','%'],['df_down','하락 할인계수','%']])];
+const scheduleFields=[['rf','Rf 선도금리','%'],['cr','Kd 선도금리','%'],['q','상승 확률','%'],['down_q','하락 확률','%'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%'],['cv','전환 가능','bool'],['put','상환청구 가능','bool'],['call','계약상 콜 가능','bool'],['put_contract','계약 상환청구금액','원금 100'],['put_value','지급 제약 반영 상환가치','원금 100'],['call_contract','계약 콜금액','원금 100'],['coupon','이자·우선배당 지급','원금 100'],['host','권리 없는 주계약 가치','원금 100'],['u','상승계수 u','배'],['d','하락계수 d','배'],['refix','정기 리픽싱','bool'],['ipo','조건부 IPO 예정','bool'],['redemption','만기 지급가치','원금 100']];
+function val(n,k){if(k==='df_rf'||k==='df_cr')return n.terminal?null:D.steps[n.i][k];return n[k];}
+function showVal(v,unit){return unit==='bool'?(v?'가능·해당':'—'):typeof v==='string'?v:unit==='%'?pct(v):fmt(v);}
+function tabButton(text,id,on){const b=document.createElement('button');b.textContent=text;b.dataset.tab=id;b.setAttribute('aria-pressed',String(on));$('tabs').appendChild(b);return b;}
+function columns(){return Array.from({length:(D.end??D.n)-(D.start??0)+1},(_,k)=>k+(D.start??0));}
+function head(cols,first){return '<thead><tr><th scope="col">'+first+'</th>'+cols.map(i=>'<th scope="col">'+i+'</th>').join('')+'</tr><tr><th scope="col">날짜</th>'+cols.map(i=>'<th scope="col">'+safe(D.steps[i].date)+'</th>').join('')+'</tr></thead>';}
+function dependencies(n){if(['stock','df_rf','df_cr'].includes(metric))return [];if(['ya','df_up'].includes(metric))return [n.up];if(['yb','df_down'].includes(metric))return [n.dn];return [n.up,n.dn];}
+function selectedClass(i,r){if(!selected||D.mode!=='nodes')return '';const n=D.nodes[selected];if(!n)return '';if(selected===i+','+r)return ' selected';return dependencies(n).some(k=>k&&k[0]===i&&k[0]-k[1]===r)?' reference':'';}
+function cell(text,i,r,extra=''){return '<td><button class="cell'+selectedClass(i,r)+extra+'" data-i="'+i+'" data-r="'+r+'" aria-label="'+safe(D.mode==='nodes'?`${metricLabel()} · 시점 ${i} · 하락 ${r} · ${text}`:`${scheduleFields[r][1]} · 시점 ${i} · ${text}`)+'">'+safe(text)+'</button></td>';}
+function metricLabel(){return nodeFields.find(f=>f[0]===metric)?.[1]||metric;}
+function render(){
+ const scrollLeft=$('scroll').scrollLeft,scrollTop=$('scroll').scrollTop;
+ if(D.mode==='nodes'){
+  const cols=columns(), field=nodeFields.find(x=>x[0]===metric);let out=head(cols,'하락 횟수');
+  out+='<tbody>';for(let r=rowStart;r<=Math.min(D.end,rowStart+39);r++){out+='<tr><th scope="row">'+r+'</th>';for(const i of cols){const n=D.nodes[i+','+r];if(r>i)out+='<td class="empty"></td>';else if(!n)out+='<td class="empty" title="강제전환 등으로 계산되지 않은 노드">—</td>';else out+=cell(showVal(val(n,metric),field[2]),i,r,metric==='kind'?(n.kind.includes('전환')?' decision-conv':n.kind.includes('상환')?' decision-put':''):'');}out+='</tr>';}out+='</tbody>';$('grid').innerHTML=out;
+  $('instruction').textContent=field[1]+' · '+(field[2]||'행사 판단')+' | 셀을 누르면 계산식과 참조값이 열립니다.';
+ }else if(D.mode==='schedule'){
+  let out=head(columns(),'적용 항목')+'<tbody>';scheduleFields.forEach(([key,label,unit],r)=>{out+='<tr><th scope="row">'+label+(unit==='원금 100'?' (100)':'')+'</th>';D.steps.forEach((s,i)=>{let v=key==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(key)?D[key]:s[key];out+=cell(showVal(v,unit),i,r);});out+='</tr>';});$('grid').innerHTML=out+'</tbody>';
+ }else{
+  const c=D.curves[curve];$('input-note').hidden=false;$('input-note').textContent='입력 곡선: '+c.inputs.map(p=>fmt(p[0])+'년 '+pct(p[1])).join(' · ')+` | 연 ${c.m}회 복리`;
+  $('grid').innerHTML='<thead><tr>'+['만기(년)','적용 수익률','회당 이율','이전 이표 PV 합(%)','할인계수(%)','연속복리 현물금리','산출 구분'].map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+c.rows.map((r,i)=>'<tr>'+[fmt(r.t),pct(r.y),pct(r.c),pct(r.pv),pct(r.df),pct(r.spot),kindLabel(r.kind)].map(v=>'<td><button class="cell" data-boot="'+i+'" aria-label="'+fmt(r.t)+'년 · '+safe(v)+'">'+safe(v)+'</button></td>').join('')+'</tr>').join('')+'</tbody>';
+ }
+ $('scroll').scrollLeft=scrollLeft;$('scroll').scrollTop=scrollTop;
+}
+function kindLabel(k){return {grid:'정규 이표일',zero:'첫 이표일 전',stub:'이표일 사이 만기',spot:'현물금리 환산'}[k];}
+function formula(s){return '<div class="formula">'+safe(s)+'</div>';}
+function refs(items){return '<div class="section-title">참조값</div><div class="refs">'+items.map(([k,v])=>'<div class="ref"><span>'+safe(k)+'</span><strong>'+safe(v)+'</strong></div>').join('')+'</div>';}
+function openDetail(title,sub,body){$('detail-title').textContent=title;$('detail-sub').textContent=sub;$('detail').innerHTML=body;$('drawer').hidden=false;$('drawer').scrollTop=0;}
+function nodeDetail(key,focus=true){
+ const n=D.nodes[key];if(!n)return;selected=key;rowStart=Math.floor(n.down/40)*40;$('rows').value=String(rowStart);render();
+ const s=D.steps[n.i],a=n.up?D.nodes[n.up[0]+','+(n.up[0]-n.up[1])]:null,b=n.dn?D.nodes[n.dn[0]+','+(n.dn[0]-n.dn[1])]:null;
+ const f=nodeFields.find(x=>x[0]===metric),v=val(n,metric);let text='', rr=[];
+ const eh=()=>`E 보유 = [p × E↑ + (1−p) × E↓] × exp(−Rf × Δt)\n= [${pct(s.q)} × ${fmt(a.E)} + ${pct(1-s.q)} × ${fmt(b.E)}] × exp(−${pct(s.rf)} × ${fmt(D.delta)})\n= ${fmt(n.equity_hold)}`;
+ const bh=()=>`B 보유 = [p × B↑ + (1−p) × B↓] × exp(−Kd × Δt) + C\n= [${pct(s.q)} × ${fmt(a.B)} + ${pct(1-s.q)} × ${fmt(b.B)}] × exp(−${pct(s.cr)} × ${fmt(D.delta)}) + ${fmt(s.coupon)}\n= ${fmt(n.debt_hold)}`;
+ const gh=()=>`r↑ = π↑ × Rf + (1−π↑) × Kd = ${pct(n.ya)}\nr↓ = π↓ × Rf + (1−π↓) × Kd = ${pct(n.yb)}\nH = p × V↑ × exp(−r↑ × Δt) + (1−p) × V↓ × exp(−r↓ × Δt) + C\n= ${pct(s.q)} × ${fmt(a.value)} × ${pct(n.df_up)} + ${pct(1-s.q)} × ${fmt(b.value)} × ${pct(n.df_down)} + ${fmt(s.coupon)}\n= ${fmt(n.hold)}`;
+ const hold=()=>D.model==='GS'?gh():eh()+'\n\n'+bh()+`\n\nH = E 보유 + B 보유 = ${fmt(n.hold)}`;
+ if(metric==='stock'){text=`S(i,j) = S₀ × uʲ × d⁽ⁱ⁻ʲ⁾\n= ${fmt(D.S0)} × ${fmt(D.u)}^${n.j} × ${fmt(D.d)}^${n.down}\n= ${fmt(n.stock)} 원\n\nu = exp(σ × √Δt), d = 1 ÷ u`;rr=[['최초 주가 S₀',fmt(D.S0)+' 원'],['연 변동성 σ',pct(D.sig)],['구간 Δt',fmt(D.delta)+' 년'],['상승 / 하락 횟수',n.j+' / '+n.down]];}
+ else if(metric==='P'){text=n.terminal||n.probability_kind!=='계속 보유'?`전환확률 π = ${pct(n.P)}\n전환·강제전환이면 100.00%, 현금상환이면 0.00%입니다.\nGS 확률 처리: ${n.probability_kind}`:`π = p × π↑ + (1−p) × π↓\n= ${pct(s.q)} × ${pct(a.P)} + ${pct(1-s.q)} × ${pct(b.P)}\n= ${pct(n.P)}`;if(a)rr=[['상승 노드 전환확률 π↑',pct(a.P)],['하락 노드 전환확률 π↓',pct(b.P)],['상승 확률 p',pct(s.q)]];text+='\n전환확률은 GS의 가치 선택을 기준으로 계산한 확률입니다.';}
+ else if(['df_rf','df_cr','df_up','df_down','ya','yb'].includes(metric)){
+  if(n.terminal){text='종료 노드에는 다음 구간이 없어 할인율·할인계수를 적용하지 않습니다.';}
+  else{let rate=['df_rf'].includes(metric)?s.rf:['df_cr'].includes(metric)?s.cr:['df_up','ya'].includes(metric)?n.ya:n.yb;const cp=['df_up','ya'].includes(metric)?a.P:b.P;
+   text=['df_rf','df_cr'].includes(metric)?`DF = exp(−${metric==='df_rf'?'Rf':'Kd'} × Δt)`:`r = π자식 × Rf + (1−π자식) × Kd\n= ${pct(cp)} × ${pct(s.rf)} + ${pct(1-cp)} × ${pct(s.cr)} = ${pct(rate)}\n\nDF = exp(−r × Δt)`;
+   text+=`\n= exp(−${pct(rate)} × ${fmt(D.delta)})\n= ${pct(Math.exp(-rate*D.delta))}`;rr=[['무위험 선도금리 Rf',pct(s.rf)],['위험 선도금리 Kd',pct(s.cr)],['구간 Δt',fmt(D.delta)+' 년'],['참조 전환확률',D.model==='GS'?pct(cp):'TF는 결제 성격별 할인']];}
+ }else if(metric==='hold'){text=n.terminal?'만기 또는 강제전환으로 종료되어 다음 시점의 계속보유 계산이 없습니다.':hold();}
+ else if(['E','B'].includes(metric)){
+  text=n.terminal?`종료 시 선택한 결제금액\nE = ${fmt(n.E)}, B = ${fmt(n.B)}\nV = E + B = ${fmt(n.E+n.B)}`: (metric==='E'?eh():bh())+`\n\n위 금액은 행사 전 보유분입니다.\n${n.kind} 반영 후 ${metric} = ${fmt(v)}`;
+ }else{
+  if(n.terminal)text=`종료 시 선택한 가치 = ${fmt(n.value)}\n처리: ${n.kind}\n주식결제분 E ${fmt(n.E)} + 현금결제분 B ${fmt(n.B)} = ${fmt(n.E+n.B)}`;
+  else if(D.bw_cash)text=hold()+`\n\n현금납입 BW: 신주인수권과 사채를 구분합니다.\n신주인수권 행사가치 = MAX(100 × S ÷ K − 100, 0)\n권리의 ${D.bw_detach?'분리형':'비분리형'} 조건과 사채 행사순서를 반영한 E + B = ${fmt(n.value)}`;
+  else text=hold()+`\n\nV = MIN(MAX(전환, 상환청구, H), 콜 대응가치)\n콜 대응가치 = MAX(콜금액${D.conv_resp?', 전환':''}${!D.pc_order?', 상환청구':''})\n행사 불가 후보는 제외합니다. 본체 내 콜이 없으면 첫 MAX만 적용합니다.\n선택: ${n.kind} → ${fmt(n.value)}`;
+ }
+ if(metric!=='stock')rr.push(['주가 S',fmt(n.stock)+' 원'],['전환가액 K',fmt(n.K)+' 원'],['전환가치 100 × S ÷ K',fmt(n.cv)],['상환청구 후보',fmt(n.pv)],['본체 내 콜 후보',fmt(n.kv)],['당기 이자·배당 C',fmt(s.coupon)]);
+ let body='<span class="badge">'+safe(f[2]||'의사결정')+'</span><div class="result">'+safe(showVal(v,f[2]))+'</div>'+formula(text)+refs(rr);
+ if(a&&b&&dependencies(n).length){const prob=['P','ya','yb','df_up','df_down'].includes(metric), refValue=x=>prob?pct(x.P):fmt(metric==='E'?x.E:metric==='B'?x.B:x.value), refName=prob?'전환확률':metric==='E'?'주식결제분':metric==='B'?'현금결제분':'본체가치';
+  const children=[['상승',a],['하락',b]].filter((_,idx)=>dependencies(n).some(k=>k&&k[0]===[a,b][idx].i&&k[1]===[a,b][idx].j));
+  body+='<div class="section-title">다음 시점의 '+refName+' · 버튼으로 참조 위치 이동</div><div class="flow"><div class="current">현재 '+n.i+' / '+n.down+'<br><strong>'+safe(showVal(v,f[2]))+'</strong></div><span>←</span><div class="children">'+children.map(([label,x])=>'<button '+(x.i>D.end?'disabled ':'')+'data-node="'+x.i+','+x.down+'">'+label+' '+x.i+' / '+x.down+' · '+refValue(x)+'</button>').join('')+'</div></div>';}
+ if(a&&a.i>D.end)body+='<p class="sub">다음 참조 노드를 열려면 위의 계산표 시점 구간을 다음 구간으로 변경하세요.</p>';
+ body+='<p class="sub">좌표: 시점 / 하락 횟수. 초록색은 참조하는 다음 노드의 위치이며, 참조 항목은 위에 표시합니다. 주가는 원, 본체 금액은 원금 100 기준입니다. 본체는 별도 콜 차감 전입니다. 표시값은 반올림되므로 표시 숫자만으로 다시 계산하면 차이가 날 수 있습니다.</p>';
+ openDetail(metricLabel()+' 계산내역',`${D.model} · 시점 ${n.i} / 하락 ${n.down} · ${s.date}`,body);if(focus)$('close').focus({preventScroll:true});
+}
+function scheduleDetail(i,row){const s=D.steps[i],[k,label,unit]=scheduleFields[row];let v=k==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(k)?D[k]:s[k],text='';
+ if(['rf','cr'].includes(k))text='f(t₀,t₁) = [z(t₁) × t₁ − z(t₀) × t₀] ÷ (t₁−t₀)\n입력곡선의 연속복리 현물금리에서 구간 선도금리를 계산합니다.\n현재 열 → 다음 열 구간 적용값 = '+pct(v);
+ else if(['q','down_q'].includes(k))text=`p = [exp((Rf − 배당수익률) × Δt) − d] ÷ (u−d)\n= [exp((${pct(s.rf)} − ${pct(D.div_y)}) × ${fmt(D.delta)}) − ${fmt(D.d)}] ÷ (${fmt(D.u)} − ${fmt(D.d)})\n상승 p = ${pct(s.q)}, 하락 1−p = ${s.q==null?'—':pct(1-s.q)}`;
+ else if(['df_rf','df_cr'].includes(k))text=`DF = exp(−구간 선도금리 × Δt)\n= exp(−${pct(k==='df_rf'?s.rf:s.cr)} × ${fmt(D.delta)})\n= ${pct(v)}`;
+ else if(['u','d'].includes(k))text=`u = exp(σ × √Δt) = exp(${pct(D.sig)} × √${fmt(D.delta)}) = ${fmt(D.u)}\nd = 1 ÷ u = ${fmt(D.d)}`;
+ else if(k==='coupon')text=`C = 100 × 적용 이자·배당률 × 지급주기(개월) ÷ 12 × 배정 지급 횟수\n= 100 × ${pct(D.cpn)} × ${fmt(D.ipay)} ÷ 12 × ${s.pays}\n= ${fmt(v)}`;
+ else if(k==='host')text=i===D.n?`주계약 만기 가치 = 만기 지급가치 + 당기 이자·배당\n= ${fmt(s.redemption)} + ${fmt(s.coupon)} = ${fmt(v)}`:`H(i) = H(i+1) × DF_Kd(i) + C(i)\n= ${fmt(D.steps[i+1].host)} × ${pct(s.df_cr)} + ${fmt(s.coupon)} = ${fmt(v)}\n전환·상환청구·콜을 제외하고 동일 지급일정과 위험 할인율로 역산합니다.`;
+ else if(k==='ipo')text='계약의 IPO 예정일을 격자에 배정한 시점입니다. 실제 조정·강제전환은 해당 노드의 주가와 IPO 조건을 함께 충족할 때만 적용합니다.';
+ else if(k==='put_value')text='지급 제약 반영 상환가치 = Σ(실제 지급액 × 지급시점까지의 위험 할인계수)\n배당가능이익 제약이 없으면 계약 상환청구금액과 같습니다. 행사일 이자 별도 지급 여부는 노드의 행사 후보에서 추가 반영합니다.';
+ else text='계약상 행사기간·회차별 행사일·의무보유·지급조건을 실제 격자일에 배정한 값입니다.\n콜 행사는 계약 일정이며, 본체와 별도 평가한 콜 차감액은 평가금액 구성에서 확인합니다.';
+ if(i===D.n&&['rf','cr','q','down_q','df_rf','df_cr'].includes(k))text='만기 열에는 다음 구간이 없으므로 적용값을 표시하지 않습니다.';
+ openDetail(label+' 계산내역',`시점 ${i} · ${s.date}`,`<div class="result">${safe(showVal(v,unit))}</div>`+formula(text)+refs([['현재 격자일',s.date],['다음 격자일',D.steps[i+1]?.date||'만기'],['경과연수',fmt(s.time)],['구간 Δt',fmt(D.delta)+' 년']])+'<p class="sub">금리와 확률은 현재 열에서 다음 열로 가는 구간 값입니다. 날짜는 격자일이며 계약상 원래 날짜와 차이가 있을 수 있습니다.</p>');$('close').focus({preventScroll:true});}
+function bootDetail(idx){const c=D.curves[curve],r=c.rows[idx];let eq='';
+ if(r.kind==='spot')eq=`z = m × ln(1 + y ÷ m)\n= ${c.m} × ln(1 + ${pct(r.y)} ÷ ${c.m}) = ${pct(r.spot)}\nDF = exp(−z × t) = ${pct(r.df)}\n입력값이 현물금리이므로 이표채 부트스트래핑을 수행하지 않습니다.`;
+ else if(r.kind==='zero')eq=`DF = (1 + y ÷ m)^(−m × t)\n= (1 + ${pct(r.y)} ÷ ${c.m})^(−${c.m} × ${fmt(r.t)})\n= ${pct(r.df)}\n첫 이표일 전 만기는 만기 일시지급으로 계산합니다.`;
+ else eq=`c = y ÷ m = ${pct(r.c)}\nDF(t) = [1 − 이전 이표 현금흐름의 PV 합] ÷ (1+c)\n= (1 − ${pct(r.pv)}) ÷ (1 + ${pct(r.c)})\n= ${pct(r.df)}\n${r.kind==='grid'?'이전 이표 PV = c × 이전 정규 이표일 DF 합':'이전 이표 PV = Σ[c × 기간비율 × DF(이표일)]\n짧은 첫 이표를 반영하고, 이미 구한 연속복리 현물을 선형보간합니다.'}`;
+ eq+=`\n\nz(t) = −ln(DF(t)) ÷ t\n= −ln(${pct(r.df)}) ÷ ${fmt(r.t)} = ${pct(r.spot)}`;
+ let body='<span class="badge">'+kindLabel(r.kind)+'</span><div class="result">DF '+pct(r.df)+'</div>'+formula(eq)+refs([['만기',fmt(r.t)+' 년'],['적용 수익률',pct(r.y)],['연 복리 횟수',String(c.m)],['이전 이표 PV 합',pct(r.pv)],['연속복리 현물금리',pct(r.spot)],['이전 정규 이표 DF 합(배)',fmt(r.acc)]]);
+ if(r.refs.length)body+='<div class="section-title">참조한 이전 이표 · 짧은 첫 이표는 기간비율 반영</div>'+refs(r.refs.map(x=>[fmt(x.t)+'년 × 기간비율 '+fmt(x.weight),'DF '+pct(x.df)]));
+ body+='<p class="sub">입력 만기 사이 수익률은 선형보간하며 범위 밖은 끝점 값을 사용합니다. 모든 참조값은 반올림 전 원값으로 계산합니다.</p>';
+ openDetail('부트스트래핑 계산내역',c.name+' · '+fmt(r.t)+'년',body);$('close').focus({preventScroll:true});}
+if(D.mode==='nodes'){
+ $('heading').textContent=D.model+' 모형 · 노드 계산표';nodeFields.forEach(f=>tabButton(f[1],f[0],f[0]===metric));
+ for(let r=0;r<=D.end;r+=40){const o=document.createElement('option');o.value=r;o.textContent=r+'–'+Math.min(D.end,r+39);$('rows').appendChild(o);}
+ $('scope').textContent=`시점 ${D.start}–${D.end} / 전체 ${D.n} · 별도 콜 차감 전 본체`;
+}else{
+ $('rows-label').hidden=true;$('ref-legend').hidden=true;
+ if(D.mode==='schedule'){$('heading').textContent='노드 스케줄';$('instruction').textContent='금리·확률은 현재 열 → 다음 열 구간 값 · 셀을 눌러 근거 확인';$('scope').textContent='금액: 원금 100 · 행사는 격자일 기준';}
+ else{$('heading').textContent=D.y_type==='spot'?'현물금리 환산':'부트스트래핑';D.curves.forEach((c,i)=>tabButton(c.name,String(i),i===curve));$('instruction').textContent='입력 수익률 → 할인계수 → 연속복리 현물금리 · 셀을 눌러 산식 확인';$('scope').textContent='평가에 적용한 곡선과 동일한 산출 방식';$('grid').setAttribute('aria-label','부트스트래핑 계산표');}
+}
+$('tabs').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(!b)return;D.mode==='nodes'?metric=b.dataset.tab:curve=Number(b.dataset.tab);for(const x of $('tabs').children)x.setAttribute('aria-pressed',String(x===b));$('drawer').hidden=true;render();});
+$('rows').addEventListener('change',()=>{rowStart=Number($('rows').value);render();$('scroll').scrollTop=0;});
+$('zoom').addEventListener('change',()=>document.documentElement.style.setProperty('--zoom',$('zoom').value));
+$('root').addEventListener('click',()=>{rowStart=0;$('rows').value='0';selected=null;$('drawer').hidden=true;render();$('scroll').scrollTo(0,0);});
+$('close').addEventListener('click',()=>{$('drawer').hidden=true;const current=selected?document.querySelector(`[data-i="${selected.split(',')[0]}"][data-r="${selected.split(',')[1]}"]`):null;(current||lastFocus)?.focus({preventScroll:true});});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')$('close').click();});
+$('grid').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;lastFocus=b;if(b.dataset.boot!==undefined)bootDetail(Number(b.dataset.boot));else if(D.mode==='nodes')nodeDetail(b.dataset.i+','+b.dataset.r);else scheduleDetail(Number(b.dataset.i),Number(b.dataset.r));});
+$('detail').addEventListener('click',e=>{const b=e.target.closest('[data-node]');if(b)nodeDetail(b.dataset.node);});
+render();
+</script></body></html>

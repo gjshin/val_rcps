@@ -1,6 +1,7 @@
 import json
 import pandas as pd
 import streamlit as st
+from ui_format import dataframe
 from valuation.case import Case
 from valuation.engagement import Engagement, calculate_engagement, engagement_bundle, value_bridge
 from valuation.service import calculation_key
@@ -47,7 +48,7 @@ def main():
                 if identifier.strip():
                     engagement.cases[identifier] = Case.from_dict(case.to_dict()); st.rerun()
     if engagement.cases:
-        st.dataframe([{'회차': k, '건명':c.name, '상품':c.effective().get('inst'), '기준일':c.effective().get('d_base'), '원금(원)':c.effective().get('face_total')} for k,c in engagement.cases.items()], hide_index=True)
+        dataframe([{'회차': k, '건명':c.name, '상품':c.effective().get('inst'), '기준일':c.effective().get('d_base'), '원금(원)':c.effective().get('face_total')} for k,c in engagement.cases.items()], hide_index=True)
         selected = st.selectbox('회차 선택', list(engagement.cases))
         c1,c2 = st.columns(2)
         if c1.button('선택 회차를 평가 작업에서 열기'):
@@ -65,7 +66,7 @@ def main():
             except (ValueError, ArithmeticError) as exc: st.error(str(exc))
         result = st.session_state.get('_engagement_result')
         if result and result['key'] == engagement.fingerprint():
-            st.dataframe(pd.DataFrame(result['rows']), hide_index=True)
+            dataframe(pd.DataFrame(result['rows']), hide_index=True)
             st.info(result['scope'])
             st.write({k:f'{v:,.0f}' for k,v in result['totals'].items()})
             if st.button('회차별 조서와 총괄표 생성'):
@@ -90,6 +91,6 @@ def main():
             bridge = st.session_state.get('_value_bridge')
             if bridge and bridge['previous_key'] == calculation_key(prev) and bridge['current_key'] == calculation_key(case):
                 st.info(bridge['scope'])
-                st.dataframe(pd.DataFrame(bridge['rows']), hide_index=True)
+                dataframe(pd.DataFrame(bridge['rows']), hide_index=True)
                 st.download_button('변동 분석 저장', json.dumps(bridge, ensure_ascii=False, indent=2), '전기대비변동.json', 'application/json')
         except (ValueError, ArithmeticError) as exc: st.error(str(exc))

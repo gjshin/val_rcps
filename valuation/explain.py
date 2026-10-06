@@ -6,7 +6,7 @@ import math
 from dataclasses import asdict
 from . import legacy as L
 
-VERSION = '2026.10.06-v2.1-preview'
+VERSION = '2026.10.06-v2.2'
 KINDS = {'hold': '계속 보유', 'conv': '전환', 'put': '상환청구', 'call': '콜 행사',
          'mat': '만기상환', 'auto': '만기 자동전환', 'ipo': '상장 강제전환'}
 
