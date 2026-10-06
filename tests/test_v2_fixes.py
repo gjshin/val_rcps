@@ -39,24 +39,24 @@ def test_memos_stay_current_when_only_market_data_change():
         c.memos[t] = {'decision': '앱 판정에 동의', 'reason': '근거'}; c.memo_context[t] = memo_key(c, t)
     c.market['S0'] = 21000.; c.method['d_base'] = '2026-03-31'; c.market['sig'] = .4
     assert all(memo_status(c, t) == '현재 조건의 기록' for t in c.memos)
-    c.contract['rfx_mode'] = 1                                   # 계약 조항이 바뀌면 그 주제만 다시 확인
+    c.contract['rfx_mode'] = 1                                   # 계약 조항이 바뀌면 다시 확인
     assert memo_status(c, 'refixing').startswith('이전 조건')
-    assert memo_status(c, 'priority') == '현재 조건의 기록'
 
 
 def test_memo_saved_by_previous_version():
-    # 이전 판 식별값이 지금 보는 항목을 모두 덮으면(우선순위) 그대로 인정하고, 못 덮으면(콜 방법 — k_split 등을 새로 봄)
-    # 바뀌었는지 알 수 없으므로 다시 확인하게 한다.
+    # 이전 판이 모든 입력으로 만든 식별값(검토 주제)은 지금 보는 항목을 다 덮으므로 그대로 인정한다.
+    # 이전 판이 몇 항목만 본 주제(콜 방법·우선순위 등)는 바뀌었는지 알 수 없어 다시 확인하게 한다.
     c = case()
-    for t in ('priority', 'call_method'):
-        c.memos[t] = {'decision': '앱 판정에 동의', 'reason': '근거'}; c.memo_context[t] = _memo_key_v21(c, t) or 'x'
-    from valuation.explain import _V21_GROUPS
     import hashlib, json
     from dataclasses import asdict
+    from valuation.explain import _V21_GROUPS
     v = {**asdict(L.Terms()), **c.effective()}
+    c.memos['refixing'] = c.memos['call_method'] = {'decision': '앱 판정에 동의', 'reason': '근거'}
+    c.memo_context['refixing'] = hashlib.sha256(json.dumps({k: v[k] for k in sorted(v)}, sort_keys=True,
+                                                           ensure_ascii=False).encode()).hexdigest()
     c.memo_context['call_method'] = hashlib.sha256(json.dumps({k: v[k] for k in _V21_GROUPS['call_method']},
                                                               sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    assert memo_status(c, 'priority') == '현재 조건의 기록'
+    assert memo_status(c, 'refixing') == '현재 조건의 기록'
     assert memo_status(c, 'call_method').startswith('이전 조건')
 
 
@@ -67,7 +67,9 @@ def test_memo_signatures_cover_the_inputs_each_judgment_uses():
     c2 = Case.from_dict(c.to_dict()); c2.method['pc_order'] = 1
     assert memo_status(c2, 'call_method').startswith('이전 조건')          # 동시 행사 우선순위도 콜 방법 판단에 쓰인다
     c3 = Case.from_dict(c.to_dict()); c3.market['S0'] = 25000.
-    assert memo_status(c3, 'bdt').startswith('이전 조건')                  # BDT 검토는 주가·금리·변동성을 본다
+    assert memo_status(c3, 'bdt').startswith('이전 조건')                  # BDT 검토는 평가 결과를 보고 판단한다
+    c5 = Case.from_dict(c.to_dict()); c5.contract['mat_amt'] = 1.1
+    assert memo_status(c5, 'bdt').startswith('이전 조건')
     assert memo_status(c3, 'call_method') == '현재 조건의 기록'
     assert L.split_call_separate(L.Terms(**{k: v for k, v in c.effective().items() if k in L.Terms.__dataclass_fields__}))
     assert memo_status(c3, 'split_call').startswith('이전 조건')           # 자동 출발 금액 = 100 + 별개 콜 가치
@@ -170,3 +172,9 @@ def test_topic_and_split_memos_see_schedules_and_profit_table():
 def test_sha_call_quantity_stays_locked():
     from valuation.workpaper_v2 import EXCEL_INPUTS
     assert '콜 대상 주식수' not in EXCEL_INPUTS and '풋 가격 가산율 (연)' in EXCEL_INPUTS
+
+
+def test_day1_memos_follow_any_pricing_input():
+    c = case(); c.memos['day1_price'] = {'decision': '해당 없음', 'reason': '근거'}; c.memo_context['day1_price'] = memo_key(c, 'day1_price')
+    c.contract['K0'] = 55000.
+    assert memo_status(c, 'day1_price').startswith('이전 조건')          # 최초 인식 차이는 모형값 전체로 정해진다

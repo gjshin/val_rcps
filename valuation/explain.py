@@ -11,48 +11,29 @@ KINDS = {'hold': '계속 보유', 'conv': '전환', 'put': '상환청구', 'call
          'mat': '만기상환', 'auto': '만기 자동전환', 'ipo': '상장 강제전환'}
 
 
-# 메모 주제마다 «판단을 바꿀 수 있는 입력» 만 본다. 주가·변동성·평가기준일처럼 분기마다 바뀌는 시장자료는
-# 계약 판단(콜 방법·우선순위·분리 등)을 바꾸지 않으므로 넣지 않는다 — 넣으면 분기마다 모든 메모가
-# «재확인 필요» 가 된다. 최초 인식 원인 점검만 시장자료를 본다.
-_SPLIT = ['conv_class', 'p_sep', 'k_sep', 'emb_approach', 'fvpl_whole', 'split_tol', 'split_base_in',
-          'p_lost_int', 'k_third', 'k_transfer', 'p_s', 'p_e', 'p_f', 'p_mode', 'p_rate', 'p_yield', 'p_cmp',
-          'k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp', 'cpn', 'ytm', 'mat_mode', 'd_issue', 'd_mat',
-          # 행사일·행사금액을 직접 적은 일정표와 금액 산식의 공제·가산 — split_test 가 exercise_amounts 로 읽는다
-          'p_sched', 'k_sched', 'p_less_cpn', 'p_cpn_add', 'k_less_cpn', 'k_cpn_add', 'm_less_cpn', 'mat_amt',
-          'ytm_cmp', 'ipay', 'issue_px', 'par', 'div_basis', 'div_mode', 'acc_basis']
+# 메모가 «현재 조건의 기록» 인지 가리는 식별값. 계약 조항을 보고 내린 판단(콜 방법·우선순위·분리·검토 주제)은
+# 시장자료(주가·변동성·금리곡선·평가기준일)를 뺀 모든 입력을 본다 — 분기마다 시장자료만 바뀌면 메모가 그대로
+# 현재 조건이고, 계약 입력이 하나라도 바뀌면 다시 확인한다. 평가 결과 숫자를 보고 내린 판단(BDT 검토·최초 인식
+# 원인 점검·시장자료 적정성)은 모든 입력을 본다. 항목을 주제마다 골라 적으면 빠뜨린 입력이 생긴다.
 _MARKET = ['S0', 'sig', 'div_y', 'rf_curve', 'cr_curve', 'cr_curve_b', 'rate_mode', 'd_base']
-MEMO_FIELDS = {
-    'call_method': ['k_method', 'k_split', 'k_w', 'k_lock', 'k_lock_put', 'k_lock_w', 'k_hold', 'k_conv_resp',
-                    'k_third', 'k_kind', 'k_transfer', 'issuer_call', 'pc_order', 'model'],
-    'conv_resp': ['k_conv_resp', 'cv_s', 'cv_e', 'k_s', 'k_e', 'k_lock', 'k_hold'],
-    'priority': ['pc_order', 'p_s', 'p_e', 'k_s', 'k_e'],
-    'rcps_equity': ['inst', 'view', 'conv_class', 'issuer_call', 'mat_mode'],
-    # BDT 검토는 주가÷전환가액·보장수익률·금리곡선·변동성 민감도를 보고 판단하므로 시장자료도 본다.
-    'bdt': ['put_bdt', 'bdt_sig', 'bdt_base', 'model', 'conv_class', 'p_s', 'p_e', 'K0', 'ytm', 'p_yield'] + _MARKET,
-    'split_put': _SPLIT, 'split_call': _SPLIT, 'split_conv': _SPLIT,
-    'day1_mode': ['d1_pl', 'view', 'd_issue', 'd_base', 'S0', 'sig', 'rf_curve', 'cr_curve'],
-}
 # 판단과 무관한 기록 칸 — 주가 조회 출처·종목코드·원주가 등
 _RECORDS = {'s0_src', 's0_date', 's0_raw', 's0_adj', 's0_splits', 'ticker', 'cr_src', 'tranche', 'unmod_note',
             'scen_md5', 'rvol_how', 'split_base_why', 'd1_reason'}
-_DAY1 = ['view', 'd_issue', 'd_base', 'S0', 'sig', 'rf_curve', 'cr_curve', 'base_shares', 'dil_shares']
 
 
 def memo_fields(topic, values=None):
-    """그 메모의 판단에 쓰인 입력 항목. 모르는 주제는 계약 조항 전체(시장자료 제외)를 본다."""
+    """그 메모의 식별값에 넣을 입력 — None 이면 모든 입력, ['__all_but_market__'] 이면 시장자료·기록을 뺀 모든 입력."""
     if topic in ('split_put', 'split_call', 'split_conv') and values is not None:
         # 분리 판단의 출발 금액을 자동값(100 + 별개 콜 가치)으로 두면 그 콜 가치가 시장자료로 바뀐다.
         auto_with_call = float(values.get('split_base_in', -1) or -1) <= 0 and L.split_call_separate(L.Terms(**{
             k: v for k, v in values.items() if k in L.Terms.__dataclass_fields__}))
-        return _SPLIT + ['k_kind', 'k_w', 'k_split', 'k_method', 'model'] + (_MARKET if auto_with_call else [])
-    if topic in MEMO_FIELDS:
-        return MEMO_FIELDS[topic]
-    if topic.startswith('day1'):
-        return _DAY1
-    if topic == 'fair_value_inputs':
-        return None                                 # 시장자료 자체를 판단하는 주제 — 모든 입력을 본다
-    # 그 밖의 검토 주제(상환제약·누적배당·리픽싱·희석 등)는 판단에 쓰인 입력을 하나하나 고르기보다 시장자료와
-    # 출처 기록을 뺀 모든 입력을 본다 — 배당가능이익 표처럼 주제 카드에 적히지 않은 입력도 놓치지 않는다.
+        # 분리 판단은 행사금액·상각후원가를 정하는 계약 입력 전부를 본다(일정표·산식 공제 포함). 시장자료는 자동 출발 금액일 때만.
+        return None if auto_with_call else ['__all_but_market__']
+    # 평가 결과 숫자를 보고 내리는 판단은 모든 입력을 본다 — BDT 검토(주가÷전환가액·보장수익률·금리·변동성 민감도),
+    # 최초 인식 차이(모형값 전체), 시장자료 자체를 판단하는 주제.
+    if topic in ('bdt', 'fair_value_inputs') or topic.startswith('day1'):
+        return None
+    # 그 밖의 판단(콜 방법·우선순위·전환 대응·검토 주제)은 시장자료와 출처 기록을 뺀 모든 입력을 본다.
     return ['__all_but_market__']
 
 
