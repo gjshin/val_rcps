@@ -44,10 +44,36 @@ def test_memos_stay_current_when_only_market_data_change():
     assert memo_status(c, 'priority') == '현재 조건의 기록'
 
 
-def test_memo_saved_by_previous_version_is_still_current():
-    c = case(); c.memos['call_method'] = {'decision': '앱 판정에 동의', 'reason': '근거'}
-    c.memo_context['call_method'] = _memo_key_v21(c, 'call_method')
-    assert memo_status(c, 'call_method') == '현재 조건의 기록'
+def test_memo_saved_by_previous_version():
+    # 이전 판 식별값이 지금 보는 항목을 모두 덮으면(우선순위) 그대로 인정하고, 못 덮으면(콜 방법 — k_split 등을 새로 봄)
+    # 바뀌었는지 알 수 없으므로 다시 확인하게 한다.
+    c = case()
+    for t in ('priority', 'call_method'):
+        c.memos[t] = {'decision': '앱 판정에 동의', 'reason': '근거'}; c.memo_context[t] = _memo_key_v21(c, t) or 'x'
+    from valuation.explain import _V21_GROUPS
+    import hashlib, json
+    from dataclasses import asdict
+    v = {**asdict(L.Terms()), **c.effective()}
+    c.memo_context['call_method'] = hashlib.sha256(json.dumps({k: v[k] for k in _V21_GROUPS['call_method']},
+                                                              sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    assert memo_status(c, 'priority') == '현재 조건의 기록'
+    assert memo_status(c, 'call_method').startswith('이전 조건')
+
+
+def test_memo_signatures_cover_the_inputs_each_judgment_uses():
+    c = case(issuer_call=2, k_w=.3, k_s=3., k_e=9., k_prem=.02, k_cmp=1)
+    for t in ('call_method', 'bdt', 'split_call'):
+        c.memos[t] = {'decision': '앱 판정에 동의', 'reason': '근거'}; c.memo_context[t] = memo_key(c, t)
+    c2 = Case.from_dict(c.to_dict()); c2.method['pc_order'] = 1
+    assert memo_status(c2, 'call_method').startswith('이전 조건')          # 동시 행사 우선순위도 콜 방법 판단에 쓰인다
+    c3 = Case.from_dict(c.to_dict()); c3.market['S0'] = 25000.
+    assert memo_status(c3, 'bdt').startswith('이전 조건')                  # BDT 검토는 주가·금리·변동성을 본다
+    assert memo_status(c3, 'call_method') == '현재 조건의 기록'
+    assert L.split_call_separate(L.Terms(**{k: v for k, v in c.effective().items() if k in L.Terms.__dataclass_fields__}))
+    assert memo_status(c3, 'split_call').startswith('이전 조건')           # 자동 출발 금액 = 100 + 별개 콜 가치
+    c4 = Case.from_dict(c.to_dict()); c4.method['split_base_in'] = 101.; c4.method['split_base_why'] = '가상 배분액'
+    c4.memo_context['split_call'] = memo_key(c4, 'split_call'); c4.market['S0'] = 25000.
+    assert memo_status(c4, 'split_call') == '현재 조건의 기록'             # 출발 금액을 직접 넣으면 시장자료와 무관
 
 
 def test_missing_year_blocker_says_where_to_fix_and_assumption_lifts_it():

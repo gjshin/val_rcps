@@ -17,20 +17,28 @@ KINDS = {'hold': '계속 보유', 'conv': '전환', 'put': '상환청구', 'call
 _SPLIT = ['conv_class', 'p_sep', 'k_sep', 'emb_approach', 'fvpl_whole', 'split_tol', 'split_base_in',
           'p_lost_int', 'k_third', 'k_transfer', 'p_s', 'p_e', 'p_f', 'p_mode', 'p_rate', 'p_yield', 'p_cmp',
           'k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp', 'cpn', 'ytm', 'mat_mode', 'd_issue', 'd_mat']
+_MARKET = ['S0', 'sig', 'div_y', 'rf_curve', 'cr_curve', 'cr_curve_b', 'rate_mode', 'd_base']
 MEMO_FIELDS = {
-    'call_method': ['k_method', 'k_split', 'k_w', 'k_lock', 'k_hold', 'k_conv_resp', 'k_third', 'issuer_call', 'model'],
+    'call_method': ['k_method', 'k_split', 'k_w', 'k_lock', 'k_lock_put', 'k_lock_w', 'k_hold', 'k_conv_resp',
+                    'k_third', 'k_kind', 'k_transfer', 'issuer_call', 'pc_order', 'model'],
     'conv_resp': ['k_conv_resp', 'cv_s', 'cv_e', 'k_s', 'k_e', 'k_lock', 'k_hold'],
     'priority': ['pc_order', 'p_s', 'p_e', 'k_s', 'k_e'],
     'rcps_equity': ['inst', 'view', 'conv_class', 'issuer_call', 'mat_mode'],
-    'bdt': ['put_bdt', 'bdt_sig', 'bdt_base', 'model', 'conv_class', 'p_s', 'p_e'],
+    # BDT 검토는 주가÷전환가액·보장수익률·금리곡선·변동성 민감도를 보고 판단하므로 시장자료도 본다.
+    'bdt': ['put_bdt', 'bdt_sig', 'bdt_base', 'model', 'conv_class', 'p_s', 'p_e', 'K0', 'ytm', 'p_yield'] + _MARKET,
     'split_put': _SPLIT, 'split_call': _SPLIT, 'split_conv': _SPLIT,
     'day1_mode': ['d1_pl', 'view', 'd_issue', 'd_base', 'S0', 'sig', 'rf_curve', 'cr_curve'],
 }
 _DAY1 = ['view', 'd_issue', 'd_base', 'S0', 'sig', 'rf_curve', 'cr_curve', 'base_shares', 'dil_shares']
 
 
-def memo_fields(topic):
+def memo_fields(topic, values=None):
     """그 메모의 판단에 쓰인 입력 항목. 모르는 주제는 계약 조항 전체(시장자료 제외)를 본다."""
+    if topic in ('split_put', 'split_call', 'split_conv') and values is not None:
+        # 분리 판단의 출발 금액을 자동값(100 + 별개 콜 가치)으로 두면 그 콜 가치가 시장자료로 바뀐다.
+        auto_with_call = float(values.get('split_base_in', -1) or -1) <= 0 and L.split_call_separate(L.Terms(**{
+            k: v for k, v in values.items() if k in L.Terms.__dataclass_fields__}))
+        return _SPLIT + ['k_kind', 'k_w', 'k_split', 'k_method', 'model'] + (_MARKET if auto_with_call else [])
     if topic in MEMO_FIELDS:
         return MEMO_FIELDS[topic]
     if topic.startswith('day1'):
@@ -46,7 +54,7 @@ def memo_fields(topic):
 def memo_key(case, topic):
     """Conservative dependency signature; metadata and other memos do not reprice."""
     values = {**asdict(L.Terms()), **case.effective()}
-    fields = memo_fields(topic)
+    fields = memo_fields(topic, values)
     if fields is None:
         from .case import section_for
         fields = sorted(k for k in values if section_for(k) == 'contract')
@@ -54,15 +62,22 @@ def memo_key(case, topic):
     return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 
+_V21_GROUPS = {
+    'call_method': ['k_method', 'k_w', 'k_lock', 'k_hold', 'k_conv_resp', 'issuer_call', 'model', 'd_base'],
+    'conv_resp': ['k_conv_resp', 'cv_s', 'cv_e', 'k_s', 'k_e', 'k_lock', 'k_hold', 'd_base'],
+    'priority': ['pc_order', 'p_s', 'p_e', 'k_s', 'k_e', 'd_base'],
+    'rcps_equity': ['inst', 'view', 'conv_class', 'issuer_call', 'mat_mode'],
+}
+
+
 def _memo_key_v21(case, topic):
     """2026.10.06 판(v2.1~2.2)이 저장한 식별값 — 그 판에서 저장한 메모를 공연히 «재확인 필요» 로 만들지 않는다."""
     values = {**asdict(L.Terms()), **case.effective()}
-    groups = {
-        'call_method': ['k_method', 'k_w', 'k_lock', 'k_hold', 'k_conv_resp', 'issuer_call', 'model', 'd_base'],
-        'conv_resp': ['k_conv_resp', 'cv_s', 'cv_e', 'k_s', 'k_e', 'k_lock', 'k_hold', 'd_base'],
-        'priority': ['pc_order', 'p_s', 'p_e', 'k_s', 'k_e', 'd_base'],
-        'rcps_equity': ['inst', 'view', 'conv_class', 'issuer_call', 'mat_mode'],
-    }
+    groups = _V21_GROUPS
+    # 이전 판이 보지 않던 항목을 지금 보면, 그 항목이 바뀌었는지 이전 식별값으로는 알 수 없다 — 다시 확인하게 한다.
+    new = memo_fields(topic, values)
+    if topic in groups and (new is None or not set(new) <= set(groups[topic])):
+        return None
     try:
         inputs = {k: values[k] for k in groups.get(topic, sorted(values))}
         return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
