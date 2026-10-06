@@ -153,3 +153,20 @@ def test_case_file_name_has_case_and_date():
     from v2_workspace import case_filename
     c = case(); c.name = '가상/회차:1'
     assert case_filename(c) == '가상_회차_1_2026-01-01_평가입력.json'
+
+
+def test_topic_and_split_memos_see_schedules_and_profit_table():
+    c = case(dp_rows=[{'fy': 2027, 'amt': 1e9}])
+    for t in ('redemption_constraint', 'split_put'):
+        c.memos[t] = {'decision': '앱 판정에 동의', 'reason': '근거'}; c.memo_context[t] = memo_key(c, t)
+    c2 = Case.from_dict(c.to_dict()); c2.market['dp_rows'] = [{'fy': 2027, 'amt': 5e8}]
+    assert memo_status(c2, 'redemption_constraint').startswith('이전 조건')   # 배당가능이익 표는 상환제약 판단의 입력
+    c3 = Case.from_dict(c.to_dict()); c3.contract['p_sched'] = '2027-01-01 104'
+    assert memo_status(c3, 'split_put').startswith('이전 조건')               # 직접 적은 행사금액 일정표
+    c4 = Case.from_dict(c.to_dict()); c4.market['S0'] = 30000.
+    assert all(memo_status(c4, t) == '현재 조건의 기록' for t in c.memos)
+
+
+def test_sha_call_quantity_stays_locked():
+    from valuation.workpaper_v2 import EXCEL_INPUTS
+    assert '콜 대상 주식수' not in EXCEL_INPUTS and '풋 가격 가산율 (연)' in EXCEL_INPUTS

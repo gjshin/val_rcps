@@ -16,7 +16,10 @@ KINDS = {'hold': '계속 보유', 'conv': '전환', 'put': '상환청구', 'call
 # «재확인 필요» 가 된다. 최초 인식 원인 점검만 시장자료를 본다.
 _SPLIT = ['conv_class', 'p_sep', 'k_sep', 'emb_approach', 'fvpl_whole', 'split_tol', 'split_base_in',
           'p_lost_int', 'k_third', 'k_transfer', 'p_s', 'p_e', 'p_f', 'p_mode', 'p_rate', 'p_yield', 'p_cmp',
-          'k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp', 'cpn', 'ytm', 'mat_mode', 'd_issue', 'd_mat']
+          'k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp', 'cpn', 'ytm', 'mat_mode', 'd_issue', 'd_mat',
+          # 행사일·행사금액을 직접 적은 일정표와 금액 산식의 공제·가산 — split_test 가 exercise_amounts 로 읽는다
+          'p_sched', 'k_sched', 'p_less_cpn', 'p_cpn_add', 'k_less_cpn', 'k_cpn_add', 'm_less_cpn', 'mat_amt',
+          'ytm_cmp', 'ipay', 'issue_px', 'par', 'div_basis', 'div_mode', 'acc_basis']
 _MARKET = ['S0', 'sig', 'div_y', 'rf_curve', 'cr_curve', 'cr_curve_b', 'rate_mode', 'd_base']
 MEMO_FIELDS = {
     'call_method': ['k_method', 'k_split', 'k_w', 'k_lock', 'k_lock_put', 'k_lock_w', 'k_hold', 'k_conv_resp',
@@ -29,6 +32,9 @@ MEMO_FIELDS = {
     'split_put': _SPLIT, 'split_call': _SPLIT, 'split_conv': _SPLIT,
     'day1_mode': ['d1_pl', 'view', 'd_issue', 'd_base', 'S0', 'sig', 'rf_curve', 'cr_curve'],
 }
+# 판단과 무관한 기록 칸 — 주가 조회 출처·종목코드·원주가 등
+_RECORDS = {'s0_src', 's0_date', 's0_raw', 's0_adj', 's0_splits', 'ticker', 'cr_src', 'tranche', 'unmod_note',
+            'scen_md5', 'rvol_how', 'split_base_why', 'd1_reason'}
 _DAY1 = ['view', 'd_issue', 'd_base', 'S0', 'sig', 'rf_curve', 'cr_curve', 'base_shares', 'dil_shares']
 
 
@@ -43,12 +49,11 @@ def memo_fields(topic, values=None):
         return MEMO_FIELDS[topic]
     if topic.startswith('day1'):
         return _DAY1
-    from .evidence import TOPICS
-    for tp in TOPICS:
-        if tp['id'] == topic:
-            keep = tp['id'] == 'fair_value_inputs'          # 시장자료 자체를 판단하는 주제만 시장자료를 본다
-            return [f for f in tp.get('fields', []) if keep or f not in ('S0', 'sig', 'rf_curve', 'cr_curve', 'd_base')] or ['inst']
-    return None
+    if topic == 'fair_value_inputs':
+        return None                                 # 시장자료 자체를 판단하는 주제 — 모든 입력을 본다
+    # 그 밖의 검토 주제(상환제약·누적배당·리픽싱·희석 등)는 판단에 쓰인 입력을 하나하나 고르기보다 시장자료와
+    # 출처 기록을 뺀 모든 입력을 본다 — 배당가능이익 표처럼 주제 카드에 적히지 않은 입력도 놓치지 않는다.
+    return ['__all_but_market__']
 
 
 def memo_key(case, topic):
@@ -56,8 +61,9 @@ def memo_key(case, topic):
     values = {**asdict(L.Terms()), **case.effective()}
     fields = memo_fields(topic, values)
     if fields is None:
-        from .case import section_for
-        fields = sorted(k for k in values if section_for(k) == 'contract')
+        fields = sorted(values)
+    elif fields == ['__all_but_market__']:
+        fields = sorted(k for k in values if k not in _MARKET and k not in _RECORDS)
     inputs = {k: values.get(k) for k in fields}
     return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
