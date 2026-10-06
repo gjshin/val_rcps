@@ -5,6 +5,7 @@ import json
 import math
 from dataclasses import asdict
 import streamlit as st
+from ui_format import dataframe
 from valuation import legacy
 from valuation.case import Case, inspect_case
 from valuation.bridge import apply_changes
@@ -69,8 +70,8 @@ def main(case):
                 st.error(str(exc))
         result = st.session_state.get('_backsolve_result')
         if result and result[0] == key:
-            st.metric('역산 주당가치(원)', f'{result[1]:,.6f}')
-            st.caption(f'목표 대사값 {result[2]:.8f} / 반복 {result[3]}회')
+            st.metric('역산 주당가치(원)', f'{result[1]:,.2f}')
+            st.caption(f'목표 대사값 {result[2]:.2f} / 반복 {result[3]}회')
             if first:
                 st.caption('발행일 평가입니다. 적용하면 보정 기록(보정일·보정 전후 주가·당시 주당가치·근거)을 평가파일과 조서 「보정기록」에 남깁니다.')
             if st.button('역산 주당가치 적용', disabled=not reason.strip() or (first and equity_ps <= 0)):
@@ -79,14 +80,14 @@ def main(case):
                 apply(case, {'S0': result[1], 'bs_target': target, 'bs_net': net, 's0_src': '거래가격 역산', 's0_date': '', 's0_raw': -1., 's0_adj': -1., 's0_splits': ''}, {'S0': f'목표 {target}, 콜 차감 여부 {net}. {reason}'}, cal)
     elif tool == '보정 이어 적용':
         cal = case.calibration
-        st.caption(f"보정 기록 — {cal['date']} · 보정 주가 {cal['after']:,.4f} · 당시 지분평가 주당가치 {cal['equity_ps']:,.4f} · {cal['reason']}")
+        st.caption(f"보정 기록 — {cal['date']} · 보정 주가 {cal['after']:,.2f} · 당시 지분평가 주당가치 {cal['equity_ps']:,.2f} · {cal['reason']}")
         now = st.number_input('이번 평가기준일 지분평가 주당가치(원)', min_value=0., value=float(cal['equity_ps']))
         new_s0 = cal['after'] * now / cal['equity_ps'] if cal['equity_ps'] > 0 else 0.
-        st.metric('이어 적용 주가(원)', f'{new_s0:,.4f}')
-        st.caption(f"새 주가 = 보정 주가 {cal['after']:,.4f} × (이번 {now:,.4f} ÷ 보정일 {cal['equity_ps']:,.4f}). "
+        st.metric('이어 적용 주가(원)', f'{new_s0:,.2f}')
+        st.caption(f"새 주가 = 보정 주가 {cal['after']:,.2f} × (이번 {now:,.2f} ÷ 보정일 {cal['equity_ps']:,.2f}). "
                    '전기말 장부금액과의 차이는 후속 분개에서 평가손익으로 나옵니다.')
         if st.button('이어 적용', disabled=now <= 0):
-            src = f"보정 이어 적용 — {cal['date']} 보정 주가 {cal['after']:,.4f} × {now:,.4f}/{cal['equity_ps']:,.4f}"
+            src = f"보정 이어 적용 — {cal['date']} 보정 주가 {cal['after']:,.2f} × {now:,.2f}/{cal['equity_ps']:,.2f}"
             apply(case, {'S0': new_s0, 's0_src': src, 's0_date': '', 's0_raw': -1., 's0_adj': -1., 's0_splits': ''}, {'S0': src})
     elif tool == '금리곡선 불러오기':
         source = st.radio('금리자료 형식', ['KIS-Net 파일', '표 붙여넣기'], horizontal=True)
@@ -136,7 +137,7 @@ def main(case):
                 origins[key] = st.text_input(title + ' 금리 출처·자료 기준일')
         for key, points in changes.items():
             st.write({'rf_curve': '무위험 금리곡선', 'cr_curve': '위험 금리곡선', 'cr_curve_b': '위험 금리곡선 B'}[key])
-            st.dataframe([{'만기(년)': x, '연이율(%)': y * 100} for x,y in points], hide_index=True)
+            dataframe([{'만기(년)': x, '연이율(%)': y * 100} for x,y in points], hide_index=True)
         if st.button('금리곡선 적용', disabled=any(len(changes.get(k, [])) < 2 for k in ['rf_curve','cr_curve'])):
             draft = apply_changes(case, changes, validate=False)
             curve_errors = [i for i in inspect_case(draft) if i.severity == 'error' and i.field in changes]

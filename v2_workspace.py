@@ -12,21 +12,23 @@ from valuation import legacy as L
 from valuation.case import Case, inspect_case, compare_cases
 from valuation.service import calculate, refresh_run, calculation_key, export_bundle, AMOUNT_LABELS
 from valuation.presentation import label, issue_rows
-from valuation.explain import VERSION, node_trace, rate_rows, event_rows, export_blockers, safe_filename
+from valuation.explain import VERSION, event_rows, export_blockers, safe_filename
+from ui_format import dataframe
 
 STAGES=['입력·시장자료','평가·분석','계산내역','조서 출력']
 STAGE_NAMES={'입력·시장자료':'01  입력','평가·분석':'02  평가결과','계산내역':'03  계산내역','조서 출력':'04  조서 출력'}
 CSS='''<style>
 .stApp{background:#F4F6FA;color:#182238}
+[data-testid="stHeader"]{background:transparent;pointer-events:none}
+[data-testid="stHeader"] button{pointer-events:auto}
 [data-testid="stAppDeployButton"]{display:none}
 [data-testid="stMainBlockContainer"]{max-width:1440px;padding:4.2rem 2.2rem 4rem}
-[data-testid="stSidebar"]{background:#182238;min-width:232px;max-width:270px}
-[data-testid="stSidebar"] p,[data-testid="stSidebar"] label,[data-testid="stSidebar"] h3{color:#e2e6f2}
-[data-testid="stSidebar"] [data-testid="stFileUploader"] p{color:#182238}
-[data-testid="stSidebar"] button p{color:#182238}
-[data-testid="stSidebar"] [data-testid="stExpander"] p,[data-testid="stSidebar"] [data-testid="stExpander"] label{color:#182238}
+[data-testid="stSidebar"]{background:#f9faff;border-right:1px solid #e0e4ee;min-width:232px;max-width:270px}
+[data-testid="stSidebar"] p,[data-testid="stSidebar"] label,[data-testid="stSidebar"] h3{color:#202939}
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p{color:#58657b}
 [data-testid="stSidebar"] [role="radiogroup"] label{padding:8px 10px;border-radius:8px}
-[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){background:#39315f}
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){background:#ebe7ff;box-shadow:inset 3px 0 #6651d6}
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p{color:#382777;font-weight:650}
 h1{font-size:1.85rem!important;letter-spacing:-.04em}h2{font-size:1.4rem!important}h3{font-size:1.12rem!important}
 [data-testid="stMetric"]{background:white;padding:20px;border:1px solid #e0e5ef;border-radius:12px}
 [data-testid="stMetricValue"]{font-variant-numeric:tabular-nums;font-size:1.8rem}
@@ -65,7 +67,7 @@ def sample_case():
 def sidebar():
     with st.sidebar:
         st.markdown('### VALUATION\nRCPS WORKSPACE')
-        st.caption('새 버전 · 비공개 검토용')
+        st.caption('평가 · 계산근거 · 조서')
         case=st.session_state.get('case')
         if case:
             st.markdown('**현재 평가**')
@@ -134,83 +136,50 @@ def component_evidence(run):
     a=s['amounts_100'];factor=t.face_total/100
     st.subheader('총액과 구성요소가 연결되는 방법')
     st.caption('동일 실행의 원금 100 기준 값에서 환산합니다. 각 권리를 순차적으로 추가한 차액이며 회계상 인식액과 구별합니다.')
-    formula_box(f"주계약 {a['host_reference']:,.10f}\n+ 상환권 증분 {a['put_increment']:,.10f}\n+ 전환권 증분 {a['conversion_increment']:,.10f}\n− 콜 영향 {a['call_deduction']:,.10f}\n= 순포지션 {a['net']:,.10f}")
-    formula_box(f"총액 = {a['net']:,.10f} × {t.face_total:,.0f} ÷ 100\n= {s['amounts_total']['net']:,.4f} 원")
+    formula_box(f"주계약 {a['host_reference']:,.2f}\n+ 상환권 증분 {a['put_increment']:,.2f}\n+ 전환권 증분 {a['conversion_increment']:,.2f}\n− 콜 영향 {a['call_deduction']:,.2f}\n= 순포지션 {a['net']:,.2f}")
+    formula_box(f"총액 = {a['net']:,.2f} × {t.face_total:,.2f} ÷ 100\n= {s['amounts_total']['net']:,.2f} 원")
     if s['amounts_per_share']:
-        st.write(f"주당금액 = 원금 100 기준 × 1주당 발행가 {t.issue_px:,.4f} ÷ 100 = {s['amounts_per_share']['net']:,.6f}원")
+        st.write(f"주당금액 = 원금 100 기준 × 1주당 발행가 {t.issue_px:,.2f} ÷ 100 = {s['amounts_per_share']['net']:,.2f}원")
     st.caption('표시값은 반올림됩니다. 합계는 반올림 전 원값으로 계산합니다. 음의 증분도 임의로 0으로 바꾸지 않습니다.')
-    st.button('본체의 첫 계산 노드 보기',on_click=goto,args=('계산내역','노드 계산'),key='root_jump')
+    st.button('전체 노드 계산표 보기',on_click=goto,args=('계산내역','노드 계산표'),key='root_jump')
     st.caption('조서: 기본 값은 평가요약, 상세 수식은 결과 및 계산대사. 생성한 파일의 실제 연결 위치는 조서 출력 후 표시됩니다.')
 
 
-def node_panel(run):
-    if L.is_sha(run.terms):W.sha_result_panel(run);return
-    t=run.terms
-    st.caption('콜 반영 전 본체의 실제 노드를 조회합니다. 콜 영향은 구성요소에서 별도로 차감합니다. 단위: 원금 100.')
-    if st.session_state.get('trace_i',0)>t.n:st.session_state['trace_i']=t.n
-    i=int(st.number_input('계산 시점(스텝)',min_value=0,max_value=t.n,value=0,step=1,key='trace_i'))
-    old=min(i,int(st.session_state.get('trace_j',0)))
-    if st.session_state.get('trace_j',0)>i:st.session_state['trace_j']=i
-    j=int(st.number_input('상승 횟수(노드)',min_value=0,max_value=i,value=old,step=1,key='trace_j'))
-    try:tr=node_trace(run,i,j)
-    except ValueError as exc:st.info(str(exc));return
-    st.subheader(f'{t.model} 노드 ({i}, {j}) · {tr["date"]}')
-    c1,c2,c3=st.columns(3)
-    c1.metric('주가(원)',f'{tr["stock"]:,.4f}')
-    c2.metric('선택 가치(원금100)',f'{tr["value"]:,.6f}')
-    c3.metric('선택된 처리',tr['kind'])
-    if tr['terminal']:
-        st.info('만기 또는 강제전환으로 종료한 노드입니다. 다음 시점의 보유 계산은 없습니다.')
-    else:
-        q=tr['q'];a,b=tr['up'],tr['down'];delta=tr['delta']
-        st.write('다음 시점의 상승·하락 가치를 확률로 가중하고, 이 시점까지 할인합니다.')
-        if t.model=='TF':
-            formula_box(f"주식결제분 = ({a['E']:,.8f} × {q:.8f} + {b['E']:,.8f} × {1-q:.8f})\n× exp(−{tr['rf']:.8f} × {delta:.8f}) = {tr['equity_hold']:,.8f}")
-            formula_box(f"현금결제분 = ({a['B']:,.8f} × {q:.8f} + {b['B']:,.8f} × {1-q:.8f})\n× exp(−{tr['cr']:.8f} × {delta:.8f}) + 당기 이자·배당 {tr['coupon']:,.8f}\n= {tr['debt_hold']:,.8f}")
-        else:
-            ya,yb=tr['gs_rates']
-            formula_box(f"상승 할인율 = 전환확률 {a['P']:.8f} × Rf + (1 − 전환확률) × Kd = {ya:.8f}\n하락 할인율 = {yb:.8f}\n보유가치 = {q:.8f} × {a['V']:,.8f} × exp(−{ya:.8f} × {delta:.8f})\n+ {1-q:.8f} × {b['V']:,.8f} × exp(−{yb:.8f} × {delta:.8f}) + {tr['coupon']:,.8f}")
-        st.success(f"계속보유가치 {tr['hold']:,.8f} · 엔진 값과의 대사차이 {tr['reconciliation']:.3g}")
-        dep=[]
-        for direction,lab in [('up','상승'),('down','하락')]:
-            child=tr[direction];dep.append({'다음 노드':str(tr[direction+'_key']),'방향':lab,'주식결제분':child['E'],'현금결제분':child['B'],'GS 가치':child['V'],'전환확률':child['P']})
-        st.dataframe(pd.DataFrame(dep),hide_index=True,use_container_width=True)
-    o=tr['node'];cand=[]
-    for k,lab in [('cv','전환'),('pv','상환청구'),('kv','본체 내 콜')]:
-        value=o.get(k)
-        enabled=tr['eligible'][k] and value is not None and math_isfinite(value)
-        cand.append({'후보':lab,'값(원금100)':value if enabled else None,'상태':'후보 가치' if enabled else '행사 불가 또는 별도 평가'})
-    st.dataframe(pd.DataFrame(cand),hide_index=True,use_container_width=True)
-    st.caption('풋·콜 동시 행사 우선권: '+('발행자 콜 우선' if t.pc_order else '투자자 상환청구 우선')+' · 동률은 계약의 행사 순서와 모형 허용오차를 적용합니다. TF의 주식·현금결제분은 옵션별 증분과 다른 구분입니다.')
-    with st.expander('원값과 적용 입력'):
-        st.json({k:v for k,v in tr.items() if k not in ('node','up','down')})
-    links=st.session_state.get('workbook_locations',{})
-    if links and st.session_state.get('locations_run')==run.summary['run_id']:
-        cols={k:v for k,v in links.items() if k.startswith(('05 ','06 ','07 ','08 ','14 '))}
-        from openpyxl.utils import get_column_letter
-        st.caption('생성된 상세 조서의 노드 위치: '+ ' · '.join(f'{name}!{get_column_letter(i+3)}{20+i-j}' for name in cols))
-    else:st.caption('상세 조서를 생성하면 해당 파일의 시트명과 노드 위치가 연결됩니다.')
-
-
-def math_isfinite(value):
-    import math
-    return isinstance(value,(float,int)) and math.isfinite(value)
-
-
 def calculation_panel(run):
-    topic=st.radio('계산내역 선택',['구성요소','노드 계산','금리·할인계수','행사·지급일정'],horizontal=True,key='_calc_topic')
+    topics=['노드 계산표','노드 스케줄','부트스트래핑','구성요소','행사·지급일정']
+    old=st.session_state.get('_calc_topic')
+    if old not in topics:st.session_state['_calc_topic']='노드 스케줄' if old=='금리·할인계수' else topics[0]
+    topic=st.radio('계산내역 선택',topics,horizontal=True,key='_calc_topic')
     if topic=='구성요소':component_evidence(run)
-    elif topic=='노드 계산':node_panel(run)
-    elif topic=='금리·할인계수':
-        st.subheader('실제 적용 금리와 할인계수')
-        st.caption(f"입력 금리: {'만기수익률 → 부트스트래핑' if run.terms.y_type=='par' else '현물금리 → 연속복리 환산'} · Rf 연 {run.terms.cmp_rf}회 / Kd 연 {run.terms.cmp_cr}회 복리")
-        st.dataframe(pd.DataFrame(rate_rows(run)),hide_index=True,use_container_width=True,column_config={c:st.column_config.NumberColumn(format='%.8f') for c in ('무위험 현물금리(연속)','위험 현물금리(연속)','무위험 할인계수','위험 할인계수')})
-        formula_box('할인계수 DF(t) = exp(−연속복리 현물금리(t) × t)\n구간 선도금리 = [현물금리(t₁) × t₁ − 현물금리(t₀) × t₀] ÷ (t₁ − t₀)')
-        for k in ('rf_curve','cr_curve'):st.caption(f'{label(k)} 출처: {run.case.sources.get(k,"미기록")}')
-        st.caption('조서: 금리 적용내역 / 상세 조서 IR. 금리 단위는 소수이며 0.03은 연 3%입니다.')
+    elif topic in topics[:3]:
+        from valuation.calculation_view import node_values, schedule_values, bootstrap_values, worksheet_html
+        import streamlit.components.v1 as components
+        if L.is_sha(run.terms) and topic!='부트스트래핑':
+            W.sha_result_panel(run);return
+        if topic=='노드 계산표':
+            st.caption('전체 격자를 표로 확인하고 셀을 눌러 수식·참조값을 여세요. 본체의 가치이며 별도 콜 차감액은 구성요소에서 확인합니다.')
+            # Preserve older sessions safely when a new valuation has fewer steps.
+            for key in ('trace_i','trace_j'):
+                if key in st.session_state:st.session_state[key]=min(st.session_state[key],run.terms.n)
+            start,end=0,run.terms.n
+            if run.terms.n>250:
+                spans=list(range(0,run.terms.n+1,32))
+                start=st.selectbox('계산표 시점 구간',spans,format_func=lambda i:f'{i}–{min(i+31,run.terms.n)} 시점',key='tree_span_'+run.summary['run_id'])
+                end=min(start+31,run.terms.n)
+                st.caption('큰 격자는 32시점씩 표시합니다. 구간을 바꾸면 만기까지 모든 노드를 확인할 수 있습니다.')
+            payload=node_values(run,start,end)
+        elif topic=='노드 스케줄':
+            payload=schedule_values(run)
+        else:
+            payload=bootstrap_values(run)
+            for k in ('rf_curve','cr_curve'):st.caption(f'{label(k)} 출처: {run.case.sources.get(k,"미기록")}')
+        if hasattr(st,'iframe'):
+            st.iframe(worksheet_html(payload),height=730)
+        else:
+            components.html(worksheet_html(payload),height=730,scrolling=True)
     else:
         st.subheader('행사금액과 지급가치')
-        st.dataframe(pd.DataFrame(event_rows(run)),hide_index=True,use_container_width=True)
+        dataframe(pd.DataFrame(event_rows(run)),hide_index=True,use_container_width=True)
         W.dp_panel(run)
         st.caption('격자일과 계약상 날짜는 다를 수 있습니다. 상세 조서의 계약일 목록·행사일 대조표에서 배정 규칙을 함께 확인하십시오.')
 
@@ -221,29 +190,29 @@ def result_panel(run,case,current,pending):
     unit=st.radio('표시 단위',units,horizontal=True,key='result_unit')
     vals=s['amounts_total'] if unit==units[0] else s['amounts_per_share'] if unit=='주당 · 원' else s['amounts_100']
     key='put' if L.is_sha(t) else 'net'
-    amount=f'{vals[key]:,.0f}' if unit=='총액 · 원' else f'{vals[key]:,.4f}'
+    amount=f'{vals[key]:,.2f}'
     st.markdown(f'<div class="v2-hero"><div class="eyebrow">{AMOUNT_LABELS[key]}'+(' · 콜 차감 후' if key=='net' else '')+f'</div><div class="amount">{amount} <span class="unit">{unit}</span></div></div>',unsafe_allow_html=True)
-    st.button('계산근거 보기 →',on_click=goto,args=('계산내역','구성요소'),type='primary')
+    st.button('계산표·수식 보기 →',on_click=goto,args=('계산내역','노드 계산표'),type='primary')
     c1,c2,c3=st.columns(3)
-    precision=0 if unit=='총액 · 원' else 4
+    precision=2
     c1.metric('본체 · 콜 차감 전' if key=='net' else '콜 가치',f"{vals.get('whole_before_call',vals.get('call',0)):,.{precision}f}")
     c2.metric('콜 차감' if key=='net' else '주당 기준가격(원)',f"{vals.get('call_deduction',t.K0):,.{precision}f}")
-    c3.metric('계산 구간',f'{t.n:,}');c3.caption(f"평균 {s['grid']['average_days']:.3f}일")
+    c3.metric('계산 구간',f'{t.n:,}');c3.caption(f"평균 {s['grid']['average_days']:.2f}일")
     if L.is_sha(t):W.sha_result_panel(run)
     table=[{'구성요소':AMOUNT_LABELS[k],'금액':vals[k]} for k in ('host_reference','put_increment','conversion_increment','call_deduction','net') if k in vals]
     if table:
         st.subheader('평가금액 구성')
-        st.dataframe(pd.DataFrame(table),hide_index=True,use_container_width=True,column_config={'금액':st.column_config.NumberColumn(format='%,.4f')})
+        dataframe(pd.DataFrame(table),hide_index=True,use_container_width=True,column_config={'금액':st.column_config.NumberColumn(format='%,.2f')})
         st.caption('권리를 순차적으로 추가한 가치 차이입니다. 회계상 인식액은 회계 참고에서 확인합니다.')
     notices=[i for i in run.issues if i.code not in {'source','engine_defaults','legacy_defaults','judgement_scope','market_date','coverage_review'}]
     blocked=export_blockers(run)
     for message in blocked:st.warning(message)
     with st.expander(f'확인할 사항 {len(notices)}건 · 계산 점검',expanded=bool(blocked)):
-        if notices:st.dataframe(pd.DataFrame(issue_rows(notices)),hide_index=True,use_container_width=True)
+        if notices:dataframe(pd.DataFrame(issue_rows(notices)),hide_index=True,use_container_width=True)
         else:st.write('이 실행에서 표시할 수치 경고가 없습니다.')
-        st.dataframe(pd.DataFrame(s['checks']),hide_index=True,use_container_width=True)
+        dataframe(pd.DataFrame(s['checks']),hide_index=True,use_container_width=True)
     with st.expander('행사·지급일정'):
-        st.dataframe(pd.DataFrame(event_rows(run)),hide_index=True,use_container_width=True)
+        dataframe(pd.DataFrame(event_rows(run)),hide_index=True,use_container_width=True)
         W.dp_panel(run)
     with st.expander('민감도 · 기준 평가 유지'):
         variable=st.selectbox('민감도 변수',['S0','sig','rf_curve','cr_curve'],format_func=label)
@@ -256,8 +225,8 @@ def result_panel(run,case,current,pending):
             except (ValueError,ArithmeticError) as exc:st.error(str(exc))
         a=st.session_state.get('analysis')
         if a and a['calculation_key']==s['calculation_key'] and current:
-            st.dataframe(pd.DataFrame(a['rows']).rename(columns=AMOUNT_LABELS),hide_index=True,use_container_width=True)
-            st.caption(f"계산된 변수 {label(a['variable'])} · 변화폭 ±{a['change']:g}. 기준 평가와 입력은 유지됩니다.")
+            dataframe(pd.DataFrame(a['rows']).rename(columns=AMOUNT_LABELS),hide_index=True,use_container_width=True)
+            st.caption(f"계산된 변수 {label(a['variable'])} · 변화폭 ±{a['change']:.2f}. 기준 평가와 입력은 유지됩니다.")
     with st.expander('회계 참고 · 선택한 분류 가정'):
         st.caption('평가금액의 분해와 회계상 인식은 구별합니다. K-IFRS 참고표이며 일반기업회계기준·자기신용 OCI 등 미지원 처리는 별도 검토합니다.')
         W.day1_panel(run,case)
@@ -317,7 +286,6 @@ def export_panel(run,case,current,pending,previous):
 
 
 def main():
-    st.markdown(CSS,unsafe_allow_html=True)
     if st.session_state.get('_workflow_stage') not in STAGES:st.session_state['_workflow_stage']=STAGES[0]
     previous=sidebar()
     case=st.session_state.get('case')
@@ -325,7 +293,7 @@ def main():
         st.title('평가에서 근거 확인까지, 한 작업 공간에서')
         st.write('RCPS · CB · BW · 주주간계약의 입력, 평가, 계산 추적과 Excel 조서를 연결합니다.')
         st.info('왼쪽에서 기존 평가파일을 열거나 합성사례로 새 화면을 체험하세요.')
-        st.caption('V2 검토 버전 · 기존 운영 앱과 별도입니다. 동료 사용 시험에는 합성·익명 사례를 사용합니다.')
+        st.caption('동료 사용 시험에는 합성·익명 사례를 사용하세요. 평가파일을 저장하면 다음에 이어서 작업할 수 있습니다.')
         return
     issues=inspect_case(case);errors=[x for x in issues if x.severity=='error']
     run=st.session_state.get('run');pending=st.session_state.get('_input_pending',False)
@@ -350,7 +318,7 @@ def main():
         return
     if stage=='평가·분석':
         st.header('평가결과')
-        if errors:st.dataframe(pd.DataFrame(issue_rows(errors)),hide_index=True,use_container_width=True)
+        if errors:dataframe(pd.DataFrame(issue_rows(errors)),hide_index=True,use_container_width=True)
         if pending:st.warning('입력화면에 반영하지 못한 값이 있습니다. 해당 항목을 확인해 주세요.')
         if st.button('현재 입력으로 평가',type='primary',disabled=bool(errors) or pending):
             try:
@@ -367,7 +335,7 @@ def main():
         else:st.info('현재 입력으로 평가하면 결과와 계산근거가 표시됩니다.')
         if previous:
             with st.expander('전기 대비 입력 변경'):
-                st.dataframe(pd.DataFrame(compare_cases(previous,case)),hide_index=True,use_container_width=True)
+                dataframe(pd.DataFrame(compare_cases(previous,case)),hide_index=True,use_container_width=True)
     elif stage=='계산내역':
         st.header('계산내역')
         if run:calculation_panel(run)

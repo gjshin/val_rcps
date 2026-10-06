@@ -9,6 +9,7 @@ from dataclasses import asdict
 from typing import get_type_hints
 import pandas as pd
 import streamlit as st
+from ui_format import dataframe
 from valuation.case import Case, SCHEMA, RIGHT_KINDS, REQUIRED, RCPS_REQUIRED, section_for, import_legacy, inspect_case, compare_cases
 from valuation.legacy import (Terms, months_to_date, issuer_day1_cases, inst_text, CALL_HOLDERS, call_holder,
                               call_holder_fields)
@@ -117,7 +118,7 @@ def field(key, edited, case, prefix='input'):
         # 의무보유 물량 비율의 음수는 «콜 대상 비율과 같음» 이다 — 칸을 비워 보여 준다.
         _same = key == 'k_lock_w' and value is not None and value < 0
         displayed = float(value * scale) if value is not None and not _same else None
-        number = st.number_input(title, value=displayed, format='%.4f' if key in PERCENT else '%.2f', help='표시 자릿수와 무관하게 수정하지 않은 원값의 정밀도는 유지됩니다.', key=widget_key)
+        number = st.number_input(title, value=displayed, format='%.2f', help='표시 자릿수와 무관하게 수정하지 않은 원값의 정밀도는 유지됩니다.', key=widget_key)
         new = value if number == displayed else number / scale if number is not None else None
         if key == 'k_lock_w' and new is None:
             new = -1.0
@@ -470,7 +471,7 @@ def dp_panel(run):
     with st.expander('배당가능이익 반영 — 청구 연도별 상환청구 가치', expanded=False):
         st.caption('평가에 쓴 상환청구 가치는 계약 상환금이 아니라, 우선배당을 먼저 빼고 남은 배당가능이익만큼 해마다 나눠 받는 '
                    '일정의 현재가치입니다. 연도마다 첫 청구일만 보여 줍니다 — 전체는 조서의 «00 배당가능이익 상환» 시트에 있습니다.')
-        st.dataframe(pd.DataFrame(rows).style.format({'계약 상환금 (100 기준)': '{:,.4f}', '실제 지급 현재가치 (100 기준)': '{:,.4f}',
+        dataframe(pd.DataFrame(rows).style.format({'계약 상환금 (100 기준)': '{:,.2f}', '실제 지급 현재가치 (100 기준)': '{:,.2f}',
                                                      '비율': '{:.2%}'}, na_rep='—'), hide_index=True, use_container_width=True)
 
 
@@ -531,7 +532,7 @@ def sha_editor(edited, case, errors):
            '풋 수량(주)': st.column_config.NumberColumn(min_value=0., format='%.0f'),
            '콜 수량(주)': st.column_config.NumberColumn(min_value=0., format='%.0f'),
            '주기(개월)': st.column_config.NumberColumn(min_value=0., format='%.2f', help='정기 행사일 때만 씁니다.'),
-           '가격 가산율(연 %)': st.column_config.NumberColumn(format='%.4f', help='0 이면 고정 행사가격입니다.'),
+           '가격 가산율(연 %)': st.column_config.NumberColumn(format='%.2f', help='0 이면 고정 행사가격입니다.'),
            '평가 대상 상태': st.column_config.SelectboxColumn(options=list(SHA_STATUS.values())),
            '확정된 거래': st.column_config.SelectboxColumn(options=[v for v in SHA_SIDE.values() if v]),
            '조건부 물량 평가 가정': st.column_config.SelectboxColumn(
@@ -585,7 +586,7 @@ def sha_editor(edited, case, errors):
         _qt = pd.DataFrame(qrows)
         _sum = {'회차': '합계', **{c: (_qt[c].sum() if _qt[c].notna().all() else None) for c in _qt.columns if c != '회차'}}
         st.markdown('**물량 나눔** — 같은 주식에 붙어 연계 판단하는 물량과 풋만·콜만 남는 물량 (앱이 나눠 평가한 뒤 더합니다)')
-        st.dataframe(pd.concat([_qt, pd.DataFrame([_sum])], ignore_index=True).style.format(
+        dataframe(pd.concat([_qt, pd.DataFrame([_sum])], ignore_index=True).style.format(
             {c: '{:,.0f}' for c in _qt.columns if c != '회차'}, na_rep='— 같은 주식 물량을 넣으십시오'),
             hide_index=True, use_container_width=True)
     if base > 0:
@@ -644,10 +645,10 @@ def sha_price_helper(edited, rev):
         fy, ey = rec.get('재무제표연도'), rec.get('행사연도')
         pf = dict(rev=rev_, ded=ded, op=op, thr=thr/100, hi=hi, lo=lo_, sh=n_sh, fy=fy, ey=ey, kind=rec.get('실적 구분'))
         px, mult, loss = sha_perf_calc(pf)
-        note = (f"실적 연동 — ({rev_:,.0f} − {ded:,.0f}) × {mult:g}배 ÷ {n_sh:,.0f}주 = {px:,.2f}원 · 영업손실률 {loss:.4%} "
+        note = (f"실적 연동 — ({rev_:,.0f} − {ded:,.0f}) × {mult:g}배 ÷ {n_sh:,.0f}주 = {px:,.2f}원 · 영업손실률 {loss:.2%} "
                 f"{'>' if round(loss, 12) > round(thr/100, 12) else '≤'} {thr:g}% · 행사연도 {ey or '?'} · 실적 {fy or '?'}년 "
                 f"({rec.get('실적 구분') or '구분 미입력'})")
-        out.append({'회차': rec.get('회차'), '행사연도': ey, '실적연도': fy, '영업손실률': f'{loss:.4%}', '적용 배수': mult,
+        out.append({'회차': rec.get('회차'), '행사연도': ey, '실적연도': fy, '영업손실률': f'{loss:.2%}', '적용 배수': mult,
                     '주당 행사가격(원)': px})
         if rec.get('회차'):
             notes[rec['회차']] = (px, note, pf)
@@ -655,7 +656,7 @@ def sha_price_helper(edited, rev):
             st.warning(f'{rec.get("회차") or ey}: 재무제표 연도({fy})가 행사연도({ey})보다 늦지 않습니다 — 계약이 «직전 회계연도» '
                        '를 쓰는지 확인하십시오.')
     if out:
-        st.dataframe(pd.DataFrame(out), hide_index=True)
+        dataframe(pd.DataFrame(out), hide_index=True)
     st.session_state['_sha_price_tbl'] = tbl.to_dict('records')
     if notes and st.button('산식을 회차에 연결하기', key=f'sha_price_apply_{rev}',
                            help='같은 이름의 회차에 산식 입력을 저장합니다 — 주당 기준가격은 산식이 정하고(엑셀 조서에도 '
@@ -673,7 +674,7 @@ def curve_editor(key, edited):
     st.write(label(key))
     table = st.data_editor(initial, num_rows='dynamic', key=f'{key}_{st.session_state.get("revision", 0)}', hide_index=True,
                            column_config={'만기(년)': st.column_config.NumberColumn(min_value=.001, required=True),
-                                          '연이율(%)': st.column_config.NumberColumn(required=True, format='%.6f')})
+                                          '연이율(%)': st.column_config.NumberColumn(required=True, format='%.2f')})
     if table.values.tolist() != initial.values.tolist():
         edited[key] = [[float(x), float(y) / 100] for x, y in table.values.tolist()]
 
@@ -936,7 +937,7 @@ def sha_result_panel(run):
                  **({'같은 주식 물량 (연계 판단)': frame['같은 주식 물량 (연계 판단)'].sum()}
                     if '같은 주식 물량 (연계 판단)' in frame else {})}
         frame = pd.concat([frame, pd.DataFrame([total])], ignore_index=True)
-        st.dataframe(frame.style.format({'주당 기준가격': '{:,.2f}', '풋 수량': '{:,.0f}', '콜 수량': '{:,.0f}',
+        dataframe(frame.style.format({'주당 기준가격': '{:,.2f}', '풋 수량': '{:,.0f}', '콜 수량': '{:,.0f}',
                                          '같은 주식 물량 (연계 판단)': '{:,.0f}',
                                          '풋 1주당': '{:,.2f}', '콜 1주당': '{:,.2f}', '풋 전액': '{:,.0f}',
                                          '콜 전액': '{:,.0f}'}, na_rep=''), hide_index=True, use_container_width=True)
@@ -946,7 +947,7 @@ def sha_result_panel(run):
         _cond = [r for r in rows if r.get('평가 대상 상태') == '추가 조건부']
         if _cond:
             st.markdown('**추가 조건부 물량 — 조건 충족 전·후 차이 (평가금액에는 고른 가정만 들어 있음)**')
-            st.dataframe(pd.DataFrame([{'회차': r['회차'], '반영한 가정': '조건 충족' if r['반영'] else '조건 미충족',
+            dataframe(pd.DataFrame([{'회차': r['회차'], '반영한 가정': '조건 충족' if r['반영'] else '조건 미충족',
                                         '평가금액 풋': r['풋 전액'], '평가금액 콜': r['콜 전액'],
                                         '조건 충족 시 풋': r['조건 충족 시 풋 전액'], '조건 충족 시 콜': r['조건 충족 시 콜 전액'],
                                         '차이 풋': r['조건 충족 시 풋 전액'] - r['풋 전액'],
@@ -966,14 +967,14 @@ def sha_result_panel(run):
                     st.session_state['_sha_perf_sens'] = (_nm, sha_perf_sensitivity(run.terms, _nm))
             _res = st.session_state.get('_sha_perf_sens')
             if _res and _res[0] == _nm:
-                st.dataframe(pd.DataFrame(_res[1], columns=['매출 배율', '손실률 시나리오', '영업손실률', '적용 배수',
+                dataframe(pd.DataFrame(_res[1], columns=['매출 배율', '손실률 시나리오', '영업손실률', '적용 배수',
                                                             '주당 행사가격(원)', '풋 (원)', '콜 (원)']).style.format(
                     {'매출 배율': '{:.0%}', '영업손실률': '{:.2%}', '적용 배수': '{:g}', '주당 행사가격(원)': '{:,.2f}',
                      '풋 (원)': '{:,.0f}', '콜 (원)': '{:,.0f}'}), hide_index=True, use_container_width=True)
     recon = run.summary.get('sha_recon')
     if recon:
         st.markdown('**수량 대사 — 평가 대상과 제외 물량**')
-        st.dataframe(pd.DataFrame(recon).style.format({'풋 주식수': '{:,.0f}', '콜 주식수': '{:,.0f}', '계약 대상 주식': '{:,.0f}'}),
+        dataframe(pd.DataFrame(recon).style.format({'풋 주식수': '{:,.0f}', '콜 주식수': '{:,.0f}', '계약 대상 주식': '{:,.0f}'}),
                      hide_index=True, use_container_width=True)
         _h = float(getattr(t, 'sha_hold_q', -1.0))
         if _h >= 0:
@@ -1012,7 +1013,7 @@ def split_panel(run):
     if not cache[1]:
         return
     st.markdown('**내재파생 분리 판단 — 평가 직후 요약**')
-    st.dataframe(pd.DataFrame(cache[1]), hide_index=True, use_container_width=True)
+    dataframe(pd.DataFrame(cache[1]), hide_index=True, use_container_width=True)
     if any(x['판정과 설정'].startswith('검토 필요') for x in cache[1]):
         st.warning('수치 판정과 이용자 설정이 다른 권리가 있습니다. 계약과 회계정책을 확인하고 근거를 남기십시오.')
     st.caption('근거 문장·검토용 수치는 아래 분석 도구 «상세 계산·회계 참고표» → 판단·근거에 있습니다. '
@@ -1040,7 +1041,7 @@ def day1_panel(run, case):
     if day1.get('view') == 'issuer':
         # 세 갈래(자본 흡수 · 당기손익 · 이연)를 나란히 보이고 이 평가가 어느 쪽인지 표시한다.
         _cases = issuer_day1_cases(dict(hybrid=bool(day1.get('choice')), pl=day1.get('mode') == '당기손익'))
-        st.dataframe(pd.DataFrame([[inst_text(run.terms, k), v, on] for k, v, on in _cases],
+        dataframe(pd.DataFrame([[inst_text(run.terms, k), v, on] for k, v, on in _cases],
                                   columns=['최초 인식 차이의 세 가지 구분', '처리', '이 평가']),
                      use_container_width=True, hide_index=True)
     if not day1.get('choice', True):
@@ -1141,7 +1142,7 @@ def main():
     if stage == '평가·분석':
         if errors:
             st.error(f'입력 오류 {len(errors)}건을 수정해야 평가할 수 있습니다.')
-            st.dataframe(pd.DataFrame(issue_rows(errors)), hide_index=True)
+            dataframe(pd.DataFrame(issue_rows(errors)), hide_index=True)
         if pending:
             st.warning('저장하지 않은 입력이 있습니다. 입력 저장 후 실행하십시오.')
         if st.button('현재 입력으로 평가', type='primary', disabled=bool(errors) or pending):
@@ -1161,7 +1162,7 @@ def main():
         if run:
             if not current:
                 st.warning('아래는 변경 전 입력의 결과입니다. 현재 입력으로 다시 평가해야 조서를 저장할 수 있습니다.')
-            st.caption(f"평가기준일 {run.terms.d_base} · {run.terms.n:,}구간 · 계산 {run.summary['calculation_seconds']:.3f}초")
+            st.caption(f"평가기준일 {run.terms.d_base} · {run.terms.n:,}구간 · 계산 {run.summary['calculation_seconds']:.2f}초")
             values = run.summary['amounts_total']
             keys = ['put', 'call'] if run.terms.inst == 'SHA' else ['whole_before_call', 'call_deduction', 'net']
             for col, key in zip(st.columns(len(keys)), keys):
@@ -1175,14 +1176,14 @@ def main():
             dp_panel(run)
             with st.expander('구성요소·원금 100 기준 상세' if run.terms.inst != 'SHA' else '계산기준금액 100 기준 상세'):
                 st.caption('순차 차감에 따른 참고값입니다. 회계상 인식액을 확정한 표가 아닙니다.')
-                st.dataframe(pd.DataFrame([{'항목': AMOUNT_LABELS[k], '총액(원)': values[k], '원금 100 기준': v}
+                dataframe(pd.DataFrame([{'항목': AMOUNT_LABELS[k], '총액(원)': values[k], '원금 100 기준': v}
                                           for k, v in run.summary['amounts_100'].items()]), hide_index=True)
             st.subheader('산술 검산')
-            st.dataframe(pd.DataFrame([{'검사': r['name'], '결과': '통과' if r['passed'] else '차이 발생', '범위': r['detail']}
+            dataframe(pd.DataFrame([{'검사': r['name'], '결과': '통과' if r['passed'] else '차이 발생', '범위': r['detail']}
                                       for r in run.summary['checks']]), hide_index=True)
             st.subheader('확인할 사항')
             numerical_issues = [i for i in run.issues if i.code not in {'source', 'legacy_defaults', 'engine_defaults', 'judgement_scope', 'market_date'}]
-            st.dataframe(pd.DataFrame(issue_rows(numerical_issues)), hide_index=True)
+            dataframe(pd.DataFrame(issue_rows(numerical_issues)), hide_index=True)
             with st.expander('추가 분석 — 선택한 변수만 계산'):
                 variable = st.selectbox('민감도 변수', ['S0', 'sig', 'rf_curve', 'cr_curve'], format_func=label)
                 magnitude = st.number_input('변화폭(주당가치는 %, 변동성·금리는 %p)', min_value=.01, max_value=50. if variable == 'S0' else 10., value=10. if variable == 'S0' else 1.)
@@ -1197,7 +1198,7 @@ def main():
                 if analysis and analysis['calculation_key'] == run.summary['calculation_key'] and current:
                     st.write(f"계산된 변수: {label(analysis['variable'])} / 변화폭: ±{analysis['change']:g}")
                     table = pd.DataFrame(analysis['rows']).rename(columns=AMOUNT_LABELS)
-                    st.dataframe(table, hide_index=True)
+                    dataframe(table, hide_index=True)
                     st.download_button('민감도 결과 저장', table.to_csv(index=False).encode('utf-8-sig'), '민감도.csv', 'text/csv')
         if current:
             analysis_mode = st.selectbox('분석 도구', ['결과 요약', '상세 계산·회계 참고표'])
@@ -1206,7 +1207,7 @@ def main():
                 detailed(run)
         if previous:
             with st.expander('전기 대비 입력 변경'):
-                st.dataframe(pd.DataFrame([{'항목': label(r['field']), '전기': str(r['previous']), '당기': str(r['current'])}
+                dataframe(pd.DataFrame([{'항목': label(r['field']), '전기': str(r['previous']), '당기': str(r['current'])}
                                           for r in compare_cases(previous, case)]), hide_index=True)
     if stage == '조서 출력':
         run = st.session_state.get('run')
@@ -1225,7 +1226,7 @@ def main():
         elif pending:
             st.warning('입력·시장자료 단계에서 저장되지 않은 입력을 확인하십시오.')
         if current:
-            st.caption(f'현재 평가: {run.terms.n:,}구간 · 평균 {run.summary["grid"]["average_days"]:.4f}일. 조서도 같은 격자를 사용합니다.')
+            st.caption(f'현재 평가: {run.terms.n:,}구간 · 평균 {run.summary["grid"]["average_days"]:.2f}일. 조서도 같은 격자를 사용합니다.')
         if st.button('조서 생성', disabled=not current or pending):
             st.session_state.pop('bundle', None)
             st.session_state.pop('bundle_key', None)

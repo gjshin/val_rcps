@@ -163,7 +163,9 @@ def display_value(key, value, issue_date=None, inst=None):
     if key in EVENT_DATES and issue_date:
         return months_to_date(issue_date, value).isoformat()
     if key in PERCENT:
-        return f'{value * 100:,.8g}%'
+        return f'{value * 100:,.2f}%'
+    if isinstance(value, float):
+        return f'{value:,.2f}'
     if isinstance(value, (list, dict)):
         return str(value)
     return str(value)
