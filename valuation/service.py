@@ -140,6 +140,7 @@ def refresh_run(run: Run, case: Case) -> Run:
                        warnings=[i for i in run.issues if i.code == 'input_check'])
     result.summary["calculation_seconds"] = run.summary["calculation_seconds"]
     result.summary["calculated_at"] = run.summary["calculated_at"]
+    result.summary["run_id"] = run.summary["run_id"]
     return result
 
 
@@ -212,6 +213,18 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
         "judgment_evidence": evidence_cards(case),
         "day1": day1,
     }
+    from .explain import VERSION, dp_missing_years, memo_status
+    summary['version'] = VERSION
+    summary['run_id'] = hashlib.sha256((summary['calculation_key'] + now).encode()).hexdigest()[:12]
+    summary['document_id'] = case.fingerprint()[:12]
+    summary['dp_missing_years'] = dp_missing_years(terms)
+    if summary['dp_missing_years'] and not case.sources.get('dp_missing_assumption', '').strip():
+        issues.append(Issue('review', 'dp_missing_assumption', 'dp_rows', '未入力 연도의 상환재원은 잠정적으로 제한 없이 계산됐습니다. 근거를 보완하기 전 조서 출력이 제한됩니다.'.replace('未入力', '미입력')))
+    for topic in case.memos:
+        status = memo_status(case, topic)
+        if status != '현재 조건의 기록':
+            issues.append(Issue('review', 'memo_stale', 'memos', f'{topic}: {status}'))
+    summary['issues'] = [asdict(i) for i in issues]
     return Run(case=case, terms=terms, raw=raw, summary=summary, issues=issues)
 
 
@@ -296,6 +309,10 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
     judgment — 판단·근거 시트와 해설·분리 판단 시트를 싣는다(기본). 검산은 조서에 싣지 않는다 —
     평가할 때 돌리고, 걸리면 아래에서 조서를 만들지 않는다.
     """
+    from .explain import export_blockers
+    blocked = export_blockers(run)
+    if blocked:
+        raise ValueError('조서 생성 전 확인: ' + ' / '.join(blocked))
     terms = copy.deepcopy(run.terms)
     # 계산이 고장 나지 않았는지 본 결과(calculate 가 잰 것). 개발용 점검이라 조서에는
     # 싣지 않고, 걸리면 조서를 만들지 않는다 — 틀린 계산이 조서로 나가는 마지막 관문이다.
@@ -318,7 +335,7 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
             args = (terms, r["full"], r["b0"], r["b1"], r["b2"], r["ca"])
             eir = legacy.eir_or_none(*args) if accounting else None
             wb = (legacy.build_xlsx_formula if formula else legacy.build_xlsx)(
-                *args, r['conv'], eir, attach=attach, as_workbook=True, include_review=judgment)
+                *args, r['conv'], eir, attach=attach, as_workbook=True, include_review=True)
     if not formula and legacy.dp_active(terms):
         legacy.dp_value_sheet(wb, terms)          # 수식 조서는 같은 시트를 수식으로 만든다
     workbook = finish_calculation_workbook(wb, run, formula=formula, accounting=accounting, judgment=judgment)

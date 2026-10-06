@@ -267,11 +267,12 @@ def test_final_record_invalidated_by_any_material_change(change):
     with pytest.raises(ValueError):export_final_bundle(changed)
 
 
-def test_unresolved_and_conditional_rights_block_final_but_allow_draft():
+def test_unresolved_rights_block_export_and_conditional_rights_block_final():
     case=synthetic();case.additional_rights=[dict(kind='distributable_profit',clause='§3',treatment='unresolved',rationale='',assumption_fields=[])]
     run=ready_run(case)
     assert any(r['code'].startswith('unresolved:') for r in controls.blockers(run))
-    assert export_bundle(run)
+    with pytest.raises(ValueError, match='미해결'):
+        export_bundle(run)
     row=next(r for r in controls.coverage_rows(run.case) if r['right'])
     case=controls.record_control(run.case,'coverage',key=row['id'],reviewer='Reviewer',rationale='Conditional schedule',clause='§3',mode='conditional')
     run=refresh_run(run,case)

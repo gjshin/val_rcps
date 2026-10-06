@@ -146,7 +146,7 @@ def test_instrument_screens_preserve_values_and_only_render_relevant_rights(inst
     app.session_state['case'] = case
     app.run()
     assert not app.exception
-    assert next(r for r in app.radio if r.label == '평가 진행').options == ['입력·시장자료', '평가·분석', '조서 출력']
+    assert next(r for r in app.radio if r.label == '평가 진행').options == ['01  입력', '02  평가결과', '03  계산내역', '04  조서 출력']
     assert not any('JSON' in w.label for w in app.text_area)
     assert not any(w.label == '상환청구 주기(개월)' for w in app.number_input)
     assert app.session_state['case'].to_dict() == case.to_dict()
@@ -195,7 +195,7 @@ def test_percent_edit_uses_percent_units_and_blocks_old_export():
     app.radio(key='_workflow_stage').set_value('조서 출력').run()
     assert button(app, '조서 생성').disabled
     app.radio(key='_workflow_stage').set_value('평가·분석').run()
-    assert any('변경 전 입력' in w.value for w in app.warning)
+    assert any('이전 결과' in w.value for w in app.warning)
 
 
 @pytest.mark.parametrize('inst', ['CB', 'BW', 'RCPS', 'SHA'])
@@ -206,7 +206,9 @@ def test_detailed_exports_judgment_sheets_are_optional(inst, formula):
     name = 'formula_review.xlsx' if formula else 'value_review.xlsx'
     with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, formula=formula, judgment=False))) as z:
         wb = load_workbook(io.BytesIO(z.read(name)))
-        assert not {'해설', '분리 판단', '검산요약', '99_모형검증', '판단·근거', '회계처리', '상각표'} & set(wb.sheetnames)
+        assert not {'해설', '검산요약', '99_모형검증', '판단·근거', '회계처리', '상각표'} & set(wb.sheetnames)
+        if inst != 'SHA':
+            assert '분리 판단' in wb.sheetnames  # 수치 근거는 선택 메모와 독립적으로 보존한다.
         assert '결과' in wb.sheetnames
     with zipfile.ZipFile(io.BytesIO(export_bundle(run, detail=True, formula=formula))) as z:
         wb = load_workbook(io.BytesIO(z.read(name)))

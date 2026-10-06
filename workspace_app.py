@@ -34,11 +34,11 @@ def read_case(raw, name):
 def install_case(case):
     st.session_state.case = case
     st.session_state.revision = st.session_state.get('revision', 0) + 1
-    for key in ['run', 'bundle', 'analysis', 'bundle_key', '_input_pending']:
+    for key in ['run', 'bundle', 'analysis', 'bundle_key', '_input_pending', 'trace_i', 'trace_j', 'result_unit', 'workbook_locations', 'locations_run']:
         st.session_state.pop(key, None)
 
 
-def save_case(case):
+def save_case(case, *, reset_widgets=True):
     if st.session_state.case.to_dict() == case.to_dict():
         return
     run = st.session_state.get('run')
@@ -47,7 +47,8 @@ def save_case(case):
     if run and not any(i.severity == 'error' for i in inspect_case(case)):
         if run.summary['calculation_key'] == calculation_key(case):
             st.session_state.run = refresh_run(run, case)
-    st.session_state.revision = st.session_state.get('revision', 0) + 1
+    if reset_widgets:
+        st.session_state.revision = st.session_state.get('revision', 0) + 1
     st.rerun()
 
 
@@ -116,7 +117,7 @@ def field(key, edited, case, prefix='input'):
         # 의무보유 물량 비율의 음수는 «콜 대상 비율과 같음» 이다 — 칸을 비워 보여 준다.
         _same = key == 'k_lock_w' and value is not None and value < 0
         displayed = float(value * scale) if value is not None and not _same else None
-        number = st.number_input(title, value=displayed, format='%.8f' if key in PERCENT else '%.6f', key=widget_key)
+        number = st.number_input(title, value=displayed, format='%.4f' if key in PERCENT else '%.2f', help='표시 자릿수와 무관하게 수정하지 않은 원값의 정밀도는 유지됩니다.', key=widget_key)
         new = value if number == displayed else number / scale if number is not None else None
         if key == 'k_lock_w' and new is None:
             new = -1.0
@@ -877,7 +878,7 @@ def input_editor(case, autosave=False):
     if autosave:
         st.session_state._input_pending = bool(draft_errors)
     if autosave and pending and not draft_errors:
-        save_case(candidate)
+        save_case(candidate, reset_widgets=False)
     if pending and not autosave:
         st.info('입력 변경사항이 아직 저장되지 않았습니다. 저장 후 평가·조서를 진행하십시오.')
     if not autosave and st.button('입력 저장', type='primary', disabled=bool(draft_errors)):
@@ -899,7 +900,7 @@ def evidence_editor(case, pending=False):
                 candidate = Case.from_dict(case.to_dict())
                 candidate.sources, candidate.notes = sources, notes
                 save_case(candidate)
-    with st.expander('추가 검토 항목'):
+    with st.expander('평가자 메모 · 선택 기록'):
         from judgment_ui import review_topics
         review_topics(case)
     with st.expander('계약조건과 다른 평가가정'):

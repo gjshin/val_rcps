@@ -75,9 +75,10 @@ def test_bdt_locks_curve_and_sigma(fwb):
     assert "금리곡선 수익률 등" not in fwb["해설"]["C5"].value
 
 
-def test_curve_stays_yellow_without_bdt():
+def test_curve_is_snapshot_protected_in_v2():
     wb = book(bw_case(put_bdt=0), True)
-    assert wb["IR 입력곡선"].cell(8, 3).fill.fgColor.rgb[-6:] == legacy.INPUT_FILL
+    assert wb["IR 입력곡선"].cell(8, 3).fill.fgColor.rgb[-6:] == 'EEF1F6'
+    assert wb["IR 입력곡선"].cell(8, 3).protection.locked
 
 
 def test_one_input_colour(fwb):
@@ -164,6 +165,6 @@ def test_base_rate_cannot_be_hand_edited(fwb):
     assert "앱에서 정한 값" in str(A.cell(r, 4).value) and str(A.cell(r, 4).value).startswith("=IF(")
 
 
-def test_no_protection_without_bdt():
+def test_formula_structure_protected_even_without_bdt():
     wb = book(bw_case(put_bdt=0), True)
-    assert not wb["IR 입력곡선"].protection.sheet
+    assert wb["IR 입력곡선"].protection.sheet

@@ -2748,6 +2748,8 @@ def bootstrap_df(par_pts, Tmax, m=1):
         return math.exp(-sp*tq)
     for t, kind in boot_times(par_pts, Tmax, m):
         y = _lin(par_pts, t); c = y/m
+        if not math.isfinite(y) or 1 + c <= 0:
+            raise ValueError(f"금리곡선 {t:g}년 구간: 복리 기준 1+금리/횟수는 양수여야 합니다. 금리 단위와 복리 횟수를 확인하십시오.")
         if kind == "grid":
             df = (1 - c*acc)/(1 + c)
             acc += df
@@ -2760,6 +2762,8 @@ def bootstrap_df(par_pts, Tmax, m=1):
             first = cps[-1]                       # 가장 이른 이표 — 짧은 첫 이표
             pv = c*first*m*df_at(first) + c*sum(df_at(x) for x in cps[:-1])
             df = (1 - pv)/(1 + c)
+        if not math.isfinite(df) or df <= 0:
+            raise ValueError(f"금리곡선 {t:g}년 구간: 할인계수가 0 이하이거나 유한하지 않습니다. 해당 만기와 인접 금리·단위를 확인하십시오.")
         out.append((t, df))
         known.append((t, -math.log(df)/t))
         known.sort()
@@ -3327,6 +3331,8 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
                 exact=False, S=S, host=100*math.exp(-CR(T)*T), dist=dist,
                 root=root, qi=qi, fwdRF=lambda i: fwd(RF, i),
                 fwdCR=lambda i: fwd(CR, i), kstrike=kstrike, kcash=kcash,
+                can_convert=conv_ok, can_put=lambda i: bool(put and _pin(i)),
+                can_call=lambda i: bool(call and _kin(i)),
                 st_lo=st_lo, st_hi=st_hi)
 
 
@@ -5422,15 +5428,10 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                 if float(getattr(tm, "split_base_in", -1.0)) > 0 else
                 ("앱 자동값 — 발행금액 100 + 발행회사가 함께 산 별개 콜의 가치"
                  if split_call_separate(tm) else "앱 자동값 — 발행금액 100"))
-    try:
-        _rows_host = eir_table(tm, base0)[1]
-    except Exception:
-        _rows_host = rows_eir
+    _eir_host, _rows_host, _, _ = eir_table(tm, base0)
 
     def amort_at(t_year):
-        """그 시점 분리 판단용 상각후원가. 분리 여부 설정과 무관하다."""
-        return next((en for _, tt_, _b, _i, _c, en in _rows_host
-                     if tt_ >= t_year - 1e-9), base0)
+        return amortized_at(base0, _eir_host, _rows_host, t_year)
     _EA = exercise_amounts(tm, n, dt_)
 
     out = {}
@@ -5540,10 +5541,18 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                            이유=["계약에 매도청구권이 없거나 행사 가능한 시점이 "
                                  "없습니다."], 근거=[], 평가="—", 지표={})
     else:
-        kv = ks(first_k)
-        kb = amort_at(max(0.0, (_EA["k_dates"].get(first_k, tm.elapsed_m + first_k*dt_*12)
-                                - tm.elapsed_m)/12))
-        kgap, kclose = _close_test(kv, kb, tol)
+        _kchk = []
+        for _i in range(n+1):
+            if ks(_i) is None:
+                continue
+            _m = _EA["k_dates"].get(_i, tm.elapsed_m + _i*dt_*12)
+            _bv = amort_at(max(0.0, (_m-tm.elapsed_m)/12))
+            _kchk.append((_m, ks(_i), _bv, _close_test(ks(_i), _bv, tol)[0]))
+        _, kv, kb, kgap = _kchk[0]
+        _kworst = max(_kchk, key=lambda x: x[3])
+        kclose = _kworst[3] <= tol
+        _ktxt = (f" 모든 행사일 {len(_kchk)}회 중 최대 차이는 발행 후 {_kworst[0]:g}개월의 "
+                 f"{_kworst[3]:.2%}입니다. 비교기준 {tol:.0%}는 이용자 설정이며 기준서의 획일적 요건이 아닙니다.")
         why, cite = [], []
         if tm.k_third or tm.k_transfer:
             res = "별도의 금융상품"
@@ -5581,8 +5590,8 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
             res = "분리"
             why.append(f"발행회사만 행사할 수 있어 내재파생상품이고, 첫 매도청구일 "
                        f"매매대금 {kv:,.2f} 와 같은 시점 주계약 상각후원가 "
-                       f"{kb:,.2f} 의 차이가 {kgap*100:.1f}% 로 거의 같지 "
-                       "않습니다.")
+                       f"{kb:,.2f} 의 차이는 {kgap*100:.1f}%입니다. 모든 행사일을 비교한 결과 "
+                       "이용자 설정 비교기준을 초과하는 행사일이 있습니다.")
             cite += ["1109 문단 4.3.1", "문단 B4.3.5(5)"]
         if (emb_policy(tm) == 2 and not (tm.k_third or tm.k_transfer) and not tm.fvpl_whole
                 and res in ("분리", "분리하지 않을 여지")):
@@ -5616,10 +5625,14 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                    f"순차 차감 — 콜을 넣고 뺀 차액입니다 (적용값 {ca:,.4f}).")
         else:
             val = "분리하지 않으므로 주계약에 포함해 상각후원가로 측정합니다."
-        out["call"] = dict(있음=True, 결론=res, 이유=why, 근거=cite, 평가=val,
+        why.append(_ktxt)
+        out["call"] = dict(있음=True, 결론=res, 이유=why, 근거=cite, 평가=val, 회차=_kchk,
                            지표={"첫 매도청구일 매매대금": kv,
                                  "같은 시점 상각후원가": kb,
                                  "차이": kgap,
+                                 "가장 큰 차이": _kworst[3],
+                                 "가장 큰 차이 · 발행 후 개월": _kworst[0],
+                                 "비교기준 (회계정책)": tol,
                                  "제3자 지정 가능": bool(tm.k_third),
                                  "독립 양도 가능": bool(tm.k_transfer)})
 
@@ -6784,6 +6797,17 @@ def eir_expect(tm: Terms):
     # 격자와 같은 산식에서 가져온다. 스텝이 아니라 «개월» 로 묻는다.
     amt = exercise_amounts(tm, 1, 0.0)["put_at_month"](m)
     return (t_exp, amt, m)
+
+
+def amortized_at(base, rate, rows, years):
+    """Balance after any coupon due at this time; accrue from the preceding cash flow."""
+    balance, previous = float(base), 0.0
+    years = max(0.0, float(years))
+    for _, when, _, _, _, end in rows:
+        if when > years + 1e-9:
+            break
+        balance, previous = end, when
+    return balance * (1 + rate) ** max(0.0, years - previous)
 
 
 def eir_table(tm: Terms, host, expect=None):
@@ -8901,7 +8925,7 @@ def _run_env() -> dict:
     try:
         head = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                               cwd=(os.path.dirname(os.path.abspath(pth)) or "."),
-                              capture_output=True, text=True, timeout=5).stdout.strip()
+                              capture_output=True, text=True, errors="replace", timeout=5).stdout.strip()
     except Exception:
         pass
     _RUN_ENV.update(app_sha12=sha, git_head=head)
@@ -9897,7 +9921,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
                            _v if isinstance(_v, str) else
                            ("예" if _v is True else "아니오" if _v is False
                             else f"{_v:,.4f}")), border=True); _r += 1
-        if _k == "put" and _d["지표"] and _d.get("회차"):
+        if _d["지표"] and _d.get("회차"):
             # 행사일마다 견준 표 — 수식 조서의 «행사일별 비교표» 와 같은 열·같은 값이다.
             _r += 1
             sec(J, _r, "B4.3.5(5)(가) 행사일별 행사금액과 상각후원가 비교 (값 — 수식 조서와 같은 표)", span=6); _r += 1
@@ -12556,36 +12580,46 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                            _v if isinstance(_v, str) else
                            ("예" if _v is True else "아니오" if _v is False
                             else f"{_v:,.4f}")), border=True); _r += 1
-        if _k == "put" and _d["지표"] and tm.p_s <= tm.p_e:
+        if _d["지표"] and _d.get("회차"):
             # ── B4.3.5(5)(가) 10% 검토를 수식으로 — 위 문자열과 같은 값이어야 한다 (검산수식대조) ──
             # 상각후원가는 split_test 와 같이 **자본요소를 분리하기 전** 금액(전환사채에 배분된
-            # 거래가격)을 계약만기까지 굴린 표에서 «t ≥ 행사 시점» 인 첫 회차의 기말이다.
+            # 거래가격)에서 직전 지급일 기말을 찾아 실제 행사일까지 이자를 발생시킨다.
             # 유효이자율도 수식(xl_eir_solver — 엔진과 같은 이분법)이다. 행사일마다 견주고 가장 큰 차이로 판정한다.
             _e0r, _e0rows, _, _e0n = eir_table(tm, split_base(tm, ca))
             _b0x = (repr(float(tm.split_base_in)) if float(getattr(tm, "split_base_in", -1.0)) > 0
                     else f"100+결과!{CAE}" if split_call_separate(tm) else "100")
-            _pms = sorted(exercise_amounts(tm, n, dt_)["p_dates"].values()) or [tm.p_s]
+            _pms = [row[0] for row in _d['회차']]
+            _isput = _k == 'put'
+            _monthkey = repr(float(_pms[0]))
+            def _xamount(mo):
+                if _isput:
+                    return x_pamt_month(mo)
+                return f"INDEX({COMQ}!$C$33:${gl(n+3)}$33,1,MATCH({mo},{COMQ}!$C$27:${gl(n+3)}$27,0))"
             _r += 1
             sec(J, _r, "B4.3.5(5)(가) 행사금액과 상각후원가 비교 — 수식 (가정 시트의 비교기준을 바꾸면 판정이 따라온다)", span=6); _r += 1
             _rs = _r + 8                               # 미니 상각표 첫 자료행
             _re = _rs + len(_e0rows) - 1
             _rpv, _rbv, _rt, _rg, _rv, _rr = _r, _r+1, _r+2, _r+3, _r+4, _r+6
-            put(J, _rpv, 2, "첫 조기상환일 행사금액", border=True)
-            put(J, _rpv, 3, "=" + x_pamt_month(K['psm']),
+            put(J, _rpv, 2, "첫 조기상환일 행사금액" if _isput else "첫 매도청구일 매매대금", border=True)
+            put(J, _rpv, 3, "=" + _xamount(_monthkey),
                 fmt=N4, align="right", border=True)
             put(J, _rbv, 2, ("같은 시점 상각후원가 (전환권 분리 전 · 준용)" if tm.conv_class != "equity"
                              else "같은 시점 상각후원가 (자본요소 분리 전)"), border=True)
-            _idx = f'(COUNTIF($C${_rs}:$C${_re},"<"&(C{_rt}-0.000000001))+1)'
-            put(J, _rbv, 3, f"=IF({_idx}>{_e0n},{_b0x},INDEX($G${_rs}:$G${_re},{_idx}))",
+            def _amort_formula(_time):
+                _ix = f'COUNTIF($C${_rs}:$C${_re},"<="&({_time}+0.000000001))'
+                _bal = f'IF({_ix}=0,{_b0x},INDEX($G${_rs}:$G${_re},MAX(1,{_ix})))'
+                _prev = f'IF({_ix}=0,0,INDEX($C${_rs}:$C${_re},MAX(1,{_ix})))'
+                return f'{_bal}*(1+$C${_rr})^MAX(0,{_time}-{_prev})'
+            put(J, _rbv, 3, "=" + _amort_formula(f"C{_rt}"),
                 fmt=N4, align="right", border=True)
-            put(J, _rt, 2, "첫 조기상환 시점 (평가기준일부터, 년)", border=True)
-            put(J, _rt, 3, f"=MAX(0,({K['psm']}-{K['elm']})/12)", fmt=N4, align="right", border=True)
+            put(J, _rt, 2, "첫 행사 시점 (평가기준일부터, 년)", border=True)
+            put(J, _rt, 3, f"=MAX(0,({_monthkey}-{K['elm']})/12)", fmt=N4, align="right", border=True)
             _ws = _re + 3                              # 행사일별 비교표 첫 자료행
             _we = _ws + len(_pms) - 1
             put(J, _rg, 2, "차이 (모든 행사일 중 가장 큰 값)", border=True)
             put(J, _rg, 3, f"=MAX($F${_ws}:$F${_we})", fmt=P2, align="right", border=True)
             put(J, _rg, 4, f"=ABS(C{_rpv}-C{_rbv})/MAX(ABS(C{_rbv}),0.000000001)", fmt=P2, align="right", border=True)
-            put(J, _rg, 5, "← 첫 조기상환일", color=GREY, size=9)
+            put(J, _rg, 5, "← 첫 행사일", color=GREY, size=9)
             put(J, _rv, 2, "판정 (수식)", bold=True, border=True)
             # 전체 지정은 구조를 정하는 선택이라 앱에서 고른 값을 박는다(가정의 fvpl 칸은 글자다).
             # 접근법 1 이면 전환권이 부채이거나 발행회사 콜이 내재파생일 때 묶어서 분리한다.
@@ -12595,9 +12629,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 bold=True, border=True)
             # 위의 «결론» 과 «판정과 설정 비교» 를 이 판정 수식에 잇는다 — 가정 시트의 비교기준이나
             # 조기상환권 처리를 바꾸면 결론·일치 여부가 함께 바뀐다 (값 조서와 같은 글자).
+            if not _isput:
+                _call_verdict = (f'=IF({1 if (tm.k_third or tm.k_transfer) else 0}=1,"별도의 금융상품",'
+                    f'IF({1 if tm.fvpl_whole else 0}=1,"분리하지 않음",'
+                    f'IF(AND({K["eqcls"]}=0,{K["embap"]}=1),"묶어서 분리",'
+                    f'IF(C{_rg}<={K["stol"]},"분리하지 않을 여지","분리"))))')
+                put(J, _rv, 3, _call_verdict, bold=True, border=True)
             if not fvpl_on(tm):
                 put(J, _r38, 3, f"=C{_rv}", bold=True, border=True)
-                if _rcmp:
+                if _rcmp and _isput:
                     # 이용자 설정 글자도 가정 시트의 분류·매도청구권 처리 칸을 보고 정한다 (split_policy_rows 와 같은 순서).
                     _w = inst_words(tm)
                     _sep = (f'IF({K["eqcls"]}=0,"{relabel_text("전환권과 묶어 분리 — 복합내재파생상품 (파생상품부채)", _w)}",'
@@ -12631,9 +12671,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 _rw = _ws + _j
                 put(J, _rw, 2, round(_m, 6), fmt=N2, align="right", border=True, color=RED)
                 put(J, _rw, 3, f"=MAX(0,(B{_rw}-{K['elm']})/12)", fmt=N4, align="right", border=True)
-                put(J, _rw, 4, "=" + x_pamt_month(f"B{_rw}"), fmt=N4, align="right", border=True)
-                _ix = f'(COUNTIF($C${_rs}:$C${_re},"<"&(C{_rw}-0.000000001))+1)'
-                put(J, _rw, 5, f"=IF({_ix}>{_e0n},{_b0x},INDEX($G${_rs}:$G${_re},{_ix}))",
+                put(J, _rw, 4, "=" + _xamount(f"B{_rw}"), fmt=N4, align="right", border=True)
+                put(J, _rw, 5, "=" + _amort_formula(f"C{_rw}"),
                     fmt=N4, align="right", border=True)
                 put(J, _rw, 6, f"=ABS(D{_rw}-E{_rw})/MAX(ABS(E{_rw}),0.000000001)", fmt=P2,
                     align="right", border=True)

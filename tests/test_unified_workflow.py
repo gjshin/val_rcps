@@ -222,9 +222,9 @@ def test_bdt_detail_does_not_decide_model_from_exercise_ratio_alone():
     next(w for w in app.selectbox if w.label=='분석 도구').set_value('상세 계산·회계 참고표').run()
     next(w for w in app.selectbox if w.label=='상세 분석 항목').set_value('판단·근거').run()
     assert not app.exception
-    messages = [str(w.value) for kind in ('info','warning','success') for w in app.get(kind)]
+    messages = [str(w.value) for kind in ('info','warning','success','markdown') for w in app.get(kind)]
     # 행사 진단은 앱 판정(초안)으로만 표시하고 BDT 를 켜라고 지시하지 않는다.
-    assert any('행사금액 ÷ 계속보유가치' in m and '앱 판정(초안)' in m for m in messages)
+    assert any('지급 제약·이자 반영 청구가치' in m and '계속보유가치' in m for m in messages)
     assert 'BDT 를 켜십시오' not in ' '.join(messages)
 
 
@@ -251,7 +251,7 @@ def test_detailed_exports_are_available_without_changing_grid():
 
 def test_contract_review_screen_has_no_document_uploader_or_ai_endpoint():
     app = app_with_case()
-    assert app.radio(key='_workflow_stage').options == ['입력·시장자료','평가·분석','조서 출력']
+    assert app.radio(key='_workflow_stage').options == ['01  입력','02  평가결과','03  계산내역','04  조서 출력']
     assert not app.exception
     labels = [u.label for u in app.get('file_uploader')]
     assert labels == ['평가파일 불러오기', '전기 평가파일(선택)']
