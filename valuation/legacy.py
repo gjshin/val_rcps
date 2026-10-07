@@ -615,7 +615,7 @@ def exdate_head(tm: "Terms") -> str:
             f"(노드 0). 차이 = 노드 날짜 − 계약일.")
 
 
-def pay_steps(tm: "Terms", n: int, dt_: float) -> dict:
+def pay_steps(tm: "Terms", n: int, dt_: float, *, include_zero=False) -> dict:
     """이자·배당 지급일 ``{스텝: 회수}``.
 
     지급일은 계약이 정한다 — 발행일 + 지급주기 × k. 날짜마다 행사일과 같은 규칙
@@ -624,7 +624,9 @@ def pay_steps(tm: "Terms", n: int, dt_: float) -> dict:
     2주 격자로 세면 21회). 격자가 지급주기보다 성겨 두 회차가 한 노드에 모이면 그
     노드에서 회수만큼 지급한다. 평가기준일 당일 이전 회차는 이미 지급했다.
     """
-    if tm.ipay <= 0 or eff_cpn(tm) <= 0: return {}
+    # 수식 조서는 0%에서 양수로 편집해도 지급일이 살아 있어야 한다.
+    # 평가 엔진은 기존처럼 실제 지급액이 있는 날만 사용한다.
+    if tm.ipay <= 0 or (eff_cpn(tm) <= 0 and not include_zero): return {}
     lo, _ = step_mapper(tm, n, dt_)
     end = tm.elapsed_m + float(getattr(tm, "rem_m", 0.0) or tm.T*12)
     out, k = {}, math.floor(tm.elapsed_m/tm.ipay + 1e-9) + 1
@@ -10380,9 +10382,9 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
     if tm.k_w > 0:
         _extra.append(("매도청구 행사일", "txcall",
                        _sched_txt(tm.k_s, tm.k_e, tm.k_f, _EA0["k_dates"], _EA0["k_rows"]), None, False))
-    if _FP0 := pay_steps(tm, n, dt_):
+    if _FP0 := pay_steps(tm, n, dt_, include_zero=True):
         _extra.append(("이자·배당 지급", "txpay",
-                       f"{tm.ipay:g}개월마다 · 평가기준일 뒤 {sum(_FP0.values())}회", None, False))
+                       f"{tm.ipay:g}개월마다 · 평가기준일 뒤 {sum(_FP0.values())}회 · 적용 이자·배당률 0%이면 지급액 0", None, False))
     spec += _extra
     # ── 구역 — 대상·기준일 → 계약 조건 → 시장자료 → 평가방법 → 격자 → 회계 입력 ──
     _SEC = [("1. 평가 대상 · 기준일", {"d_issue", "d_base", "d_mat", "elm", "T", "remm", "view", "face", "inst"}),
@@ -10581,8 +10583,8 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
 
     # 행사일 이자 — 그날이 이자지급일이고 스위치가 켜져 있으면 행사금액 위에 더 얹는다.
     # 만기 스텝은 빼 둔다. 만기 행은 「쿠폰」 열을 따로 더하므로 두 번 세게 된다.
-    # 지급일은 계약일 목록에서 온다 (pay_steps) — 엔진과 같은 노드, 같은 회수.
-    _FP = pay_steps(tm, n, dt_)
+    # 지급일은 계약일 목록에서 온다 — 0%일 때도 날짜를 유지해 Excel 편집 후 현금흐름이 연결된다.
+    _FP = pay_steps(tm, n, dt_, include_zero=True)
 
     def x_cpn(i):
         """스텝 i 에 지급하는 이자·배당 식 — 00 격자 공통 9행을 가리킨다 (계약일 목록에서 센 회수 × 이자).

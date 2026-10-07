@@ -242,11 +242,11 @@ def component_evidence(run):
     st.caption(
         '동일 실행의 원금 100 기준 값에서 환산합니다. 각 권리를 순차적으로 추가한 차액이며 회계상 인식액과 구별합니다.'
     )
-    # 원금 100 기준은 다시 곱해 총액이 나오도록 소수 여섯째 자리까지 적는다.
+    precision = 6 if st.toggle('정밀값 보기', key='_component_precision') else 2
     formula_box(
-        f"주계약 {a['host_reference']:,.6f}\n+ 상환권 증분 {a['put_increment']:,.6f}\n+ 전환권 증분 {a['conversion_increment']:,.6f}\n− 콜 영향 {a['call_deduction']:,.6f}\n= 순포지션 {a['net']:,.6f}"
+        f"주계약 {a['host_reference']:,.{precision}f}\n+ 상환권 증분 {a['put_increment']:,.{precision}f}\n+ 전환권 증분 {a['conversion_increment']:,.{precision}f}\n− 콜 영향 {a['call_deduction']:,.{precision}f}\n= 순포지션 {a['net']:,.{precision}f}"
     )
-    formula_box(f"총액 = {a['net']:,.6f} × {t.face_total:,.0f} ÷ 100\n= {s['amounts_total']['net']:,.0f} 원")
+    formula_box(f"총액 = {a['net']:,.{precision}f} × {t.face_total:,.2f} ÷ 100\n= {s['amounts_total']['net']:,.2f} 원")
     if s['amounts_per_share']:
         st.write(
             f"주당금액 = 원금 100 기준 × 1주당 발행가 {t.issue_px:,.2f} ÷ 100 = {s['amounts_per_share']['net']:,.2f}원"
@@ -320,8 +320,7 @@ def result_panel(run, case, current, pending):
         s['amounts_total'] if unit == units[0] else s['amounts_per_share'] if unit == '주당 · 원' else s['amounts_100']
     )
     key = 'put' if L.is_sha(t) else 'net'
-    # 원화 총액은 원 단위 정수, 주당은 소수 둘째 자리, 원금 100 기준은 소수 넷째 자리
-    precision = 0 if unit == '총액 · 원' else 2 if unit == '주당 · 원' else 4
+    precision = 2
     amount = f'{vals[key]:,.{precision}f}'
     st.markdown(
         f'<div class="v2-hero"><div class="eyebrow">{AMOUNT_LABELS[key]}'
