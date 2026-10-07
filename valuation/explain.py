@@ -11,17 +11,65 @@ KINDS = {'hold': '계속 보유', 'conv': '전환', 'put': '상환청구', 'call
          'mat': '만기상환', 'auto': '만기 자동전환', 'ipo': '상장 강제전환'}
 
 
+# 메모가 «현재 조건의 기록» 인지 가리는 식별값. 계약 조항을 보고 내린 판단(콜 방법·우선순위·분리·검토 주제)은
+# 시장자료(주가·변동성·금리곡선·평가기준일)를 뺀 모든 입력을 본다 — 분기마다 시장자료만 바뀌면 메모가 그대로
+# 현재 조건이고, 계약 입력이 하나라도 바뀌면 다시 확인한다. 평가 결과 숫자를 보고 내린 판단(BDT 검토·최초 인식
+# 원인 점검·시장자료 적정성)은 모든 입력을 본다. 항목을 주제마다 골라 적으면 빠뜨린 입력이 생긴다.
+_MARKET = ['S0', 'sig', 'div_y', 'rf_curve', 'cr_curve', 'cr_curve_b', 'rate_mode', 'd_base']
+# 판단과 무관한 기록 칸 — 주가 조회 출처·종목코드·원주가 등
+_RECORDS = {'s0_src', 's0_date', 's0_raw', 's0_adj', 's0_splits', 'ticker', 'cr_src', 'tranche', 'unmod_note',
+            'scen_md5', 'rvol_how', 'split_base_why', 'd1_reason'}
+
+
+def memo_fields(topic, values=None):
+    """그 메모의 식별값에 넣을 입력 — None 이면 모든 입력, ['__all_but_market__'] 이면 시장자료·기록을 뺀 모든 입력."""
+    if topic in ('split_put', 'split_call', 'split_conv') and values is not None:
+        # 분리 판단의 출발 금액을 자동값(100 + 별개 콜 가치)으로 두면 그 콜 가치가 시장자료로 바뀐다.
+        auto_with_call = float(values.get('split_base_in', -1) or -1) <= 0 and L.split_call_separate(L.Terms(**{
+            k: v for k, v in values.items() if k in L.Terms.__dataclass_fields__}))
+        # 분리 판단은 행사금액·상각후원가를 정하는 계약 입력 전부를 본다(일정표·산식 공제 포함). 시장자료는 자동 출발 금액일 때만.
+        return None if auto_with_call else ['__all_but_market__']
+    # 평가 결과 숫자를 보고 내리는 판단은 모든 입력을 본다 — BDT 검토(주가÷전환가액·보장수익률·금리·변동성 민감도),
+    # 최초 인식 차이(모형값 전체), 시장자료 자체를 판단하는 주제.
+    if topic in ('bdt', 'fair_value_inputs') or topic.startswith('day1'):
+        return None
+    # 그 밖의 판단(콜 방법·우선순위·전환 대응·검토 주제)은 시장자료와 출처 기록을 뺀 모든 입력을 본다.
+    return ['__all_but_market__']
+
+
 def memo_key(case, topic):
     """Conservative dependency signature; metadata and other memos do not reprice."""
     values = {**asdict(L.Terms()), **case.effective()}
-    groups = {
-        'call_method': ['k_method', 'k_w', 'k_lock', 'k_hold', 'k_conv_resp', 'issuer_call', 'model', 'd_base'],
-        'conv_resp': ['k_conv_resp', 'cv_s', 'cv_e', 'k_s', 'k_e', 'k_lock', 'k_hold', 'd_base'],
-        'priority': ['pc_order', 'p_s', 'p_e', 'k_s', 'k_e', 'd_base'],
-        'rcps_equity': ['inst', 'view', 'conv_class', 'issuer_call', 'mat_mode'],
-    }
-    inputs = {k: values[k] for k in groups.get(topic, sorted(values))}
-    return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    fields = memo_fields(topic, values)
+    if fields is None:
+        fields = sorted(values)
+    elif fields == ['__all_but_market__']:
+        fields = sorted(k for k in values if k not in _MARKET and k not in _RECORDS)
+    inputs = {k: values.get(k) for k in fields}
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+
+
+_V21_GROUPS = {
+    'call_method': ['k_method', 'k_w', 'k_lock', 'k_hold', 'k_conv_resp', 'issuer_call', 'model', 'd_base'],
+    'conv_resp': ['k_conv_resp', 'cv_s', 'cv_e', 'k_s', 'k_e', 'k_lock', 'k_hold', 'd_base'],
+    'priority': ['pc_order', 'p_s', 'p_e', 'k_s', 'k_e', 'd_base'],
+    'rcps_equity': ['inst', 'view', 'conv_class', 'issuer_call', 'mat_mode'],
+}
+
+
+def _memo_key_v21(case, topic):
+    """2026.10.06 판(v2.1~2.2)이 저장한 식별값 — 그 판에서 저장한 메모를 공연히 «재확인 필요» 로 만들지 않는다."""
+    values = {**asdict(L.Terms()), **case.effective()}
+    groups = _V21_GROUPS
+    # 이전 판이 보지 않던 항목을 지금 보면, 그 항목이 바뀌었는지 이전 식별값으로는 알 수 없다 — 다시 확인하게 한다.
+    new = memo_fields(topic, values)
+    if topic in groups and (new is None or not set(new) <= set(groups[topic])):
+        return None
+    try:
+        inputs = {k: values[k] for k in groups.get(topic, sorted(values))}
+        return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    except (KeyError, TypeError):
+        return None
 
 
 def memo_status(case, topic):
@@ -30,7 +78,8 @@ def memo_status(case, topic):
     old = case.memo_context.get(topic)
     if not old:
         return '작성 당시 조건 미확인'
-    return '현재 조건의 기록' if old == memo_key(case, topic) else '이전 조건의 기록 · 재확인 필요'
+    current = old == memo_key(case, topic) or old == _memo_key_v21(case, topic)
+    return '현재 조건의 기록' if current else '이전 조건의 기록 · 재확인 필요'
 
 
 def put_diagnostic(t):
@@ -80,8 +129,10 @@ def export_blockers(run):
     blockers = []
     missing = run.summary.get('dp_missing_years', [])
     if missing and not run.case.sources.get('dp_missing_assumption', '').strip():
-        blockers.append('배당가능이익 미입력 발생연도 ' + ', '.join(map(str, missing)) +
-                        '년: 연도별 재원을 보완하거나, 미입력 연도를 제한 없이 상환하는 가정과 근거를 입력하십시오.')
+        blockers.append('배당가능이익을 넣지 않은 발생연도 ' + ', '.join(map(str, missing)) +
+                        '년의 재원이 실제 지급에 쓰였습니다. «입력 → 계약·평가 입력 → 상환청구권 → 배당가능이익에 따른 '
+                        '상환 제약» 에서 그 해의 배당가능이익을 표에 넣거나, 표 아래 «넣지 않은 발생연도의 재원 가정·근거» '
+                        '를 적고 저장하십시오.')
     for row in run.case.additional_rights:
         if row.get('treatment') == 'unresolved':
             blockers.append('직접 반영되지 않은 계약조건이 미해결입니다: ' + str(row.get('clause', row.get('kind'))))

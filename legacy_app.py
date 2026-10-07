@@ -106,12 +106,12 @@ def holder_ui(t, full, b0, b1, b2, ca):
     st.dataframe(pd.DataFrame([[k, v, v*_F] for k, v in h["pos"]],
                               columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
         {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
-        use_container_width=True, hide_index=True)
+        width='stretch', hide_index=True)
     st.markdown("### 참고 — 구성요소 분해")
     st.dataframe(pd.DataFrame([[k, v, v*_F] for k, v in h["parts"]],
                               columns=["구성요소", "100 기준", "전액 기준 (원)"]).style.format(
         {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
-        use_container_width=True, hide_index=True)
+        width='stretch', hide_index=True)
     st.caption("평가보고서에 주계약·전환권으로 나눠 싣는 표입니다. 투자자 회계에서는 나누지 않고 "
                "위 한 줄(복합계약 전체)로 측정합니다.")
     st.markdown(f"### 분개 — {holder_mode_text(h)}")
@@ -121,7 +121,7 @@ def holder_ui(t, full, b0, b1, b2, ca):
              for side, acct, v in h["journal"]],
             columns=["계정", "차변 (100)", "대변 (100)", "금액 (원)"]).style.format(
             {"차변 (100)": "{:,.4f}", "대변 (100)": "{:,.4f}", "금액 (원)": "{:,.0f}"}, na_rep=""),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
     if h["mode"] == "initial": st.caption(HOLDER_DAY1)
     st.caption(HOLDER_GROUP)
 
@@ -244,7 +244,7 @@ if _shared_run is None:
                     "현재 기본 방법(옵션차익 · TF식 지분-채권 분리할인 + 본문 4.3.3 전환확률 분해, "
                     "의무보유는 기간·조기상환 제한까지 반영)으로 바꾸려면 아래를 누르십시오. "
                     "**값이 크게 달라질 수 있습니다.**")
-            if st.button("현재 기본 평가방법으로 전환", key="scen_upg", use_container_width=True):
+            if st.button("현재 기본 평가방법으로 전환", key="scen_upg", width='stretch'):
                 t.k_method, t.k_split = 2, 1
                 st.session_state.scen_old = False
                 reset_widgets()
@@ -514,7 +514,7 @@ if _shared_run is None:
             _mkt = tk2.selectbox("시장", ["KQ", "KS", ""], index=0,
                                  format_func=lambda x: {"KQ": "코스닥", "KS": "코스피", "": "해외"}[x],
                                  key="s0_mkt")
-            if tk3.button("평가기준일 종가 불러오기", use_container_width=True,
+            if tk3.button("평가기준일 종가 불러오기", width='stretch',
                           disabled=(not t.ticker or is_blank("d_base")), key="btn_s0",
                           help=("평가기준일을 먼저 넣으십시오." if is_blank("d_base") else None)):
                 with st.spinner("받는 중"):
@@ -596,7 +596,7 @@ if _shared_run is None:
                          "클수록 두 답이 벌어집니다."))
             _bs_block = [x for x in st.session_state.get("_miss_prev", []) if x != "평가기준일 주가"]
             if bc2.button(("기준가격으로 지분 역산" if _SHA else "발행가로 주가 역산"),
-                          use_container_width=True, disabled=bool(_bs_block),
+                          width='stretch', disabled=bool(_bs_block),
                           help=("«지분가치 + 풋 − 콜» 이 목표와 같아지는 주가를 이분법으로 "
                                 "찾아 위 칸에 넣습니다." if _SHA else
                                 "전체 가치(B2, 발행자 상환권이 있으면 B3)가 목표와 같아지는 "
@@ -935,7 +935,7 @@ if _shared_run is None:
                                    f"{_rows[0][1]:,.4f}% … {_rows[-1][0]:,.0f}개월 "
                                    f"{_rows[-1][1]:,.4f}%. **이 표가 산식보다 우선합니다.**")
                         st.dataframe(pd.DataFrame(_rows, columns=["발행일부터 개월", "금액 (%)"]),
-                                     hide_index=True, use_container_width=True)
+                                     hide_index=True, width='stretch')
                     if _bad:
                         st.warning("읽지 못한 줄 — " + ", ".join(str(x) for x in _bad[:8])
                                    + "번째. 한 줄에 두 값이어야 합니다.")
@@ -1184,7 +1184,7 @@ if _shared_run is None:
                                            f"들어가는 값은 **{t.bdt_sig*100:.2f}%** "
                                            "입니다. 아래 단추를 누르셔야 산출한 값이 "
                                            "BDT 격자에 들어갑니다.")
-                            if st.button("이 변동성 적용", use_container_width=True,
+                            if st.button("이 변동성 적용", width='stretch',
                                          type="primary", key="rvapply"):
                                 t.bdt_sig = _v["annual"]
                                 t.rvol_rating, t.rvol_tenor, t.rvol_how = _rv_rating, _rv_tenor, _how
@@ -1289,7 +1289,7 @@ if _shared_run is None:
                         if _kr:
                             st.caption(f"읽은 회차 {len(_kr)}개. **이 표가 산식보다 우선합니다.**")
                             st.dataframe(pd.DataFrame(_kr, columns=["발행일부터 개월", "금액 (%)"]),
-                                         hide_index=True, use_container_width=True)
+                                         hide_index=True, width='stretch')
                         if _kb:
                             st.warning("읽지 못한 줄 — " + ", ".join(str(x) for x in _kb[:8]) + "번째.")
                     if _kl:
@@ -1390,7 +1390,7 @@ if _shared_run is None:
                       if _kr:
                           st.caption(f"읽은 회차 {len(_kr)}개. **이 표가 산식보다 우선합니다.**")
                           st.dataframe(pd.DataFrame(_kr, columns=["발행일부터 개월", "금액 (%)"]),
-                                       hide_index=True, use_container_width=True)
+                                       hide_index=True, width='stretch')
                       if _kb:
                           st.warning("읽지 못한 줄 — " + ", ".join(str(x) for x in _kb[:8]) + "번째.")
                   if _kl:
@@ -1752,7 +1752,7 @@ if _shared_run is None:
                                help="MAD × 1.4826 × 2.5 밖의 일간수익률을 뺍니다. "
                                     "책 사례 5-2 와 같은 배수입니다. 대상회사 주가에만 씁니다 — "
                                     "피어는 아래 피어 칸에서 따로 고릅니다.")
-            if st.button("주가 수집", use_container_width=True, type="secondary", disabled=_tg):
+            if st.button("주가 수집", width='stretch', type="secondary", disabled=_tg):
                 with st.spinner("받는 중"):
                     try:
                         px, src = fetch_prices(code.strip(), pdays, mkt, asof.isoformat())
@@ -1790,7 +1790,7 @@ if _shared_run is None:
                         st.warning(f"아직 **적용하지 않았습니다**. 지금 변동성 칸은 "
                                    + ("**비어 있습니다**" if is_blank("sig") else f"**{t.sig*100:.2f}%** 입니다")
                                    + ". 아래 단추를 누르셔야 산출한 값이 계산에 들어갑니다.")
-                    if st.button("이 변동성 적용", use_container_width=True, type="primary"):
+                    if st.button("이 변동성 적용", width='stretch', type="primary"):
                         t.sig = v["annual"]; bfill("sig")
                         st.rerun()
 
@@ -1841,7 +1841,7 @@ if _shared_run is None:
             vpick = st.selectbox("종합 방법", ["median", "mean", "max", "min"], disabled=_pg,
                                  format_func=lambda x: {"median": "중앙값", "mean": "단순평균",
                                                         "max": "최댓값", "min": "최솟값"}[x])
-            if st.button("피어 주가 수집", use_container_width=True, disabled=_pg):
+            if st.button("피어 주가 수집", width='stretch', disabled=_pg):
                 got, fail = [], []
                 with st.spinner("받는 중"):
                     for line in ptxt.splitlines():
@@ -1886,7 +1886,7 @@ if _shared_run is None:
                     st.dataframe(pd.DataFrame(
                         [[nm, x["annual"], x["n"], x["removed"]] for nm, x in pv],
                         columns=["회사", "연 변동성", "수익률", "제외"]).style.format(
-                        {"연 변동성": "{:.2%}"}), use_container_width=True, hide_index=True)
+                        {"연 변동성": "{:.2%}"}), width='stretch', hide_index=True)
                     st.metric("피어 종합", f"{agg*100:.2f}%",
                               {"median": "중앙값", "mean": "단순평균",
                                "max": "최댓값", "min": "최솟값"}[vpick])
@@ -1895,7 +1895,7 @@ if _shared_run is None:
                         st.warning(f"아직 **적용하지 않았습니다**. 지금 변동성 칸은 "
                                    + ("**비어 있습니다**" if is_blank("sig") else f"**{t.sig*100:.2f}%** 입니다")
                                    + ". 아래 단추를 누르셔야 피어 종합값이 계산에 들어갑니다.")
-                    if st.button("피어 종합 적용", use_container_width=True, type="primary"):
+                    if st.button("피어 종합 적용", width='stretch', type="primary"):
                         t.sig = agg; bfill("sig")
             st.session_state.vol_opt = dict(tdays=tdays, drop=drop, pick=vpick,
                                             asof=asof.isoformat(), days=pdays)
@@ -1966,7 +1966,7 @@ if _shared_run is None:
                         format_func=lambda i: _lbl[i])
                     st.caption("사모 CB 는 **회사채 II(사모사채)** 줄이 성격에 가깝습니다. "
                                "무등급이면 추정 등급을 고르고 근거를 조서에 남기십시오.")
-                    if st.button("이 곡선 적용", use_container_width=True, type="primary"):
+                    if st.button("이 곡선 적용", width='stretch', type="primary"):
                         st.session_state.rf_txt = curve_text(_rows[_ri][1])
                         st.session_state.cr_txt = curve_text(_rows[_ci][1])
                         st.session_state.kis_src = (_lbl[_ri], _lbl[_ci])
@@ -2042,7 +2042,7 @@ if _shared_run is None:
                 if _pick:
                     st.caption("올리신 표에 있는 등급 — **" + " · ".join(_pick)
                                + "**. 두 곡선은 이 안에서만 고를 수 있습니다.")
-                    if st.button("고른 두 등급으로 채우기", use_container_width=True):
+                    if st.button("고른 두 등급으로 채우기", width='stretch'):
                         _byg = {}
                         for i, g in _kg: _byg.setdefault(g, i)
                         st.session_state.ca_txt = curve_text(_kr[_byg[t.rt_a]][1])
@@ -2101,7 +2101,7 @@ if _shared_run is None:
                                       ensure_ascii=False, indent=2).encode(),
                            f"{lbl(t)['short']}평가_시나리오_{dt.date.today()}.json",
                            "application/json",
-                           use_container_width=True, disabled=bool(_MISS))
+                           width='stretch', disabled=bool(_MISS))
 
     # ── 계산 ──
     t = st.session_state.tm
@@ -2200,7 +2200,7 @@ if is_sha(t):
                                            "콜 1주당", "풋 전액 (원)", "콜 전액 (원)"]).style.format(
             {"주당 기준가격": "{:,.2f}", "풋 수량": "{:,.0f}", "콜 수량": "{:,.0f}", "풋 1주당": "{:,.2f}",
              "콜 1주당": "{:,.2f}", "풋 전액 (원)": "{:,.0f}", "콜 전액 (원)": "{:,.0f}"}, na_rep=""),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         # 확정 거래 회차는 선택권 트리가 없다 — 결과 표와 조서의 확정 거래 시트에서 본다
         _lat = [x for x in R["rows"] if not x["R"].get("deal")]
         if not _lat:
@@ -2264,7 +2264,7 @@ if is_sha(t):
                 "하나의 금융상품 가치가 아닙니다"]],
             columns=["항목", "100 기준", "전액 기준 (원)", "설명"]).style.format(
             {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}, na_rep="— (수량이 달라 원 단위로만 합산)"),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         if R.get("linked"):
             st.caption("같은 주식에 붙은 물량은 한쪽이 행사하면 상대 권리가 함께 끝나므로, 풋 권리자와 "
                        "콜 권리자가 **끝나는 상대 권리까지 보고** 행사 여부를 정합니다. 풋만·콜만 "
@@ -2285,7 +2285,7 @@ if is_sha(t):
                          "풋 (원)", "콜 (원)"]).style.format(
                 {"풋 주식수": "{:,.0f}", "콜 주식수": "{:,.0f}", "풋 (100 기준)": "{:,.4f}",
                  "콜 (100 기준)": "{:,.4f}", "풋 (원)": "{:,.0f}", "콜 (원)": "{:,.0f}"}, na_rep="—"),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
             st.caption("합계의 100 기준 값은 주식수로 가중한 평균입니다 (원 ÷ 주식수 ÷ 주당 기준가격 × 100).")
         _pd, _cd = R["p_dates"], R["c_dates"]
         _dd = lambda m: months_to_date(t.d_issue, m).isoformat()
@@ -2317,11 +2317,11 @@ if is_sha(t):
                                    + ("풋·콜 모두 소멸" if int(t.sha_qipo_kill)
                                       else "풋만 소멸")])
         st.dataframe(pd.DataFrame(_rows, columns=["계약 조건", "내용"]),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
         _xr = exercise_date_rows(t)
         if _xr:
             st.markdown("**행사일 대조 — 계약상 행사일과 실제로 쓴 노드**")
-            st.dataframe(pd.DataFrame(_xr, columns=EXDATE_COLS), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(_xr, columns=EXDATE_COLS), width='stretch', hide_index=True)
             st.caption(EXDATE_RULE)
 
     if _sha_section == _sha_sections[1]:
@@ -2336,7 +2336,7 @@ if is_sha(t):
                 [[k, v, acc_k[who][0][i][1]] for i, (k, v) in enumerate(rows)],
                 columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
                 {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}, na_rep="— 주식수가 달라 원 단위로만"),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
             st.caption(memo)
         _g = R["gross"]
         if _g:
@@ -2351,7 +2351,7 @@ if is_sha(t):
                  "같은 조항인데 이만큼 갈립니다"]],
                 columns=["항목", "100 기준", "전액 기준 (원)", "언제"]).style.format(
                 {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
             st.info(f"첫 행사 가능일({_g['step']}스텝 · {_g['t']:,.2f}년)의 행사금액 "
                     f"**{_g['strike']:,.4f}** 를 그날까지 할인한 값이 "
                     f"**{_g['pv']:,.4f}** 입니다. 기준서 1032 문단 23 은 "
@@ -2389,13 +2389,13 @@ if is_sha(t):
         st.dataframe(pd.DataFrame(_tab(_dp, "풋", "콜"),
             columns=["유형", "비중", "평균 시점(개월)"]).style.format(
             {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         if _hascall:
             st.markdown("#### 콜옵션 (상대방)")
             st.dataframe(pd.DataFrame(_tab(_dc, "콜", "풋"),
                 columns=["유형", "비중", "평균 시점(개월)"]).style.format(
                 {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
         if _hascall and not int(t.sha_kill):
             _sum = R["dist_put"]["ex"] + R["dist_call"]["ex"]
             if _sum > 1.0 + 1e-9:
@@ -2441,7 +2441,7 @@ if is_sha(t):
             ["풋·콜 모두 0 이상", f"{min(R['put'], R['call']):.6f}",
              ("해당 없음" if R.get("linked") and int(t.sha_writer) != 0
               else "적합" if min(R["put"], R["call"]) >= -1e-9 else "확인 필요")]],
-            columns=["검산", "값", "판정"]), use_container_width=True, hide_index=True)
+            columns=["검산", "값", "판정"]), width='stretch', hide_index=True)
         st.caption("«풋 ≤ 행사금액 현재가치» 는 풋이 아무리 깊은 내가격이라도 "
                    "행사금액을 넘을 수 없다는 상한입니다. 이 줄이 어긋나면 할인율이나 "
                    "행사금액 산식을 보십시오.")
@@ -2466,7 +2466,7 @@ if is_sha(t):
         st.dataframe(pd.DataFrame(_rows,
             columns=["가정", "지분가치", "풋", "콜"]).style.format(
             {"지분가치": "{:,.2f}", "풋": "{:,.4f}", "콜": "{:,.4f}"}),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption("풋은 주가가 내려갈수록, 보장수익률이 올라갈수록 커집니다. "
                    "변동성에는 둔합니다 — 이미 깊은 내가격이면 시간가치가 얼마 "
                    "남지 않기 때문입니다.")
@@ -2485,7 +2485,7 @@ if is_sha(t):
                      "무위험 선도", "풋 할인 선도"]).style.format(
             {"무위험 현물": "{:.4%}", "위험 현물": "{:.4%}",
              "무위험 선도": "{:.4%}", "풋 할인 선도": "{:.4%}"}, na_rep="—"),
-            use_container_width=True, hide_index=True, height=320)
+            width='stretch', hide_index=True, height=320)
 
     if _sha_section == _sha_sections[4]:
         st.write("입력화면 **변동성** 칸에서 산출한 값입니다. 비상장 대상회사면 "
@@ -2511,7 +2511,7 @@ if is_sha(t):
         else:
             st.caption("가정 시트의 노란 셀을 바꾸면 엑셀 안에서 트리가 다시 "
                        "계산됩니다. 선도이자율만 값으로 들어갑니다.")
-        if st.button("조서 만들기", type="primary", use_container_width=True,
+        if st.button("조서 만들기", type="primary", width='stretch',
                      key="sha_build"):
             try:
                 with st.spinner("엑셀 작성 중"):
@@ -2540,7 +2540,7 @@ if is_sha(t):
             st.download_button(f"{fn} 내려받기  ({len(data)/1024:,.0f} KB)", data, fn,
                                "application/vnd.openxmlformats-officedocument."
                                "spreadsheetml.sheet",
-                               type="primary", key="sha_dl", use_container_width=True)
+                               type="primary", key="sha_dl", width='stretch')
         st.divider()
         st.caption("**변동성 산출내역은 이 조서 안에 함께 들어갑니다.** 주주간계약은 "
                    "부트스트래핑한 선도이자율을 트리 8·9행에 값으로 담습니다 — 사채 "
@@ -2621,7 +2621,7 @@ if _detail_section == _detail_sections[0]:
          f"{LB['call']} 반영 후 순평가금액"]],
         columns=["단계", "가치", "차액", "해당 옵션", "뜻"])
     st.dataframe(df.style.format({"가치": "{:,.2f}", "차액": "{:+,.2f}"}, na_rep="—"),
-                 use_container_width=True, hide_index=True)
+                 width='stretch', hide_index=True)
     _sc = ipo_scenarios(t)
     if _sc:
         st.markdown("### 상장 시점 가정")
@@ -2630,7 +2630,7 @@ if _detail_section == _detail_sections[0]:
             columns=["가정", "전체 (B2)", "발행자 상환권 반영 (B3)", "전환권대가", "기준 대비"]
             ).style.format({"전체 (B2)": "{:,.4f}", "발행자 상환권 반영 (B3)": "{:,.4f}",
                             "전환권대가": "{:,.4f}", "기준 대비": "{:+,.4f}"}),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption("예상 상장 시점은 **가정**입니다. 한 값만 싣지 말고 이 표를 조서에 함께 "
                    "넣으십시오 — 감사인이 반드시 묻는 질문의 답이 그 안에 있습니다. "
                    "상장 성공 여부는 그 노드의 주가가 최소공모가격을 넘는지로 판정하므로 "
@@ -2662,7 +2662,7 @@ if _detail_section == _detail_sections[0]:
             ["사채 (부채요소)", full["B"], "위험이자율"],
             ["합계", full["TF"], "—"]],
             columns=["요소", "가치", "할인율"]).style.format({"가치": "{:,.2f}"}),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption("현금납입형은 행사해도 사채가 남으므로 지분과 부채가 처음부터 "
                    "갈라져 있습니다. 지분이 될 확률로 할인율을 섞을 자리가 없어 "
                    "**TF 와 GS 가 같은 값**을 냅니다 — 신용위험 처리를 무엇으로 "
@@ -2675,7 +2675,7 @@ if _detail_section == _detail_sections[0]:
             columns=["모형", "전체", "지분", "부채", inst_text(t, "전환확률")]).style.format(
             {"전체": "{:,.2f}", "지분": "{:,.2f}", "부채": "{:,.2f}",
              inst_text(t, "전환확률"): "{:.4f}"}, na_rep=""),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption(inst_text(t, "전환확률이 0과 1 사이 중간이면 두 모형이 갈립니다. "
                              "한쪽으로 몰리면 사실상 같은 값이 나옵니다."
                              if 0.15 < full["P"] < 0.85 else
@@ -2690,7 +2690,7 @@ if _detail_section == _detail_sections[1]:
         st.dataframe(pd.DataFrame([[k, v, v/100*t.face_total] for k, v in _fvr],
                                   columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
             {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption("결산 분개는 «전기말 장부금액 → 당기말 공정가치» 차이를 파생상품평가손익으로, "
                    "주계약은 발행일 유효이자율로 계산한 이자비용으로 만듭니다. 두 입력이 있어야 앱이 그 분개를 "
                    "만듭니다. 조서의 「회계처리」 시트도 같은 안내와 표를 포함합니다.")
@@ -2699,7 +2699,7 @@ if _detail_section == _detail_sections[1]:
         af = allocate_full(t, alloc_rows + alloc_extra(t, ca))
         st.dataframe(pd.DataFrame(af, columns=["항목", "최초 장부금액 (100 기준)", "전액 기준 (원)"]).style.format(
             {"최초 장부금액 (100 기준)": "{:,.2f}", "전액 기준 (원)": "{:,.0f}"}),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption(f"{'발행총액' if is_rcps(t) else '전자등록총액'} {t.face_total:,.0f}원 "
                    "기준으로 환산했습니다.")
         st.caption(alloc_note)
@@ -2710,13 +2710,13 @@ if _detail_section == _detail_sections[1]:
             st.dataframe(pd.DataFrame([[k, v, v/100*t.face_total] for k, v in issuer_day1_rows(_d1x)],
                                       columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
                 {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
             st.caption(ISSUER_DAY1 if _d1x["hybrid"] else
                        "전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수됩니다 (1032 문단 31). "
                        "최초 인식 손익은 생기지 않습니다.")
             st.dataframe(pd.DataFrame([[inst_text(t, k), v, on] for k, v, on in issuer_day1_cases(_d1x)],
                                       columns=["최초 인식 차이의 세 가지 구분", "처리", "이 평가"]),
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
         if t.issue_cost > 0:
             _cs, _c100 = cost_split(t, alloc_rows)
             _F = t.face_total/100
@@ -2727,7 +2727,7 @@ if _detail_section == _detail_sections[1]:
                 columns=["요소", "배분액 (100)", "거래원가 몫 (100)", "몫 (원)", "처리"]
                 ).style.format({"배분액 (100)": "{:,.2f}", "거래원가 몫 (100)": "{:,.4f}",
                                 "몫 (원)": "{:,.0f}"}),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
             if fvpl_on(t):
                 st.caption("복합계약 전체를 당기손익-공정가치로 지정했으므로 거래원가를 얹을 "
                            "자리가 없어 **전액 즉시 비용**입니다 (제1109호 문단 5.1.1). "
@@ -2795,7 +2795,7 @@ if _detail_section == _detail_sections[1]:
                    if _rm["prev_host"] is not None else []),
                 columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
                 {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
             if _pl >= 0:
                 st.code(f"차) 파생상품평가손실            {_pl:>12,.4f}\n"
                         f"    대) 파생상품부채                {_pl:>12,.4f}", language=None)
@@ -2820,7 +2820,7 @@ if _detail_section == _detail_sections[1]:
                 [[i, bv, it, c, end] for i, bv, it, c, end in _ar],
                 columns=["회차", "기초", "유효이자", "지급이자", "기말"]).style.format(
                 {"기초": "{:,.4f}", "유효이자": "{:,.4f}", "지급이자": "{:,.4f}", "기말": "{:,.4f}"}),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
             _ti = sum(x[2] for x in _ar); _tc = sum(x[3] for x in _ar)
             st.code(inst_text(t,
                 f"차) 이자비용                    {_ti:>12,.4f}\n"
@@ -2885,7 +2885,7 @@ if _detail_section == _detail_sections[1]:
                      abs(_ss["pl"]), abs(_ss["pl"])*t.face_total/100]],
                     columns=["항목", "100 기준", "전액 기준 (원)"]).style.format(
                     {"100 기준": "{:,.4f}", "전액 기준 (원)": "{:,.0f}"}),
-                    use_container_width=True, hide_index=True)
+                    width='stretch', hide_index=True)
                 _pl = _ss["pl"]
                 st.code(inst_text(t,
                     f"차) 전환사채 (주계약)             {_ss['liab_bv']:>12,.4f}\n"
@@ -2972,7 +2972,7 @@ if _detail_section == _detail_sections[3]:
     st.dataframe(cdf.style.format({"시점(년)": "{:.2f}", "무위험 현물": "{:.2%}",
                                    "무위험 선도": "{:.2%}", "위험 현물": "{:.2%}",
                                    "위험 선도": "{:.2%}", "스프레드": "{:.2%}"}),
-                 use_container_width=True, hide_index=True)
+                 width='stretch', hide_index=True)
     st.line_chart(cdf.set_index("시점(년)")[["무위험 현물", "위험 현물", "위험 선도"]])
     if len(t.cr_curve) >= 2 and t.y_type == "par":
         st.markdown("**부트스트래핑 과정**")
@@ -2982,7 +2982,7 @@ if _detail_section == _detail_sections[3]:
                           columns=["만기(년)", "만기수익률", "할인계수", "현물이자율(연속)"])
         st.dataframe(bt.style.format({"만기(년)": "{:.2f}", "만기수익률": "{:.2%}",
                                       "할인계수": "{:.6f}", "현물이자율(연속)": "{:.4%}"}),
-                     use_container_width=True, hide_index=True, height=260)
+                     width='stretch', hide_index=True, height=260)
         st.caption("각 이표 시점마다 1 = 이자 × 앞선 할인계수 합 + 그 시점 할인계수 를 풀어 "
                    "할인계수를 앞에서부터 순차로 구합니다. 현물이자율은 −LN(할인계수) ÷ 만기입니다.")
     step_df = math.exp(-sum(forward_rate(CR, i*dt_, (i+1)*dt_)*dt_ for i in range(t.n)))
@@ -3007,7 +3007,7 @@ if _detail_section == _detail_sections[4]:
             [[nm, x["annual"], x["daily"], x["n"], x["removed"], px[0][0], px[-1][0]]
              for nm, x, px in _pvv if x],
             columns=["피어", "연 변동성", "일 변동성", "수익률", "제외", "시작", "끝"]).style.format(
-            {"연 변동성": "{:.2%}", "일 변동성": "{:.2%}"}), use_container_width=True, hide_index=True)
+            {"연 변동성": "{:.2%}", "일 변동성": "{:.2%}"}), width='stretch', hide_index=True)
         _ag = st.session_state.get("peer_agg")
         st.caption(f"연 거래일수 {_po.get('tdays', 250)}일 · 이상치 제거 "
                    f"{'함' if _po.get('drop', True) else '안 함'} · 조회 종료일 {_po.get('asof', '')}"
@@ -3036,7 +3036,7 @@ if _detail_section == _detail_sections[4]:
             ["이상치 포함", v0["annual"], v0["daily"], v0["n"], 0]],
             columns=["구분", "연 변동성", "일 변동성", "관측", "제거"]).style.format(
             {"연 변동성": "{:.2%}", "일 변동성": "{:.2%}"}),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption(f"정상범위 {v['lo']*100:.2f}% ~ {v['hi']*100:.2f}% — "
                    "일별 로그수익률의 중앙값에서 중앙값 절대편차의 2.5배를 벗어난 값을 뺍니다.")
         if abs(v["annual"] - t.sig) > 5e-5:
@@ -3044,7 +3044,7 @@ if _detail_section == _detail_sections[4]:
                        "입력 화면에서 직접 넣었거나 다른 조회 조건으로 산출한 값이면 그 근거를 남기십시오.")
         st.markdown("**최근 10일**")
         st.dataframe(pxdf.tail(10).iloc[::-1].style.format({"종가": "{:,.0f}"}),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
 
 if _detail_section == _detail_sections[5]:
     import matplotlib
@@ -3077,7 +3077,7 @@ if _detail_section == _detail_sections[5]:
                        zip(["#1b6b5a", "#7a4b1e", "#a3312a", "#e4e8ec", "#9aa4ae"],
                            _L["lg"])],
               loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=5, frameon=False)
-    st.pyplot(fig, use_container_width=True)
+    st.pyplot(fig, width='stretch')
     if not _kf:
         st.caption("한글 글꼴이 없어 그림만 영문으로 그렸습니다. 표와 설명은 그대로입니다. "
                    "한글로 보시려면 저장소에 `packages.txt` 를 만들어 `fonts-nanum` "
@@ -3096,7 +3096,7 @@ if _detail_section == _detail_sections[5]:
              _tw/_w/full["mper"] if _w else None]],
             columns=["유형", "비중", "평균 시점(개월)"]).style.format(
             {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption("위 세 줄은 **사채**가 어떻게 끝나는지의 분포이고 합이 100% 입니다. "
                    "마지막 줄은 **신주인수권**을 행사할 확률로, 행사해도 사채가 남으므로 "
                    "위 분포와 따로 셉니다"
@@ -3120,7 +3120,7 @@ if _detail_section == _detail_sections[5]:
         st.dataframe(pd.DataFrame(_rows,
             columns=["유형", "비중", "평균 시점(개월)"]).style.format(
             {"비중": "{:.1%}", "평균 시점(개월)": "{:,.1f}"}, na_rep="—"),
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
         st.caption("거의 모든 경로가 만기 전에 끝나면 기대만기가 계약만기보다 짧다는 뜻이고, "
                    "장기 할인율의 영향이 줄어듭니다."
                    + ("  만기에 존속기간이 만료되어 **보통주로 자동전환**되는 몫은 "
@@ -3179,7 +3179,7 @@ if _detail_section == _detail_sections[6]:
         [inst_text(t, "표면이자 (회당)"), f"{100*eff_cpn(t)*t.ipay/12:,.2f}"], ["상각 횟수", f"{nper}회"],
         ["유효이자율 (연, 이산복리)", f"{r_eir:.2%}"]]
     st.dataframe(pd.DataFrame(_amrows, columns=["항목", "값"]),
-        use_container_width=True, hide_index=True)
+        width='stretch', hide_index=True)
     if abs(_ah6 - b0) > 5e-3:
         st.caption("상각은 배분표의 최초 장부금액에서 시작합니다. 거래원가, 비분리 조기상환권, 부채로 분류한 "
                    "전환권, 최초 인식 차이 처리 때문에 공정가치(B0)와 다릅니다.")
@@ -3188,7 +3188,7 @@ if _detail_section == _detail_sections[6]:
     st.dataframe(amdf.style.format({"경과연수": "{:.2f}", "기초 장부금액": "{:,.2f}",
                                     "이자비용": "{:,.2f}", "지급이자": "{:,.2f}",
                                     "기말 장부금액": "{:,.2f}"}),
-                 use_container_width=True, hide_index=True, height=320)
+                 width='stretch', hide_index=True, height=320)
     st.caption("기말 장부금액이 만기에 상환금액과 일치해야 합니다.")
 
 if _detail_section == _detail_sections[7] and st.button("상세 민감도 계산"):
@@ -3200,7 +3200,7 @@ if _detail_section == _detail_sections[7] and st.button("상세 민감도 계산
     st.dataframe(pd.DataFrame([[r[0], r[1], r[1]-base] for r in rows],
                               columns=["변동성", "전체 가치", "변화"]).style.format(
         {"변동성": "{:.1%}", "전체 가치": "{:,.2f}", "변화": "{:+,.2f}"}),
-        use_container_width=True, hide_index=True)
+        width='stretch', hide_index=True)
     rows2 = []
     for dvv in (-0.05, -0.025, 0.0, 0.025, 0.05):
         tt = Terms(**asdict(t))
@@ -3211,7 +3211,7 @@ if _detail_section == _detail_sections[7] and st.button("상세 민감도 계산
     st.dataframe(pd.DataFrame([[r[0], r[1], r[1]-base2] for r in rows2],
                               columns=["할인율 조정", "전체 가치", "변화"]).style.format(
         {"할인율 조정": "{:+.1%}", "전체 가치": "{:,.2f}", "변화": "{:+,.2f}"}),
-        use_container_width=True, hide_index=True)
+        width='stretch', hide_index=True)
     st.caption("입력변수별 민감도를 비교하고 중요한 비관측 투입변수와 공시 요구사항을 별도로 검토하십시오.")
 
 if _detail_section == _detail_sections[8]:
@@ -3231,7 +3231,7 @@ if _detail_section == _detail_sections[8]:
               ("배분 합계 = 100", f"{tot_al:,.2f}", abs(tot_al-100) < 0.01)]
     st.dataframe(pd.DataFrame([[k, v, "적합" if ok else "확인 필요"] for k, v, ok in checks],
                               columns=["항목", "값", "판정"]),
-                 use_container_width=True, hide_index=True)
+                 width='stretch', hide_index=True)
     st.caption("위험중립가중치가 0과 1을 벗어나면 현재 금리·변동성과 격자 간격의 조합을 검토해야 합니다. "
                "구간마다 선도이자율로 다시 계산되므로 **첫 구간만 보아서는 안 됩니다** — "
                "전 구간의 범위를 함께 표시합니다.")
@@ -3316,7 +3316,7 @@ if _detail_section == _detail_sections[8]:
               f"**확인 필요** — 음수인 권리: {', '.join(_neg2)}")),
         ]
         st.dataframe(pd.DataFrame(_q, columns=["질문", "답"]),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
         if _ovd:
             st.warning("세 번째 줄이 **확인 필요**입니다. 계약서의 통지기간과 "
                        "우선순위 조항을 보시고, 「판단·근거」의 우선순위 비교에서 두 "
@@ -3325,7 +3325,7 @@ if _detail_section == _detail_sections[8]:
         if st.button('추가 수치 검산', key='btn_model_checks'):
             _mc = model_checks(t, full, b0, b1, b2, ca, eir_or_none(t, full, b0, b1, b2, ca))
             st.dataframe(pd.DataFrame(_mc, columns=['항목', '값', '결과', '설명']),
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
             _mcbad = [nm for nm, _, vd, _ in _mc if vd == '확인 필요']
             if _mcbad:
                 st.warning('확인할 사항: ' + ', '.join(_mcbad))
@@ -3333,7 +3333,7 @@ if _detail_section == _detail_sections[8]:
             st.info(unmod_text(t))
         st.markdown("**모형의 알려진 한계** — 조서 「99_모형검증」 시트와 같은 표")
         st.dataframe(pd.DataFrame([(a, b) for a, b, _ in MODEL_LIMITS], columns=["한계", "설명"]),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
 
         # ── 극단 시험 — 격자를 두 번 더 돌리므로 눌렀을 때만 ──
         st.markdown("**극단에서 값이 붙는가**")
@@ -3356,7 +3356,7 @@ if _detail_section == _detail_sections[8]:
                  f"전체 ÷ 전환가치 {_h2/_cvh:,.6f}", "1.000000",
                  ("붙는다" if _gap2 < 1e-4 else f"차이 {_gap2:,.6f} — 확인 필요")]],
                 columns=["극단", "잰 값", "가야 할 곳", "판정"]),
-                use_container_width=True, hide_index=True)
+                width='stretch', hide_index=True)
             st.caption("붙지 않으면 전환가치·상환금액 배선이나 리픽싱 하한을 "
                        "의심하십시오. 매도청구권은 이 시험에 넣지 않습니다 — "
                        "한도·의무보유가 걸려 있어 극단에서도 단순한 값으로 "
@@ -3369,7 +3369,7 @@ if _detail_section == _detail_sections[8]:
             st.caption(exdate_head(t))
             st.dataframe(pd.DataFrame([["—" if v is None else v for v in _row] for _row in _exr],
                                       columns=EXDATE_COLS),
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
             st.caption("규칙 — " + EXDATE_RULE)
 
     st.markdown("**신용스프레드가 발행조건과 맞는가**")
@@ -3428,7 +3428,7 @@ if _detail_section == _detail_sections[8]:
                      f"현재 {b1-b0:,.2f}"],
                     ["역산 상태의 전환권대가", f"{_zv:,.2f}", f"현재 {conv:,.2f}"]],
                     columns=["항목", "값", "참고"]),
-                    use_container_width=True, hide_index=True)
+                    width='stretch', hide_index=True)
                 if abs(b2-100) < 1.0:
                     st.info('모형가치와 원금 100의 차이가 1 미만입니다. 금액의 일치만으로 거래가격이나 투입변수의 적정성을 확인할 수는 없습니다.')
                 else:
@@ -3480,7 +3480,7 @@ if _detail_section == _detail_sections[9]:
                      "지금 만들면 위의 **조서에 들어가는 값**으로 계산됩니다.")
 
     c1, c2 = st.columns([1, 2])
-    if c1.button("조서 만들기", type="primary", use_container_width=True):
+    if c1.button("조서 만들기", type="primary", width='stretch'):
         try:
             with st.spinner("엑셀 작성 중"):
                 # 산출내역을 조서 안에 함께 싣는다. 수식 조서에서는 종가·고시
@@ -3525,7 +3525,7 @@ if _detail_section == _detail_sections[9]:
         fn, data = rep[0], rep[1]
         st.download_button(f"{fn} 내려받기  ({len(data)/1024:,.0f} KB)", data, fn,
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           type="primary", key="dl_report", use_container_width=True)
+                           type="primary", key="dl_report", width='stretch')
         st.caption("버튼이 보이지 않거나 눌러도 반응이 없으면 브라우저의 팝업·다운로드 차단을 확인하십시오.")
 
     st.divider()

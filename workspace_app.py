@@ -53,6 +53,26 @@ def save_case(case, *, reset_widgets=True):
     st.rerun()
 
 
+def _decimals(x):
+    """숫자 칸에 보일 소수 자릿수 — 값에 있는 자릿수(최대 6), 적어도 2."""
+    if x is None:
+        return 2
+    frac = f'{abs(float(x)):.10f}'.rstrip('0').partition('.')[2]
+    return min(max(len(frac), 2), 6)
+
+
+def won_words(v):
+    """6000000000 → «6,000,000,000원 · 60억 원» — 큰 금액의 자릿수를 한눈에 보이게."""
+    n = int(round(abs(v)))
+    parts = []
+    for unit, size in (('조', 10**12), ('억', 10**8), ('만', 10**4)):
+        if n >= size:
+            parts.append(f'{n // size:,}{unit}'); n %= size
+    if n:
+        parts.append(f'{n:,}')
+    return f"{v:,.0f}원 · {'−' if v < 0 else ''}{' '.join(parts) or '0'} 원"
+
+
 def field(key, edited, case, prefix='input'):
     st.session_state.setdefault('_rendered_fields', set()).add(key)
     rev = st.session_state.get('revision', 0)
@@ -118,8 +138,11 @@ def field(key, edited, case, prefix='input'):
         # 의무보유 물량 비율의 음수는 «콜 대상 비율과 같음» 이다 — 칸을 비워 보여 준다.
         _same = key == 'k_lock_w' and value is not None and value < 0
         displayed = float(value * scale) if value is not None and not _same else None
-        number = st.number_input(title, value=displayed, format='%.2f', help='표시 자릿수와 무관하게 수정하지 않은 원값의 정밀도는 유지됩니다.', key=widget_key)
+        # 넣은 자릿수를 그대로 보인다 (2.125% 를 2.13 으로 보이지 않는다). 소수 둘째~여섯째 자리.
+        number = st.number_input(title, value=displayed, format=f'%.{_decimals(displayed)}f', key=widget_key)
         new = value if number == displayed else number / scale if number is not None else None
+        if new is not None and '(원)' in title and abs(new) >= 1e6:
+            st.caption(won_words(new))           # 큰 금액은 천 단위 쉼표와 억·만 단위로 한 번 더 보인다
         if key == 'k_lock_w' and new is None:
             new = -1.0
         if new is not None and TYPES[key] is int:
@@ -275,7 +298,10 @@ DP_RANK = {'senior': '평가대상이 선순위', 'pari': '동순위 (비율로 
 DP_CMP = {1: '연복리', 0: '단리'}
 
 
-def dp_editor(edited, errors):
+DP_MISSING_LABEL = '넣지 않은 발생연도의 재원 가정·근거'
+
+
+def dp_editor(edited, errors, case=None):
     """배당가능이익 상환 제약 — 연도별 추정 배당가능이익(발생연도 기준)과 같은 재원을 쓰는 다른 상품.
 
     비워 두면 배당이 가능하다는 전제(제한 없음)로 종전과 같이 계산한다.
@@ -445,6 +471,20 @@ def dp_editor(edited, errors):
         if new_rows:
             st.caption('평가 결과의 «확인할 사항» 에 넣지 않은 해·재원이 우선배당보다 작은 해·발행자 상환권이 막힌 행사일이 '
                        '나옵니다. 상세 조서의 «00 배당가능이익 상환» 시트에 청구 시점별 지급 일정이 실립니다.')
+        if new_rows and case is not None:
+            # 표에 없는 발생연도의 재원을 실제 지급에 쓰면 그 해는 제한 없이 갚는다고 보고 계산한다 — 그 가정의 근거가
+            # 없으면 조서를 만들지 않는다 (valuation.explain.export_blockers). 근거는 이 표 바로 아래에서 받는다.
+            st.markdown('**넣지 않은 발생연도의 재원 가정·근거**')
+            _why = st.text_area(DP_MISSING_LABEL, case.sources.get('dp_missing_assumption', ''), key=f'dp_missing_{rev}',
+                                label_visibility='collapsed',
+                                placeholder='예: 사업계획 기간 뒤에는 상환에 충분한 이익이 난다고 본 근거 (자료명·쪽)',
+                                help='표에 없는 발생연도의 재원이 실제 지급에 쓰이면, 그 해는 제한 없이 갚는다고 보고 계산합니다. '
+                                     '이 근거가 비어 있으면 조서를 만들 수 없습니다. 근거가 없으면 그 해의 배당가능이익을 표에 넣으십시오.')
+            if _why.strip() != case.sources.get('dp_missing_assumption', '').strip():
+                if st.button('재원 가정 저장', key=f'dp_missing_save_{rev}'):
+                    candidate = Case.from_dict(case.to_dict())
+                    candidate.sources['dp_missing_assumption'] = _why.strip()
+                    save_case(candidate)
 
 
 def dp_panel(run):
@@ -472,7 +512,7 @@ def dp_panel(run):
         st.caption('평가에 쓴 상환청구 가치는 계약 상환금이 아니라, 우선배당을 먼저 빼고 남은 배당가능이익만큼 해마다 나눠 받는 '
                    '일정의 현재가치입니다. 연도마다 첫 청구일만 보여 줍니다 — 전체는 조서의 «00 배당가능이익 상환» 시트에 있습니다.')
         dataframe(pd.DataFrame(rows).style.format({'계약 상환금 (100 기준)': '{:,.2f}', '실제 지급 현재가치 (100 기준)': '{:,.2f}',
-                                                     '비율': '{:.2%}'}, na_rep='—'), hide_index=True, use_container_width=True)
+                                                     '비율': '{:.2%}'}, na_rep='—'), hide_index=True, width='stretch')
 
 
 def sha_editor(edited, case, errors):
@@ -550,7 +590,7 @@ def sha_editor(edited, case, errors):
                     '봅니다. 수량이 다르면 반드시 넣으십시오 — 앱이 수량만 보고 자동으로 잇지 않습니다. 나머지 풋·콜 '
                     '물량은 앱이 따로 평가해 더합니다.')}
     frame = st.data_editor(_sha_frame(rows, cols), num_rows='dynamic', hide_index=True, key=f'sha_rows_{rev}',
-                           column_config=cfg, use_container_width=True)
+                           column_config=cfg, width='stretch')
     new_rows = _sha_rows_from(frame, cols, rows)
     edited['sha_rows'] = new_rows
     st.session_state.setdefault('_rendered_fields', set()).update({'sha_rows', 'K0', 'face_total', 'd_mat'})
@@ -588,7 +628,7 @@ def sha_editor(edited, case, errors):
         st.markdown('**물량 나눔** — 같은 주식에 붙어 연계 판단하는 물량과 풋만·콜만 남는 물량 (앱이 나눠 평가한 뒤 더합니다)')
         dataframe(pd.concat([_qt, pd.DataFrame([_sum])], ignore_index=True).style.format(
             {c: '{:,.0f}' for c in _qt.columns if c != '회차'}, na_rep='— 같은 주식 물량을 넣으십시오'),
-            hide_index=True, use_container_width=True)
+            hide_index=True, width='stretch')
     if base > 0:
         edited['face_total'] = base
     st.caption(f'회차 {len(new_rows)}개 · 계산기준금액 {base:,.0f}원 (주당 기준가격 × 대상 주식수의 합) · 평가 종료일 '
@@ -745,7 +785,7 @@ def input_editor(case, autosave=False):
                            '뒤이면 다시 판정하지 않고 최초 인식 때의 결론을 이어 씁니다 (1109 B4.3.11).')
                 fields(['p_sep', 'p_lost_int', 'split_tol', 'split_base_in', 'split_base_why'], edited, case)
         if inst == 'RCPS':
-            dp_editor(edited, draft_errors)
+            dp_editor(edited, draft_errors, case)
         st.subheader('매도청구권 (콜)' if inst != 'RCPS' else '발행회사 상환권·매도청구권 (콜)')
         if inst == 'RCPS':
             field('issuer_call', edited, case)
@@ -940,7 +980,7 @@ def sha_result_panel(run):
         dataframe(frame.style.format({'주당 기준가격': '{:,.2f}', '풋 수량': '{:,.0f}', '콜 수량': '{:,.0f}',
                                          '같은 주식 물량 (연계 판단)': '{:,.0f}',
                                          '풋 1주당': '{:,.2f}', '콜 1주당': '{:,.2f}', '풋 전액': '{:,.0f}',
-                                         '콜 전액': '{:,.0f}'}, na_rep=''), hide_index=True, use_container_width=True)
+                                         '콜 전액': '{:,.0f}'}, na_rep=''), hide_index=True, width='stretch')
         st.caption('회차마다 따로 계산해 더했습니다. 연도별 미행사 물량을 다음 회차로 넘기지 않습니다. 같은 주식 물량은 '
                    '두 권리자가 끝나는 상대 권리까지 보고 행사 여부를 정했고, 나머지 풋·콜 물량은 따로 평가했습니다. '
                    '1주당 금액은 풋·콜 각자의 수량으로 나눈 값입니다.')
@@ -953,7 +993,7 @@ def sha_result_panel(run):
                                         '차이 풋': r['조건 충족 시 풋 전액'] - r['풋 전액'],
                                         '차이 콜': r['조건 충족 시 콜 전액'] - r['콜 전액']} for r in _cond]).style.format(
                 {c: '{:,.0f}' for c in ['평가금액 풋', '평가금액 콜', '조건 충족 시 풋', '조건 충족 시 콜', '차이 풋', '차이 콜']}),
-                hide_index=True, use_container_width=True)
+                hide_index=True, width='stretch')
             st.caption('조건 충족 가능성을 확률로 반영한 값이 아닙니다. 충족 가정과 미충족 가정의 차이를 보여 줄 뿐입니다.')
     _perf_rows = [x for x in (run.terms.sha_rows or []) if isinstance(x, dict) and x.get('perf')]
     if _perf_rows:
@@ -970,12 +1010,12 @@ def sha_result_panel(run):
                 dataframe(pd.DataFrame(_res[1], columns=['매출 배율', '손실률 시나리오', '영업손실률', '적용 배수',
                                                             '주당 행사가격(원)', '풋 (원)', '콜 (원)']).style.format(
                     {'매출 배율': '{:.0%}', '영업손실률': '{:.2%}', '적용 배수': '{:g}', '주당 행사가격(원)': '{:,.2f}',
-                     '풋 (원)': '{:,.0f}', '콜 (원)': '{:,.0f}'}), hide_index=True, use_container_width=True)
+                     '풋 (원)': '{:,.0f}', '콜 (원)': '{:,.0f}'}), hide_index=True, width='stretch')
     recon = run.summary.get('sha_recon')
     if recon:
         st.markdown('**수량 대사 — 평가 대상과 제외 물량**')
         dataframe(pd.DataFrame(recon).style.format({'풋 주식수': '{:,.0f}', '콜 주식수': '{:,.0f}', '계약 대상 주식': '{:,.0f}'}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width='stretch')
         _h = float(getattr(t, 'sha_hold_q', -1.0))
         if _h >= 0:
             _used = sum(r['계약 대상 주식'] for r in recon)
@@ -1013,7 +1053,7 @@ def split_panel(run):
     if not cache[1]:
         return
     st.markdown('**내재파생 분리 판단 — 평가 직후 요약**')
-    dataframe(pd.DataFrame(cache[1]), hide_index=True, use_container_width=True)
+    dataframe(pd.DataFrame(cache[1]), hide_index=True, width='stretch')
     if any(x['판정과 설정'].startswith('검토 필요') for x in cache[1]):
         st.warning('수치 판정과 이용자 설정이 다른 권리가 있습니다. 계약과 회계정책을 확인하고 근거를 남기십시오.')
     st.caption('근거 문장·검토용 수치는 아래 분석 도구 «상세 계산·회계 참고표» → 판단·근거에 있습니다. '
@@ -1043,7 +1083,7 @@ def day1_panel(run, case):
         _cases = issuer_day1_cases(dict(hybrid=bool(day1.get('choice')), pl=day1.get('mode') == '당기손익'))
         dataframe(pd.DataFrame([[inst_text(run.terms, k), v, on] for k, v, on in _cases],
                                   columns=['최초 인식 차이의 세 가지 구분', '처리', '이 평가']),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
     if not day1.get('choice', True):
         # 발행자 · 전환권 자본 — 차이는 잔여인 자본요소(전환권대가)에 흡수된다.
         st.caption(inst_text(run.terms, '전환권이 자본이므로 차이는 잔여인 자본요소(전환권대가)에 흡수됩니다 (1032 문단 31). '
@@ -1072,181 +1112,12 @@ def day1_panel(run, case):
 
 
 def main():
-    if not st.session_state.get('_app_embedded'):
-        st.set_page_config(page_title='복합금융상품 평가', layout='wide')
-    st.title('복합금융상품 평가')
-    st.caption('입력·시장자료 → 평가·분석 → 조서 출력')
-    with st.sidebar:
-        st.subheader('평가파일')
-        with st.expander('새 평가 만들기'):
-            with st.form('new_case'):
-                name = st.text_input('평가 건명')
-                instrument = st.selectbox('평가 상품', ['RCPS', 'CB', 'BW', 'SHA'])
-                if st.form_submit_button('빈 입력안 만들기'):
-                    if name.strip():
-                        contract = dict(inst=instrument, rfx_mode=0, cpn=0., cv_s=99., cv_e=0., p_s=99., p_e=0., k_w=0.,
-                                        sha_put_s=99., sha_put_e=0., sha_call_s=99., sha_call_e=0.)
-                        install_case(Case(name=name.strip(), contract=contract, method=dict(model='TF', view='holder', gap_m=1.)))
-                    else:
-                        st.error('평가 건명을 입력하십시오.')
-        upload = st.file_uploader('평가파일 불러오기', type='json')
-        previous_upload = st.file_uploader('전기 평가파일(선택)', type='json', key='previous_upload')
-        st.caption('전기 자료를 복사한 경우 새 기준일의 주당가치·변동성·금리를 확인하십시오.')
-    if upload:
-        digest = hashlib.sha256(upload.getvalue()).hexdigest()
-        if st.session_state.get('upload_digest') != digest:
-            try:
-                install_case(read_case(upload.getvalue(), upload.name.removesuffix('.json')))
-                st.session_state.upload_digest = digest
-            except (ValueError, TypeError) as exc:
-                st.error(f'평가파일을 읽을 수 없습니다: {exc}'); st.stop()
-    previous = None
-    if previous_upload:
-        try:
-            previous = read_case(previous_upload.getvalue(), previous_upload.name)
-        except (ValueError, TypeError) as exc:
-            st.error(f'전기 평가파일을 읽을 수 없습니다: {exc}')
-    if previous:
-        with st.sidebar:
-            if st.button('전기 입력을 새 평가로 복사'):
-                cloned = Case.from_dict(previous.to_dict())
-                cloned.name += ' — 갱신'
-                cloned.notes += '\n전기 입력 복사: 평가기준일과 시장자료, 계약 변경 여부를 확인할 것.'
-                install_case(cloned)
-    if 'case' not in st.session_state:
-        st.info('왼쪽에서 새 평가를 만들거나 기존 평가파일을 불러오십시오.'); st.stop()
-    case = st.session_state.case
-    st.subheader(f'{case.name} · {case.contract.get("inst", "")}')
-    # One active step only: hidden analyses never execute on input changes.
-    if st.session_state.get('_workflow_stage') not in (None, '입력·시장자료', '평가·분석', '조서 출력'):
-        st.session_state['_workflow_stage'] = '입력·시장자료'
-    stage = st.radio('평가 진행', ['입력·시장자료', '평가·분석', '조서 출력'],
-                     index=0, horizontal=True, key='_workflow_stage')
-    st.sidebar.download_button('평가파일 저장', json.dumps(case.to_dict(), ensure_ascii=False, indent=2), '평가입력.json', 'application/json')
-    st.sidebar.caption('입력은 현재 세션에 반영됩니다. 종료 전 평가파일을 저장하십시오.')
-    pending = st.session_state.get('_input_pending', False)
-    if pending and stage != '입력·시장자료':
-        st.warning('입력화면에 저장되지 않은 오류가 있습니다. 입력·시장자료에서 확인하십시오.')
-    if stage == '입력·시장자료':
-        area = st.radio('입력 항목', ['계약·평가 입력', '주가·변동성·금리 자료', '출처·평가가정'], horizontal=True, key='_input_area')
-        if area == '계약·평가 입력':
-            pending = input_editor(case, autosave=True)
-        elif area == '주가·변동성·금리 자료':
-            from market_tools_ui import main as market_tools
-            market_tools(case)
-        else:
-            evidence_editor(case)
-        return
-    issues = inspect_case(case)
-    errors = [i for i in issues if i.severity == 'error']
-    if stage == '평가·분석':
-        if errors:
-            st.error(f'입력 오류 {len(errors)}건을 수정해야 평가할 수 있습니다.')
-            dataframe(pd.DataFrame(issue_rows(errors)), hide_index=True)
-        if pending:
-            st.warning('저장하지 않은 입력이 있습니다. 입력 저장 후 실행하십시오.')
-        if st.button('현재 입력으로 평가', type='primary', disabled=bool(errors) or pending):
-            try:
-                with st.spinner('입력한 조건으로 평가 중입니다.'):
-                    old = st.session_state.get('run')
-                    if old and old.summary['calculation_key'] == calculation_key(case):
-                        st.session_state.run = refresh_run(old, case)
-                    else:
-                        st.session_state.run = calculate(case)
-                        st.session_state.pop('analysis', None)
-                    st.session_state.pop('bundle', None)
-            except (ValueError, ArithmeticError) as exc:
-                st.error(f'평가를 완료하지 못했습니다: {exc}')
-        run = st.session_state.get('run')
-        current = run is not None and not errors and run.summary['calculation_key'] == calculation_key(case)
-        if run:
-            if not current:
-                st.warning('아래는 변경 전 입력의 결과입니다. 현재 입력으로 다시 평가해야 조서를 저장할 수 있습니다.')
-            st.caption(f"평가기준일 {run.terms.d_base} · {run.terms.n:,}구간 · 계산 {run.summary['calculation_seconds']:.2f}초")
-            values = run.summary['amounts_total']
-            keys = ['put', 'call'] if run.terms.inst == 'SHA' else ['whole_before_call', 'call_deduction', 'net']
-            for col, key in zip(st.columns(len(keys)), keys):
-                col.metric(AMOUNT_LABELS[key] + ' (원)', f'{values[key]:,.0f}')
-                if run.summary['amounts_per_share']:
-                    col.caption(f"1주당 {run.summary['amounts_per_share'][key]:,.2f}원")
-            if run.terms.inst == 'SHA':
-                sha_result_panel(run)
-            day1_panel(run, case)
-            split_panel(run)
-            dp_panel(run)
-            with st.expander('구성요소·원금 100 기준 상세' if run.terms.inst != 'SHA' else '계산기준금액 100 기준 상세'):
-                st.caption('순차 차감에 따른 참고값입니다. 회계상 인식액을 확정한 표가 아닙니다.')
-                dataframe(pd.DataFrame([{'항목': AMOUNT_LABELS[k], '총액(원)': values[k], '원금 100 기준': v}
-                                          for k, v in run.summary['amounts_100'].items()]), hide_index=True)
-            st.subheader('산술 검산')
-            dataframe(pd.DataFrame([{'검사': r['name'], '결과': '통과' if r['passed'] else '차이 발생', '범위': r['detail']}
-                                      for r in run.summary['checks']]), hide_index=True)
-            st.subheader('확인할 사항')
-            numerical_issues = [i for i in run.issues if i.code not in {'source', 'legacy_defaults', 'engine_defaults', 'judgement_scope', 'market_date'}]
-            dataframe(pd.DataFrame(issue_rows(numerical_issues)), hide_index=True)
-            with st.expander('추가 분석 — 선택한 변수만 계산'):
-                variable = st.selectbox('민감도 변수', ['S0', 'sig', 'rf_curve', 'cr_curve'], format_func=label)
-                magnitude = st.number_input('변화폭(주당가치는 %, 변동성·금리는 %p)', min_value=.01, max_value=50. if variable == 'S0' else 10., value=10. if variable == 'S0' else 1.)
-                st.caption('감소·증가 조건 각 1회, 총 2회 추가 평가합니다. 금리곡선은 모든 만기의 금리를 같은 폭으로 이동합니다.')
-                if st.button('민감도 계산', disabled=not current or pending):
-                    try:
-                        with st.spinner('민감도 2개 조건 계산 중입니다.'):
-                            st.session_state.analysis = sensitivity(run, variable, magnitude)
-                    except (ValueError, ArithmeticError) as exc:
-                        st.error(str(exc))
-                analysis = st.session_state.get('analysis')
-                if analysis and analysis['calculation_key'] == run.summary['calculation_key'] and current:
-                    st.write(f"계산된 변수: {label(analysis['variable'])} / 변화폭: ±{analysis['change']:g}")
-                    table = pd.DataFrame(analysis['rows']).rename(columns=AMOUNT_LABELS)
-                    dataframe(table, hide_index=True)
-                    st.download_button('민감도 결과 저장', table.to_csv(index=False).encode('utf-8-sig'), '민감도.csv', 'text/csv')
-        if current:
-            analysis_mode = st.selectbox('분석 도구', ['결과 요약', '상세 계산·회계 참고표'])
-            if analysis_mode == '상세 계산·회계 참고표':
-                from application import detailed
-                detailed(run)
-        if previous:
-            with st.expander('전기 대비 입력 변경'):
-                dataframe(pd.DataFrame([{'항목': label(r['field']), '전기': str(r['previous']), '당기': str(r['current'])}
-                                          for r in compare_cases(previous, case)]), hide_index=True)
-    if stage == '조서 출력':
-        run = st.session_state.get('run')
-        current = run is not None and not errors and run.summary['calculation_key'] == calculation_key(case)
-        st.download_button('평가 입력파일 저장', json.dumps(case.to_dict(), ensure_ascii=False, indent=2), '평가입력.json', 'application/json')
-        st.subheader('계산 조서')
-        st.write('기본 조서: 평가 결과, 적용 입력, 금리·변동성 자료, 평가가정, 조서 정보(계산 기록·자료 출처·확인할 사항)')
-        st.caption('산술 검산과 계산 점검은 앱이 평가할 때 돌립니다. 조서에는 싣지 않고, 이상이 있으면 조서를 만들지 않습니다.')
-        option = st.radio('조서 구성', ['기본 값 조서', '상세 계산 값 조서', '상세 계산 수식 조서'])
-        accounting = st.checkbox('회계처리·분개·상각표 포함 (초안)', value=False)
-        judgment = st.checkbox('판단·근거 시트 포함 (분리 판정·평가자 판단·근거 원문, 상세 조서는 해설·분리 판단 시트 포함)', value=True)
-        if option != '기본 값 조서':
-            st.info('상세 조서는 모든 계산 노드를 포함합니다. 주 간격의 장기 평가에서는 생성에 시간이 걸릴 수 있습니다.')
-        if not current:
-            st.warning('현재 입력으로 평가·분석 단계에서 먼저 평가를 실행하십시오. 입력을 바꾼 뒤에는 재평가해야 조서를 만들 수 있습니다.')
-        elif pending:
-            st.warning('입력·시장자료 단계에서 저장되지 않은 입력을 확인하십시오.')
-        if current:
-            st.caption(f'현재 평가: {run.terms.n:,}구간 · 평균 {run.summary["grid"]["average_days"]:.2f}일. 조서도 같은 격자를 사용합니다.')
-        if st.button('조서 생성', disabled=not current or pending):
-            st.session_state.pop('bundle', None)
-            st.session_state.pop('bundle_key', None)
-            try:
-                with st.spinner('조서를 생성하고 입력·결과 기록을 묶는 중입니다.'):
-                    st.session_state.bundle = export_bundle(run, formula=option == '상세 계산 수식 조서', detail=option != '기본 값 조서', previous=previous, accounting=accounting, judgment=judgment)
-                    st.session_state.bundle_key = (run.case.fingerprint(), option, accounting, judgment, previous.fingerprint() if previous else None)
-            except (ValueError, ArithmeticError) as exc:
-                st.error(f'조서를 생성하지 못했습니다: {exc}')
-            except (MemoryError, OSError, RuntimeError, OverflowError) as exc:
-                st.error(f'조서 생성 중 서버 자원 또는 파일 처리 오류가 발생했습니다 ({type(exc).__name__}). '
-                         '상세 계산 값 조서로 저장하거나 계산 간격을 늘리고 재평가하십시오.')
-        bundle_key = (case.fingerprint(), option, accounting, judgment, previous.fingerprint() if previous else None) if current else None
-        if current and not pending and st.session_state.get('bundle_key') == bundle_key and 'bundle' in st.session_state:
-            data = st.session_state.bundle
-            st.success(f'조서 생성 완료 · {len(data) / 1024 / 1024:.1f} MB. 아래에서 Excel 파일이나 전체 묶음을 저장하십시오.')
-            st.download_button('평가 조서 묶음 저장', data, '평가조서.zip', 'application/zip')
-            with zipfile.ZipFile(io.BytesIO(data)) as z:
-                name = next(n for n in z.namelist() if n.endswith('.xlsx'))
-                st.download_button('Excel 조서만 저장', z.read(name), '평가조서.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    """단독 실행 진입점 — 옛 화면은 없앴다. 지금 화면(v2_workspace · 01 입력 ~ 04 조서 출력)으로 연다.
+
+    이 모듈은 입력 편집·결과 패널 같은 부품을 v2_workspace 에 빌려 준다.
+    """
+    from application import main as app_main
+    app_main()
 
 
 if __name__ == '__main__':

@@ -215,11 +215,14 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
     }
     from .explain import VERSION, dp_missing_years, memo_status
     summary['version'] = VERSION
-    summary['run_id'] = hashlib.sha256((summary['calculation_key'] + now).encode()).hexdigest()[:12]
+    # 실행번호 — 평가한 날짜·시각(한국 시각)과 짧은 식별값. 예: 20261007-143205-a3f9
+    from zoneinfo import ZoneInfo
+    _kst = dt.datetime.fromisoformat(now).astimezone(ZoneInfo('Asia/Seoul'))
+    summary['run_id'] = _kst.strftime('%Y%m%d-%H%M%S-') + hashlib.sha256((summary['calculation_key'] + now).encode()).hexdigest()[:4]
     summary['document_id'] = case.fingerprint()[:12]
     summary['dp_missing_years'] = dp_missing_years(terms)
     if summary['dp_missing_years'] and not case.sources.get('dp_missing_assumption', '').strip():
-        issues.append(Issue('review', 'dp_missing_assumption', 'dp_rows', '未入力 연도의 상환재원은 잠정적으로 제한 없이 계산됐습니다. 근거를 보완하기 전 조서 출력이 제한됩니다.'.replace('未入力', '미입력')))
+        issues.append(Issue('review', 'dp_missing_assumption', 'dp_rows', '배당가능이익을 넣지 않은 발생연도 ' + ', '.join(map(str, summary['dp_missing_years'])) + '년은 제한 없이 갚는다고 보고 계산했습니다. 표에 넣거나 표 아래 «넣지 않은 발생연도의 재원 가정·근거» 를 적기 전에는 조서를 만들 수 없습니다.'))
     for topic in case.memos:
         status = memo_status(case, topic)
         if status != '현재 조건의 기록':

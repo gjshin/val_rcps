@@ -104,7 +104,7 @@ def split_section(t, full, b0, b1, b2, ca, LB, run):
                 # 행사일마다 견준 표 — 조서 «분리 판단» 시트의 행사일별 표와 같은 값이다.
                 dataframe(pd.DataFrame([[round(m, 2), max(0.0, (m - t.elapsed_m)/12), pv, bv, f'{g*100:.1f}%']
                                            for m, pv, bv, g in d['회차']], columns=L.SPLIT_DATE_COLS),
-                             hide_index=True, use_container_width=True)
+                             hide_index=True, width='stretch')
                 st.caption('행사일마다 행사금액과 같은 시점 상각후원가를 견주고, 가장 큰 차이로 판정합니다. '
                            '조서 «분리 판단» 시트의 행사일별 표와 같은 값입니다.')
         with c2:
@@ -126,7 +126,7 @@ def facts_section(t, run):
             ['조기상환 행사금액이 상실이자 보상 수준이다', t.p_lost_int, '1109 B4.3.5(5)(나)'],
             ['복합계약 전체를 당기손익-공정가치로 지정했다', t.fvpl_whole, '1109 4.3.5']]
     dataframe(pd.DataFrame([[a, '예' if b else '아니오', c] for a, b, c in rows],
-                              columns=['조항', '입력', '근거']), hide_index=True, use_container_width=True)
+                              columns=['조항', '입력', '근거']), hide_index=True, width='stretch')
     if run is not None:
         st.caption('바꾸려면 「입력·시장자료 → 분해방법·기간 기준」 또는 콜 권리의 상세 조건에서 수정합니다.')
 
@@ -148,7 +148,7 @@ def put_exercise_section(t):
     elif min(ratios) <= 1.03:
         st.info('금리에 따라 행사 여부가 달라질 수 있습니다. 지원범위와 금리모형 적용 근거를 확인하십시오.')
     with st.expander('행사일별 표'):
-        dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        dataframe(pd.DataFrame(rows), hide_index=True, width='stretch')
     source('put_exercise')
 
 
@@ -170,12 +170,12 @@ def call_section(t, full, b2, sp, run):
         dataframe(pd.DataFrame([[nm, sp_, v, (v - base) if base else 0., '◀ 적용' if on else '']
                                    for nm, sp_, v, on in cmp_rows],
                                   columns=['방법', '지분·채권 구분', '값', '유무가치 대비', '']).style.format(
-            {'값': '{:,.2f}', '유무가치 대비': '{:+,.2f}'}), hide_index=True, use_container_width=True)
+            {'값': '{:,.2f}', '유무가치 대비': '{:+,.2f}'}), hide_index=True, width='stretch')
         st.caption(L.call_compare_note(t))
         if tr:
             # 유무가치비교법 차액의 구성 — 음수여도 0 으로 덮지 않고 원인을 나눠 보인다 (조서 결과 시트와 같은 표)
             dataframe(pd.DataFrame(L.wow_trace_rows(tr), columns=['유무가치비교법 차액의 구성', '값']).style.format(
-                {'값': '{:,.2f}'}), hide_index=True, use_container_width=True)
+                {'값': '{:,.2f}'}), hide_index=True, width='stretch')
             (st.warning if (tr['A'] < 0 or tr['A0'] < 0) else st.caption)(L.wow_trace_note(tr))
         if rec:
             # 조서 결과 시트와 같은 분해 — 마지막 줄이 ① + ② 이자 실제 차이다.
@@ -183,7 +183,7 @@ def call_section(t, full, b2, sp, run):
             dataframe(pd.DataFrame([[k, v] for k, v in rec.items()]
                                       + [['차이 (유무가치 − 옵션차익) = ① + ②', _dA]],
                                       columns=['차이 분해', '값']).style.format({'값': '{:,.2f}'}),
-                         hide_index=True, use_container_width=True)
+                         hide_index=True, width='stretch')
             st.caption(L.CALL_REC_NOTE)
     with st.expander('같은 날 겹치는 사건의 처리 (세 평가방법 공통)'):
         st.table(pd.DataFrame(L.event_order_rows(t), columns=['사건', '처리']))
@@ -214,7 +214,7 @@ def priority_section(t, ca, conv, run):
         rows = got or [['투자자 조기상환 우선', ca, conv, int(t.pc_order) == 0], ['발행자 매도청구 우선', ca, conv, int(t.pc_order) == 1]]
         dataframe(pd.DataFrame([[a, b, c, '◀ 적용' if on else ''] for a, b, c, on in rows],
                                   columns=['우선순위', '매도청구권', '전환권대가', '']).style.format(
-            {'매도청구권': '{:,.2f}', '전환권대가': '{:,.2f}'}), hide_index=True, use_container_width=True)
+            {'매도청구권': '{:,.2f}', '전환권대가': '{:,.2f}'}), hide_index=True, width='stretch')
     memo('priority', run, '우선순위 조항')
 
 
@@ -237,7 +237,7 @@ def cresp_section(t, ca, conv, run):
     if got is not None:
         dataframe(pd.DataFrame([[a, b, c, '◀ 적용' if on else ''] for a, b, c, on in got],
                                   columns=['통지 뒤 전환', '매도청구권', '전환권대가', '']).style.format(
-            {'매도청구권': '{:,.2f}', '전환권대가': '{:,.2f}'}), hide_index=True, use_container_width=True)
+            {'매도청구권': '{:,.2f}', '전환권대가': '{:,.2f}'}), hide_index=True, width='stretch')
     memo('conv_resp', run, '매도청구 조항')
 
 
@@ -263,7 +263,7 @@ def bdt_section(t, full, b0, b1, b2, ca, run):
         sig, bd, compare = got
         dataframe(pd.DataFrame([[n_, q_, v_, '판단 필요' if ok_ is None else '예' if ok_ else '아니오']
                                    for n_, q_, v_, ok_, _ in bd['관문']],
-                                  columns=['번호', '검토사항', '값', '상태']), hide_index=True, use_container_width=True)
+                                  columns=['번호', '검토사항', '값', '상태']), hide_index=True, width='stretch')
         st.info(f"**{bd['결론']}** — {bd['사유']}")
         st.caption(f"민감도(전체 대비) — 금리 ±1%p {abs(sig['dl'])/max(b2, 1e-9):.2%} · 스프레드 ±1%p "
                    f"{abs(sig['ds'])/max(b2, 1e-9):.2%} · 변동성 ±10%p {abs(sig['dv'])/max(b2, 1e-9):.2%}")
@@ -279,7 +279,7 @@ def allocation_section(t, full, b0, b1, b2, ca):
         rows, note = L.allocate(t, full, b0, b1, b2, ca)
         dataframe(pd.DataFrame([[k, v, fv] for k, v, fv in L.allocate_full(t, rows)],
                                   columns=['항목', '100 기준', '전액 기준 (원)']).style.format(
-            {'100 기준': '{:,.2f}', '전액 기준 (원)': '{:,.0f}'}), hide_index=True, use_container_width=True)
+            {'100 기준': '{:,.2f}', '전액 기준 (원)': '{:,.0f}'}), hide_index=True, width='stretch')
         st.caption(note)
 
 
@@ -339,7 +339,7 @@ def render(t, full, b0, b1, b2, ca, conv, LB, run=None):
     if L.holder_on(t):
         st.caption('투자자 관점 — 아래 분리 판정은 발행자 기준입니다. 투자자는 복합계약 전체를 당기손익-공정가치로 측정합니다 (1109 4.3.2).')
     with st.expander('계약상 권리 (격자 의사결정 설계도)'):
-        dataframe(pd.DataFrame(L.rights_table(t), columns=L.RIGHT_COLS), hide_index=True, use_container_width=True)
+        dataframe(pd.DataFrame(L.rights_table(t), columns=L.RIGHT_COLS), hide_index=True, width='stretch')
     facts_section(t, run)
     sp = split_section(t, full, b0, b1, b2, ca, LB, run)
     put_exercise_section(t)

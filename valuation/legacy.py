@@ -3216,13 +3216,18 @@ def engine(tm: Terms, conv=True, put=True, call=False, conv_start=None,
             # GS 도 같은 순서다. 현금이 동점이면 전환확률 0 이다. 열리지 않은 상환청구(금액 0)는 현금 갈래가
             # 아니다 — 아래 결정과 같은 읽기(_pvd)다. 0 과 견주면 값이 0 에 가까운 자리의 전환확률이 0 이 된다.
             _pvd = pv if pv > 0 else -math.inf
-            if (abs(Vg - _pvd) < tie_tol(Vg, _pvd)
-                    or (kv < math.inf and abs(Vg - kv) < tie_tol(Vg, kv))):   Pg = 0.0
-            elif cv > 0 and abs(Vg - cv) < tie_tol(Vg, cv):                  Pg = 1.0
-            else:                                                            Pg = pr
+            # gkind 는 GS 가 고른 처리다 — 계산표 화면이 따로 다시 판정하지 않고 이 값을 그대로 보인다.
+            _gput = abs(Vg - _pvd) < tie_tol(Vg, _pvd)
+            _gcall = kv < math.inf and abs(Vg - kv) < tie_tol(Vg, kv)
+            if _gput or _gcall:
+                Pg = 0.0; gkind = "put" if _gput and (not _kfirst or not _gcall) else "call"
+            elif cv > 0 and abs(Vg - cv) < tie_tol(Vg, cv):
+                Pg = 1.0; gkind = "conv"
+            else:
+                Pg = pr; gkind = "hold"
             # up·dn 은 자식 노드 키다. 만기 노드에는 없어 자식 없음의 표시가 된다.
             ex = dict(hold=hold, cv=cv, K=KK, pv=pv, kv=kv, Vc=Vc, up=ku, dn=kd,
-                      forced=False)
+                      forced=False, gkind=gkind)
             # 동점 처리는 위 만기 노드와 같다. 전환은 허용오차만큼 앞설 때만 이긴다.
             # 평가기준일(i=0)도 예외가 아니다. 그날 행사할 수 있고 행사가 유리하면
             # 공정가치는 행사가치 이상이어야 한다 — 계속보유로 눌러 두면 값이
@@ -5551,8 +5556,11 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
         _, kv, kb, kgap = _kchk[0]
         _kworst = max(_kchk, key=lambda x: x[3])
         kclose = _kworst[3] <= tol
-        _ktxt = (f" 모든 행사일 {len(_kchk)}회 중 최대 차이는 발행 후 {_kworst[0]:g}개월의 "
-                 f"{_kworst[3]:.2%}입니다. 비교기준 {tol:.0%}는 이용자 설정이며 기준서의 획일적 요건이 아닙니다.")
+        # 판정은 차이가 가장 큰 행사일로 한다 — 문장도 그 행사일의 숫자로 쓴다 (첫 행사일 숫자로 쓰면 판정과 어긋나 보인다).
+        _wm, _wv, _wb, _wg = _kworst
+        _kat = (f"모든 행사일 {len(_kchk)}회 가운데 차이가 가장 큰 발행 후 {_wm:g}개월의 매매대금 {_wv:,.2f} 와 "
+                f"같은 시점 주계약 상각후원가 {_wb:,.2f} 의 차이가 {_wg*100:.1f}%")
+        _ktxt = f"비교기준 {tol:.0%}는 이용자 설정이며 기준서의 획일적 요건이 아닙니다."
         why, cite = [], []
         if tm.k_third or tm.k_transfer:
             res = "별도의 금융상품"
@@ -5580,18 +5588,13 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
             cite += ["1109 문단 B4.3.4", "실무사례 30~31쪽"]
         elif kclose:
             res = "분리하지 않을 여지"
-            why.append(f"첫 매도청구일 매매대금 {kv:,.2f} 와 같은 시점 주계약 "
-                       f"상각후원가 {kb:,.2f} 의 차이가 {kgap*100:.1f}% 로 "
-                       "거의 같습니다. 다만 이 앱은 발행회사만 행사하는 매도청구권을 주계약에 "
+            why.append(f"{_kat} 로 거의 같습니다. 다만 이 앱은 발행회사만 행사하는 매도청구권을 주계약에 "
                        "남기는 처리를 지원하지 않아 분리한 것으로 계산합니다 — 주계약에 둔다고 "
                        "판단하면 그 차이를 조서에 따로 적으십시오.")
             cite.append("1109 문단 B4.3.5(5)(가)")
         else:
             res = "분리"
-            why.append(f"발행회사만 행사할 수 있어 내재파생상품이고, 첫 매도청구일 "
-                       f"매매대금 {kv:,.2f} 와 같은 시점 주계약 상각후원가 "
-                       f"{kb:,.2f} 의 차이는 {kgap*100:.1f}%입니다. 모든 행사일을 비교한 결과 "
-                       "이용자 설정 비교기준을 초과하는 행사일이 있습니다.")
+            why.append(f"발행회사만 행사할 수 있어 내재파생상품이고, {_kat} 로 비교기준을 넘습니다.")
             cite += ["1109 문단 4.3.1", "문단 B4.3.5(5)"]
         if (emb_policy(tm) == 2 and not (tm.k_third or tm.k_transfer) and not tm.fvpl_whole
                 and res in ("분리", "분리하지 않을 여지")):
@@ -10866,7 +10869,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
         _in = lambda r, c, v, fm=None: put(W, r, c, v, fmt=fm, fill=INPUT_FILL, border=True, align="right")
         put(W, 5, 2, "평가대상 발행총액 (원)", bold=True, border=True)
         put(W, 5, 3, f"={K['face']}", fmt=N0, border=True, align="right")
-        put(W, 6, 2, "평가대상 우선배당률 (발행가 기준, 연)", bold=True, border=True); _in(6, 3, dp_div_rate(tm), P2)
+        # 우선배당률은 가정 시트의 계약 배당률에서 따라온다 — 가정 시트에서 배당률을 바꾸면 재원 차감도 바뀐다
+        # (dp_div_rate = cpn_basis_rate: 재량 배당이어도 지급하면 재원을 쓰므로 계약 배당률을 발행가 기준으로).
+        put(W, 6, 2, "평가대상 우선배당률 (발행가 기준, 연)", bold=True, border=True)
+        put(W, 6, 3, (f"={K['cpnc']}*IF(AND({K['dbas']}=1,{K['ipx']}>0,{K['par']}>0),{K['par']}/MAX(1E-9,{K['ipx']}),1)"
+                      if 'cpnc' in K else dp_div_rate(tm)), fmt=P2, border=True, align="right")
         put(W, 7, 2, "넘긴 상환금 연 가산율", bold=True, border=True); _in(7, 3, float(getattr(tm, "dp_delay", 0.0) or 0.0), P2)
         _fm, _fd = dp_from_md(tm) or (1, 1)
         put(W, 8, 2, "재원 사용 시작일 (월 · 일) — 이 날 전은 그 전해 재원", bold=True, border=True)

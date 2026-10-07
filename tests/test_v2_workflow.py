@@ -265,7 +265,7 @@ def test_workspace_loads_and_runs_shared_service():
     app.radio(key="_workflow_stage").set_value("평가·분석").run()
     assert not app.exception
     assert app.session_state['run'].case.contract['K0'] == 100.
-    assert any('변경 전 입력' in w.value for w in app.warning)
+    assert any('이전 결과' in w.value for w in app.warning)
     app.radio(key='_workflow_stage').set_value('조서 출력').run()
     assert next(b for b in app.button if b.label == '조서 생성').disabled
 
