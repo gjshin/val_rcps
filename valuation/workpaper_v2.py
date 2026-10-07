@@ -1,6 +1,7 @@
 """Navigation, run identity and trace evidence for value and formula workbooks."""
 
 import math
+import re
 from copy import copy
 from openpyxl.styles import Font, PatternFill, Alignment, Protection
 from openpyxl.utils import get_column_letter
@@ -38,7 +39,7 @@ DP_FIRST_YEAR_ROW = 10
 
 def excel_input(ws, cell):
     """수식 조서에서 고칠 수 있는 노란 입력 칸인가."""
-    if ws.title.startswith('가정'):
+    if re.fullmatch(r'(?:\d+·)?가정', ws.title):
         return cell.column == 3 and ws.cell(cell.row, 2).value in EXCEL_INPUTS
     if ws.title == DP_SHEET:
         if (cell.row, cell.column) in DP_INPUT_CELLS:

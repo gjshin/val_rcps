@@ -138,8 +138,9 @@ def field(key, edited, case, prefix='input'):
         # 의무보유 물량 비율의 음수는 «콜 대상 비율과 같음» 이다 — 칸을 비워 보여 준다.
         _same = key == 'k_lock_w' and value is not None and value < 0
         displayed = float(value * scale) if value is not None and not _same else None
-        # 넣은 자릿수를 그대로 보인다 (2.125% 를 2.13 으로 보이지 않는다). 소수 둘째~여섯째 자리.
-        number = st.number_input(title, value=displayed, format=f'%.{_decimals(displayed)}f', key=widget_key)
+        digits = _decimals(displayed) if st.session_state.get('_input_precision', False) else 2
+        number = st.number_input(title, value=displayed, format=f'%.{digits}f',
+                                 help='표시는 둘째 자리이며 수정하지 않은 원값은 유지됩니다. 정밀값 보기로 입력 자릿수를 확인할 수 있습니다.', key=widget_key)
         new = value if number == displayed else number / scale if number is not None else None
         if new is not None and '(원)' in title and abs(new) >= 1e6:
             st.caption(won_words(new))           # 큰 금액은 천 단위 쉼표와 억·만 단위로 한 번 더 보인다
@@ -720,6 +721,7 @@ def curve_editor(key, edited):
 
 
 def input_editor(case, autosave=False):
+    st.toggle('정밀값 보기', key='_input_precision', help='숫자 입력칸의 소수 자릿수를 최대 여섯 자리까지 표시합니다. 계산·저장 원값은 바뀌지 않습니다.')
     st.session_state._rendered_fields = set()
     styles = dict(case.exercise_styles)
     st.session_state._editing_styles = styles

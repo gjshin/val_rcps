@@ -7,15 +7,16 @@
 <div class="tools"><p id="instruction"></p><div><label id="rows-label">하락 횟수 <select id="rows" aria-label="표시할 하락 횟수"></select></label> <label>확대 <select id="zoom" aria-label="계산표 확대"><option value="0.85">85%</option><option value="1" selected>100%</option><option value="1.2">120%</option></select></label> <button id="root">처음으로</button></div></div>
 <div id="input-note" class="input-note" hidden></div><div class="scroll" id="scroll" tabindex="0" aria-label="계산표 가로·세로 스크롤"><table class="grid" id="grid" aria-label="전체 노드 계산표"></table></div>
 <div class="foot"><div class="legend"><span><i class="dot" style="background:#b8a6f5"></i>선택한 셀</span><span id="ref-legend"><i class="dot" style="background:#87c6b7"></i>다음 시점 참조 셀</span><span id="scope"></span></div><div>소수점 둘째 자리 표시 · 할인계수 99.79%는 0.9979배 · 계산은 반올림 전 원값을 사용합니다. 셀 선택은 평가금액과 입력을 변경하지 않습니다.</div></div></div>
-<aside class="drawer" id="drawer" role="dialog" aria-modal="false" aria-labelledby="detail-title" hidden><header><div><h3 id="detail-title">계산내역</h3><div id="detail-sub" class="sub"></div></div><button id="close" aria-label="계산내역 닫기">닫기 ×</button></header><div id="detail"></div></aside>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="false" aria-labelledby="detail-title" hidden><header><div><h3 id="detail-title">계산내역</h3><div id="detail-sub" class="sub"></div><div class="sub"><label title="계산식의 대입값을 최대 여섯 자리, 금리·확률을 % 넷째 자리로 봅니다"><input type="checkbox" id="precision"> 정밀값 보기</label></div></div><button id="close" aria-label="계산내역 닫기">닫기 ×</button></header><div id="detail"></div></aside>
 <script id="worksheet-data" type="application/json">__PAYLOAD__</script><script>
 'use strict';
 const D=JSON.parse(document.getElementById('worksheet-data').textContent), $=id=>document.getElementById(id);
 const fmt=v=>v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Object.is(v,-0)?0:v);
 const pct=v=>v==null?'—':fmt(v*100)+'%';
-// 수식창의 대입값 — 다시 계산하면 결과가 나오도록 금액·배수는 소수 6자리, 금리·확률은 % 소수 4자리까지 (끝의 0은 지운다).
-const fx=v=>v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:6}).format(Object.is(v,-0)?0:v);
-const px=v=>v==null?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:4}).format(v*100)+'%';
+let precise=false, lastDetail=null;
+// 기본은 둘째 자리. 정밀값 보기는 상세 수식과 참조값의 표시만 바꾼다.
+const fx=v=>!precise?fmt(v):v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:6}).format(Object.is(v,-0)?0:v);
+const px=v=>!precise?pct(v):v==null?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:4}).format(v*100)+'%';
 const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let metric='value', curve=0, rowStart=0, selected=null, lastFocus=null;
 const nodeFields=[['stock','주가','원'],['P','전환확률','%'],['kind','의사결정',''],['hold','보유가치','원금 100'],['value','본체가치','원금 100'],...(D.model==='TF'?[['E','주식결제분','원금 100'],['B','현금결제분','원금 100'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%']]:[['ya','상승 할인율','%'],['yb','하락 할인율','%'],['df_up','상승 할인계수','%'],['df_down','하락 할인계수','%']])];
@@ -38,8 +39,8 @@ function render(){
  }else if(D.mode==='schedule'){
   let out=head(columns(),'적용 항목')+'<tbody>';scheduleFields.forEach(([key,label,unit],r)=>{out+='<tr><th scope="row">'+label+(unit==='원금 100'?' (100)':'')+'</th>';D.steps.forEach((s,i)=>{let v=key==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(key)?D[key]:s[key];out+=cell(showVal(v,unit),i,r);});out+='</tr>';});$('grid').innerHTML=out+'</tbody>';
  }else{
-  const c=D.curves[curve];$('input-note').hidden=false;$('input-note').textContent='입력 곡선: '+c.inputs.map(p=>fx(p[0])+'년 '+px(p[1])).join(' · ')+` | 연 ${c.m}회 복리`;
-  $('grid').innerHTML='<thead><tr>'+['만기(년)','적용 수익률','회당 이율','이전 이표 PV 합(%)','할인계수(%)','연속복리 현물금리','산출 구분'].map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+c.rows.map((r,i)=>'<tr>'+[fx(r.t),px(r.y),px(r.c),px(r.pv),px(r.df),px(r.spot),kindLabel(r.kind)].map(v=>'<td><button class="cell" data-boot="'+i+'" aria-label="'+fx(r.t)+'년 · '+safe(v)+'">'+safe(v)+'</button></td>').join('')+'</tr>').join('')+'</tbody>';
+  const c=D.curves[curve];$('input-note').hidden=false;$('input-note').textContent='입력 곡선: '+c.inputs.map(p=>fmt(p[0])+'년 '+pct(p[1])).join(' · ')+` | 연 ${c.m}회 복리`;
+  $('grid').innerHTML='<thead><tr>'+['만기(년)','적용 수익률','회당 이율','이전 이표 PV 합(%)','할인계수(%)','연속복리 현물금리','산출 구분'].map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+c.rows.map((r,i)=>'<tr>'+[fmt(r.t),pct(r.y),pct(r.c),pct(r.pv),pct(r.df),pct(r.spot),kindLabel(r.kind)].map(v=>'<td><button class="cell" data-boot="'+i+'" aria-label="'+fmt(r.t)+'년 · '+safe(v)+'">'+safe(v)+'</button></td>').join('')+'</tr>').join('')+'</tbody>';
  }
  $('scroll').scrollLeft=scrollLeft;$('scroll').scrollTop=scrollTop;
 }
@@ -48,6 +49,7 @@ function formula(s){return '<div class="formula">'+safe(s)+'</div>';}
 function refs(items){return '<div class="section-title">참조값</div><div class="refs">'+items.map(([k,v])=>'<div class="ref"><span>'+safe(k)+'</span><strong>'+safe(v)+'</strong></div>').join('')+'</div>';}
 function openDetail(title,sub,body){$('detail-title').textContent=title;$('detail-sub').textContent=sub;$('detail').innerHTML=body;$('drawer').hidden=false;$('drawer').scrollTop=0;}
 function nodeDetail(key,focus=true){
+ lastDetail=()=>nodeDetail(key,false);
  const n=D.nodes[key];if(!n)return;selected=key;rowStart=Math.floor(n.down/40)*40;$('rows').value=String(rowStart);render();
  const s=D.steps[n.i],a=n.up?D.nodes[n.up[0]+','+(n.up[0]-n.up[1])]:null,b=n.dn?D.nodes[n.dn[0]+','+(n.dn[0]-n.dn[1])]:null;
  const f=nodeFields.find(x=>x[0]===metric),v=val(n,metric);let text='', rr=[];
@@ -79,7 +81,7 @@ function nodeDetail(key,focus=true){
  body+='<p class="sub">좌표: 시점 / 하락 횟수. 초록색은 참조하는 다음 노드의 위치이며, 참조 항목은 위에 표시합니다. 주가는 원, 본체 금액은 원금 100 기준입니다. 본체는 별도 콜 차감 전입니다. 표시값은 반올림되므로 표시 숫자만으로 다시 계산하면 차이가 날 수 있습니다.</p>';
  openDetail(metricLabel()+' 계산내역',`${D.model} · 시점 ${n.i} / 하락 ${n.down} · ${s.date}`,body);if(focus)$('close').focus({preventScroll:true});
 }
-function scheduleDetail(i,row){const s=D.steps[i],[k,label,unit]=scheduleFields[row];let v=k==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(k)?D[k]:s[k],text='';
+function scheduleDetail(i,row,focus=true){lastDetail=()=>scheduleDetail(i,row,false);const s=D.steps[i],[k,label,unit]=scheduleFields[row];let v=k==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(k)?D[k]:s[k],text='';
  if(['rf','cr'].includes(k))text='f(t₀,t₁) = [z(t₁) × t₁ − z(t₀) × t₀] ÷ (t₁−t₀)\n입력곡선의 연속복리 현물금리에서 구간 선도금리를 계산합니다.\n현재 열 → 다음 열 구간 적용값 = '+px(v);
  else if(['q','down_q'].includes(k))text=`p = [exp((Rf − 배당수익률) × Δt) − d] ÷ (u−d)\n= [exp((${px(s.rf)} − ${px(D.div_y)}) × ${fx(D.delta)}) − ${fx(D.d)}] ÷ (${fx(D.u)} − ${fx(D.d)})\n상승 p = ${px(s.q)}, 하락 1−p = ${s.q==null?'—':px(1-s.q)}`;
  else if(['df_rf','df_cr'].includes(k))text=`DF = exp(−구간 선도금리 × Δt)\n= exp(−${px(k==='df_rf'?s.rf:s.cr)} × ${fx(D.delta)})\n= ${px(v)}`;
@@ -90,8 +92,8 @@ function scheduleDetail(i,row){const s=D.steps[i],[k,label,unit]=scheduleFields[
  else if(k==='put_value')text='지급 제약 반영 상환가치 = Σ(실제 지급액 × 지급시점까지의 위험 할인계수)\n배당가능이익 제약이 없으면 계약 상환청구금액과 같습니다. 행사일 이자 별도 지급 여부는 노드의 행사 후보에서 추가 반영합니다.';
  else text='계약상 행사기간·회차별 행사일·의무보유·지급조건을 실제 격자일에 배정한 값입니다.\n콜 행사는 계약 일정이며, 본체와 별도 평가한 콜 차감액은 평가금액 구성에서 확인합니다.';
  if(i===D.n&&['rf','cr','q','down_q','df_rf','df_cr'].includes(k))text='만기 열에는 다음 구간이 없으므로 적용값을 표시하지 않습니다.';
- openDetail(label+' 계산내역',`시점 ${i} · ${s.date}`,`<div class="result">${safe(showVal(v,unit))}</div>`+formula(text)+refs([['현재 격자일',s.date],['다음 격자일',D.steps[i+1]?.date||'만기'],['경과연수',fx(s.time)],['구간 Δt',fx(D.delta)+' 년']])+'<p class="sub">금리와 확률은 현재 열에서 다음 열로 가는 구간 값입니다. 날짜는 격자일이며 계약상 원래 날짜와 차이가 있을 수 있습니다.</p>');$('close').focus({preventScroll:true});}
-function bootDetail(idx){const c=D.curves[curve],r=c.rows[idx];let eq='';
+ openDetail(label+' 계산내역',`시점 ${i} · ${s.date}`,`<div class="result">${safe(showVal(v,unit))}</div>`+formula(text)+refs([['현재 격자일',s.date],['다음 격자일',D.steps[i+1]?.date||'만기'],['경과연수',fx(s.time)],['구간 Δt',fx(D.delta)+' 년']])+'<p class="sub">금리와 확률은 현재 열에서 다음 열로 가는 구간 값입니다. 날짜는 격자일이며 계약상 원래 날짜와 차이가 있을 수 있습니다.</p>');if(focus)$('close').focus({preventScroll:true});}
+function bootDetail(idx,focus=true){lastDetail=()=>bootDetail(idx,false);const c=D.curves[curve],r=c.rows[idx];let eq='';
  if(r.kind==='spot')eq=`z = m × ln(1 + y ÷ m)\n= ${c.m} × ln(1 + ${px(r.y)} ÷ ${c.m}) = ${px(r.spot)}\nDF = exp(−z × t) = ${px(r.df)}\n입력값이 현물금리이므로 이표채 부트스트래핑을 수행하지 않습니다.`;
  else if(r.kind==='zero')eq=`DF = (1 + y ÷ m)^(−m × t)\n= (1 + ${px(r.y)} ÷ ${c.m})^(−${c.m} × ${fx(r.t)})\n= ${px(r.df)}\n첫 이표일 전 만기는 만기 일시지급으로 계산합니다.`;
  else eq=`c = y ÷ m = ${px(r.c)}\nDF(t) = [1 − 이전 이표 현금흐름의 PV 합] ÷ (1+c)\n= (1 − ${px(r.pv)}) ÷ (1 + ${px(r.c)})\n= ${px(r.df)}\n${r.kind==='grid'?'이전 이표 PV = c × 이전 정규 이표일 DF 합':'이전 이표 PV = Σ[c × 기간비율 × DF(이표일)]\n짧은 첫 이표를 반영하고, 이미 구한 연속복리 현물을 선형보간합니다.'}`;
@@ -99,7 +101,7 @@ function bootDetail(idx){const c=D.curves[curve],r=c.rows[idx];let eq='';
  let body='<span class="badge">'+kindLabel(r.kind)+'</span><div class="result">DF '+px(r.df)+'</div>'+formula(eq)+refs([['만기',fx(r.t)+' 년'],['적용 수익률',px(r.y)],['연 복리 횟수',String(c.m)],['이전 이표 PV 합',px(r.pv)],['연속복리 현물금리',px(r.spot)],['이전 정규 이표 DF 합(배)',fx(r.acc)]]);
  if(r.refs.length)body+='<div class="section-title">참조한 이전 이표 · 짧은 첫 이표는 기간비율 반영</div>'+refs(r.refs.map(x=>[fx(x.t)+'년 × 기간비율 '+fx(x.weight),'DF '+px(x.df)]));
  body+='<p class="sub">입력 만기 사이 수익률은 선형보간하며 범위 밖은 끝점 값을 사용합니다. 모든 참조값은 반올림 전 원값으로 계산합니다.</p>';
- openDetail('부트스트래핑 계산내역',c.name+' · '+fx(r.t)+'년',body);$('close').focus({preventScroll:true});}
+ openDetail('부트스트래핑 계산내역',c.name+' · '+fx(r.t)+'년',body);if(focus)$('close').focus({preventScroll:true});}
 if(D.mode==='nodes'){
  $('heading').textContent=D.model+' 모형 · 노드 계산표';nodeFields.forEach(f=>tabButton(f[1],f[0],f[0]===metric));
  for(let r=0;r<=D.end;r+=40){const o=document.createElement('option');o.value=r;o.textContent=r+'–'+Math.min(D.end,r+39);$('rows').appendChild(o);}
@@ -111,6 +113,7 @@ if(D.mode==='nodes'){
 }
 $('tabs').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(!b)return;D.mode==='nodes'?metric=b.dataset.tab:curve=Number(b.dataset.tab);for(const x of $('tabs').children)x.setAttribute('aria-pressed',String(x===b));$('drawer').hidden=true;render();});
 $('rows').addEventListener('change',()=>{rowStart=Number($('rows').value);render();$('scroll').scrollTop=0;});
+$('precision').addEventListener('change',()=>{precise=$('precision').checked;if(!$('drawer').hidden&&lastDetail)lastDetail();});
 $('zoom').addEventListener('change',()=>document.documentElement.style.setProperty('--zoom',$('zoom').value));
 $('root').addEventListener('click',()=>{rowStart=0;$('rows').value='0';selected=null;$('drawer').hidden=true;render();$('scroll').scrollTo(0,0);});
 $('close').addEventListener('click',()=>{$('drawer').hidden=true;const current=selected?document.querySelector(`[data-i="${selected.split(',')[0]}"][data-r="${selected.split(',')[1]}"]`):null;(current||lastFocus)?.focus({preventScroll:true});});
