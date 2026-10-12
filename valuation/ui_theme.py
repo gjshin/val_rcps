@@ -1,10 +1,9 @@
 """화면 색 — 한곳에서 정한다. 화면(v2_workspace)·계산표(calculation_grid.html)는 여기 값을 CSS 변수로 받는다.
 
 엑셀 조서의 색(노란 입력 칸·파란 입력 글씨·초록 참조 수식)은 감사 관행이라 여기서 바꾸지 않는다.
-배포마다 바꿀 때는 환경변수 VALUATION_THEME 에 이름을 넣는다(예: 시안 비교). 앱의 기본 단추 색은
-.streamlit/config.toml 의 primaryColor 와 같아야 한다.
+다른 시안으로 바꿀 때는 DEFAULT 와 .streamlit/config.toml 의 [theme](primaryColor·backgroundColor·textColor)을
+함께 바꾼다 — 기본 단추·선택 칸 색은 Streamlit 이 config.toml 에서만 읽는다 (tests/test_ui_theme.py 가 둘을 맞춰 본다).
 """
-import os
 
 THEMES = {
     # 지금까지 쓰던 보라
@@ -36,8 +35,8 @@ DEFAULT = 'navy'
 
 
 def theme(name=None):
-    """쓸 색 묶음 — 이름을 주지 않으면 환경변수 VALUATION_THEME, 없으면 기본."""
-    return THEMES.get(name or os.environ.get('VALUATION_THEME') or DEFAULT, THEMES[DEFAULT])
+    """쓸 색 묶음 — 이름을 주지 않으면 기본(DEFAULT)."""
+    return THEMES.get(name or DEFAULT, THEMES[DEFAULT])
 
 
 def css_vars(name=None):
