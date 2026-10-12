@@ -15,6 +15,7 @@ from valuation.service import calculate, refresh_run, calculation_key, export_bu
 from valuation.presentation import label, issue_rows
 from valuation.explain import VERSION, event_rows, export_blockers, safe_filename
 from ui_format import dataframe
+from valuation.ui_theme import css_vars
 
 STAGES = ['입력·시장자료', '평가·분석', '계산내역', '조서 출력']
 INST_NAMES = {'RCPS': '상환전환우선주', 'CB': '전환사채', 'BW': '신주인수권부사채', 'SHA': '주주간계약'}
@@ -24,31 +25,36 @@ STAGE_NAMES = {
     '계산내역': '03  계산내역',
     '조서 출력': '04  조서 출력',
 }
-CSS = '''<style>
-.stApp{background:#F4F6FA;color:#182238}
+# 색은 valuation/ui_theme.py 한곳에서 정한다 — 여기서는 var(--이름) 으로만 쓴다.
+CSS = (
+    '<style>'
+    + css_vars()
+    + '''
+.stApp{background:var(--bg);color:var(--ink)}
 [data-testid="stHeader"]{background:transparent;pointer-events:none}
 [data-testid="stHeader"] button{pointer-events:auto}
 [data-testid="stAppDeployButton"]{display:none}
 [data-testid="stMainBlockContainer"]{max-width:1440px;padding:4.2rem 2.2rem 4rem}
-[data-testid="stSidebar"]{background:#f9faff;border-right:1px solid #e0e4ee;min-width:232px;max-width:270px}
-[data-testid="stSidebar"] p,[data-testid="stSidebar"] label,[data-testid="stSidebar"] h3{color:#202939}
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p{color:#58657b}
+[data-testid="stSidebar"]{background:var(--nav);border-right:1px solid var(--line);min-width:232px;max-width:270px}
+[data-testid="stSidebar"] p,[data-testid="stSidebar"] label,[data-testid="stSidebar"] h3{color:var(--ink)}
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p{color:var(--muted)}
 [data-testid="stSidebar"] [role="radiogroup"] label{padding:8px 10px;border-radius:8px}
-[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){background:#ebe7ff;box-shadow:inset 3px 0 #6651d6}
-[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p{color:#382777;font-weight:650}
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){background:var(--nav-sel);box-shadow:inset 3px 0 var(--kicker)}
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p{color:var(--nav-sel-ink);font-weight:650}
 h1{font-size:1.85rem!important;letter-spacing:-.04em}h2{font-size:1.4rem!important}h3{font-size:1.12rem!important}
-[data-testid="stMetric"]{background:white;padding:20px;border:1px solid #e0e5ef;border-radius:12px}
+[data-testid="stMetric"]{background:var(--surface);padding:20px;border:1px solid var(--line);border-radius:12px}
 [data-testid="stMetricValue"]{font-variant-numeric:tabular-nums;font-size:1.8rem}
-[data-testid="stExpander"]{background:white;border:1px solid #dce2ee;border-radius:10px}
-[data-testid="stDataFrame"]{background:white;border-radius:8px}
-.v2-hero{background:white;border:1px solid #dce2ee;border-radius:14px;padding:24px;margin:8px 0 14px}
-.v2-hero .eyebrow{color:#526176;font-size:14px}.v2-hero .amount{font-size:clamp(25px,3.5vw,36px);font-weight:750;color:#272152;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.v2-hero .unit{font-size:15px;color:#526176;font-weight:400}.v2-status{font-size:13px;color:#526176;margin-bottom:10px}
-.v2-kicker{font-size:12px;letter-spacing:.02em;color:#5145cd;font-weight:700}.v2-title{font-size:19px;font-weight:700;margin:0}
-.v2-formula{background:#f0eefb;padding:18px;border-radius:8px;line-height:1.9;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
-button{min-height:42px}button:focus-visible,input:focus-visible{outline:3px solid #5145cd!important;outline-offset:2px}
+[data-testid="stExpander"]{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+[data-testid="stDataFrame"]{background:var(--surface);border-radius:8px}
+.v2-hero{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:24px;margin:8px 0 14px}
+.v2-hero .eyebrow{color:var(--muted);font-size:14px}.v2-hero .amount{font-size:clamp(25px,3.5vw,36px);font-weight:750;color:var(--accent-ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.v2-hero .unit{font-size:15px;color:var(--muted);font-weight:400}.v2-status{font-size:13px;color:var(--muted);margin-bottom:10px}
+.v2-kicker{font-size:12px;letter-spacing:.02em;color:var(--kicker);font-weight:700}.v2-title{font-size:19px;font-weight:700;margin:0}
+.v2-formula{background:var(--soft);padding:18px;border-radius:8px;line-height:1.9;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+button{min-height:42px}button:focus-visible,input:focus-visible{outline:3px solid var(--accent)!important;outline-offset:2px}
 @media(max-width:768px){[data-testid="stMainBlockContainer"]{padding:4rem .9rem 3rem}.v2-hero{padding:18px}[data-testid="stMetricValue"]{font-size:1.3rem}}
 </style>'''
+)
 
 
 def goto(stage, topic=None):
