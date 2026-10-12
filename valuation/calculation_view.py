@@ -228,4 +228,6 @@ def worksheet_html(payload):
     # No remote assets, no network, no user strings interpolated as HTML.
     raw = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
     raw = raw.replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
-    return Path(__file__).with_name('calculation_grid.html').read_text(encoding='utf-8').replace('__PAYLOAD__', raw)
+    from .ui_theme import css_vars
+    page = Path(__file__).with_name('calculation_grid.html').read_text(encoding='utf-8')
+    return page.replace('__THEME__', css_vars()).replace('__PAYLOAD__', raw)
