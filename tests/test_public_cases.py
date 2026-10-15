@@ -68,3 +68,20 @@ def test_public_case_formula_workbook_recalculates_without_errors(path):
     expected = L.formula_key_cells(run.terms, run.raw, L.eir_or_none(*args))
     result = recalculate_and_compare(xlsx, expected=expected)
     assert result['comparison'] and all(r[4] == '일치' for r in result['comparison'])
+
+
+@pytest.mark.skipif(not (shutil.which('libreoffice') or shutil.which('soffice')), reason='LibreOffice 없음')
+def test_dated_call_schedule_recalculates_without_errors():
+    # 매도청구 회차표를 «날짜» 로 넣으면 계약 개월이 소수 여섯째 자리 밑까지 간다(정기 행사 · 계약일
+    # 목록의 개월). 언제든지 행사(녹십자웰빙)와 함께 두 길 모두에서 분리 판단 비교표가 깨지지 않아야 한다.
+    path = next(p for p in CASES if p.stem.startswith('아이즈비전'))
+    case = W.read_case(path.read_bytes(), path.stem)
+    case.contract['k_sched'] = '2026-02-23 103.5\n2026-05-26 104.4\n2026-08-24 105.3\n2026-11-23 106.2'
+    run = calculate(case)
+    data = export_bundle(run, detail=True, formula=True)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        xlsx = z.read(next(n for n in z.namelist() if n.endswith('.xlsx')))
+    args = (run.terms, run.raw['full'], run.raw['b0'], run.raw['b1'], run.raw['b2'], run.raw['ca'])
+    expected = L.formula_key_cells(run.terms, run.raw, L.eir_or_none(*args))
+    result = recalculate_and_compare(xlsx, expected=expected)
+    assert result['comparison'] and all(r[4] == '일치' for r in result['comparison'])

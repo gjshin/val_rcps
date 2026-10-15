@@ -5548,13 +5548,14 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                            이유=["계약에 매도청구권이 없거나 행사 가능한 시점이 "
                                  "없습니다."], 근거=[], 평가="—", 지표={})
     else:
-        _kchk = []
+        _kchk, _knodes = [], []
         for _i in range(n+1):
             if ks(_i) is None:
                 continue
             _m = _EA["k_dates"].get(_i, tm.elapsed_m + _i*dt_*12)
             _bv = amort_at(max(0.0, (_m-tm.elapsed_m)/12))
             _kchk.append((_m, ks(_i), _bv, _close_test(ks(_i), _bv, tol)[0]))
+            _knodes.append(_i)
         _, kv, kb, kgap = _kchk[0]
         _kworst = max(_kchk, key=lambda x: x[3])
         kclose = _kworst[3] <= tol
@@ -5631,7 +5632,7 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
         else:
             val = "분리하지 않으므로 주계약에 포함해 상각후원가로 측정합니다."
         why.append(_ktxt)
-        out["call"] = dict(있음=True, 결론=res, 이유=why, 근거=cite, 평가=val, 회차=_kchk,
+        out["call"] = dict(있음=True, 결론=res, 이유=why, 근거=cite, 평가=val, 회차=_kchk, 노드=_knodes,
                            지표={"첫 매도청구일 매매대금": kv,
                                  "같은 시점 상각후원가": kb,
                                  "차이": kgap,
@@ -5719,6 +5720,7 @@ def split_test(tm: Terms, full, b0, b1, b2, ca, rows_eir):
                      이유=[B4311_NOTE + f" 이 평가는 {nm}을 «{_set}» 으로 이어 적용합니다."],
                      근거=["1109 문단 B4.3.11", "실무사례 32쪽"], 지표={}, 설정일치=True)
             d.pop("회차", None)
+            d.pop("노드", None)
     return out
 
 
@@ -12600,9 +12602,15 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
             _pms = [row[0] for row in _d['회차']]
             _isput = _k == 'put'
             _monthkey = repr(float(_pms[0]))
-            def _xamount(mo):
+            # 매도청구 회차마다 격자 칸 번호(split_test 의 «노드»). 매매대금은 그 칸의 00 격자 공통
+            # 33행을 바로 가리킨다 — 개월 수로 27행을 찾으면(MATCH …, 0) 언제든지 행사(노드 개월 식)와
+            # 정기 행사(계약일 목록의 반올림 개월) 가운데 한쪽에서 소수 끝자리가 달라 #N/A 가 난다.
+            _knode = list(_d.get('노드') or [])
+            def _xamount(mo, j=0):
                 if _isput:
                     return x_pamt_month(mo)
+                if j < len(_knode):
+                    return f"{COMQ}!{gl(_knode[j]+3)}$33"
                 return f"INDEX({COMQ}!$C$33:${gl(n+3)}$33,1,MATCH({mo},{COMQ}!$C$27:${gl(n+3)}$27,0))"
             _r += 1
             sec(J, _r, "B4.3.5(5)(가) 행사금액과 상각후원가 비교 — 수식 (가정 시트의 비교기준을 바꾸면 판정이 따라온다)", span=6); _r += 1
@@ -12678,12 +12686,11 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 put(J, _ws-1, 2+_j, _h, bold=True, fill=LIGHT, align="center", border=True, size=9)
             for _j, _m in enumerate(_pms):
                 _rw = _ws + _j
-                # 반올림하지 않은 개월 수 — 아래 매매대금 수식이 격자 개월 행(27행)에서 이 값을 «정확히»
-                # 찾는다(MATCH …, 0). 평가기준일이 발행일 뒤라 격자 개월이 12.528387096… 처럼 떨어지지
-                # 않으면, 반올림한 값으로는 찾지 못해 #N/A 가 났다. 값 조서도 같은 값을 적는다.
+                # 반올림하지 않은 개월 수 — 옆의 행사 시점(C열) 식이 이 값에서 나오므로 값 조서와 같은
+                # 값을 적어야 두 조서의 C·E·F열이 끝자리까지 같다. 매매대금(D열)은 개월 수로 찾지 않는다.
                 put(J, _rw, 2, float(_m), fmt=N2, align="right", border=True, color=RED)
                 put(J, _rw, 3, f"=MAX(0,(B{_rw}-{K['elm']})/12)", fmt=N4, align="right", border=True)
-                put(J, _rw, 4, "=" + _xamount(f"B{_rw}"), fmt=N4, align="right", border=True)
+                put(J, _rw, 4, "=" + _xamount(f"B{_rw}", _j), fmt=N4, align="right", border=True)
                 put(J, _rw, 5, "=" + _amort_formula(f"C{_rw}"),
                     fmt=N4, align="right", border=True)
                 put(J, _rw, 6, f"=ABS(D{_rw}-E{_rw})/MAX(ABS(E{_rw}),0.000000001)", fmt=P2,

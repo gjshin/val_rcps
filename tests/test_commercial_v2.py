@@ -51,7 +51,9 @@ def test_every_call_exercise_and_formulas():
         w=load_workbook(io.BytesIO(z.read('formula_review.xlsx')))
     assert '분리 판단' in w
     formulas=[c.value for c in w['분리 판단']._cells.values() if c.data_type=='f']
-    assert any('33' in f and 'MATCH' in f for f in formulas)
+    # 매매대금은 그 회차의 격자 칸(00 격자 공통 33행 · 매도청구금액)을 바로 가리킨다 — 개월 수로 찾지 않는다.
+    assert any("'00 격자 공통'!" in f and '$33' in f for f in formulas)
+    assert not any('MATCH' in f and '$27' in f for f in formulas)
     assert any('COUNTIF' in f and '^MAX(0,' in f for f in formulas)
     assert '판단·근거' not in w
     assumption = w['가정']
