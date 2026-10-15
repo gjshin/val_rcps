@@ -91,7 +91,7 @@ def review_issues(case, tm, raw):
 def arithmetic_checks(tm, raw, amounts):
     full = raw if legacy.is_sha(tm) else raw['full']
     checks = [dict(name='유한한 평가금액', passed=all(math.isfinite(v) for v in amounts.values()),
-                   detail='NaN·무한대가 없는지 확인'),
+                   detail='숫자가 아닌 값·무한대가 없는지 확인'),
               dict(name='위험중립확률 범위', passed=not full.get('qbad'),
                    detail=f"최소 {full['qmin']:.8f}, 최대 {full['qmax']:.8f}; 0 < 확률 < 1")]
     if not legacy.is_sha(tm):

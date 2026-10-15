@@ -201,6 +201,13 @@ def case_filename(case):
     return f"{name}_{case.effective().get('d_base') or '기준일미입력'}_평가입력.json"
 
 
+def check_rows(checks):
+    """계산 점검 표 — 화면 머리글을 한글로 (조서의 «산술 검산» 표와 같은 말)."""
+    return [
+        {'점검 항목': r['name'], '결과': '통과' if r['passed'] else '차이 발생', '내용': r['detail']} for r in checks
+    ]
+
+
 def error_summary(errors):
     """입력 오류 — 비어 있는 필수 입력은 한 줄로 모으고, 나머지 오류만 표로 보인다."""
     missing = [label(e.field) for e in errors if e.code == 'required']
@@ -376,7 +383,7 @@ def result_panel(run, case, current, pending):
             dataframe(pd.DataFrame(issue_rows(notices)), hide_index=True, width='stretch')
         else:
             st.write('이 실행에서 표시할 수치 경고가 없습니다.')
-        dataframe(pd.DataFrame(s['checks']), hide_index=True, width='stretch')
+        dataframe(pd.DataFrame(check_rows(s['checks'])), hide_index=True, width='stretch')
     with st.expander('행사·지급일정'):
         dataframe(pd.DataFrame(event_rows(run)), hide_index=True, width='stretch')
         W.dp_panel(run)
@@ -498,14 +505,14 @@ def export_panel(run, case, current, pending, previous):
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             name = next(n for n in z.namelist() if n.endswith('.xlsx'))
             st.download_button(
-                'Excel 조서만 저장',
+                '엑셀 조서만 저장',
                 z.read(name),
                 safe_filename(run, option, 'xlsx'),
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 type='primary',
             )
         st.download_button('평가 조서 묶음 저장', data, safe_filename(run, option, 'zip'), 'application/zip')
-        st.success('조서 생성 완료 · 같은 실행의 Excel·입력·적용값·시장자료·결과 기록을 생성했습니다.')
+        st.success('조서 생성 완료 · 같은 실행의 엑셀·입력·적용값·시장자료·결과 기록을 생성했습니다.')
         st.caption('다운로드 파일은 기기에 저장됩니다. 이 앱은 서버 영구 보관을 제공하지 않습니다.')
 
 
@@ -520,6 +527,7 @@ def main():
             '상환전환우선주 · 전환사채 · 신주인수권부사채 · 주주간계약의 입력, 평가, 계산 추적과 엑셀 조서를 연결합니다.'
         )
         st.info('왼쪽에서 기존 평가파일을 열거나 합성사례로 새 화면을 체험하세요.')
+        st.caption('처음이라면 왼쪽 맨 위 «업무 선택»에서 «사용 안내»를 고르면 순서대로 따라 할 수 있습니다.')
         st.caption(
             '동료 사용 시험에는 합성·익명 사례를 사용하세요. 평가파일을 저장하면 다음에 이어서 작업할 수 있습니다.'
         )
