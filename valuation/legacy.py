@@ -9934,7 +9934,7 @@ def build_xlsx(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, *, as_wo
                 put(J, _r, 2+_j, _h, bold=True, fill=LIGHT, align="center", border=True, size=9)
             _r += 1
             for _m, _pv, _bv, _g in _d["회차"]:
-                for _j, (_v, _f) in enumerate(((round(_m, 6), N2), (max(0.0, (_m - tm.elapsed_m)/12), N4),
+                for _j, (_v, _f) in enumerate(((float(_m), N2), (max(0.0, (_m - tm.elapsed_m)/12), N4),
                                                 (_pv, N4), (_bv, N4), (_g, P2))):
                     put(J, _r, 2+_j, _v, fmt=_f, align="right", border=True,
                         color=(RED if _j == 0 else "000000"))
@@ -12678,7 +12678,10 @@ def build_xlsx_formula(tm: Terms, full, b0, b1, b2, ca, conv, eir, attach=None, 
                 put(J, _ws-1, 2+_j, _h, bold=True, fill=LIGHT, align="center", border=True, size=9)
             for _j, _m in enumerate(_pms):
                 _rw = _ws + _j
-                put(J, _rw, 2, round(_m, 6), fmt=N2, align="right", border=True, color=RED)
+                # 반올림하지 않은 개월 수 — 아래 매매대금 수식이 격자 개월 행(27행)에서 이 값을 «정확히»
+                # 찾는다(MATCH …, 0). 평가기준일이 발행일 뒤라 격자 개월이 12.528387096… 처럼 떨어지지
+                # 않으면, 반올림한 값으로는 찾지 못해 #N/A 가 났다. 값 조서도 같은 값을 적는다.
+                put(J, _rw, 2, float(_m), fmt=N2, align="right", border=True, color=RED)
                 put(J, _rw, 3, f"=MAX(0,(B{_rw}-{K['elm']})/12)", fmt=N4, align="right", border=True)
                 put(J, _rw, 4, "=" + _xamount(f"B{_rw}"), fmt=N4, align="right", border=True)
                 put(J, _rw, 5, "=" + _amort_formula(f"C{_rw}"),
