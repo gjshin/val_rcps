@@ -283,7 +283,7 @@ def inspect_case(case: Case) -> list[Issue]:
                  isinstance(value, list) if typ is list else
                  _finite(value) and (typ is not int or isinstance(value, int)))
         if not valid:
-            add("error", "type", key, "자료형 또는 숫자를 확인하십시오. NaN·무한대는 허용하지 않습니다.")
+            add("error", "type", key, "자료형 또는 숫자를 확인하십시오. 숫자가 아닌 값·무한대는 허용하지 않습니다.")
     if any(i.severity == "error" for i in issues):
         return issues
     if not all(isinstance(k, str) and isinstance(v, str) for k, v in case.sources.items()):

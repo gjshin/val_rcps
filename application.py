@@ -4,7 +4,7 @@ import runpy
 import streamlit as st
 
 ROOT = Path(__file__).parent
-PAGES = ['평가 작업', '여러 회차·변동 분석']
+PAGES = ['평가 작업', '여러 회차·변동 분석', '사용 안내']
 APP_VERSION = '2026.10.06-v2.2'
 
 
@@ -24,6 +24,9 @@ def main():
     if page == PAGES[0]:
         from v2_workspace import main as workspace
         workspace()
-    else:
+    elif page == PAGES[1]:
         import engagement_ui
         engagement_ui.main()
+    else:
+        import guide_ui
+        guide_ui.main()
