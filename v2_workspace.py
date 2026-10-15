@@ -6,6 +6,7 @@ import io
 import json
 import zipfile
 import hashlib
+from pathlib import Path
 import pandas as pd
 import streamlit as st
 import workspace_app as W
@@ -107,6 +108,21 @@ def sample_case():
     return c
 
 
+PUBLIC_CASES = Path(__file__).parent / '시나리오' / '공시사례'
+
+
+def public_cases():
+    """공시 사례 평가파일 {건명: 경로} — 시나리오/공시사례 폴더의 평가파일(.json)."""
+    out = {}
+    for path in sorted(PUBLIC_CASES.glob('*.json')):
+        try:
+            name = json.loads(path.read_text(encoding='utf-8'))['name']
+        except (ValueError, KeyError, TypeError):
+            continue
+        out[name] = path
+    return out
+
+
 def sidebar():
     with st.sidebar:
         st.markdown('### 복합금융상품 평가')
@@ -158,6 +174,16 @@ def sidebar():
             if st.button('합성사례로 시작하기', width='stretch'):
                 W.install_case(sample_case())
                 st.rerun()
+            cases = public_cases()
+            if cases:
+                pick = st.selectbox('공시 사례', list(cases), key='_public_case')
+                if st.button('공시 사례 열기', width='stretch'):
+                    try:
+                        W.install_case(W.read_case(cases[pick].read_bytes(), cases[pick].stem))
+                        st.rerun()
+                    except (ValueError, TypeError) as exc:
+                        st.error(str(exc))
+                st.caption('공개 공시(전자공시)만으로 만든 연습용 사례입니다. 회사·평가기관이 실제로 쓴 입력값과 다를 수 있습니다.')
         previous = None
         with st.expander('전기 평가와 비교'):
             upload = st.file_uploader('전기 평가파일(선택)', type='json', key='previous_upload')
@@ -526,7 +552,7 @@ def main():
         st.write(
             '상환전환우선주 · 전환사채 · 신주인수권부사채 · 주주간계약의 입력, 평가, 계산 추적과 엑셀 조서를 연결합니다.'
         )
-        st.info('왼쪽에서 기존 평가파일을 열거나 합성사례로 새 화면을 체험하세요.')
+        st.info('왼쪽에서 기존 평가파일을 열거나, 합성사례 또는 공시 사례로 새 화면을 체험하세요.')
         st.caption('처음이라면 왼쪽 맨 위 «업무 선택»에서 «사용 안내»를 고르면 순서대로 따라 할 수 있습니다.')
         st.caption(
             '동료 사용 시험에는 합성·익명 사례를 사용하세요. 평가파일을 저장하면 다음에 이어서 작업할 수 있습니다.'
