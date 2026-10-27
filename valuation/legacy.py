@@ -6458,7 +6458,7 @@ def matrix_summary(path=None):
         return None
     rows = (mx.get("cases") or mx.get("rows") or []) if isinstance(mx, dict) else mx
     if not rows: return None
-    order = ["CB", "RCPS", "BW", "SHA", "ALL"]
+    order = ["CB", "RCPS", "BW", "SHA", "SO", "ALL"]
     prods = sorted({x["product"] for x in rows}, key=lambda p: order.index(p) if p in order else 9)
     out = []
     for pr in prods:

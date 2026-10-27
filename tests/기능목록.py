@@ -128,6 +128,10 @@ MANIFEST = {
     "sha_kill":    ("한쪽 행사 시 상대 권리", {0: "존속 (독립)", 1: "소멸 (상호소멸)"}, ("SHA",)),
     "sha_put_cmp": ("풋 보장 복리", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회"}, ("SHA",)),
     "sha_call_cmp": ("콜 가산 복리", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회"}, ("SHA",)),
+    # ── 주식선택권 (valuation/stock_option.py) ──
+    "so_ex":       ("주식선택권 조기행사 가정", {0: "만기에만 행사 (유럽형)", 1: "가득 뒤 최적 행사",
+                                         2: "행사 배수에 도달하면 행사"}, ("SO",)),
+    "so_settle":   ("주식선택권 결제 방식", {0: "주식결제형", 1: "현금결제형 — 2단계 (입력 검사가 막음)"}, ("SO",)),
 }
 
 # 값이 아니라 **있고 없음**으로 갈리는 권리. 필드 하나로 못 잡아 술어로 적는다.
@@ -148,6 +152,8 @@ PRESENCE = {
 def selectable(G, product, field, value):
     # 상품 필드는 그 상품 값 하나만 「선택」이다 — CB 행에 RCPS 값이 있을 수 없다
     if field == "inst": return value == product
+    if product == "SO" and field == "so_settle":
+        return value == 0          # 현금결제형은 입력 검사가 막는다 (BLOCKS)
     if product == "SHA":
         forced = dict(mat_mode=1, issuer_call=0, div_mode=0, div_basis=0, view="issuer", rfx_mode=0, k_method=0,
                       p_sep=1, k_sep=1, put_bdt=0, ipo_conv=0, carry=1)
@@ -180,6 +186,8 @@ BLOCKS = [
      "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
     ("GS 또는 전환권 부채 + BDT", "compat() 이 put_bdt=0 으로 되돌린다 (COMPAT_BDT). 값은 전부터 같았고 이제 경고가 붙는다",
      "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
+    ("현금결제형 주식선택권", "2단계 기능이다. 입력 검사(stock_option.issues)가 평가를 막는다 — 화면·평가·조서가 같은 검사를 쓴다",
+     "engine+ui", "tests/test_stock_option.py::test_input_checks_block_calculation"),
 ]
 
 # 계산은 허용하되 한계가 화면·문서·조서에 같은 뜻으로 표시되어야 하는 것.
@@ -212,7 +220,9 @@ def terms_enum_fields(G):
                  # 최초 인식 차이의 분개 표기 전용 — 값에 영향 없음 (tests/test_judgment_sources.py 가 시험)
                  "d1_pl", "d1_reason", "split_base_why",
                  # 배당가능이익 재원 사용 시작일 — «월-일» 날짜 입력이다 (갈래가 아니다)
-                 "dp_from"): continue
+                 "dp_from",
+                 # 주식선택권 결산일 — «월-일» 날짜 입력이다 (비용을 나누는 결산일, 갈래가 아니다)
+                 "so_fy_end"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty
@@ -467,6 +477,26 @@ def collect_coverage(G):
             (pres if f in PRESENCE else cov).setdefault(key, []).append((tf, fn, "hand_calc_independent"))
     unlisted += sorted(f"오라클::{x}" for x in have_o - set(ORACLE))
 
+    # 주식선택권 — 블랙-숄즈 닫힌 식(교과서 값)이 격자를 보지 않는 독립 오라클이다.
+    # 나머지 갈래는 「배당이 없으면 최적 행사 = 유럽형」「배수·퇴사가 있으면 값이 작다」 같은 불변식.
+    SO_TESTS = {
+        "test_european_lattice_converges_to_black_scholes": ([("SO", "so_ex", 0), ("SO", "so_settle", 0)],
+                                                             "hand_calc_independent"),
+        "test_no_dividend_optimal_exercise_equals_european_and_dividend_makes_it_worth_more":
+            ([("SO", "so_ex", 0), ("SO", "so_ex", 1)], "invariants"),
+        "test_exercise_multiple_and_exit_rate_lower_the_value": ([("SO", "so_ex", 1), ("SO", "so_ex", 2)], "invariants"),
+        "test_node_trace_reconciles_every_node": ([("SO", "so_ex", 2)], "invariants"),
+    }
+    tf = "tests/test_stock_option.py"
+    src = open(os.path.join(ROOT, tf), encoding="utf-8").read()
+    have_s = set(re.findall(r"^def (test_\w+)", src, re.M))
+    for fn, (tags, oracle) in SO_TESTS.items():
+        if fn not in have_s:
+            unlisted.append(f"주식선택권::{fn} (시험 함수가 없다)")
+            continue
+        for key in tags:
+            cov.setdefault(key, []).append((tf, fn, oracle))
+
     # 분기 전수 — 오라클은 불변식 (NaN 없음 · q ∈ (0,1) · 권리값 ≥ 0 · 배분 합계 100 ·
     # 상각표 기말 = 상환금액 · 분포 합 1). 값을 못 박지는 않지만 모든 선택 갈래를 한 번씩 밟는다.
     tf = "tests/분기전수.py"
@@ -541,7 +571,7 @@ def build_matrix(G, cov, pres):
 
 
 def summarize(rows):
-    prods = ("CB", "RCPS", "BW", "SHA", "ALL")
+    prods = ("CB", "RCPS", "BW", "SHA", "SO", "ALL")
     st = ("PASS", "EXPECTED_BLOCK", "KNOWN_LIMITATION", "FAIL", "NOT_TESTED")
     tab = {p: {s: 0 for s in st} for p in prods}
     for r in rows: tab[r["product"]][r["status"]] += 1

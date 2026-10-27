@@ -1,6 +1,6 @@
 {
- "generated": "2026-10-03T10:13:56",
- "head": "a981a7e",
+ "generated": "2026-10-27T23:54:47",
+ "head": "ca83103",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -32,9 +32,16 @@
    "FAIL": 0,
    "NOT_TESTED": 0
   },
+  "SO": {
+   "PASS": 4,
+   "EXPECTED_BLOCK": 0,
+   "KNOWN_LIMITATION": 0,
+   "FAIL": 0,
+   "NOT_TESTED": 0
+  },
   "ALL": {
    "PASS": 0,
-   "EXPECTED_BLOCK": 5,
+   "EXPECTED_BLOCK": 6,
    "KNOWN_LIMITATION": 26,
    "FAIL": 0,
    "NOT_TESTED": 0
@@ -7622,6 +7629,73 @@
    "n_tests": 1
   },
   {
+   "case_id": "SO-so_ex-0",
+   "product": "SO",
+   "branch": "so_ex",
+   "value": 0,
+   "label": "만기에만 행사 (유럽형)",
+   "meaning": "주식선택권 조기행사 가정",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/test_stock_option.py::test_european_lattice_converges_to_black_scholes",
+    "tests/test_stock_option.py::test_no_dividend_optimal_exercise_equals_european_and_dividend_makes_it_worth_more"
+   ],
+   "n_tests": 2
+  },
+  {
+   "case_id": "SO-so_ex-1",
+   "product": "SO",
+   "branch": "so_ex",
+   "value": 1,
+   "label": "가득 뒤 최적 행사",
+   "meaning": "주식선택권 조기행사 가정",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "invariants",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/test_stock_option.py::test_no_dividend_optimal_exercise_equals_european_and_dividend_makes_it_worth_more",
+    "tests/test_stock_option.py::test_exercise_multiple_and_exit_rate_lower_the_value"
+   ],
+   "n_tests": 2
+  },
+  {
+   "case_id": "SO-so_ex-2",
+   "product": "SO",
+   "branch": "so_ex",
+   "value": 2,
+   "label": "행사 배수에 도달하면 행사",
+   "meaning": "주식선택권 조기행사 가정",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "invariants",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/test_stock_option.py::test_exercise_multiple_and_exit_rate_lower_the_value",
+    "tests/test_stock_option.py::test_node_trace_reconciles_every_node"
+   ],
+   "n_tests": 2
+  },
+  {
+   "case_id": "SO-so_settle-0",
+   "product": "SO",
+   "branch": "so_settle",
+   "value": 0,
+   "label": "주식결제형",
+   "meaning": "주식선택권 결제 방식",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/test_stock_option.py::test_european_lattice_converges_to_black_scholes"
+   ],
+   "n_tests": 1
+  },
+  {
    "case_id": "CB-put-ON",
    "product": "CB",
    "branch": "put",
@@ -8892,6 +8966,23 @@
    "note": ""
   },
   {
+   "case_id": "BLOCK-06",
+   "product": "ALL",
+   "branch": "현금결제형 주식선택권",
+   "value": null,
+   "label": "2단계 기능이다. 입력 검사(stock_option.issues)가 평가를 막는다 — 화면·평가·조서가 같은 검사를 쓴다",
+   "meaning": "지원하지 않는 조합",
+   "kind": "block",
+   "status": "EXPECTED_BLOCK",
+   "oracle": "block_behaviour",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/test_stock_option.py::test_input_checks_block_calculation"
+   ],
+   "n_tests": 1,
+   "note": ""
+  },
+  {
    "case_id": "LIMIT-01",
    "product": "ALL",
    "branch": "복합내재파생이 음수",
@@ -8968,7 +9059,7 @@
    "product": "ALL",
    "branch": "배당가능이익 상환 제약은 연도별 고정 추정치로만 반영",
    "value": null,
-   "label": "넣지 않으면 계약상 상환일에 즉시 상환된다고 본다. 넣으면 발생연도별 고정값으로 청구 시점마다 지급 일정을 정한다 — 주가와 이익의 연동, 해마다 한도만큼만 나눠 청구하는 전략, 동순위 상품의 개별 판단(그 재원 연도 안에 청구 기간이 하루라도 있으면 그 해 함께 청구하고, 평가대상 청구 전에 청구 기간이 끝난 상품은 그 전에 상환을 마쳤다고 본다)은 반영하지 않는다. 넘긴 상환금은 청구일부터 1년 단위의 가장 가까운 계산 시점에 갚고, 만기 뒤 지급분은 마지막 구간의 위험 선도이자율로 할인한다(«받지 못함» 을 고르면 만기 뒤 지급은 0, 만기에 보통주로 바꾸는 조항은 반영하지 않음). 배당 부족(이익 < 우선배당)은 따로 반영하지 않는다",
+   "label": "넣지 않으면 계약상 상환일에 즉시 상환된다고 본다. 넣으면 발생연도별 고정값으로 청구 시점마다 지급 일정을 정한다 — 주가와 이익의 연동, 해마다 한도만큼만 나눠 청구하는 전략, 동순위 상품의 개별 판단(그 재원 연도 안에 청구 기간이 하루라도 있으면 그 해 함께 청구하고, 평가대상이 청구하는 재원 연도가 시작하기 전에 청구 기간이 끝난 상품은 그 전에 상환을 마쳤다고 보며, 같은 재원 연도 안에서 먼저 끝난 상품은 그 해 재원을 함께 쓴다)은 반영하지 않는다. 넘긴 상환금은 청구일부터 1년 단위의 가장 가까운 계산 시점에 갚고, 만기 뒤 지급분은 마지막 구간의 위험 선도이자율로 할인한다(«받지 못함» 을 고르면 만기 뒤 지급은 0, 만기에 보통주로 바꾸는 조항은 반영하지 않음). 배당 부족(이익 < 우선배당)은 따로 반영하지 않는다",
    "meaning": "계산은 하되 한계를 표시",
    "kind": "limitation",
    "status": "KNOWN_LIMITATION",
