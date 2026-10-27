@@ -41,6 +41,8 @@ class Engagement:
 def calculate_engagement(engagement, previous_runs=None):
     if not engagement.cases:
         raise ValueError('평가할 회차를 추가하십시오.')
+    if any(c.effective().get('inst') == 'SO' for c in engagement.cases.values()):
+        raise ValueError('주식선택권은 여러 회차 합산에 넣지 않습니다. 가득 회차가 여럿이면 한 평가의 회차표에 한 줄씩 넣어 평가하십시오.')
     dates = {c.effective().get('d_base') for c in engagement.cases.values()}
     views = {c.effective().get('view') for c in engagement.cases.values() if c.effective().get('inst') != 'SHA'}
     if len(dates) != 1 or len(views) > 1:

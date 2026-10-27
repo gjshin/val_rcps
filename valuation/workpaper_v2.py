@@ -57,12 +57,13 @@ def add_workpaper_guide(wb, run, *, formula=False):
     from .service import AMOUNT_LABELS
 
     t, s = run.terms, run.summary
+    so = L.is_so(t)
     rows = [
         ['항목', '내용'],
         ['평가 건명', run.case.name],
         ['기준일', t.d_base],
-        ['상품·회차', f'{t.inst} · {t.tranche}'],
-        ['평가관점', '투자자' if t.view == 'holder' else '발행자'],
+        ['상품·회차', f"{'주식선택권' if so else t.inst} · {t.tranche}"],
+        ['평가관점', '발행회사 (보상원가)' if so else '투자자' if t.view == 'holder' else '발행자'],
         ['평가 실행번호', s['run_id']],
         ['문서 개정번호', s['document_id']],
         ['계산 버전', VERSION],
@@ -77,8 +78,10 @@ def add_workpaper_guide(wb, run, *, formula=False):
                 else '평가 당시의 고정값입니다. 입력을 고쳐도 재계산되지 않습니다.'
             ),
         ],
-        ['원금 100 기준', '단위가 다른 값을 직접 합산하지 마십시오. 총액 = 원금100 기준 × 평가대상 원금 ÷ 100.'],
-        ['분해와 회계', 'TF 주식/현금 결제분, 권리별 증분, 회계상 인식액은 서로 다른 구분입니다.'],
+        ['주가 100 기준', '1주당 금액 ÷ 부여일 주가 × 100. 총액 = 1주당 금액 × 수량. 단위가 다른 값을 직접 합산하지 마십시오.']
+        if so else ['원금 100 기준', '단위가 다른 값을 직접 합산하지 마십시오. 총액 = 원금100 기준 × 평가대상 원금 ÷ 100.'],
+        ['공정가치와 보상원가', '공정가치는 부여 수량 전체, 보상원가는 가득 예상 수량(근무조건 반영) 기준입니다.']
+        if so else ['분해와 회계', 'TF 주식/현금 결제분, 권리별 증분, 회계상 인식액은 서로 다른 구분입니다.'],
         ['자료 보관', '평가 입력(case.json)·적용입력·시장자료·결과 기록을 조서 묶음과 함께 보관하십시오.'],
         [
             '구조조건 변경',
@@ -96,6 +99,8 @@ def add_workpaper_guide(wb, run, *, formula=False):
         ['배당가능이익 미입력 가정', run.case.sources.get('dp_missing_assumption', '해당 없음 또는 미확인')],
         ['목차', '시트명을 누르면 이동합니다.'],
     ]
+    if so:
+        rows = [r for r in rows if r[0] != '배당가능이익 미입력 가정']
     guide = calculation_table(wb, '00_안내', rows)
     wb.move_sheet(guide, offset=-wb.sheetnames.index(guide.title))
     guide.column_dimensions['A'].width = 28
@@ -146,12 +151,13 @@ def add_workpaper_guide(wb, run, *, formula=False):
     if len(check_rows) == 1:
         for key, val in s['amounts_100'].items():
             check.append([AMOUNT_LABELS[key], val, val, 0, '고정값 조서 · 수식 재계산 대사 아님'])
-    rates = rate_rows(run)
-    calculation_table(wb, '금리 적용내역', [list(rates[0])] + [list(x.values()) for x in rates])
-    events = event_rows(run)
-    if events:
-        calculation_table(wb, '행사 지급내역', [list(events[0])] + [list(x.values()) for x in events])
-    if not L.is_sha(t):
+    if not so:  # 주식선택권은 회차별 격자 시트에 시점별 금리·확률이 있다
+        rates = rate_rows(run)
+        calculation_table(wb, '금리 적용내역', [list(rates[0])] + [list(x.values()) for x in rates])
+        events = event_rows(run)
+        if events:
+            calculation_table(wb, '행사 지급내역', [list(events[0])] + [list(x.values()) for x in events])
+    if not (L.is_sha(t) or so):
         trace = node_trace(run)
         rows = [
             ['항목', '생성 당시 실제 적용값(고정 기록)', '계산 의미'],

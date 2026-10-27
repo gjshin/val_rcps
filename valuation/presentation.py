@@ -71,9 +71,11 @@ LABELS = {
     'imported_defaults': '기존 파일의 보충값', 'applied_terms': '실제 적용 조건', 'result': '평가 결과', 'dates': '평가 관련 날짜',
     'notes': '검토메모', 'market_date': '시장자료 기준일',
     'sources': '자료 출처', 'contract': '계약서',
+    'so_rows': '주식선택권 회차표', 'so_ex': '조기행사 가정', 'so_mult': '행사 배수(배)',
+    'so_exit': '가득 뒤 연간 퇴사율(%)', 'so_settle': '결제 방식', 'so_fy_end': '결산일(월-일, 예: 12-31)',
 }
 PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'k_lock_w', 'ytm', 'bdt_sig',
-                     'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue', 'dp_delay'})
+                     'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue', 'dp_delay', 'so_exit'})
 EVENT_DATES = frozenset({'cv_s', 'cv_e', 'p_s', 'p_e', 'k_s', 'k_e', 'k_lock', 'ipo_m', 'rfx_first',
                         'sha_put_s', 'sha_put_e', 'sha_call_s', 'sha_call_e'})
 CHOICES = {
@@ -107,6 +109,8 @@ CHOICES = {
     'sha_ipo_kind': {1: '실제 상장 완료 시 종료 (상장일·상장 가정일 — 주가와 무관)', 0: '그 시점 주가가 기준을 넘으면 상장으로 봄 (주가 기준)'},
     'bs_net': {0: '콜 차감 전', 1: '콜 차감 후'},
     'd1_pl': {0: '이연 (기본 · 1109 B5.1.2A(2))', 1: '당기손익 (관측 가능한 시장자료만 사용 · B5.1.2A(1))'},
+    'so_ex': {0: '만기에만 행사 (유럽형)', 1: '가득 뒤 최적 행사', 2: '행사 배수에 도달하면 행사'},
+    'so_settle': {0: '주식결제형 (신주 교부·자기주식 교부)', 1: '현금결제형 (차액보상 — 2단계 예정)'},
 }
 for _key in ('p_less_cpn', 'k_less_cpn', 'm_less_cpn'):
     CHOICES[_key] = {0: '공제 없음', 1: '이자·배당의 미래가치 공제', 2: '기지급 명목금액 공제'}
@@ -134,6 +138,15 @@ SHA_CHOICES = {
 }
 
 
+# 주식선택권 화면에서만 바꿔 부르는 이름 — 사채가 없으므로 발행일·만기일·전환가액이라 부르지 않는다.
+SO_LABELS = {
+    'd_issue': '부여일', 'd_base': '측정기준일 (주식결제형은 부여일)',
+    'd_mat': '행사기간 종료일 (마지막 회차)', 'K0': '행사가격(원)',
+    'S0': '부여일 주가(원) — 보통주 1주당 가치', 'tranche': '대상 차수 (예: 제10차)',
+    'dil_shares': '행사로 증가하는 보통주식수', 'unmod_note': '모형에 반영하지 않은 조건·근거 메모',
+}
+
+
 def choices(key, inst=None):
     """선택지 — 주주간계약이면 그 상품의 이름으로."""
     if inst == 'SHA' and key in SHA_CHOICES:
@@ -146,6 +159,8 @@ def label(key, inst=None):
         return '별도 계약조건 ' + str(int(key.split('[')[1][:-1]) + 1)
     if inst == 'SHA' and key in SHA_LABELS:
         return SHA_LABELS[key]
+    if inst == 'SO' and key in SO_LABELS:
+        return SO_LABELS[key]
     return LABELS.get(key, key)
 
 
@@ -165,6 +180,8 @@ def display_value(key, value, issue_date=None, inst=None):
         return '미입력'
     if key in CHOICES:
         return choices(key, inst).get(value, str(value))
+    if key == 'inst' and value == 'SO':
+        return '주식선택권'
     if key in ('sha_link_q', 'sha_hold_q') and value is not None and value < 0:
         return '미입력 (풋·콜 수량이 같으면 전부)'
     if key == 'k_lock_w' and value < 0:

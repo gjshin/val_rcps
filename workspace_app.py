@@ -728,6 +728,10 @@ def input_editor(case, autosave=False):
     edited = case.facts().copy()
     draft_errors = []
     inst = edited['inst']
+    if inst == 'SO':
+        import stock_option_ui
+        stock_option_ui.editor(edited, case, draft_errors)
+        return _commit(case, edited, styles, draft_errors, autosave)
     st.subheader('평가대상 및 기준일')
     if inst == 'SHA' and edited.get('sha_rows'):
         # 회차별 표 — 평가 종료일·계산기준금액·주당 기준가격은 표에서 정해진다 (sha_editor).
@@ -879,20 +883,7 @@ def input_editor(case, autosave=False):
         fields(['unmod_note', 'base_shares', 'dil_shares'], edited, case)
     st.subheader('시장자료 및 계산방법')
     fields(['S0', 'sig', 'div_y', 'model'], edited, case)
-    grid_choices = {0: '월', 14: '2주(14일 기준)', 7: '주(7일 기준)'}
-    requested_grid = edited.get('grid_days', 0)
-    if requested_grid not in grid_choices:
-        st.error('저장된 계산 간격이 지원 범위를 벗어났습니다. 월·2주·주 중에서 선택하십시오.')
-    grid = st.selectbox('계산 간격 단위', list(grid_choices),
-                        index=list(grid_choices).index(requested_grid) if requested_grid in grid_choices else None,
-                        format_func=grid_choices.get, key=f'grid_unit_{st.session_state.get("revision", 0)}')
-    if grid is not None and (grid or 'grid_days' in edited):
-        edited['grid_days'] = float(grid)
-    st.session_state._rendered_fields.add('grid_days')
-    if grid == 0:
-        field('gap_m', edited, case)
-    else:
-        st.caption('평가기준일과 만기일 사이를 선택한 일수에 가장 가까운 동일 간격으로 나눕니다. 실제 평균 일수는 평가 결과에 표시합니다.')
+    grid_editor(edited, case)
     fields(['y_type', 'cmp_rf', 'cmp_cr'], edited, case)
     st.caption('비율은 % 단위입니다. 주·2주 간격은 월 간격보다 평가와 조서 생성에 시간이 더 걸립니다.')
     curve_editor('rf_curve', edited); curve_editor('cr_curve', edited)
@@ -907,6 +898,29 @@ def input_editor(case, autosave=False):
     if inst == 'SHA' and not edited.get('sha_rows'):
         with st.expander('행사금액 경과기간 기준'):
             field('acc_basis', edited, case)
+    return _commit(case, edited, styles, draft_errors, autosave)
+
+
+def grid_editor(edited, case, end_word='만기일'):
+    """계산 간격 — 월(개월 수) · 2주 · 주."""
+    grid_choices = {0: '월', 14: '2주(14일 기준)', 7: '주(7일 기준)'}
+    requested_grid = edited.get('grid_days', 0)
+    if requested_grid not in grid_choices:
+        st.error('저장된 계산 간격이 지원 범위를 벗어났습니다. 월·2주·주 중에서 선택하십시오.')
+    grid = st.selectbox('계산 간격 단위', list(grid_choices),
+                        index=list(grid_choices).index(requested_grid) if requested_grid in grid_choices else None,
+                        format_func=grid_choices.get, key=f'grid_unit_{st.session_state.get("revision", 0)}')
+    if grid is not None and (grid or 'grid_days' in edited):
+        edited['grid_days'] = float(grid)
+    st.session_state._rendered_fields.add('grid_days')
+    if grid == 0:
+        field('gap_m', edited, case)
+    else:
+        st.caption(f'평가기준일과 {end_word} 사이를 선택한 일수에 가장 가까운 동일 간격으로 나눕니다. 실제 평균 일수는 평가 결과에 표시합니다.')
+
+
+def _commit(case, edited, styles, draft_errors, autosave):
+    """화면에서 고친 값을 평가 건에 저장한다 — 상품마다 같은 절차."""
     st.session_state.pop('_editing_styles', None)
     candidate = Case.from_dict(case.to_dict())
     for group in ['contract', 'market', 'method']:

@@ -94,7 +94,7 @@ def result_review(case, run, current, pending):
         st.caption('이 앱에서 복사한 값을 검산값으로 사용하지 마십시오. 별도 계산서·외부 모형의 산식과 범위를 확인하고 원금 100 기준 값을 입력하십시오.')
         rev = st.session_state.get('revision', 0)
         with st.form(f'independent_{rev}'):
-            values = {k: st.number_input('독립 검산: ' + label(k) + ' (원금 100 기준)', value=None, format='%.8f') for k in (['put', 'call'] if run.terms.inst == 'SHA' else ['net'])}
+            values = {k: st.number_input('독립 검산: ' + label(k) + ' (원금 100 기준)', value=None, format='%.8f') for k in controls.verification_keys(run)}
             absolute = st.number_input('절대 허용차이(원금 100 기준)', value=.000001, min_value=0., format='%.8f')
             relative = st.number_input('상대 허용차이(%)', value=.001, min_value=0., max_value=1., format='%.6f')
             reference = st.text_area('독립 계산서 위치·산식·허용차이 근거')

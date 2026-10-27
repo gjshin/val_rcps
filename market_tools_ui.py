@@ -24,7 +24,12 @@ def apply(case, changes, sources=None, calibration=None):
 
 
 def main(case):
-    tools = ['변동성 산출', '기준일 주가 조회', '주가 역산'] + (['보정 이어 적용'] if case.calibration else []) + ['금리곡선 불러오기', 'BDT 금리 변동성']
+    # 주식선택권 — 신용위험이 없어 무위험 곡선만 쓰고, 거래가격 역산·BDT 금리격자가 없다.
+    so = case.contract.get('inst') == 'SO'
+    curve_keys = ['rf_curve'] if so else ['rf_curve', 'cr_curve']
+    tools = (['변동성 산출', '기준일 주가 조회', '금리곡선 불러오기'] if so else
+             ['변동성 산출', '기준일 주가 조회', '주가 역산'] + (['보정 이어 적용'] if case.calibration else [])
+             + ['금리곡선 불러오기', 'BDT 금리 변동성'])
     tool = st.selectbox('시장자료 도구', tools)
     if tool == '변동성 산출':
         from vol_app import main as volatility
@@ -100,10 +105,15 @@ def main(case):
                     if not curves:
                         raise ValueError('금리곡선을 찾지 못했습니다.')
                     a = st.selectbox('무위험 곡선', range(len(curves)), format_func=lambda i: curves[i][0])
-                    way = st.radio('위험 곡선', ['한 등급 곡선', '두 등급 보간'], horizontal=True,
-                                   help='평가대상 등급이 고시표에 없을 때만 두 등급 보간을 씁니다.')
                     sha = hashlib.sha256(upload.getvalue()).hexdigest()
-                    if way == '한 등급 곡선':
+                    if so:
+                        changes = {'rf_curve': curves[a][1]}
+                        origins = {'rf_curve': f'{upload.name} · {curves[a][0]} · SHA256 {sha}'}
+                    way = None if so else st.radio('위험 곡선', ['한 등급 곡선', '두 등급 보간'], horizontal=True,
+                                   help='평가대상 등급이 고시표에 없을 때만 두 등급 보간을 씁니다.')
+                    if so:
+                        pass
+                    elif way == '한 등급 곡선':
                         b = st.selectbox('위험 곡선 (등급)', range(len(curves)), format_func=lambda i: curves[i][0])
                         changes = {'rf_curve': curves[a][1], 'cr_curve': curves[b][1]}
                         origins = {k: f'{upload.name} · {curves[i][0]} · SHA256 {sha}' for k,i in [('rf_curve',a),('cr_curve',b)]}
@@ -131,14 +141,14 @@ def main(case):
                     st.error(f'금리표를 읽지 못했습니다: {exc}')
         else:
             unit = st.selectbox('만기 단위', ['year', 'month'], format_func=lambda x: '년' if x == 'year' else '개월')
-            for key, title in [('rf_curve', '무위험'), ('cr_curve', '위험')]:
+            for key, title in [('rf_curve', '무위험'), ('cr_curve', '위험')][:len(curve_keys)]:
                 text = st.text_area(title + ' 금리표 (만기, 연이율 %)')
                 changes[key] = legacy.parse_yields(text, unit)
                 origins[key] = st.text_input(title + ' 금리 출처·자료 기준일')
         for key, points in changes.items():
             st.write({'rf_curve': '무위험 금리곡선', 'cr_curve': '위험 금리곡선', 'cr_curve_b': '위험 금리곡선 B'}[key])
             dataframe([{'만기(년)': x, '연이율(%)': y * 100} for x,y in points], hide_index=True)
-        if st.button('금리곡선 적용', disabled=any(len(changes.get(k, [])) < 2 for k in ['rf_curve','cr_curve'])):
+        if st.button('금리곡선 적용', disabled=any(len(changes.get(k, [])) < 2 for k in curve_keys)):
             draft = apply_changes(case, changes, validate=False)
             curve_errors = [i for i in inspect_case(draft) if i.severity == 'error' and i.field in changes]
             if curve_errors:

@@ -142,9 +142,14 @@ def final_key(run):
     return digest([approval_key(run), run.case.review_controls.get('review')])
 
 
+def verification_keys(run):
+    """독립 검산으로 맞춰 볼 결과 — 상품마다 대표 금액(100 기준)."""
+    return {'SHA': ['put', 'call'], 'SO': ['so_fair']}.get(run.terms.inst, ['net'])
+
+
 def verification_rows(run):
     record = run.case.review_controls.get('verification', {})
-    keys = ['put', 'call'] if run.terms.inst == 'SHA' else ['net']
+    keys = verification_keys(run)
     values = record.get('values', {})
     result = []
     for key in keys:
@@ -158,7 +163,7 @@ def verification_rows(run):
 
 def record_verification(run, *, reviewer, reference, values, absolute_tolerance, relative_tolerance):
     case = Case.from_dict(run.case.to_dict())
-    expected = {'put', 'call'} if run.terms.inst == 'SHA' else {'net'}
+    expected = set(verification_keys(run))
     if set(values) != expected:
         raise ValueError('현재 결과와 같은 범위의 독립 검산값(원금 100 기준)을 입력하십시오.')
     case.review_controls['verification'] = dict(reviewer=reviewer.strip(), reference=reference.strip(), values=values,

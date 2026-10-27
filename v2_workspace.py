@@ -19,7 +19,8 @@ from ui_format import dataframe
 from valuation.ui_theme import css_vars
 
 STAGES = ['입력·시장자료', '평가·분석', '계산내역', '조서 출력']
-INST_NAMES = {'RCPS': '상환전환우선주', 'CB': '전환사채', 'BW': '신주인수권부사채', 'SHA': '주주간계약'}
+INST_NAMES = {'RCPS': '상환전환우선주', 'CB': '전환사채', 'BW': '신주인수권부사채', 'SHA': '주주간계약',
+              'SO': '주식선택권'}
 STAGE_NAMES = {
     '입력·시장자료': '01  입력',
     '평가·분석': '02  평가결과',
@@ -108,6 +109,23 @@ def sample_case():
     return c
 
 
+def sample_so_case():
+    """주식선택권 합성사례 — 3년에 걸쳐 나눠 가득되는 가상 회사의 부여 (실제 회사·시장자료 아님)."""
+    rows = [dict(name=f'{k}차 (1/3)', vest=f'{2027 + k}-03-31', start='', end='', qty=30000.0, keep=keep)
+            for k, keep in ((1, 0.9), (2, 0.85), (3, 0.8))]
+    c = Case(
+        name='샘플기업 제3차 주식선택권 · 합성사례',
+        contract=dict(inst='SO', tranche='제3차', d_issue='2026-03-31', d_mat='2033-03-30', K0=20000.0, so_settle=0,
+                      so_fy_end='12-31', so_rows=rows),
+        market=dict(S0=18000.0, sig=0.40, div_y=0.005, rf_curve=[[1, 0.027], [3, 0.029], [5, 0.031], [10, 0.033]],
+                    y_type='par', cmp_rf=2),
+        method=dict(d_base='2026-03-31', so_ex=2, so_mult=2.2, so_exit=0.05, grid_days=7.0, gap_m=1.0),
+    )
+    c.sources = {k: '사용성 시험을 위한 합성 가정 · 실제 시장자료 아님' for k in ('S0', 'sig', 'rf_curve')}
+    c.notes = '합성사례 — 실제 회사·시장자료가 아닙니다. 행사 배수 2.2배·가득 뒤 퇴사율 5%·가득 예상 비율은 예시 가정입니다.'
+    return c
+
+
 PUBLIC_CASES = Path(__file__).parent / '시나리오' / '공시사례'
 
 
@@ -126,7 +144,7 @@ def public_cases():
 def sidebar():
     with st.sidebar:
         st.markdown('### 복합금융상품 평가')
-        st.caption('상환전환우선주 · 전환사채 · 신주인수권부사채 · 주주간계약')
+        st.caption('상환전환우선주 · 전환사채 · 신주인수권부사채 · 주주간계약 · 주식선택권')
         case = st.session_state.get('case')
         if case:
             st.markdown('**현재 평가**')
@@ -145,10 +163,15 @@ def sidebar():
                         st.error(str(exc))
             with st.form('new_case'):
                 name = st.text_input('평가 건명')
-                instrument = st.selectbox('평가 상품', ['RCPS', 'CB', 'BW', 'SHA'], format_func=INST_NAMES.get)
+                instrument = st.selectbox('평가 상품', ['RCPS', 'CB', 'BW', 'SHA', 'SO'], format_func=INST_NAMES.get)
                 if st.form_submit_button('빈 입력안 만들기'):
                     if not name.strip():
                         st.error('평가 건명을 입력하십시오.')
+                    elif instrument == 'SO':
+                        W.install_case(Case(name=name.strip(),
+                                            contract=dict(inst='SO', so_settle=0, so_fy_end='12-31', so_rows=[]),
+                                            method=dict(so_ex=1, so_exit=0.0, gap_m=1.0)))
+                        st.rerun()
                     else:
                         W.install_case(
                             Case(
@@ -173,6 +196,9 @@ def sidebar():
                         st.rerun()
             if st.button('합성사례로 시작하기', width='stretch'):
                 W.install_case(sample_case())
+                st.rerun()
+            if st.button('주식선택권 합성사례로 시작하기', width='stretch'):
+                W.install_case(sample_so_case())
                 st.rerun()
             cases = public_cases()
             if cases:
@@ -252,9 +278,12 @@ def context(case, run, current):
     )
     st.markdown('<div class="v2-title">' + html.escape(case.name) + '</div>', unsafe_allow_html=True)
     v = case.effective()
-    st.caption(
-        f"{v.get('d_base','기준일 미입력')} 기준 · {'투자자' if v.get('view')=='holder' else '발행자'} 관점 · {v.get('model','TF')} 모형"
-    )
+    if inst == 'SO':
+        st.caption(f"{v.get('d_base','기준일 미입력')} 측정 · 주식결제형 · 이항격자")
+    else:
+        st.caption(
+            f"{v.get('d_base','기준일 미입력')} 기준 · {'투자자' if v.get('view')=='holder' else '발행자'} 관점 · {v.get('model','TF')} 모형"
+        )
     if run and not current:
         st.warning(
             '입력이 변경되었습니다. 아래는 이전 결과입니다. 현재 입력으로 다시 평가해야 조서를 만들 수 있습니다.'
@@ -298,6 +327,10 @@ def component_evidence(run):
 
 
 def calculation_panel(run):
+    if L.is_so(run.terms):
+        import stock_option_ui
+        stock_option_ui.calculation_panel(run)
+        return
     topics = ['노드 계산표', '노드 스케줄', '부트스트래핑', '구성요소', '행사·지급일정']
     old = st.session_state.get('_calc_topic')
     if old not in topics:
@@ -352,6 +385,10 @@ def calculation_panel(run):
 
 
 def result_panel(run, case, current, pending):
+    if L.is_so(run.terms):
+        import stock_option_ui
+        stock_option_ui.result_panel(run, case, current, pending)
+        return
     s, t = run.summary, run.terms
     units = ['총액 · 원'] + (['주당 · 원'] if s['amounts_per_share'] else []) + ['원금 100']
     unit = st.radio('표시 단위', units, horizontal=True, key='result_unit')
@@ -467,16 +504,22 @@ def result_panel(run, case, current, pending):
 def export_panel(run, case, current, pending, previous):
     st.header('조서 출력')
     st.caption('검토 목적에 맞게 선택하세요. 결과와 입력은 같은 평가 실행으로 묶습니다.')
-    option = st.radio('조서 구성', ['기본 값 조서', '상세 계산 값 조서', '상세 계산 수식 조서'], horizontal=True)
+    so = case.contract.get('inst') == 'SO'
+    option = st.radio('조서 구성', ['기본 값 조서', '상세 계산 값 조서'] + ([] if so else ['상세 계산 수식 조서']),
+                      horizontal=True)
+    if so:
+        st.caption('주식선택권의 상세 계산 수식 조서는 2단계에서 지원합니다 (값 조서와 결과가 같은 수식 조서).')
     explanations = {
         '기본 값 조서': '권장 · 요약과 주요 근거를 읽고 대사·보관할 때 사용합니다. 입력을 바꿔도 재계산되지 않습니다.',
         '상세 계산 값 조서': '전체 노드와 계약 일정을 확인합니다. 생성 당시의 값으로 고정됩니다.',
         '상세 계산 수식 조서': '수식을 추적하고 직접 입력한 주가·변동성을 바꿔 재계산합니다. 날짜·금리·권리조건·간격·모형 등 다른 입력은 앱에서 변경 후 다시 생성해야 합니다.',
     }
     st.info(explanations[option])
-    accounting = st.checkbox('회계처리·분개·상각표 포함 (초안)', value=False)
+    accounting = st.checkbox('회계처리·분개 포함 (초안)' if so else '회계처리·분개·상각표 포함 (초안)', value=False)
     judgment = st.checkbox('평가자 메모 포함', value=True)
     st.caption(
+        '상세 조서에는 회차별 격자 전체가 메모 선택과 관계없이 실립니다. 원문 저작물은 포함하지 않습니다.'
+        if so else
         '분리 비교 등 수치 계산근거는 메모 선택과 관계없이 상세 조서에 포함됩니다. 원문 저작물은 포함하지 않습니다.'
     )
     blocked = export_blockers(run) if run else []
@@ -550,7 +593,7 @@ def main():
     if case is None:
         st.title('평가에서 근거 확인까지, 한 작업 공간에서')
         st.write(
-            '상환전환우선주 · 전환사채 · 신주인수권부사채 · 주주간계약의 입력, 평가, 계산 추적과 엑셀 조서를 연결합니다.'
+            '상환전환우선주 · 전환사채 · 신주인수권부사채 · 주주간계약 · 주식선택권의 입력, 평가, 계산 추적과 엑셀 조서를 연결합니다.'
         )
         st.info('왼쪽에서 기존 평가파일을 열거나, 합성사례 또는 공시 사례로 새 화면을 체험하세요.')
         st.caption('처음이라면 왼쪽 맨 위 «업무 선택»에서 «사용 안내»를 고르면 순서대로 따라 할 수 있습니다.')

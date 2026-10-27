@@ -80,6 +80,16 @@ class Terms:
     # 회차별 표 — 계약·연도·물량별로 행사기간·주당 기준가격·가산율·풋·콜 수량을 한 줄씩.
     # 비어 있으면 위의 풋·콜 칸 한 벌(단일 계약)을 쓴다. 줄의 모양은 SHA_ROW_KEYS.
     sha_rows: list = field(default_factory=list)
+    # ── 주식선택권 (SO) — valuation/stock_option.py ─────────────
+    # 행사가격은 K0, 부여일은 d_issue, 측정기준일은 d_base, 행사기간 종료일은 d_mat 을 쓴다.
+    # 회차표 한 줄 = 한 가득 회차 {name 회차, vest 가득일(= 행사 시작일), end 행사 종료일(빈칸 = d_mat),
+    # qty 부여 수량, keep 가득 예상 비율(근무조건 — 수량에만 반영, 문단 19)}.
+    so_rows: list = field(default_factory=list)
+    so_ex: int = 1                  # 조기행사 0 만기에만(유럽형) / 1 최적 행사 / 2 행사 배수
+    so_mult: float = 2.0            # 행사 배수 — 주가가 행사가격의 몇 배이면 행사하는가 (so_ex = 2)
+    so_exit: float = 0.0            # 가득 뒤 연간 퇴사율 — 퇴사하면 내가격이면 행사, 아니면 소멸
+    so_settle: int = 0              # 0 주식결제형 / 1 현금결제형(차액보상형 — 2단계)
+    so_fy_end: str = "12-31"        # 결산일 (월-일) — 보상원가를 회계연도에 나눌 때
     mat_mode: int = 0               # RCPS 존속기간 만료 시 0 보통주 자동전환 / 1 상환
     issuer_call: int = 0            # RCPS 콜 — 0 없음 / 1 발행자 상환권 / 2 제3자 지정 매도청구권
     # 배당가능이익 상환 제약 (RCPS) — 비어 있으면 배당이 가능하다는 전제(제한 없음)다.
@@ -917,6 +927,15 @@ def derive(tm: Terms) -> Terms:
     tm.T = max(1e-6, (dm-db).days/365)
     gap = max(0.25, tm.gap_m)
     tm.n = max(4, int(round(tm.T*365/tm.grid_days if tm.grid_days > 0 else tm.T*12/gap)))
+    if is_so(tm):
+        # 주식선택권에는 사채가 없다. 사채·우선주 전용 스위치를 모두 끈다 (주주간계약과 같은 방식).
+        tm.mat_mode = 1; tm.issuer_call = 0; tm.div_mode = 0; tm.div_basis = 0
+        tm.view = "issuer"
+        tm.rfx_mode = 0; tm.cpn = 0.0; tm.ytm = 0.0
+        tm.k_w = 0.0; tm.k_method = 0; tm.k_lock = 0.0
+        tm.p_s = 999.0; tm.p_e = 0.0; tm.cv_s = 999.0; tm.cv_e = 0.0
+        tm.put_bdt = 0; tm.ipo_on = 0; tm.fvpl_whole = 0
+        return tm
     if is_sha(tm):
         # 주주간계약에는 사채가 없다. 사채·우선주 전용 스위치를 모두 끈다.
         # 지분가치는 100 × 주가 ÷ 주당 인수가액이라 리픽싱도 없다.
@@ -986,6 +1005,11 @@ def bw_cash(tm: Terms) -> bool:
     갈음해 사채가 소멸하므로 전환사채와 완전히 같은 계산이 된다.
     """
     return is_bw(tm) and int(tm.bw_pay) == 0
+
+
+def is_so(tm: Terms) -> bool:
+    """주식선택권인가. 계산·화면·조서가 valuation/stock_option.py 로 통째로 갈린다."""
+    return (tm.inst or "CB").upper() == "SO"
 
 
 def is_sha(tm: Terms) -> bool:
