@@ -73,10 +73,14 @@ def bs_table(run):
             rate = r['r_end'] if kind == '행사 종료일' else None
             if rate is None:
                 rate = _rate(run, T)
+            bs = SO.black_scholes(S, K, T, rate, q, sig)
+            if T <= 0:
+                # 평가일에 바로 행사 — 남은 기간이 없어 d1·d2 가 정의되지 않는다 (값 = 내재가치)
+                out.append([r['name'], kind, T, rate, None, None, None, None, bs, r['fv'], r['fv'] - bs])
+                continue
             v = sig*math.sqrt(T)
             d1 = (math.log(S/K) + (rate - q + 0.5*sig*sig)*T)/v
             d2 = d1 - v
-            bs = SO.black_scholes(S, K, T, rate, q, sig)
             out.append([r['name'], kind, T, rate, d1, d2, SO._ncdf(d1), SO._ncdf(d2), bs, r['fv'], r['fv'] - bs])
     return out
 

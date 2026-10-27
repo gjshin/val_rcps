@@ -222,3 +222,19 @@ def test_new_stock_option_case_from_the_sidebar():
     assert c.contract['inst'] == 'SO' and c.method['so_ex'] == 1
     missing = {i.field for i in inspect_case(c) if i.code == 'required'}
     assert {'S0', 'K0', 'sig'} <= missing
+
+
+def test_exercise_at_measurement_date_still_exports():
+    # 부여일 = 가득일 = 측정기준일이고 주가가 이미 행사 배수를 넘으면 뿌리에서 행사한다 — 기대존속기간 0년.
+    # 블랙-숄즈 대조표가 0으로 나누지 않고 내재가치를 싣는다 (자동 검토 지적).
+    c = case(S0=250.0, K0=100.0, so_ex=2, so_mult=2.0,
+             so_rows=[dict(name='1차', vest='2026-01-01', end='', qty=10.0, keep=1.0)])
+    run = calculate(c)
+    r = run.raw['rows'][0]
+    assert r['life'] == 0 and r['fv'] == pytest.approx(150.0)
+    assert run.raw['schedule'][0]['share'] == 1.0            # 가득기간이 없으면 첫 결산일에 전액
+    for detail in (False, True):
+        wb = _workbook(run, detail=detail, accounting=True)
+        rows = list(wb['블랙-숄즈 대조'].iter_rows(values_only=True))
+        life_row = next(x for x in rows if x[1] == '기대존속기간')
+        assert life_row[4] is None and life_row[8] == pytest.approx(150.0)
