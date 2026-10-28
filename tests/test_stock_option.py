@@ -4,6 +4,7 @@
 """
 import copy
 import io
+import math
 import shutil
 import zipfile
 
@@ -14,6 +15,7 @@ from streamlit.testing.v1 import AppTest
 import v2_workspace
 from valuation import stock_option as SO
 from valuation import legacy as L
+from valuation import stock_option_report as SOR
 from valuation.case import Case, inspect_case
 from valuation.evidence import TOPICS, applicable
 from valuation.service import calculate, export_bundle, CaseError
@@ -23,10 +25,10 @@ from test_v2_workflow import ROOT
 def case(**over):
     rows = over.pop('so_rows', [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0)])
     contract = dict(inst='SO', tranche='가상', d_issue='2026-01-01', d_mat='2031-01-01', K0=100.0, so_settle=0,
-                    so_fy_end='12-31', so_rows=rows, so_mod=0, so_mod_rows=[])
+                    so_fy_end='12-31', so_rows=rows, so_mod=0, so_mod_rows=[], so_mkt=0)
     market = dict(S0=100.0, sig=0.3, div_y=0.0, rf_curve=[[1, 0.03], [5, 0.03]], y_type='spot', cmp_rf=1)
     method = dict(d_base='2026-01-01', so_ex=0, so_mult=2.0, so_exit=0.0, grid_days=7.0, gap_m=1.0, so_prev_liab=-1.0,
-                  so_paid=0.0)
+                  so_paid=0.0, so_nv=0.0)
     for key, value in over.items():
         for group in (contract, market, method):
             if key in group:
@@ -95,6 +97,121 @@ def test_node_trace_reconciles_every_node():
         SO.node_trace(run.terms, r, 3, 4)
 
 
+# ── 시장조건·비가득조건 (문단 21, 21A) — 격자 안에서 판정한다 ─────────────────────
+
+def _gap_call(S, K, H, T, r, q, s):
+    """만기 주가가 H 이상일 때만 S − K 를 받는 갭 옵션 — 가득일 = 만기인 «가득일 판정» 의 닫힌 식."""
+    d1 = (math.log(S/H) + (r - q + s*s/2)*T)/(s*math.sqrt(T))
+    return S*math.exp(-q*T)*SO._ncdf(d1) - K*math.exp(-r*T)*SO._ncdf(d1 - s*math.sqrt(T))
+
+
+def _up_in_call(S, K, H, T, r, q, s):
+    """연속 관찰 상향 진입 콜 (H > K) — 만기까지 한 번이라도 H 에 닿으면 보통 콜이 된다."""
+    lam, st = (r - q + s*s/2)/(s*s), s*math.sqrt(T)
+    y = math.log(H*H/(S*K))/st + lam*st
+    x1, y1 = math.log(S/H)/st + lam*st, math.log(H/S)/st + lam*st
+    N = SO._ncdf
+    return (S*math.exp(-q*T)*N(x1) - K*math.exp(-r*T)*N(x1 - st)
+            - S*math.exp(-q*T)*(H/S)**(2*lam)*(N(-y) - N(-y1))
+            + K*math.exp(-r*T)*(H/S)**(2*lam - 2)*(N(-y + st) - N(-y1 + st)))
+
+
+def _target_row(H, vest='2028-01-01', end='2028-01-01'):
+    return [dict(name='1차', vest=vest, end=end, qty=1.0, keep=1.0, target=H)]
+
+
+@pytest.mark.parametrize('H', [110.0, 130.0, 170.0])
+def test_market_condition_at_vest_matches_the_gap_option(H):
+    # 가득일 = 행사 종료일이면 «가득일 주가 ≥ 목표» 는 갭 옵션이다. 목표가 걸친 노드를 비율로 나눠 계단 오차를 줄인다.
+    run = calculate(case(so_rows=_target_row(H), so_mkt=1, d_mat='2028-01-01', div_y=0.01))
+    r = run.raw['rows'][0]
+    want = _gap_call(100.0, 100.0, H, r['t_end'], r['r_end'], 0.01, 0.3)
+    assert r['fv'] == pytest.approx(want, rel=0.005)
+    assert not run.raw['integrity']
+    ends = [SO.node_trace(run.terms, r, r['n'], j) for j in range(r['n'] + 1)]   # 종료 노드에서 판정
+    assert max(abs(t['reconciliation']) for t in ends) <= 1e-12
+    assert any(0 < t['pass_share'] < 1 for t in ends)
+
+
+@pytest.mark.parametrize('H', [115.0, 130.0, 160.0])
+def test_market_condition_touch_matches_the_weekly_barrier_option(H):
+    # «가득일까지 한 번이라도» 는 격자 노드(주 단위)에서 관찰한다 — 연속 관찰 식에 주 단위 관찰 보정을 한 값과 대조
+    run = calculate(case(so_rows=_target_row(H), so_mkt=2, d_mat='2028-01-01', div_y=0.01))
+    r = run.raw['rows'][0]
+    shifted = H*math.exp(0.5826*0.3*math.sqrt(r['dt']))
+    want = _up_in_call(100.0, 100.0, shifted, r['t_end'], r['r_end'], 0.01, 0.3)
+    assert r['fv'] == pytest.approx(want, rel=0.006)
+
+
+def test_market_condition_bounds():
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0)]
+    base = fv(case(so_ex=1, div_y=0.02, so_rows=rows))
+    vals = {}
+    for mkt in (1, 2):
+        for H in (1.0, 130.0, 1e6):
+            vals[mkt, H] = fv(case(so_ex=1, div_y=0.02, so_mkt=mkt, so_rows=[{**rows[0], 'target': H}]))
+    assert vals[1, 1.0] == pytest.approx(base, rel=1e-12) and vals[2, 1.0] == pytest.approx(base, rel=1e-12)
+    assert vals[1, 1e6] == 0 and vals[2, 1e6] == 0
+    assert 0 < vals[1, 130.0] < vals[2, 130.0] < base        # 한 번이라도 닿으면 되는 쪽이 더 쉽다
+
+
+def test_market_condition_after_measurement_keeps_the_trace_and_life():
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0, target=130.0)]
+    for mkt in (1, 2):
+        run = calculate(case(so_ex=2, so_mult=1.8, so_exit=0.05, so_nv=0.05, div_y=0.01, so_mkt=mkt, so_rows=rows,
+                             grid_days=14.0))
+        r = run.raw['rows'][0]
+        free = calculate(case(so_ex=2, so_mult=1.8, so_exit=0.05, div_y=0.01, so_rows=[{**rows[0], 'target': None}],
+                              grid_days=14.0)).raw['rows'][0]
+        assert r['life'] == pytest.approx(free['life'], rel=1e-12)       # 기대존속기간은 가득된다고 보고 잰다
+        worst = max(abs(SO.node_trace(run.terms, r, i, j)['reconciliation'])
+                    for i in range(r['n']) for j in range(i + 1))
+        assert worst <= 1e-10
+        if mkt == 2:
+            w = max(abs(SO.node_trace(run.terms, r, i, j).get('wait_reconciliation', 0.0))
+                    for i in range(r['vest_step'] + 1) for j in range(i + 1))
+            assert w <= 1e-10
+        checks = {c['name']: c['passed'] for c in SO.checks(run.terms, run.raw)}
+        assert checks['시장조건·비가득조건 (공정가치 ≤ 조건 없는 블랙-숄즈)'] and '블랙-숄즈 수렴 (유럽형)' not in checks
+        assert not run.raw['integrity']
+    trace = SO.node_trace(run.terms, run.raw['rows'][0], 0, 0)
+    assert '비가득조건' in trace['rule']
+
+
+@pytest.mark.parametrize('mkt', [0, 2])
+def test_non_vesting_condition_scales_the_value_by_the_survival_to_vesting(mkt):
+    # 비가득조건(문단 21A) — 가득일까지 구간마다 «그만두지 않을 확률» 을 곱한다
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0, target=130.0 if mkt else None)]
+    plain = calculate(case(so_ex=1, div_y=0.02, so_mkt=mkt, so_rows=rows)).raw['rows'][0]
+    r = calculate(case(so_ex=1, div_y=0.02, so_mkt=mkt, so_nv=0.1, so_rows=rows)).raw['rows'][0]
+    assert r['nv_step'] == pytest.approx(1 - 0.9**r['dt'], rel=1e-14)
+    assert r['fv'] == pytest.approx(plain['fv']*(1 - r['nv_step'])**r['vest_step'], rel=1e-12)
+
+
+def test_modification_values_both_sides_with_the_market_condition():
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=0.9, target=130.0)]
+    r = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=rows, so_mkt=1)).raw['rows'][0]
+    before = fv(case(d_base='2027-01-01', so_mkt=1, so_rows=rows))
+    after = fv(case(d_base='2027-01-01', so_mkt=1, so_rows=rows, K0=80.0))
+    assert r['fv_before'] == pytest.approx(before, rel=1e-12) and r['fv'] == pytest.approx(after, rel=1e-12)
+    assert r['target'] == 130.0 and r['mkt'] == 1
+
+
+def test_condition_inputs_reach_the_workpapers_and_review():
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0, target=130.0)]
+    run = calculate(case(so_mkt=2, so_nv=0.05, so_rows=rows, grid_days=14.0))
+    codes = {i.code for i in run.issues}
+    assert {'so_market', 'so_nonvesting'} <= codes
+    wb = _workbook(run, detail=True)
+    summary = {r[0]: r[1] for r in wb['평가요약'].iter_rows(values_only=True) if r and r[0]}
+    assert summary['시장조건 판정'] == SO.MKT_LABELS[2] and summary['비가득조건 연간 중단율 (가득일까지)'] == 0.05
+    head = [c.value for c in wb['회차표 입력'][1]]
+    assert wb['회차표 입력'].cell(2, head.index('시장조건 목표 주가(원)') + 1).value == 130.0
+    lattice = next(wb[n] for n in wb.sheetnames if n.startswith('격자 '))
+    assert any(c.value and str(c.value).startswith('목표 주가에 아직 닿지 않은 상태의 가치')
+               for row in lattice.iter_rows() for c in row)
+
+
 def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
     rows = [dict(name='1차', vest='2027-07-01', end='', qty=1000.0, keep=0.9),
             dict(name='2차', vest='2029-01-01', end='', qty=2000.0, keep=0.8)]
@@ -145,6 +262,16 @@ def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
     (dict(so_rows=[dict(name='A', vest='2028-01-01', qty=1.0), dict(name='A', vest='2029-01-01', qty=1.0)]), '겹칩니다'),
     (dict(so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, price=3)]), '형식'),
     (dict(so_exit=0.1, so_rows=[dict(name='1차', vest='2027-01-01', start='2028-01-01', qty=1.0)]), '행사 시작일이 가득일보다 늦은'),
+    (dict(so_mkt=3), '지원하지 않는 선택값'),
+    (dict(so_nv=1.0), '비가득조건 연간 중단율'),
+    (dict(so_nv=-0.1), '비가득조건 연간 중단율'),
+    (dict(so_mkt=1), '목표 주가를 넣은 회차가 없습니다'),
+    (dict(so_mkt=1, so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=0.0)]), '목표 주가는 0보다'),
+    (dict(so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=130.0)]), '«시장조건 판정» 이 «없음»'),
+    (dict(so_mkt=2, d_base='2028-06-30', d_issue='2026-01-01',
+          so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=130.0)]), '시장조건이 이미 판정됐습니다'),
+    (dict(so_mkt=1, so_mod=1, d_base='2027-01-01', so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=130.0)],
+          so_mod_rows=[dict(name='1차', vest='2027-01-01', grant_fv=10.0)]), '변경 후 가득일이 조건 변경일 이전'),
 ])
 def test_input_checks_block_calculation(over, words):
     c = case(**over)
@@ -166,7 +293,7 @@ def test_review_prompts_follow_the_standard():
 def test_only_stock_option_judgment_topics_apply():
     values = case().effective()
     ids = {t['id'] for t in TOPICS if applicable(t, values)}
-    assert ids == {'so_volatility', 'so_early_exercise', 'so_vesting', 'so_modification', 'so_settlement',
+    assert ids == {'so_volatility', 'so_early_exercise', 'so_vesting', 'so_conditions', 'so_modification', 'so_settlement',
                    'fair_value_inputs', 'method_change'}
     cb = {**values, 'inst': 'CB', 'view': 'issuer'}
     assert not any(applicable(t, cb) for t in TOPICS if t['trigger'] == 'so')
@@ -232,6 +359,33 @@ def test_screens_open_evaluate_and_show_calculations():
     app.run()
     tools = next(s for s in app.selectbox if s.label == '시장자료 도구')
     assert tools.options == ['변동성 산출', '기준일 주가 조회', '금리곡선 불러오기']
+
+
+def test_screens_take_market_and_non_vesting_conditions():
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=180)
+    app.run()
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0, target=130.0)]
+    for mkt in (1, 2):
+        app.session_state['case'] = case(so_mkt=mkt, so_nv=0.05, so_rows=rows, grid_days=14.0)
+        app.session_state['_workflow_stage'] = '입력·시장자료'
+        app.run()
+        assert not app.exception, app.exception
+        assert '시장조건·비가득조건' in [h.value for h in app.subheader]
+        assert next(s for s in app.selectbox if s.label == '시장조건 판정').value == mkt
+        assert any(n.label.startswith('비가득조건 연간 중단율') for n in app.number_input)
+        app.session_state['_workflow_stage'] = '평가·분석'
+        app.run()
+        next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
+        assert not app.exception, app.exception
+        run = app.session_state.run
+        r = run.raw['rows'][0]
+        assert r['mkt'] == mkt and r['nv_step'] > 0
+        app.session_state['_workflow_stage'] = '계산내역'
+        app.session_state['_calc_topic'] = '노드 따라가기'
+        for i in (0, r['vest_step']):
+            app.session_state['_so_trace_i'] = i
+            app.run()
+            assert not app.exception, (mkt, i, app.exception)
 
 
 def test_new_stock_option_case_from_the_sidebar():
@@ -465,6 +619,7 @@ def test_screens_switch_between_grant_modification_and_cash():
 LIBRE = shutil.which('libreoffice') or shutil.which('soffice')
 THREE = [dict(name='1차', vest='2027-01-01', end='2029-01-01', qty=1000.0, keep=0.9),
          dict(name='2차', vest='2028-01-01', end='', qty=2000.0, keep=0.8)]
+TARGETS = [{**THREE[0], 'target': 125.0}, {**THREE[1], 'target': 140.0}]
 FORMULA_CASES = {
     '부여일 · 행사 배수 · 퇴사율': lambda: case(so_ex=2, so_mult=1.8, so_exit=0.05, div_y=0.01, d_mat='2029-07-01',
                                        so_rows=THREE, grid_days=14.0),
@@ -477,7 +632,24 @@ FORMULA_CASES = {
     '조건 변경 · 증분 0': lambda: mod_case([dict(name='1차', end='2032-01-01', grant_fv=20.0)], grid_days=14.0, so_ex=2,
                                        so_mult=2.0, S0=250.0,
                                        rows=[dict(name='1차', vest='2026-06-30', end='', qty=1000.0, keep=1.0)]),
+    # 시장조건·비가득조건 — 목표 주가가 걸친 노드의 비율, «닿지 않은 상태» 격자, 가득 전 중단 확률까지 수식으로
+    '시장조건 가득일 판정 · 비가득조건': lambda: case(so_ex=1, div_y=0.02, d_mat='2029-07-01', so_rows=TARGETS, so_mkt=1,
+                                          so_nv=0.05, grid_days=14.0),
+    '시장조건 한 번 도달 · 행사 배수 · 퇴사': lambda: case(so_ex=2, so_mult=1.8, so_exit=0.05, d_mat='2029-07-01',
+                                             so_rows=TARGETS, so_mkt=2, grid_days=14.0),
+    '시장조건 가득일 = 행사 종료일': lambda: case(d_mat='2029-07-01', so_mkt=1, grid_days=7.0,
+                                       so_rows=[dict(name='1차', vest='2028-01-01', end='2028-01-01', qty=1000.0,
+                                                     keep=1.0, target=120.0)]),
+    '조건 변경 · 시장조건 한 번 도달 · 비가득조건': lambda: mod_case(
+        [dict(name='1차', K=80.0, grant_fv=20.0)], grid_days=14.0, so_ex=1, so_mkt=2, so_nv=0.05,
+        rows=[dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=0.9, target=130.0)]),
+    '현금결제형 · 가득일 판정': lambda: _targeted(cash_case(so_prev_liab=5000.0, grid_days=14.0, so_mkt=1)),
 }
+
+
+def _targeted(c):
+    c.contract['so_rows'][0]['target'] = 120.0      # 가득일이 결산일 뒤인 회차만
+    return c
 
 
 def _settled(c):
@@ -505,12 +677,15 @@ def test_formula_workbook_has_live_lattices_and_only_estimates_open():
     value = load_workbook(io.BytesIO(_xlsx(run, detail=True, accounting=True)))
     assert wb.sheetnames == value.sheetnames                       # 값 조서와 같은 시트
     ws = wb['격자 1차 변경 후']
-    assert ws['C14'].value == '=C24' and ws['C9'].value.startswith('=EXP(')
-    assert all(isinstance(c.value, str) and c.value.startswith('=') for c in ws[24][2:5])
-    assert isinstance(ws['C18'].value, float)                     # 금리는 앱이 정한 값 (엑셀에서 고치지 않는다)
+    lay = SOR.lattice_layout(run.raw['rows'][0]['n'])
+    assert ws.cell(lay['param']['1주당 공정가치'], 3).value == f"=C{lay['val']}"
+    assert ws.cell(lay['param']['상승 배수 u'], 3).value.startswith('=EXP(')
+    assert all(isinstance(c.value, str) and c.value.startswith('=') for c in ws[lay['val']][2:5])
+    # 금리는 앱이 정한 값 (엑셀에서 고치지 않는다)
+    assert isinstance(ws.cell(lay['time']['선도 무위험 금리(연속)'], 3).value, float)
     editable = {(s.title, c.coordinate) for s in wb for row in s.iter_rows() for c in row
                 if c.protection.locked is False}
-    assert editable == ({('평가 입력값', f'B{r}') for r in range(2, 7)} | {('회차표 입력', 'F2')} |
+    assert editable == ({('평가 입력값', f'B{r}') for r in range(2, 8)} | {('회차표 입력', 'F2')} |
                         {('조건 변경표 입력', 'G2')})
     assert all(s.protection.sheet for s in wb)
     assert wb['계산대사']['C2'].value.startswith("='평가요약'!")
@@ -584,6 +759,26 @@ def test_formula_workbook_follows_changed_estimates_like_the_app():
 
 
 @pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
+@pytest.mark.parametrize('name', ['시장조건 가득일 판정 · 비가득조건', '시장조건 한 번 도달 · 행사 배수 · 퇴사'])
+def test_formula_workbook_follows_changed_condition_inputs_like_the_app(name):
+    c = FORMULA_CASES[name]()
+    wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True)))
+    ws = wb['평가 입력값']
+    ws['B2'].value, ws['B3'].value, ws['B7'].value = 115.0, 0.4, 0.08
+    out = io.BytesIO()
+    wb.save(out)
+    live = _recalc(out.getvalue())
+    c2 = copy.deepcopy(c)
+    c2.market.update(S0=115.0, sig=0.4)
+    c2.method['so_nv'] = 0.08
+    app = calculate(c2)
+    from valuation.service import AMOUNT_LABELS
+    lab = {r[0]: r for r in live['평가요약'].iter_rows(values_only=True)}
+    for key, want in app.summary['amounts_total'].items():
+        assert lab[AMOUNT_LABELS[key]][1] == pytest.approx(want, rel=1e-10), key
+
+
+@pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
 def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
     # 처음에 0인 증분·결제액도 비용 배분·분개에 줄이 있어, 엑셀에서 입력을 바꾸면 따라온다 (자동 검토 지적)
     c = FORMULA_CASES['조건 변경 · 증분 0']()
@@ -610,7 +805,7 @@ def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
     # 현금결제형 — 처음 결제액 0, 엑셀에서 3,000원을 넣는다
     c = cash_case(grid_days=14.0, so_prev_liab=5000.0)
     wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
-    wb['평가 입력값']['B8'].value = 3000.0
+    wb['평가 입력값']['B9'].value = 3000.0
     out = io.BytesIO()
     wb.save(out)
     rows = {r[0]: r for r in _recalc(out.getvalue())['회계처리'].iter_rows(values_only=True) if r and r[0]}

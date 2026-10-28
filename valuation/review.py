@@ -94,8 +94,19 @@ def review_issues(case, tm, raw):
 
 def so_review(tm, raw, add):
     """주식선택권 확인할 사항 — 기준서가 정한 판단을 평가자가 했는지 묻는다(값을 바꾸지 않는다)."""
-    from .stock_option import EX_LABELS
+    from .stock_option import EX_LABELS, MKT_LABELS
     md = raw.get('mode', 'grant')
+    goals = [f"{r['name']} {r['target']:,.0f}원" for r in raw['rows'] if r.get('mkt')]
+    if goals:
+        add('so_market', 'so_mkt', f"시장조건: {MKT_LABELS[int(tm.so_mkt)]} — 목표 주가 " + ', '.join(goals) + '.',
+            '시장조건은 1주당 공정가치(격자) 안에 반영했습니다. 근무조건을 채우면 시장조건을 못 채워도 인식한 비용을 '
+            '되돌리지 않고, 가득 예상 비율에도 넣지 않습니다 (문단 21).',
+            '판정 방식과 관측 주기(앱은 격자 노드마다 관측)가 계약과 맞는지 확인하십시오.')
+    if float(getattr(tm, 'so_nv', 0.0)) > 0:
+        add('so_nonvesting', 'so_nv', f'비가득조건 연간 중단율 {tm.so_nv:.2%}을 가득일까지 반영했습니다.',
+            '비가득조건은 1주당 공정가치에 넣습니다 (문단 21A). 임직원이나 회사가 고를 수 있는 조건을 가득기간 중에 '
+            '그만두면 취소로 보아 남은 비용을 즉시 인식합니다 (문단 28A).',
+            '조건을 누가 고를 수 있는지와 중단율 추정 근거를 기록하십시오. 회사가 고르는 조건이면 0%를 넣습니다.')
     if md == 'grant' and tm.d_base != tm.d_issue:
         add('so_measure_date', 'd_base', f'측정기준일({tm.d_base})이 부여일({tm.d_issue})과 다릅니다.',
             '주식결제형은 부여일 현재 공정가치로 측정하고 다시 재지 않습니다 (기업회계기준서 제1102호 문단 11).',

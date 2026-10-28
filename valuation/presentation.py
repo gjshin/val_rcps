@@ -75,9 +75,10 @@ LABELS = {
     'so_exit': '가득 뒤 연간 퇴사율(%)', 'so_settle': '결제 방식', 'so_fy_end': '결산일(월-일, 예: 12-31)',
     'so_mod': '조건 변경 평가 (측정기준일 = 조건 변경일)', 'so_mod_rows': '조건 변경표',
     'so_prev_liab': '전기말 주식보상부채(원, -1은 없음)', 'so_paid': '당기 현금 결제액(원)',
+    'so_mkt': '시장조건 판정', 'so_nv': '비가득조건 연간 중단율(%) — 가득일까지',
 }
 PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'k_lock_w', 'ytm', 'bdt_sig',
-                     'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue', 'dp_delay', 'so_exit'})
+                     'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue', 'dp_delay', 'so_exit', 'so_nv'})
 EVENT_DATES = frozenset({'cv_s', 'cv_e', 'p_s', 'p_e', 'k_s', 'k_e', 'k_lock', 'ipo_m', 'rfx_first',
                         'sha_put_s', 'sha_put_e', 'sha_call_s', 'sha_call_e'})
 CHOICES = {
@@ -112,6 +113,7 @@ CHOICES = {
     'bs_net': {0: '콜 차감 전', 1: '콜 차감 후'},
     'd1_pl': {0: '이연 (기본 · 1109 B5.1.2A(2))', 1: '당기손익 (관측 가능한 시장자료만 사용 · B5.1.2A(1))'},
     'so_ex': {0: '만기에만 행사 (유럽형)', 1: '가득 뒤 최적 행사', 2: '행사 배수에 도달하면 행사'},
+    'so_mkt': {0: '없음', 1: '가득일 주가가 목표 주가 이상이면 가득', 2: '가득일까지 한 번이라도 목표 주가 이상이면 가득'},
     'so_settle': {0: '주식결제형 (신주 교부·자기주식 교부)', 1: '현금결제형 (차액보상 — 결산일마다 다시 잼)'},
 }
 for _key in ('p_less_cpn', 'k_less_cpn', 'm_less_cpn'):

@@ -133,6 +133,8 @@ MANIFEST = {
                                          2: "행사 배수에 도달하면 행사"}, ("SO",)),
     "so_settle":   ("주식선택권 결제 방식", {0: "주식결제형", 1: "현금결제형 — 결산일마다 다시 잰다"}, ("SO",)),
     "so_mod":      ("주식선택권 조건 변경 평가", {0: "부여일 평가", 1: "조건 변경 평가 — 증분 공정가치"}, ("SO",)),
+    "so_mkt":      ("주식선택권 시장조건 판정", {0: "없음", 1: "가득일 주가가 목표 주가 이상이면 가득",
+                                         2: "가득일까지 한 번이라도 목표 주가 이상이면 가득"}, ("SO",)),
 }
 
 # 값이 아니라 **있고 없음**으로 갈리는 권리. 필드 하나로 못 잡아 술어로 적는다.
@@ -500,6 +502,14 @@ def collect_coverage(G):
             ([("SO", "so_ex", 1), ("SO", "so_ex", 2), ("SO", "so_mod", 1), ("SO", "so_settle", 1)],
              "engine_vs_formula_workbook"),
         "test_formula_workbook_follows_changed_estimates_like_the_app": ([("SO", "so_ex", 2)], "engine_vs_formula_workbook"),
+        # 시장조건 — 가득일 판정은 갭 옵션 닫힌 식, 한 번 도달은 상향 진입 콜 닫힌 식(주 단위 관찰 보정)과 대조
+        "test_market_condition_at_vest_matches_the_gap_option": ([("SO", "so_mkt", 1)], "hand_calc_independent"),
+        "test_market_condition_touch_matches_the_weekly_barrier_option": ([("SO", "so_mkt", 2)], "hand_calc_independent"),
+        "test_market_condition_bounds": ([("SO", "so_mkt", 0), ("SO", "so_mkt", 1), ("SO", "so_mkt", 2)], "invariants"),
+        "test_non_vesting_condition_scales_the_value_by_the_survival_to_vesting":
+            ([("SO", "so_mkt", 0), ("SO", "so_mkt", 2)], "invariants"),
+        "test_formula_workbook_follows_changed_condition_inputs_like_the_app":
+            ([("SO", "so_mkt", 1), ("SO", "so_mkt", 2)], "engine_vs_formula_workbook"),
     }
     tf = "tests/test_stock_option.py"
     src = open(os.path.join(ROOT, tf), encoding="utf-8").read()

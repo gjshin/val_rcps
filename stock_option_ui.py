@@ -16,7 +16,7 @@ from valuation import stock_option as SO
 from valuation.presentation import label
 
 COLS = [('name', '회차'), ('vest', '가득일'), ('start', '행사 시작일'), ('end', '행사 종료일'), ('qty', '부여 수량(주)'),
-        ('keep', '가득 예상 비율(%)')]
+        ('keep', '가득 예상 비율(%)'), ('target', '목표 주가(원)')]
 
 
 def _day(v):
@@ -40,11 +40,15 @@ def rows_editor(edited):
     st.session_state.setdefault('_rendered_fields', set()).add('so_rows')
     old = list(edited.get('so_rows') or [])
     shown = old or [dict(name='1차', vest='', start='', end='', qty=None, keep=1.0)]
+    # 목표 주가 칸은 시장조건을 고르거나 이미 값이 있을 때만 보인다
+    market = bool(edited.get('so_mkt')) or any(not _blank(r.get('target')) for r in old)
+    cols = COLS if market else COLS[:-1]
     frame = pd.DataFrame([{'회차': r.get('name', ''), '가득일': _day(r.get('vest')),
                            '행사 시작일': _day(r.get('start')), '행사 종료일': _day(r.get('end')),
                            '부여 수량(주)': r.get('qty'),
-                           '가득 예상 비율(%)': None if r.get('keep') is None else float(r['keep'])*100}
-                          for r in shown], columns=[t for _, t in COLS])
+                           '가득 예상 비율(%)': None if r.get('keep') is None else float(r['keep'])*100,
+                           '목표 주가(원)': r.get('target')}
+                          for r in shown], columns=[t for _, t in cols])
     for col in ('가득일', '행사 시작일', '행사 종료일'):
         frame[col] = pd.to_datetime(frame[col])      # 빈 날짜는 빈칸으로 보인다 (글자 «None» 이 아니라)
     table = st.data_editor(
@@ -60,17 +64,24 @@ def rows_editor(edited):
             '부여 수량(주)': st.column_config.NumberColumn(min_value=0., format='%,.0f'),
             '가득 예상 비율(%)': st.column_config.NumberColumn(
                 min_value=0., max_value=100., format='%.2f',
-                help='가득기간 중 퇴사 등으로 가득되지 않을 수량을 뺀 비율. 공정가치가 아니라 수량에만 반영합니다 (문단 19·20).'),
+                help='가득기간 중 퇴사 등으로 가득되지 않을 수량을 뺀 비율. 공정가치가 아니라 수량에만 반영합니다 (문단 19·20). '
+                     '영업이익·매출 같은 비시장 성과조건의 달성 예상 비율도 여기에 곱해 넣습니다.'),
+            '목표 주가(원)': st.column_config.NumberColumn(
+                min_value=0., format='%,.0f',
+                help='시장조건의 목표 주가. 비우면 그 회차에는 시장조건이 없습니다. 판정 방식은 아래 «시장조건 판정» 에서 고릅니다.'),
         })
     new = []
     for rec in table.to_dict('records'):
         if all(_blank(v) for v in rec.values()):
             continue
-        qty, keep = rec['부여 수량(주)'], rec['가득 예상 비율(%)']
-        new.append(dict(name=str(rec['회차'] or '').strip() or f'{len(new)+1}차',
-                        vest=_iso(rec['가득일']), start=_iso(rec['행사 시작일']), end=_iso(rec['행사 종료일']),
-                        qty=None if _blank(qty) else float(qty),
-                        keep=1.0 if _blank(keep) else float(keep)/100))
+        qty, keep, goal = rec['부여 수량(주)'], rec['가득 예상 비율(%)'], rec.get('목표 주가(원)')
+        row = dict(name=str(rec['회차'] or '').strip() or f'{len(new)+1}차',
+                   vest=_iso(rec['가득일']), start=_iso(rec['행사 시작일']), end=_iso(rec['행사 종료일']),
+                   qty=None if _blank(qty) else float(qty),
+                   keep=1.0 if _blank(keep) else float(keep)/100)
+        if not _blank(goal):
+            row['target'] = float(goal)          # 빈 목표 주가는 저장하지 않는다 (시장조건 없는 회차)
+        new.append(row)
     if new != old and (new or old):
         edited['so_rows'] = new
 
@@ -157,6 +168,15 @@ def editor(edited, case, draft_errors):
     st.caption('가득 뒤 연간 퇴사율 — 행사할 수 있게 된 뒤 퇴사하면 그때 내가격이면 바로 행사하고, 아니면 소멸한다고 봅니다. '
                '행사 시작일이 가득일보다 늦은 회차가 있으면 이 비율을 넣을 수 없습니다(그 사이 퇴사의 처리가 계약마다 다름). '
                '가득 전 퇴사는 위 «가득 예상 비율» 에 넣습니다.')
+    st.subheader('시장조건·비가득조건')
+    st.caption('근무조건과 영업이익·매출 같은 비시장 성과조건은 공정가치가 아니라 위 «가득 예상 비율» 에 넣습니다. '
+               '여기 두 가지는 1주당 공정가치(격자) 안에 넣는 조건입니다. 시장조건은 회차표의 «목표 주가(원)» 와 함께 쓰고, '
+               '근무조건을 채우면 시장조건 달성 여부와 관계없이 비용을 되돌리지 않습니다 (문단 21).')
+    W.field('so_mkt', edited, case)
+    W.field('so_nv', edited, case)
+    st.caption('비가득조건 연간 중단율 — 가득일까지 지켜야 하는 근무·성과가 아닌 조건(예: 행사가격 납입용 적립)을 해마다 '
+               '그만둘 비율입니다 (문단 21A). 임직원이나 회사가 스스로 그만두면 취소로 보아 남은 비용을 즉시 인식합니다 '
+               '(문단 28A). 회사가 고르는 조건(제도 유지)은 유지 확률 100%로 보아 0%를 넣습니다.')
     st.subheader('시장자료 및 계산방법')
     W.fields(['S0', 'sig', 'div_y'], edited, case)
     W.grid_editor(edited, case, end_word='회차의 행사 종료일')
@@ -358,7 +378,10 @@ def calculation_panel(run):
     row = _pick_row(run, '_so_calc_row')
     st.caption(f"{row['name']} · 가득일 {row['vest']} · 행사 시작일 {row['start']} · 행사 종료일 {row['end']} · {row['n']}구간 · "
                f"구간 {row['dt']*365:.2f}일 · 상승 배수 u = {row['u']:.6f} · 하락 배수 d = {row['d']:.6f} · "
-               f"행사 가능 시점 {row['ex_step']}부터")
+               f"행사 가능 시점 {row['ex_step']}부터"
+               + (f" · 가득 시점 {row['vest_step']} · 목표 주가 {row['target']:,.0f}원 ({SO.MKT_LABELS[row['mkt']]})"
+                  if row.get('mkt') else '')
+               + (f" · 비가득조건 구간 중단 확률 {row['nv_step']:.6%}" if row.get('nv_step') else ''))
     if topic == '노드 계산표':
         n = row['n']
         spans = list(range(0, n + 1, 16))
@@ -377,8 +400,10 @@ def calculation_panel(run):
                             key='_so_trace_j')
         tr = SO.node_trace(t, row, int(i), min(int(j), int(i)))
         st.write(f"**{tr['date']}** · 주가 {tr['stock']:,.2f}원 · 행사가격 {tr['strike']:,.2f}원 · 판단: {tr['rule']}")
+        share = tr.get('pass_share', 1.0)
         if tr['terminal']:
-            _formula(f"가치 = max({tr['stock']:,.4f} − {tr['strike']:,.4f}, 0) = {tr['value']:,.6f}")
+            _formula(f"가치 = {'' if share == 1 else f'{share:.6f} × '}max({tr['stock']:,.4f} − {tr['strike']:,.4f}, 0)"
+                     f" = {tr['value']:,.6f}")
         else:
             text = (f"계속 보유(퇴사 전) = exp(−{tr['fwd']:.6%} × {row['dt']:.6f}) × "
                     f"[{tr['p']:.8f} × {tr['up']:,.6f} + (1 − {tr['p']:.8f}) × {tr['down']:,.6f}]\n"
@@ -386,12 +411,22 @@ def calculation_panel(run):
             if tr['exit_step'] > 0:
                 text += (f"\n퇴사 반영 = (1 − {tr['exit_step']:.8f}) × {tr['cont']:,.6f} + {tr['exit_step']:.8f} × "
                          f"max({tr['intrinsic']:,.4f}, 0) = {tr['hold']:,.6f}")
+            if tr['nv_step'] > 0:
+                text += (f"\n비가득조건 반영 = (1 − {tr['nv_step']:.8f}) × {tr['cont']:,.6f} = {tr['hold']:,.6f}")
             if tr['vested']:
                 text += f"\n지금 행사 = {tr['stock']:,.4f} − {tr['strike']:,.4f} = {tr['intrinsic']:,.6f}"
+            if share < 1:
+                text += (f"\n시장조건 반영 = 목표 주가 이상인 비율 {share:.6f} × {tr['before_share']:,.6f}"
+                         f" = {share*tr['before_share']:,.6f}")
             text += f"\n이 노드의 가치 = {tr['value']:,.6f}  (다시 계산한 값과의 차이 {abs(tr['reconciliation']):.6f})"
             _formula(text)
             st.caption(f"위 노드: 주가 {tr['up_stock']:,.2f} · 가치 {tr['up']:,.6f} / 아래 노드: 주가 {tr['down_stock']:,.2f} · "
                        f"가치 {tr['down']:,.6f}")
+        if 'wait' in tr:
+            _formula(f"목표 주가에 아직 닿지 않은 상태의 가치 = {tr['wait']:,.6f} — {tr['wait_rule']}"
+                     + (f"\n= (1 − {tr['nv_step']:.8f}) × {tr['disc']:.8f} × [{tr['p']:.8f} × {tr['wait_up']:,.6f} + "
+                        f"(1 − {tr['p']:.8f}) × {tr['wait_down']:,.6f}]" if 'wait_up' in tr else '')
+                     + f"\n(다시 계산한 값과의 차이 {abs(tr['wait_reconciliation']):.6f})")
     else:
         rows = [{'시점': i, '격자일': (dt.date.fromisoformat(t.d_base) + dt.timedelta(days=round(i*row['dt']*365))).isoformat(),
                  '선도 무위험 금리(연속)': row['fwd'][i], '할인계수': math.exp(-row['fwd'][i]*row['dt']),

@@ -97,6 +97,8 @@ class Terms:
     so_mod_rows: list = field(default_factory=list)
     so_prev_liab: float = -1.0      # 현금결제형 전기말 주식보상부채(원, -1은 없음)
     so_paid: float = 0.0            # 현금결제형 당기 현금 결제액(원) — 부채 증감에서 빼지 않으면 비용이 줄어든다
+    so_mkt: int = 0                 # 시장조건 판정 — 0 없음, 1 가득일 주가 ≥ 목표, 2 가득일까지 한 번이라도 ≥ 목표
+    so_nv: float = 0.0              # 비가득조건 — 가득일까지 연간 중단율 (공정가치에 넣는다, 문단 21A)
     mat_mode: int = 0               # RCPS 존속기간 만료 시 0 보통주 자동전환 / 1 상환
     issuer_call: int = 0            # RCPS 콜 — 0 없음 / 1 발행자 상환권 / 2 제3자 지정 매도청구권
     # 배당가능이익 상환 제약 (RCPS) — 비어 있으면 배당이 가능하다는 전제(제한 없음)다.

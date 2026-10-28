@@ -12,7 +12,16 @@
   가득 뒤 퇴사율을 넣으면 매 구간 그 비율만큼 퇴사해 내가격이면 행사, 아니면 소멸한다.
   가득일과 행사 시작일 사이에 퇴사하면 선택권이 남는지 소멸하는지는 계약마다 달라 정하지 않는다 —
   퇴사율을 넣었는데 행사 시작일이 가득일보다 늦은 회차가 있으면 입력 검사가 막는다.
-- 근무조건(가득 전 퇴사)은 공정가치가 아니라 «가득 예상 비율» 로 수량에 반영한다 (문단 19).
+- 근무조건(가득 전 퇴사)·비시장 성과조건은 공정가치가 아니라 «가득 예상 비율» 로 수량에 반영한다 (문단 19).
+- 시장조건(목표 주가)은 격자 안에서 판정한다 (문단 21). 회차마다 목표 주가를 넣고 판정 방식을 고른다.
+    1 가득일 판정 — 가득일 노드에서 주가가 목표 미만이면 소멸(가치 0). 노드는 로그 주가로 위아래 반 칸씩의 구간을
+      대표하므로, 목표 주가가 걸친 노드는 그 구간 가운데 목표 이상인 비율만큼 가치를 남긴다(pass_share) — 격자가
+      계단 모양이라 생기는 오차가 닫힌 식(갭 옵션) 대비 수 %에서 0.3% 안쪽으로 준다.
+    2 한 번이라도 도달 — 가득일까지 노드 주가가 한 번이라도 목표 이상이면 가득. «아직 닿지 않은 상태» 의 가치를
+      따로 계산한다(wait). 닿은 노드에서는 보통 격자의 가치(values)로 바뀐다. 관측은 격자 노드(계산 간격)마다.
+  시장조건을 채우지 못해도 근무조건을 채우면 비용을 되돌리지 않는다 — 수량(가득 예상 비율)에는 넣지 않는다.
+- 비가득조건(예: 행사가격 납입용 적립 계속)은 공정가치에 넣는다 (문단 21A). 가득일까지 구간마다 연간 중단율만큼
+  선택권을 잃는다고 보고 «1 − 구간 중단 확률» 을 곱한다. 기대존속기간은 가득된다고 보고 잰다 (문단 B18⑴).
 - 보상원가는 회차마다 «1주당 공정가치 × 부여 수량 × 가득 예상 비율» 이고, 부여일부터
   가득일까지 일수로 나눠 회계연도에 배분한다.
 
@@ -31,10 +40,17 @@ import math
 
 import numpy as np
 
-ROW_KEYS = ("name", "vest", "start", "end", "qty", "keep")
+ROW_KEYS = ("name", "vest", "start", "end", "qty", "keep", "target")
 MOD_KEYS = ("name", "K", "vest", "start", "end", "qty", "grant_fv")
 EX_LABELS = {0: "만기에만 행사 (유럽형)", 1: "가득 뒤 최적 행사", 2: "행사 배수에 도달하면 행사"}
 SETTLE_LABELS = {0: "주식결제형", 1: "현금결제형 (차액보상)"}
+MKT_LABELS = {0: "없음", 1: "가득일 주가가 목표 주가 이상이면 가득", 2: "가득일까지 한 번이라도 목표 주가 이상이면 가득"}
+MKT_TOL = 1e-12          # 목표 주가 비교 — 엔진과 수식 조서가 같은 여유를 쓴다
+
+
+def pass_share(S, u, H):
+    """가득일 노드가 대표하는 로그 주가 구간 [ln S − ln u, ln S + ln u] 가운데 목표 주가 이상인 비율 (0~1)."""
+    return np.clip((np.log(S) + math.log(u) - math.log(H))/(2*math.log(u)), 0.0, 1.0)
 # 조기행사가 없을 때 격자값과 블랙-숄즈 값의 허용 차이 (상대). 주 단위 격자면 보통 0.1% 안쪽이다.
 BS_TOL = 0.005
 
@@ -78,7 +94,7 @@ def mod_row(row: dict, m: dict, tm) -> dict:
     return dict(name=row["name"], vest=vest, start=start,
                 end=row["end"] if _blank(m.get("end")) else str(m["end"]),
                 qty=float(row["qty"]) if _blank(m.get("qty")) else float(m["qty"]), keep=row["keep"],
-                K=float(tm.K0) if _blank(m.get("K")) else float(m["K"]))
+                K=float(tm.K0) if _blank(m.get("K")) else float(m["K"]), target=row.get("target"))
 
 
 def mod_map(tm) -> dict:
@@ -90,7 +106,7 @@ def _date(s):
 
 
 def row_defaults(row: dict, tm=None) -> dict:
-    out = {"name": "", "vest": "", "start": "", "end": "", "qty": 0.0, "keep": 1.0}
+    out = {"name": "", "vest": "", "start": "", "end": "", "qty": 0.0, "keep": 1.0, "target": None}
     out.update({k: v for k, v in (row or {}).items() if k in ROW_KEYS})
     if not str(out["start"] or "").strip():
         out["start"] = out["vest"]          # 빈칸 = 가득일부터 행사
@@ -117,6 +133,11 @@ def issues(tm) -> list[str]:
         out.append("당기 현금 결제액은 현금결제형에서만 넣습니다.")
     if int(tm.so_ex) not in EX_LABELS:
         out.append("조기행사 가정을 고르십시오.")
+    if int(getattr(tm, "so_mkt", 0)) not in MKT_LABELS:
+        out.append("시장조건 판정 방식을 고르십시오.")
+    nv = getattr(tm, "so_nv", 0.0)
+    if not (isinstance(nv, (int, float)) and math.isfinite(nv) and 0 <= nv < 1):
+        out.append("비가득조건 연간 중단율은 0% 이상 100% 미만이어야 합니다.")
     if int(tm.so_ex) == 2 and not tm.so_mult > 1:
         out.append("행사 배수는 1보다 커야 합니다 (주가가 행사가격의 몇 배일 때 행사하는가).")
     if not 0 <= tm.so_exit < 1:
@@ -161,6 +182,7 @@ def issues(tm) -> list[str]:
             out.append(f"{label}: 남은 수량은 0 이상이어야 합니다." if cash else f"{label}: 부여 수량은 0보다 커야 합니다.")
         if not (isinstance(r["keep"], (int, float)) and math.isfinite(r["keep"]) and 0 < r["keep"] <= 1):
             out.append(f"{label}: 가득 예상 비율은 0%보다 크고 100% 이하여야 합니다.")
+        out += _target_issues(tm, label, r, vest, db)
     if tm.so_exit > 0:
         late = [str(r["name"]) for r in (row_defaults(x, tm) for x in rs) if str(r["start"]) > str(r["vest"])]
         if late:
@@ -170,9 +192,32 @@ def issues(tm) -> list[str]:
     dup = sorted({n for n in names if n and names.count(n) > 1})
     if dup:
         out.append("회차 이름이 겹칩니다: " + ", ".join(dup))
+    if int(getattr(tm, "so_mkt", 0)) in (1, 2) and not any(target(row_defaults(x, tm)) for x in rs):
+        out.append("«시장조건 판정» 을 골랐는데 목표 주가를 넣은 회차가 없습니다 — 회차표의 «목표 주가(원)» 에 넣으십시오.")
     if int(tm.so_mod) == 1 and int(tm.so_settle) == 0:
         out += mod_issues(tm, rs, di, db, dm)
     return out
+
+
+def target(row):
+    """회차의 시장조건 목표 주가 — 비었으면 None (그 회차에는 시장조건이 없다)."""
+    v = row.get("target")
+    if _blank(v) or isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
+        return None                      # 잘못된 값은 입력 검사(_target_issues)가 따로 알린다
+    return float(v)
+
+
+def _target_issues(tm, label, r, vest, db) -> list[str]:
+    v = r.get("target")
+    if _blank(v):
+        return []
+    if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0):
+        return [f"{label}: 목표 주가는 0보다 커야 합니다."]
+    if int(getattr(tm, "so_mkt", 0)) == 0:
+        return [f"{label}: 목표 주가를 넣었는데 «시장조건 판정» 이 «없음» 입니다 — 판정 방식을 고르거나 목표 주가를 지우십시오."]
+    if vest <= db:
+        return [f"{label}: 가득일이 측정기준일 이전이라 시장조건이 이미 판정됐습니다 — 목표 주가를 지우십시오."]
+    return []
 
 
 def mod_issues(tm, rs, di, db, dm) -> list[str]:
@@ -229,6 +274,8 @@ def mod_issues(tm, rs, di, db, dm) -> list[str]:
         # 빈칸으로 둔 변경 전 행사 종료일까지 늘어나 연장의 증분이 사라진다 (자동 검토 지적)
         if tm.so_exit > 0 and start > vest:
             out.append(f"{label}: 가득 뒤 퇴사율을 넣었는데 변경 후 행사 시작일이 가득일보다 늦습니다 — 퇴사율을 0%로 두십시오.")
+        if target(new) and vest <= db and int(getattr(tm, "so_mkt", 0)):
+            out.append(f"{label}: 변경 후 가득일이 조건 변경일 이전이라 시장조건이 이미 판정됐습니다 — 목표 주가를 지우십시오.")
     return out
 
 
@@ -276,6 +323,13 @@ def value_row(tm, row: dict, R=None) -> dict:
     K, S0 = float(row.get("K") or tm.K0), float(tm.S0)
     # 행사 시작일 이후 첫 노드부터 행사할 수 있다 (노드 사이면 다음 노드).
     ex_step = min(n, max(0, int(math.ceil(t_ex/dt_ - 1e-9))))
+    # 가득 시점 — 시장조건 판정과 비가득조건이 끝나는 노드 (가득일 이후 첫 노드, 행사 시작 노드보다 늦지 않음)
+    t_vest = max(0.0, (_date(row["vest"]) - db).days/365)
+    vest_step = min(ex_step, max(0, int(math.ceil(t_vest/dt_ - 1e-9))))
+    H = target(row)
+    mkt = int(getattr(tm, "so_mkt", 0)) if H else 0
+    nv = float(getattr(tm, "so_nv", 0.0))
+    nv_step = 1.0 - (1.0 - nv)**dt_ if nv > 0 else 0.0     # 한 구간에 비가득조건을 그만둘 확률 (가득 전)
     fwd = np.array([forward_rate(R, i*dt_, (i+1)*dt_) for i in range(n)])
     p = (np.exp((fwd - q)*dt_) - d)/(u - d)
     disc = np.exp(-fwd*dt_)
@@ -286,7 +340,13 @@ def value_row(tm, row: dict, R=None) -> dict:
     S = S0*u**(n - 2*j)
     V = np.maximum(S - K, 0.0)
     values, prices, exercise = [None]*(n + 1), [None]*(n + 1), [None]*(n + 1)
-    values[n], prices[n], exercise[n] = V.copy(), S.copy(), (S - K > 0)
+    exercise_life = [None]*(n + 1)             # 기대존속기간용 — 가득된다고 보고 잰다 (시장조건 소멸 전)
+    go = S - K > 0
+    exercise_life[n] = go.copy()
+    if mkt == 1 and vest_step == n:
+        w = pass_share(S, u, H)
+        V, go = w*V, go & (w >= 1)
+    values[n], prices[n], exercise[n] = V.copy(), S.copy(), go
     for i in range(n - 1, -1, -1):
         jj = np.arange(i + 1)
         S = S0*u**(i - 2*jj)
@@ -304,13 +364,35 @@ def value_row(tm, row: dict, R=None) -> dict:
         else:
             go = np.zeros(i + 1, dtype=bool)
             V = cont
+            if i < vest_step and nv_step:
+                V = (1 - nv_step)*V                # 가득 전 비가득조건 — 그만두면 소멸 (문단 21A)
+        exercise_life[i] = go.copy()
+        if mkt == 1 and i == vest_step:
+            w = pass_share(S, u, H)                # 가득일 주가가 목표 미만이면 소멸 (문단 21), 걸친 노드는 비율만큼
+            V, go = w*V, go & (w >= 1)
         values[i], prices[i], exercise[i] = V.copy(), S.copy(), go
     fv = float(V[0])
-    # 기대존속기간 — 위험중립확률로 «행사·퇴사·만기» 중 먼저 오는 때를 평균한다.
+    wait = None
+    if mkt == 2:
+        # 아직 목표 주가에 닿지 않은 상태의 가치 — 가득일에 닿지 못했으면 소멸, 닿은 노드에서는 보통 격자 가치
+        k = vest_step
+        Sk = S0*u**(k - 2*np.arange(k + 1))
+        Wv = np.where(Sk >= H*(1 - MKT_TOL), values[k], 0.0)
+        wait = [None]*(k + 1)
+        wait[k] = Wv.copy()
+        for i in range(k - 1, -1, -1):
+            Si = S0*u**(i - 2*np.arange(i + 1))
+            Wv = disc[i]*(p[i]*Wv[:-1] + (1 - p[i])*Wv[1:])
+            if nv_step:
+                Wv = (1 - nv_step)*Wv
+            Wv = np.where(Si >= H*(1 - MKT_TOL), values[i], Wv)
+            wait[i] = Wv.copy()
+        fv = float(Wv[0])
+    # 기대존속기간 — 위험중립확률로 «행사·퇴사·만기» 중 먼저 오는 때를 평균한다 (가득된다고 보고, 문단 B18⑴).
     mass, life = np.array([1.0]), 0.0
     for i in range(n):
         t = i*dt_
-        go = exercise[i]
+        go = exercise_life[i]
         life += float(mass[go].sum())*t
         stay = np.where(go, 0.0, mass)
         if i >= ex_step and e_step > 0:
@@ -328,6 +410,9 @@ def value_row(tm, row: dict, R=None) -> dict:
     return dict(
         name=row["name"], vest=row["vest"], start=row["start"], end=row["end"], qty=float(row["qty"]),
         keep=float(row["keep"]), K=K, t_ex=t_ex, t_end=t_end, n=n, dt=dt_, ex_step=ex_step, u=u, d=d,
+        vest_step=vest_step, target=H, mkt=mkt, nv_step=nv_step,
+        vest_exercise=exercise_life[vest_step].tolist() if mkt == 1 else None,   # 비율을 곱하기 전 행사 여부
+        wait=None if wait is None else [w.tolist() for w in wait],
         fv=fv, bs_end=bs_end, bs_life=bs_life, life=life, r_end=r_end, qbad=qbad,
         p_min=float(p.min()), p_max=float(p.max()), fwd=fwd.tolist(), p=p.tolist(),
         values=[v.tolist() for v in values], prices=[s.tolist() for s in prices],
@@ -475,7 +560,7 @@ def integrity(tm, raw) -> list[str]:
     for r in raw["rows"]:
         if not (0 <= r["fv"] <= S0*(1 + 1e-9)) or not math.isfinite(r["fv"]):
             bad.append(f"{r['name']} 공정가치 범위(0 ~ 주가)")
-        if int(tm.so_ex) == 0 and tm.so_exit == 0 and r["bs_end"] > 1e-6*S0:
+        if int(tm.so_ex) == 0 and tm.so_exit == 0 and not conditioned(r) and r["bs_end"] > 1e-6*S0:
             if abs(r["fv"] - r["bs_end"]) > BS_TOL*r["bs_end"] + 1e-9*S0:
                 bad.append(f"{r['name']} 유럽형 격자값과 블랙-숄즈 값의 수렴")
     for b in raw.get("before_rows", []):
@@ -485,6 +570,11 @@ def integrity(tm, raw) -> list[str]:
     if abs(total - want) > 1e-6*max(1.0, want):
         bad.append("비용 배분 합계와 총 보상원가")
     return bad
+
+
+def conditioned(r) -> bool:
+    """시장조건·비가득조건이 들어간 회차 — 조건 없는 블랙-숄즈 값과 같을 까닭이 없다."""
+    return bool(r.get("mkt")) or bool(r.get("nv_step"))
 
 
 def sched_total(raw):
@@ -518,7 +608,11 @@ def checks(tm, raw) -> list[dict]:
     if raw.get("mode") == "mod":
         out.append(dict(name="증분 공정가치 (음수 없음)", passed=all(r["incr"] >= 0 for r in rows_),
                         detail="증분 = 큰 값(변경 후 − 변경 전, 0) — 줄어든 공정가치는 인식하지 않음 (문단 27)"))
-    if int(tm.so_ex) == 0 and tm.so_exit == 0:
+    if any(conditioned(r) for r in rows_):
+        out.append(dict(name="시장조건·비가득조건 (공정가치 ≤ 조건 없는 블랙-숄즈)",
+                        passed=all(r["fv"] <= r["bs_end"]*(1 + BS_TOL) + 1e-9*S0 or int(tm.so_ex) != 0 for r in rows_),
+                        detail="조건이 있으면 같은 선택권의 조건 없는 값보다 작아야 함 — 블랙-숄즈 수렴 점검은 하지 않음"))
+    elif int(tm.so_ex) == 0 and tm.so_exit == 0:
         worst = max(abs(r["fv"] - r["bs_end"])/max(r["bs_end"], 1e-12) for r in rows_)
         out.append(dict(name="블랙-숄즈 수렴 (유럽형)", passed=worst <= BS_TOL,
                         detail=f"격자값과 블랙-숄즈 값의 최대 상대 차이 {worst:.4%} (허용 {BS_TOL:.1%})"))
@@ -542,18 +636,50 @@ def node_trace(tm, row: dict, i: int, j: int) -> dict:
                vested=i >= row["ex_step"], terminal=i == n)
     if i == n:
         out.update(rule="행사 종료일 — 내가격이면 행사, 아니면 소멸: max(주가 − 행사가격, 0)")
+        if row.get("mkt") == 1 and row.get("vest_step") == n:
+            share = float(pass_share(np.array([S]), row["u"], row["target"])[0])
+            out.update(pass_share=share, forfeit=share < 1.0, reconciliation=out["value"] - share*max(S - K, 0.0))
+            if share < 1.0:
+                out["rule"] += f" × 목표 주가 이상인 비율 {share:.4f} (가득일 시장조건 판정)"
         return out
     p, f = row["p"][i], row["fwd"][i]
     up, dn = row["values"][i + 1][j], row["values"][i + 1][j + 1]
     disc = math.exp(-f*dt_)
     cont = disc*(p*up + (1 - p)*dn)
     e = 1.0 - (1.0 - float(tm.so_exit))**dt_ if out["vested"] else 0.0
-    hold = (1 - e)*cont + e*max(S - K, 0.0)
+    nv = row.get("nv_step", 0.0) if i < row.get("vest_step", 0) else 0.0
+    hold = (1 - e)*(1 - nv)*cont + e*max(S - K, 0.0)
+    judged = row.get("mkt") == 1 and i == row.get("vest_step")
+    share = float(pass_share(np.array([S]), row["u"], row["target"])[0]) if judged else 1.0
+    forfeit = share < 1.0
+    went = row["vest_exercise"][j] if judged else out["exercise"]
+    raw_v = S - K if went else hold                    # 시장조건 비율을 곱하기 전 가치
+    want = share*raw_v
     out.update(up=up, down=dn, up_stock=row["prices"][i + 1][j], down_stock=row["prices"][i + 1][j + 1],
-               p=p, fwd=f, disc=disc, cont=cont, exit_step=e, hold=hold,
-               reconciliation=out["value"] - (S - K if out["exercise"] else hold))
-    if not out["vested"]:
-        out["rule"] = "행사 시작 전 — 행사할 수 없어 계속 보유 가치"
+               p=p, fwd=f, disc=disc, cont=cont, exit_step=e, nv_step=nv, hold=hold, forfeit=forfeit,
+               reconciliation=out["value"] - want)
+    if row.get("wait") is not None and i <= row["vest_step"]:
+        # «아직 목표 주가에 닿지 않은 상태» 의 가치 — 닿았으면 보통 격자 가치, 가득일까지 못 닿으면 0
+        w = row["wait"][i][j]
+        if S >= row["target"]*(1 - MKT_TOL):
+            w_want, w_rule = out["value"], "목표 주가 이상 — 보통 격자 가치로 바뀜"
+        elif i == row["vest_step"]:
+            w_want, w_rule = 0.0, "가득일까지 목표 주가에 닿지 못해 소멸"
+        else:
+            wu, wd = row["wait"][i + 1][j], row["wait"][i + 1][j + 1]
+            w_want = (1 - nv)*disc*(p*wu + (1 - p)*wd)
+            w_rule = "아직 목표 주가 미만 — 다음 시점의 «닿지 않은 상태» 가치를 할인"
+            out.update(wait_up=wu, wait_down=wd)
+        out.update(wait=w, wait_rule=w_rule, wait_reconciliation=w - w_want)
+    out.update(pass_share=share, before_share=raw_v)
+    if forfeit and share == 0:
+        out["rule"] = f"가득일 주가가 목표 주가 {row['target']:,.0f}원 미만 — 시장조건을 못 채워 소멸 (가치 0)"
+    elif forfeit:
+        out["rule"] = (f"목표 주가 {row['target']:,.0f}원이 이 노드가 대표하는 주가 구간에 걸쳐 있어 "
+                       f"구간 가운데 목표 이상인 비율 {share:.4f}만큼만 가치를 남김")
+    elif not out["vested"]:
+        out["rule"] = ("행사 시작 전 — 행사할 수 없어 계속 보유 가치"
+                       + (" × (1 − 비가득조건 중단 확률)" if nv else ""))
     elif out["exercise"]:
         out["rule"] = {1: "지금 행사 가치가 계속 보유 가치보다 커서 행사",
                        2: f"주가가 행사가격의 {float(tm.so_mult):g}배 이상이라 행사"}.get(int(tm.so_ex), "행사")
@@ -587,7 +713,9 @@ def summary_rows(tm, raw) -> list[dict]:
                  "당초 보상원가": x["grant_cost"], "증분 공정가치": x["fair"], "증분 보상원가": x["cost"]}
                 for x in raw["rows"]]
     base = [{"회차": x["name"], "가득일": x["vest"], "행사 시작일": x["start"], "행사 종료일": x["end"],
-             "부여 수량": x["qty"], "가득 예상 비율": x["keep"], "구간 수": x["n"],
+             "부여 수량": x["qty"], "가득 예상 비율": x["keep"], **({"시장조건 목표 주가": x.get("target")}
+                                                             if any(r.get("target") for r in raw["rows"]) else {}),
+             "구간 수": x["n"],
              "1주당 공정가치": x["fv"], "블랙-숄즈(행사 종료일)": x["bs_end"],
              "기대존속기간(년)": x["life"], "공정가치": x["fair"], "보상원가": x["cost"]} for x in raw["rows"]]
     if md == "cash":

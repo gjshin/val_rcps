@@ -1,6 +1,6 @@
 {
- "generated": "2026-10-28T03:16:15",
- "head": "ae9754e",
+ "generated": "2026-10-28T08:18:29",
+ "head": "e9bb56c",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -33,7 +33,7 @@
    "NOT_TESTED": 0
   },
   "SO": {
-   "PASS": 7,
+   "PASS": 10,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -7747,6 +7747,60 @@
     "tests/test_stock_option.py::test_unfavourable_change_adds_nothing",
     "tests/test_stock_option.py::test_added_options_are_valued_at_the_modified_value",
     "tests/test_stock_option.py::test_formula_workbook_recalculates_to_the_value_workbook"
+   ],
+   "n_tests": 4
+  },
+  {
+   "case_id": "SO-so_mkt-0",
+   "product": "SO",
+   "branch": "so_mkt",
+   "value": 0,
+   "label": "없음",
+   "meaning": "주식선택권 시장조건 판정",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "invariants",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/test_stock_option.py::test_market_condition_bounds",
+    "tests/test_stock_option.py::test_non_vesting_condition_scales_the_value_by_the_survival_to_vesting"
+   ],
+   "n_tests": 2
+  },
+  {
+   "case_id": "SO-so_mkt-1",
+   "product": "SO",
+   "branch": "so_mkt",
+   "value": 1,
+   "label": "가득일 주가가 목표 주가 이상이면 가득",
+   "meaning": "주식선택권 시장조건 판정",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/test_stock_option.py::test_market_condition_at_vest_matches_the_gap_option",
+    "tests/test_stock_option.py::test_market_condition_bounds",
+    "tests/test_stock_option.py::test_formula_workbook_follows_changed_condition_inputs_like_the_app"
+   ],
+   "n_tests": 3
+  },
+  {
+   "case_id": "SO-so_mkt-2",
+   "product": "SO",
+   "branch": "so_mkt",
+   "value": 2,
+   "label": "가득일까지 한 번이라도 목표 주가 이상이면 가득",
+   "meaning": "주식선택권 시장조건 판정",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/test_stock_option.py::test_market_condition_touch_matches_the_weekly_barrier_option",
+    "tests/test_stock_option.py::test_market_condition_bounds",
+    "tests/test_stock_option.py::test_non_vesting_condition_scales_the_value_by_the_survival_to_vesting",
+    "tests/test_stock_option.py::test_formula_workbook_follows_changed_condition_inputs_like_the_app"
    ],
    "n_tests": 4
   },
