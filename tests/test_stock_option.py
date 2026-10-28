@@ -417,6 +417,13 @@ def test_screens_switch_between_grant_modification_and_cash():
     assert not app.exception, app.exception
     assert app.session_state.case.contract['so_mod'] == 0
     assert [h.value for h in app.subheader][:2] == ['회차별 공정가치와 부채', '결산일 부채와 당기 비용']
+    app.session_state['_workflow_stage'] = '조서 출력'
+    app.run()
+    next(r for r in app.radio if r.label == '조서 구성').set_value('상세 계산 수식 조서').run()
+    next(b for b in app.button if b.label == '조서 생성').click().run()
+    assert not app.exception, app.exception
+    with zipfile.ZipFile(io.BytesIO(app.session_state.bundle)) as z:
+        assert 'formula_review.xlsx' in z.namelist()
 
 
 # ── 2단계 ③ 수식 조서 — 상세 값 조서와 같은 시트·같은 칸, 다시 계산하면 같은 값 ─────────────────────
@@ -430,7 +437,7 @@ FORMULA_CASES = {
     '부여일 · 최적 행사 · 배당': lambda: case(so_ex=1, div_y=0.03, d_mat='2029-07-01', so_rows=THREE, grid_days=14.0),
     '조건 변경': lambda: mod_case([dict(name='1차', K=80.0, qty=1200.0, vest='2028-07-01', grant_fv=20.0)],
                               grid_days=14.0, so_ex=1, div_y=0.02),
-    '현금결제형': lambda: cash_case(so_prev_liab=5000.0, grid_days=14.0, so_ex=2, so_mult=2.0),
+    '현금결제형': lambda: cash_case(so_prev_liab=5000.0, so_paid=1500.0, grid_days=14.0, so_ex=2, so_mult=2.0),
 }
 
 

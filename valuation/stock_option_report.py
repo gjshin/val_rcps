@@ -29,6 +29,7 @@ NAVY = PatternFill('solid', fgColor='17365D')
 GO = PatternFill('solid', fgColor='FCE4D6')        # 행사 노드
 HEAD = Font(bold=True, color='FFFFFF')
 DRAFT_NOTE = '입력 가정에 따른 초안입니다. 계약별 회계처리는 별도로 검토하십시오.'
+EXPENSE_LABEL = '당기 비용(원) = 당기말 부채 − 전기말 부채 + 당기 결제액'
 
 
 def summary_rows(run):
@@ -53,7 +54,7 @@ def summary_rows(run):
         rows.append(['당초 보상원가(원) — 부여일 공정가치 기준', raw['grant_cost']])
     if md == 'cash':
         rows += [['전기말 주식보상부채(원)', raw['prev_liab']], ['당기 현금 결제액(원)', raw['paid']],
-                 ['당기 비용(원) = 당기말 부채 − 전기말 부채 + 당기 결제액', raw['expense']]]
+                 [EXPENSE_LABEL, raw['expense']]]
     rows += [['계산 구간 수 (가장 긴 회차)', max(r['n'] for r in raw['rows'])],
              ['계산시각(UTC)', s['calculated_at']], ['기록 갱신시각(UTC)', s['generated_at']],
              ['계산 소요시간(초)', s['calculation_seconds']],
@@ -189,7 +190,7 @@ def add_basic_sheets(wb, run, sheet):
 ROWS_SHEET = {'grant': '회차별 공정가치', 'mod': '조건 변경', 'cash': '부채 재측정'}
 INPUT_SHEET = '평가 입력값'
 # 평가 입력값 시트의 칸 — 수식 조서의 격자·표가 이 칸을 가리킨다
-IN_ROW = {'S0': 2, 'sig': 3, 'div_y': 4, 'so_mult': 5, 'so_exit': 6, 'so_prev_liab': 7}
+IN_ROW = {'S0': 2, 'sig': 3, 'div_y': 4, 'so_mult': 5, 'so_exit': 6, 'so_prev_liab': 7, 'so_paid': 8}
 LATTICE_PARAMS = ('행사가격(원)', '가득일', '행사 시작일', '행사 종료일', '구간 수', '구간 길이(년)', '상승 배수 u',
                   '하락 배수 d', '행사 가능 시점', '구간 퇴사 확률', '조기행사 가정', '1주당 공정가치')
 LATTICE_TIME = ('시점', '격자일', '선도 무위험 금리(연속)', '상승 확률', '할인계수', '행사 가능')
@@ -215,7 +216,8 @@ def input_table(run):
             ['행사 배수 (주가 ÷ 행사가격)', float(t.so_mult), '«행사 배수에 도달하면 행사» 가정에서만 씁니다'],
             ['가득 뒤 연간 퇴사율', float(t.so_exit), '구간 퇴사 확률 = 1 − (1 − 퇴사율)^구간 길이']]
     if run.raw['mode'] == 'cash':
-        rows.append(['전기말 주식보상부채(원, -1은 없음)', float(t.so_prev_liab), '당기 비용 = 당기말 부채 − 전기말 부채(없으면 0)'])
+        rows += [['전기말 주식보상부채(원, -1은 없음)', float(t.so_prev_liab), '당기 비용 = 당기말 부채 − 전기말 부채(없으면 0) + 당기 결제액'],
+                 ['당기 현금 결제액(원)', float(t.so_paid), '당기 중 행사되어 현금으로 지급한 금액']]
     return rows
 
 
@@ -487,21 +489,28 @@ def formula_tables(wb, run, names):
     if md == 'mod':
         sm.cell(lab['당초 보상원가(원) — 부여일 공정가치 기준'], 2, f"={total['당초 보상원가']}")
     if md == 'cash':
-        rp, re_ = lab['전기말 주식보상부채(원)'], lab['당기 비용(원) = 당기말 부채 − 전기말 부채']
+        rp, rq, re_ = lab['전기말 주식보상부채(원)'], lab['당기 현금 결제액(원)'], lab[EXPENSE_LABEL]
         sm.cell(rp, 2, f"=MAX(0,{_in('so_prev_liab')})")
-        sm.cell(re_, 2, f"={total['주식보상부채']}-B{rp}")
+        sm.cell(rq, 2, f"={_in('so_paid')}")
+        sm.cell(re_, 2, f"={total['주식보상부채']}-B{rp}+B{rq}")
     # 회계처리
     if '회계처리' not in wb.sheetnames:
         return
     jw = wb['회계처리']
     if md == 'cash':
-        v = f"{_q('평가요약')}!$B${lab['당기 비용(원) = 당기말 부채 − 전기말 부채']}"
+        v = f"{_q('평가요약')}!$B${lab[EXPENSE_LABEL]}"
         jw.cell(3, 2, f'=IF({v}>=0,"주식보상비용","주식보상부채")')
         jw.cell(3, 3, f"=ABS({v})")
         jw.cell(3, 4, f'=IF({v}>=0,"주식보상부채","주식보상비용 (환입)")')
         jw.cell(3, 5, f"=ABS({v})")
-        jw.cell(5, 2, f"={_q('평가요약')}!$B${lab['전기말 주식보상부채(원)']}")
-        jw.cell(6, 2, f"={total['주식보상부채']}")
+        at = {jw.cell(r, 1).value: r for r in range(4, jw.max_row + 1)}
+        paid = f"{_q('평가요약')}!$B${lab['당기 현금 결제액(원)']}"
+        if '당기 중' in at:
+            jw.cell(at['당기 중'], 3, f"={paid}")
+            jw.cell(at['당기 중'], 5, f"={paid}")
+        jw.cell(at['전기말 주식보상부채'], 2, f"={_q('평가요약')}!$B${lab['전기말 주식보상부채(원)']}")
+        jw.cell(at['당기 현금 결제액'], 2, f"={paid}")
+        jw.cell(at['당기말 주식보상부채'], 2, f"={total['주식보상부채']}")
         return
     for r in range(3, jw.max_row + 1):
         d = jw.cell(r, 1).value
@@ -527,5 +536,5 @@ def key_cells(wb, run, names):
     if raw['mode'] == 'mod':
         out.append(('당초 보상원가 (원)', '평가요약', f"B{lab['당초 보상원가(원) — 부여일 공정가치 기준']}", raw['grant_cost']))
     if raw['mode'] == 'cash':
-        out.append(('당기 비용 (원)', '평가요약', f"B{lab['당기 비용(원) = 당기말 부채 − 전기말 부채']}", raw['expense']))
+        out.append(('당기 비용 (원)', '평가요약', f"B{lab[EXPENSE_LABEL]}", raw['expense']))
     return out
