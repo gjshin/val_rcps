@@ -469,7 +469,14 @@ FORMULA_CASES = {
     '조건 변경': lambda: mod_case([dict(name='1차', K=80.0, qty=1200.0, vest='2028-07-01', grant_fv=20.0)],
                               grid_days=14.0, so_ex=1, div_y=0.02),
     '현금결제형': lambda: cash_case(so_prev_liab=5000.0, so_paid=1500.0, grid_days=14.0, so_ex=2, so_mult=2.0),
+    '현금결제형 · 모두 결제': lambda: _settled(cash_case(so_prev_liab=10000.0, so_paid=12000.0, grid_days=14.0)),
 }
+
+
+def _settled(c):
+    for r in c.contract['so_rows']:
+        r['qty'] = 0.0
+    return c
 
 
 def _xlsx(run, **kw):

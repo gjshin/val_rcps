@@ -482,7 +482,7 @@ def formula_tables(wb, run, names):
     for key, h in zip(SO.AMOUNT_KEYS[md], sources):
         r = lab[AMOUNT_LABELS[key]]
         sm.cell(r, 2, f"={total[h]}")
-        sm.cell(r, 3, f"=B{r}/{qty!r}")
+        sm.cell(r, 3, f"=B{r}/{qty!r}" if qty else "=0")      # 현금결제형에서 모두 결제했으면 남은 수량 0
         sm.cell(r, 4, f"=C{r}/{S0}*100")
     sm.cell(lab['측정기준일 주가(원)'], 2, f"={S0}")
     sm.cell(lab['가득 뒤 연간 퇴사율'], 2, f"={_in('so_exit')}")
