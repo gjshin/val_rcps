@@ -165,8 +165,9 @@ def test_value_workpapers_carry_the_run_values():
     assert '행사방식' not in basic.sheetnames
     rows = list(basic['회차별 공정가치'].iter_rows(values_only=True))
     head = rows[0]
+    # 엑셀 파일은 숫자를 유효숫자 16자리까지만 적는다 — 마지막 자리까지 같기를 요구하지 않는다
     for r, x in zip(rows[1:-1], run.summary['so_rows']):
-        assert r[head.index('1주당 공정가치')] == x['1주당 공정가치']
+        assert r[head.index('1주당 공정가치')] == pytest.approx(x['1주당 공정가치'], rel=1e-12)
     assert rows[-1][head.index('보상원가')] == pytest.approx(run.summary['amounts_total']['so_cost'])
     labels = [r[0] for r in basic['계약조건'].iter_rows(values_only=True)]
     assert '행사가격(원)' in labels and '현재 전환가액(원)' not in labels and '표면이자·우선배당률(연, %)' not in labels
@@ -176,7 +177,8 @@ def test_value_workpapers_carry_the_run_values():
     lattices = [n for n in detail.sheetnames if n.startswith('격자 ')]
     assert len(lattices) == 3
     ws, r = detail[lattices[0]], run.raw['rows'][0]
-    found = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, float) and c.value == r['values'][0][0]]
+    found = [c.value for row in ws.iter_rows() for c in row
+             if isinstance(c.value, float) and abs(c.value - r['values'][0][0]) <= 1e-12*abs(r['values'][0][0])]
     assert found                                          # 격자 시점 0의 가치 = 회차 1주당 공정가치
     assert r['values'][0][0] == r['fv']
     with pytest.raises(ValueError, match='2단계'):
