@@ -15,7 +15,7 @@ from streamlit.testing.v1 import AppTest
 import v2_workspace
 from valuation import stock_option as SO
 from valuation import legacy as L
-from valuation import stock_option_report as SOR
+from valuation import stock_option_workpaper as SOW
 from valuation.case import Case, inspect_case
 from valuation.evidence import TOPICS, applicable
 from valuation.service import calculate, export_bundle, CaseError
@@ -209,6 +209,8 @@ def test_touch_condition_already_met_before_remeasurement_uses_the_ordinary_latt
     assert wait.raw['rows'][0]['fv'] < met.raw['rows'][0]['fv']
     assert 'so_market_hit' in {i.code for i in wait.issues}
     assert met.summary['so_rows'][0]['목표 도달 (측정기준일 전)'] == '예'
+    A = _workbook(met, detail=True)['가정']
+    assert A[_cell(A, '회차', '1차', '목표 도달 (측정기준일 전)')].value == '예'
     # 조건 변경 — 변경 전·후 모두 보통 격자
     mod = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=[dict(rows[0], hit=True)], so_mkt=2))
     plain = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=[dict(rows[0], target=None)]))
@@ -237,13 +239,16 @@ def test_condition_inputs_reach_the_workpapers_and_review():
     codes = {i.code for i in run.issues}
     assert {'so_market', 'so_nonvesting'} <= codes
     wb = _workbook(run, detail=True)
-    summary = {r[0]: r[1] for r in wb['평가요약'].iter_rows(values_only=True) if r and r[0]}
-    assert summary['시장조건 판정'] == SO.MKT_LABELS[2] and summary['비가득조건 연간 중단율 (가득일까지)'] == 0.05
-    head = [c.value for c in wb['회차표 입력'][1]]
-    assert wb['회차표 입력'].cell(2, head.index('시장조건 목표 주가(원)') + 1).value == 130.0
+    A = wb['가정']
+    assert A[_input(wb, '시장조건 판정')].value == SO.MKT_LABELS[2]
+    assert A[_input(wb, '비가득조건 연간 중단율 (가득일까지)')].value == 0.05
+    assert A[_cell(A, '회차', '1차', '시장조건 목표 주가(원)')].value == 130.0
     lattice = next(wb[n] for n in wb.sheetnames if n.startswith('격자 '))
-    assert any(c.value and str(c.value).startswith('목표 주가에 아직 닿지 않은 상태의 가치')
+    assert any(c.value and str(c.value).startswith('③ 목표 주가 미도달 상태 가치트리')
                for row in lattice.iter_rows() for c in row)
+    basic = _workbook(run)
+    summary = {r[0]: r[1] for r in basic['평가요약'].iter_rows(values_only=True) if r and r[0]}
+    assert summary['시장조건 판정'] == SO.MKT_LABELS[2] and summary['비가득조건 연간 중단율 (가득일까지)'] == 0.05
 
 
 def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
@@ -341,6 +346,51 @@ def test_only_stock_option_judgment_topics_apply():
     assert not any(applicable(t, cb) for t in TOPICS if t['trigger'] == 'so')
 
 
+def _label_row(ws, label, col=2):
+    """B 열에서 항목 이름이 label 인 첫 줄."""
+    return next(r for r in range(1, ws.max_row + 1) if ws.cell(r, col).value == label)
+
+
+def _table_rows(ws, first_head, need=None):
+    """B 열 머리가 first_head 이고 (need 가 있으면) 그 머리를 가진 표 — (머리 목록, [줄 번호])."""
+    for h in range(1, ws.max_row + 1):
+        if ws.cell(h, 2).value != first_head:
+            continue
+        heads = [ws.cell(h, c).value for c in range(2, ws.max_column + 1)]
+        heads = heads[:heads.index(None)] if None in heads else heads
+        if need is None or need in heads:
+            break
+    rows = []
+    r = h + 1
+    while ws.cell(r, 2).value not in (None, ''):
+        rows.append(r)
+        r += 1
+    return heads, rows
+
+
+def _cell(ws, first_head, row_label, head):
+    """표(first_head)에서 B 열이 row_label 인 줄의 head 칸 좌표."""
+    heads, rows = _table_rows(ws, first_head, head)
+    r = next(x for x in rows if str(ws.cell(x, 2).value) == str(row_label))
+    return f"{chr(ord('B') + heads.index(head))}{r}"
+
+
+def _input(wb, label):
+    """가정 시트 «1. 평가 입력값» 의 칸."""
+    return f"C{_label_row(wb['가정'], label)}"
+
+
+def _amount_rows(ws):
+    """결과 시트 «1. 평가 금액» — {항목: (총액, 1주당, 주가 100 기준)}."""
+    heads, rows = _table_rows(ws, '항목')
+    return {ws.cell(r, 2).value: tuple(ws.cell(r, c).value for c in (3, 4, 5)) for r in rows}
+
+
+def _records(ws, first_head, need=None):
+    heads, rows = _table_rows(ws, first_head, need)
+    return [dict(zip(heads, (ws.cell(r, 2 + k).value for k in range(len(heads))))) for r in rows]
+
+
 def _workbook(run, **kw):
     with zipfile.ZipFile(io.BytesIO(export_bundle(run, **kw))) as z:
         return load_workbook(io.BytesIO(z.read(next(n for n in z.namelist() if n.endswith('.xlsx')))))
@@ -363,6 +413,11 @@ def test_value_workpapers_carry_the_run_values():
     journal = [r for r in basic['회계처리'].iter_rows(values_only=True) if r and r[1] == '주식보상비용']
     assert sum(r[2] for r in journal) == pytest.approx(run.summary['amounts_total']['so_cost'])
     detail = _workbook(run, detail=True)
+    # 상세 조서는 전환사채 상세 조서와 같은 구성 — 해설 · 가정 · 격자 · 결과
+    assert detail.sheetnames[:3] == ['00_안내', '해설', '가정']
+    for name in ('결과', '비용 배분', '금리곡선'):
+        assert name in detail.sheetnames, name
+    assert '평가요약' not in detail.sheetnames and '평가 입력값' not in detail.sheetnames
     lattices = [n for n in detail.sheetnames if n.startswith('격자 ')]
     assert len(lattices) == 3
     ws, r = detail[lattices[0]], run.raw['rows'][0]
@@ -370,8 +425,19 @@ def test_value_workpapers_carry_the_run_values():
              if isinstance(c.value, float) and abs(c.value - r['values'][0][0]) <= 1e-12*abs(r['values'][0][0])]
     assert found                                          # 격자 시점 0의 가치 = 회차 1주당 공정가치
     assert r['values'][0][0] == r['fv']
-    inputs = [r[:2] for r in detail['평가 입력값'].iter_rows(values_only=True)]
-    assert inputs[1] == ('측정기준일 주가(원)', run.terms.S0) and inputs[2] == ('변동성 σ (연)', run.terms.sig)
+    assert detail['가정'][_input(detail, '측정기준일 주가(원)')].value == run.terms.S0
+    assert detail['가정'][_input(detail, '변동성 σ (연)')].value == run.terms.sig
+    lay = SOW.layout(r['n'])
+    # 엑셀 파일은 숫자를 유효숫자 16자리까지만 적을 수 있다 (자동 시험의 openpyxl) — 마지막 자리까지 같기를 요구하지 않는다
+    assert ws.cell(lay['value'], 3).value == pytest.approx(r['fv'], rel=1e-12)
+    assert ws.cell(lay['stock'], 3).value == pytest.approx(run.terms.S0, rel=1e-12)
+    assert ws['B1'].value == '날짜' and ws.cell(lay['stock'] - 1, 2).value == '하락 횟수 r ＼ 스텝'
+    res = _amount_rows(detail['결과'])
+    from valuation.service import AMOUNT_LABELS
+    assert res[AMOUNT_LABELS['so_cost']][0] == pytest.approx(run.summary['amounts_total']['so_cost'])
+    # 서식 — 전환사채 상세 조서와 같은 글꼴·제목 띠·항목 칸 색
+    assert detail['가정']['B2'].font.name == 'KoPub돋움체 Medium' and detail['가정']['B2'].fill.fgColor.rgb.endswith('1F3864')
+    assert ws['B3'].fill.fgColor.rgb.endswith('DCE6F1')
 
 
 def test_screens_open_evaluate_and_show_calculations():
@@ -387,7 +453,7 @@ def test_screens_open_evaluate_and_show_calculations():
     assert not app.exception, app.exception
     assert [h.value for h in app.subheader][:2] == ['회차별 공정가치', '회계연도별 보상원가 배분']
     assert any(m.label.startswith('1주당 공정가치') for m in app.metric)
-    for topic in ('노드 계산표', '노드 따라가기', '금리·확률', '비용 배분'):
+    for topic in ('노드 계산표', '노드 스케줄', '부트스트래핑', '비용 배분'):
         app.session_state['_workflow_stage'] = '계산내역'
         app.session_state['_calc_topic'] = topic
         app.run()
@@ -423,11 +489,10 @@ def test_screens_take_market_and_non_vesting_conditions():
         r = run.raw['rows'][0]
         assert r['mkt'] == mkt and r['nv_step'] > 0
         app.session_state['_workflow_stage'] = '계산내역'
-        app.session_state['_calc_topic'] = '노드 따라가기'
-        for i in (0, r['vest_step']):
-            app.session_state['_so_trace_i'] = i
+        for topic in ('노드 계산표', '노드 스케줄'):
+            app.session_state['_calc_topic'] = topic
             app.run()
-            assert not app.exception, (mkt, i, app.exception)
+            assert not app.exception, (mkt, topic, app.exception)
 
 
 def test_new_stock_option_case_from_the_sidebar():
@@ -452,11 +517,13 @@ def test_exercise_at_measurement_date_still_exports():
     r = run.raw['rows'][0]
     assert r['life'] == 0 and r['fv'] == pytest.approx(150.0)
     assert run.raw['schedule'][0]['share'] == 1.0            # 가득기간이 없으면 첫 결산일에 전액
-    for detail in (False, True):
-        wb = _workbook(run, detail=detail, accounting=True)
-        rows = list(wb['블랙-숄즈 대조'].iter_rows(values_only=True))
-        life_row = next(x for x in rows if x[1] == '기대존속기간')
-        assert life_row[4] is None and life_row[8] == pytest.approx(150.0)
+    wb = _workbook(run, accounting=True)
+    rows = list(wb['블랙-숄즈 대조'].iter_rows(values_only=True))
+    life_row = next(x for x in rows if x[1] == '기대존속기간')
+    assert life_row[4] is None and life_row[8] == pytest.approx(150.0)
+    wb = _workbook(run, detail=True, accounting=True)               # 상세 조서는 결과 시트의 «3. 블랙-숄즈 대조»
+    life = next(x for x in _records(wb['결과'], '회차', '만기 구분') if x['만기 구분'] == '기대존속기간')
+    assert life['d1'] is None and life['블랙-숄즈 1주당(원)'] == pytest.approx(150.0)
 
 
 # ── 2단계 ① 조건 변경 · ② 현금결제형 ─────────────────────────────────────────
@@ -591,15 +658,20 @@ def test_cash_settled_liability_is_remeasured_at_year_end():
     gone = calculate(done)
     assert gone.raw['liab'] == 0 and gone.raw['expense'] == pytest.approx(2000.0)
     assert gone.summary['amounts_per_share'] == {'so_fair': 0.0, 'so_liab': 0.0}
-    assert '부채 재측정' in _workbook(gone, detail=True, accounting=True).sheetnames
+    assert '부채 재측정' in _workbook(gone, accounting=True).sheetnames
+    detail = _workbook(gone, detail=True, accounting=True)
+    assert any(c.value == '2. 회차별 공정가치와 주식보상부채' for row in detail['결과'].iter_rows() for c in row)
     assert any('부여 수량' in i.message for i in inspect_case(case(so_rows=[dict(name='1차', vest='2028-01-01', qty=0.0)])))
 
 
 def test_mode_workpapers():
     wb = _workbook(calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)])), detail=True, accounting=True)
-    for name in ('조건 변경', '조건 변경표 입력', '격자 1차 변경 후', '격자 1차 변경 전', '비용 배분', '회계처리'):
+    for name in ('해설', '가정', '격자 1차 변경 후', '격자 1차 변경 전', '결과', '비용 배분', '회계처리'):
         assert name in wb.sheetnames, name
-    assert '회차별 공정가치' not in wb.sheetnames
+    assert wb['가정'][_cell(wb['가정'], '회차', '1차', '부여일 1주당 공정가치(원)')].value == 20.0
+    assert any(c.value == '2. 회차별 조건 변경 전·후 공정가치와 증분' for row in wb['결과'].iter_rows() for c in row)
+    basic = _workbook(calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)])), accounting=True)
+    assert '조건 변경' in basic.sheetnames and '회차별 공정가치' not in basic.sheetnames
     run = calculate(cash_case(so_prev_liab=5000.0))
     wb = _workbook(run, accounting=True)
     assert '부채 재측정' in wb.sheetnames and '조건 변경' not in wb.sheetnames
@@ -686,11 +758,15 @@ FORMULA_CASES = {
         [dict(name='1차', K=80.0, grant_fv=20.0)], grid_days=14.0, so_ex=1, so_mkt=2, so_nv=0.05,
         rows=[dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=0.9, target=130.0)]),
     '현금결제형 · 가득일 판정': lambda: _targeted(cash_case(so_prev_liab=5000.0, grid_days=14.0, so_mkt=1)),
+    '현금결제형 · 한 번이라도 · 측정기준일 전 도달': lambda: _targeted(cash_case(so_prev_liab=5000.0, grid_days=14.0, so_mkt=2),
+                                                    hit=True),
 }
 
 
-def _targeted(c):
+def _targeted(c, hit=False):
     c.contract['so_rows'][0]['target'] = 120.0      # 가득일이 결산일 뒤인 회차만
+    if hit:
+        c.contract['so_rows'][0]['hit'] = True
     return c
 
 
@@ -719,18 +795,23 @@ def test_formula_workbook_has_live_lattices_and_only_estimates_open():
     value = load_workbook(io.BytesIO(_xlsx(run, detail=True, accounting=True)))
     assert wb.sheetnames == value.sheetnames                       # 값 조서와 같은 시트
     ws = wb['격자 1차 변경 후']
-    lay = SOR.lattice_layout(run.raw['rows'][0]['n'])
-    assert ws.cell(lay['param']['1주당 공정가치'], 3).value == f"=C{lay['val']}"
-    assert ws.cell(lay['param']['상승 배수 u'], 3).value.startswith('=EXP(')
-    assert all(isinstance(c.value, str) and c.value.startswith('=') for c in ws[lay['val']][2:5])
-    # 금리는 앱이 정한 값 (엑셀에서 고치지 않는다)
-    assert isinstance(ws.cell(lay['time']['선도 무위험 금리(연속)'], 3).value, float)
+    lay = SOW.layout(run.raw['rows'][0]['n'])
+    h = lay['head']
+    assert ws.cell(h['상승계수 u'], 3).value.startswith('=EXP(')
+    assert all(isinstance(c.value, str) and c.value.startswith('=') for c in ws[lay['value']][2:5])
+    assert ws.cell(lay['stock'], 3).value.startswith("='가정'!")
+    # 금리·날짜·행사 일정은 앱이 정한 값 (엑셀에서 고치지 않는다)
+    assert isinstance(ws.cell(h['무위험 선도이자율'], 3).value, float)
+    assert ws.cell(h['행사 가능 (1=예)'], 3).value in (0, 1)
     editable = {(s.title, c.coordinate) for s in wb for row in s.iter_rows() for c in row
                 if c.protection.locked is False}
-    assert editable == ({('평가 입력값', f'B{r}') for r in range(2, 8)} | {('회차표 입력', 'F2')} |
-                        {('조건 변경표 입력', 'G2')})
+    A = wb['가정']
+    labels = ('측정기준일 주가(원)', '변동성 σ (연)', '배당수익률 (연, 연속복리)', '행사 배수 (주가 ÷ 행사가격)',
+              '가득 뒤 연간 퇴사율', '비가득조건 연간 중단율 (가득일까지)')
+    assert editable == ({('가정', _input(wb, x)) for x in labels} | {('가정', _cell(A, '회차', '1차', '가득 예상 비율'))} |
+                        {('가정', _cell(A, '회차', '1차', '부여일 1주당 공정가치(원)'))})
     assert all(s.protection.sheet for s in wb)
-    assert wb['계산대사']['C2'].value.startswith("='평가요약'!")
+    assert wb['계산대사']['C2'].value.startswith("='결과'!")
 
 
 def test_formula_workbook_matches_tranche_names_like_the_engine():
@@ -738,9 +819,9 @@ def test_formula_workbook_matches_tranche_names_like_the_engine():
     rows = [dict(name=' 1차 ', vest='2028-01-01', end='', qty=1000.0, keep=0.9)]
     run = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=rows, grid_days=14.0))
     wb = load_workbook(io.BytesIO(_xlsx(run, detail=True, formula=True)))
-    ws = wb['조건 변경']
-    head = [c.value for c in ws[1]]
-    assert ws.cell(2, head.index('부여일 1주당 공정가치') + 1).value == "='조건 변경표 입력'!$G$2"
+    want = _cell(wb['가정'], '회차', '1차', '부여일 1주당 공정가치(원)')
+    got = wb['결과'][_cell(wb['결과'], '회차', ' 1차 ', '부여일 1주당 공정가치')].value
+    assert got == f"='가정'!${want[0]}${want[1:]}"
     # 숫자 회차명 — 불러온 평가파일에서 생길 수 있다 (자동 검토 지적)
     num = [dict(name=1, vest='2028-01-01', end='', qty=1000.0, keep=0.9)]
     for c in (mod_case([dict(name=1, K=80.0, grant_fv=20.0)], rows=num, grid_days=14.0),
@@ -778,11 +859,10 @@ def test_formula_workbook_recalculates_to_the_value_workbook(name):
 def test_formula_workbook_follows_changed_estimates_like_the_app():
     c = FORMULA_CASES['부여일 · 행사 배수 · 퇴사율']()
     wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True)))
-    edits = {'S0': 110.0, 'sig': 0.35, 'so_mult': 2.0, 'so_exit': 0.03}
-    rows = {'S0': 2, 'sig': 3, 'so_mult': 5, 'so_exit': 6}
+    edits = {'측정기준일 주가(원)': 110.0, '변동성 σ (연)': 0.35, '행사 배수 (주가 ÷ 행사가격)': 2.0, '가득 뒤 연간 퇴사율': 0.03}
     for k, v in edits.items():
-        wb['평가 입력값'].cell(rows[k], 2).value = v
-    wb['회차표 입력']['F3'].value = 0.7
+        wb['가정'][_input(wb, k)].value = v
+    wb['가정'][_cell(wb['가정'], '회차', '2차', '가득 예상 비율')].value = 0.7
     out = io.BytesIO()
     wb.save(out)
     live = _recalc(out.getvalue())
@@ -792,12 +872,12 @@ def test_formula_workbook_follows_changed_estimates_like_the_app():
     c2.contract['so_rows'][1]['keep'] = 0.7
     app = calculate(c2)
     from valuation.service import AMOUNT_LABELS
-    lab = {r[0]: r for r in live['평가요약'].iter_rows(values_only=True)}
+    lab = _amount_rows(live['결과'])
     for key, want in app.summary['amounts_total'].items():
-        assert lab[AMOUNT_LABELS[key]][1] == pytest.approx(want, rel=1e-10), key
-        assert lab[AMOUNT_LABELS[key]][3] == pytest.approx(app.summary['amounts_100'][key], rel=1e-10), key
-    sched = [r for r in live['비용 배분'].iter_rows(min_row=2, values_only=True)]
-    assert [x[3] for x in sched] == pytest.approx([x['당기 비용'] for x in app.summary['so_schedule']], rel=1e-10)
+        assert lab[AMOUNT_LABELS[key]][0] == pytest.approx(want, rel=1e-10), key
+        assert lab[AMOUNT_LABELS[key]][2] == pytest.approx(app.summary['amounts_100'][key], rel=1e-10), key
+    sched = _records(live['비용 배분'], '결산일')
+    assert [x['당기 비용'] for x in sched] == pytest.approx([x['당기 비용'] for x in app.summary['so_schedule']], rel=1e-10)
 
 
 @pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
@@ -805,8 +885,10 @@ def test_formula_workbook_follows_changed_estimates_like_the_app():
 def test_formula_workbook_follows_changed_condition_inputs_like_the_app(name):
     c = FORMULA_CASES[name]()
     wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True)))
-    ws = wb['평가 입력값']
-    ws['B2'].value, ws['B3'].value, ws['B7'].value = 115.0, 0.4, 0.08
+    A = wb['가정']
+    A[_input(wb, '측정기준일 주가(원)')].value = 115.0
+    A[_input(wb, '변동성 σ (연)')].value = 0.4
+    A[_input(wb, '비가득조건 연간 중단율 (가득일까지)')].value = 0.08
     out = io.BytesIO()
     wb.save(out)
     live = _recalc(out.getvalue())
@@ -815,9 +897,9 @@ def test_formula_workbook_follows_changed_condition_inputs_like_the_app(name):
     c2.method['so_nv'] = 0.08
     app = calculate(c2)
     from valuation.service import AMOUNT_LABELS
-    lab = {r[0]: r for r in live['평가요약'].iter_rows(values_only=True)}
+    lab = _amount_rows(live['결과'])
     for key, want in app.summary['amounts_total'].items():
-        assert lab[AMOUNT_LABELS[key]][1] == pytest.approx(want, rel=1e-10), key
+        assert lab[AMOUNT_LABELS[key]][0] == pytest.approx(want, rel=1e-10), key
 
 
 @pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
@@ -826,8 +908,8 @@ def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
     c = FORMULA_CASES['조건 변경 · 증분 0']()
     assert calculate(c).raw['rows'][0]['incr'] == 0
     wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
-    wb['평가 입력값']['B2'].value = 150.0                  # 주가를 낮추면 바로 행사하지 않아 연장의 증분이 생긴다
-    wb['조건 변경표 입력']['G2'].value = 10.0
+    wb['가정'][_input(wb, '측정기준일 주가(원)')].value = 150.0     # 주가를 낮추면 바로 행사하지 않아 연장의 증분이 생긴다
+    wb['가정'][_cell(wb['가정'], '회차', '1차', '부여일 1주당 공정가치(원)')].value = 10.0
     out = io.BytesIO()
     wb.save(out)
     live = _recalc(out.getvalue())
@@ -836,10 +918,9 @@ def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
     c2.contract['so_mod_rows'][0]['grant_fv'] = 10.0
     app = calculate(c2)
     assert app.raw['cost'] > 1000
-    sched = [r for r in live['비용 배분'].iter_rows(min_row=2, values_only=True)]
-    assert [x[4] for x in sched] == pytest.approx([x['당기 비용'] for x in app.summary['so_schedule']], rel=1e-10)
-    journal = {r[0]: r[2] for r in live['회계처리'].iter_rows(min_row=3, values_only=True)
-               if r and r[1] == '주식보상비용'}
+    sched = _records(live['비용 배분'], '결산일')
+    assert [x['당기 비용'] for x in sched] == pytest.approx([x['당기 비용'] for x in app.summary['so_schedule']], rel=1e-10)
+    journal = {x['결산일']: x['차변 금액(원)'] for x in _records(live['회계처리'], '결산일') if x['차변 계정'] == '주식보상비용'}
     want = {}
     for x in app.summary['so_schedule']:
         want[x['결산일']] = want.get(x['결산일'], 0.0) + x['당기 비용']
@@ -847,10 +928,71 @@ def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
     # 현금결제형 — 처음 결제액 0, 엑셀에서 3,000원을 넣는다
     c = cash_case(grid_days=14.0, so_prev_liab=5000.0)
     wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
-    wb['평가 입력값']['B9'].value = 3000.0
+    wb['가정'][_input(wb, '당기 현금 결제액(원)')].value = 3000.0
     out = io.BytesIO()
     wb.save(out)
-    rows = {r[0]: r for r in _recalc(out.getvalue())['회계처리'].iter_rows(values_only=True) if r and r[0]}
+    rows = {r[1]: r[1:] for r in _recalc(out.getvalue())['회계처리'].iter_rows(values_only=True) if r and r[1]}
     assert rows['당기 중'][1:5] == ('주식보상부채', 3000.0, '현금', 3000.0)
     c.method['so_paid'] = 3000.0
     assert rows[c.method['d_base']][2] == pytest.approx(calculate(c).raw['expense'], rel=1e-10)
+
+
+# ── 계산표 — 전환사채·상환전환우선주와 같은 화면, 셀을 누르면 계산식과 참조 노드 ─────────────────────
+
+def test_calculation_grid_keeps_the_unmet_target_values_at_expiry():
+    # 가득일 = 행사 종료일인 «한 번이라도» 판정 — 마지막 열의 미도달 상태 가치도 싣는다 (자동 검토 지적)
+    from valuation.calculation_view import so_node_values
+    run = calculate(case(so_mkt=2, so_rows=_target_row(130.0), d_mat='2028-01-01', div_y=0.01, grid_days=14.0))
+    r = run.raw['rows'][0]
+    assert r['vest_step'] == r['n']
+    view = so_node_values(run, r, r['n'] - 1, r['n'])
+    for down in range(r['n'] + 1):
+        node = view['nodes'][f"{r['n']},{down}"]
+        assert node['wait'] == r['wait'][r['n']][down]
+        tr = SO.node_trace(run.terms, r, r['n'], down)
+        assert abs(tr['wait_reconciliation']) <= 1e-12
+    parent = view['nodes'][f"{r['n'] - 1},0"]
+    assert parent['wait'] == r['wait'][r['n'] - 1][0]
+
+
+@pytest.mark.parametrize('mkt', [0, 1, 2])
+def test_calculation_grid_reads_the_engine_lattice(mkt, monkeypatch):
+    import json
+    from valuation.calculation_view import so_node_values, so_schedule_values, bootstrap_values, worksheet_html
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0, target=130.0 if mkt else None)]
+    run = calculate(case(so_ex=2, so_mult=1.8, so_exit=0.05, so_nv=0.05, div_y=0.01, so_mkt=mkt, so_rows=rows,
+                         grid_days=14.0))
+    r = run.raw['rows'][0]
+    monkeypatch.setattr(SO, 'value_row', lambda *a, **k: pytest.fail('화면이 다시 평가했습니다'))
+    view = so_node_values(run, r, 30, 61)
+    assert {n['i'] for n in view['nodes'].values()} == set(range(30, 63))     # 마지막 열이 참조하는 다음 열까지
+    for key, n in view['nodes'].items():
+        i, down = n['i'], n['down']
+        assert key == f'{i},{down}' and n['j'] == i - down
+        assert n['value'] == r['values'][i][down] and n['stock'] == r['prices'][i][down]
+        assert n['exercise'] == r['exercise'][i][down] and (n['kind'] == '행사') == n['exercise']
+        up = view['nodes'].get(f"{n['up'][0]},{n['up'][0] - n['up'][1]}") if n['up'] else None
+        dn = view['nodes'].get(f"{n['dn'][0]},{n['dn'][0] - n['dn'][1]}") if n['dn'] else None
+        if up and dn:                     # 화면 계산식 C = 할인계수 × [p × V↑ + (1 − p) × V↓]
+            s = view['steps'][i]
+            assert (up['down'], dn['down']) == (down, down + 1)
+            assert n['cont'] == pytest.approx(s['df']*(s['q']*up['value'] + (1 - s['q'])*dn['value']), rel=1e-12)
+            if mkt == 2 and n['wait'] is not None and i < r['vest_step'] and n['stock'] < 130.0:
+                assert n['wait'] == pytest.approx((1 - s['nv'])*s['df']*(s['q']*up['wait'] + (1 - s['q'])*dn['wait']),
+                                                  rel=1e-12)
+    page = worksheet_html(view)
+    payload = json.loads(page.split('type="application/json">')[1].split('</script>')[0])
+    assert payload['nodes']['30,0']['value'] == r['values'][30][0] and 'NaN' not in page
+    if mkt == 1:
+        judged = [n for n in so_node_values(run, r, r['vest_step'], r['vest_step'])['nodes'].values()
+                  if n['i'] == r['vest_step']]
+        assert any(0 < n['share'] < 1 for n in judged) and any(n['kind'] == '소멸 (시장조건)' for n in judged)
+    sched = so_schedule_values(run, r)
+    assert [s['q'] for s in sched['steps'][:-1]] == r['p'] and [s['rf'] for s in sched['steps'][:-1]] == r['fwd']
+    assert sum(s['before_vest'] for s in sched['steps']) == r['vest_step']
+    assert sum(not s['can_ex'] for s in sched['steps']) == r['ex_step']
+    assert all(s['nv'] == (r['nv_step'] if s['i'] < r['vest_step'] else 0.0) for s in sched['steps'][:-1])
+    boot = bootstrap_values(run, horizon=r['t_end'], risk_free_only=True)
+    curve = SO.rate_fn(run.terms, r['t_end'])
+    assert len(boot['curves']) == 1
+    assert all(row['spot'] == pytest.approx(curve(row['t'])) for row in boot['curves'][0]['rows'])

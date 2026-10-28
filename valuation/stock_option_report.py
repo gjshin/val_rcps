@@ -1,16 +1,10 @@
 """주식선택권 조서 — 이미 평가한 실행 결과(run)로만 만든다. 새로 계산하지 않는다.
 
 기본 값 조서는 report.basic_workbook 이 공통 시트를 만들고 여기의 시트를 더한다.
-상세 값 조서는 회차마다 이항격자 전체(옵션 1주당 가치·주가·행사 노드)를 싣는다.
-조건 변경이면 회차마다 변경 전·후 격자를, 현금결제형이면 결산일 격자를 싣는다.
-상세 수식 조서는 상세 값 조서와 같은 시트·같은 칸에 엔진과 같은 순서의 수식을 넣는다.
+상세 값·수식 조서는 stock_option_workpaper 가 전환사채 상세 조서와 같은 서식으로 만들고, 여기의 표를 쓴다.
 """
 import math
 import re
-
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
 
 from . import stock_option as SO
 
@@ -25,9 +19,6 @@ SUM_COLS = {'grant': ('부여 수량', '공정가치', '보상원가'),
             'mod': ('변경 전 수량', '늘어난 수량', '당초 보상원가', '증분 공정가치', '증분 보상원가'),
             'cash': ('부여 수량', '공정가치', '가득 예상 수량의 공정가치', '주식보상부채')}
 MODE_TEXT = {'grant': '부여일 평가', 'mod': '조건 변경 평가 (증분 공정가치)', 'cash': '현금결제형 결산일 재측정'}
-NAVY = PatternFill('solid', fgColor='17365D')
-GO = PatternFill('solid', fgColor='FCE4D6')        # 행사 노드
-HEAD = Font(bold=True, color='FFFFFF')
 DRAFT_NOTE = '입력 가정에 따른 초안입니다. 계약별 회계처리는 별도로 검토하십시오.'
 EXPENSE_LABEL = '당기 비용(원) = 당기말 부채 − 전기말 부채 + 당기 결제액'
 
@@ -161,26 +152,6 @@ def journal_rows(run):
     return rows
 
 
-def _table(wb, name, rows, width=24):
-    ws = wb.create_sheet(name)
-    for row in rows:
-        ws.append([str(v) if isinstance(v, (dict, list, tuple)) else v for v in row])
-    ws.freeze_panes = 'A2'
-    ws.sheet_view.showGridLines = False
-    for cell in ws[1]:
-        cell.font, cell.fill = HEAD, NAVY
-    for row in ws.iter_rows():
-        for cell in row:
-            cell.alignment = Alignment(vertical='top', wrap_text=True)
-            if isinstance(cell.value, str):
-                cell.data_type = 's'            # 입력 문자열은 엑셀 수식으로 읽히지 않는다
-            elif isinstance(cell.value, float):
-                cell.number_format = '#,##0.000000'
-    for col in range(1, ws.max_column + 1):
-        ws.column_dimensions[get_column_letter(col)].width = width
-    return ws
-
-
 def add_basic_sheets(wb, run, sheet):
     """기본 값 조서에 더하는 시트 — report.basic_workbook 의 sheet() 로 만든다."""
     md = run.raw['mode']
@@ -193,111 +164,6 @@ def add_basic_sheets(wb, run, sheet):
 
 
 ROWS_SHEET = {'grant': '회차별 공정가치', 'mod': '조건 변경', 'cash': '부채 재측정'}
-INPUT_SHEET = '평가 입력값'
-# 평가 입력값 시트의 칸 — 수식 조서의 격자·표가 이 칸을 가리킨다
-IN_ROW = {'S0': 2, 'sig': 3, 'div_y': 4, 'so_mult': 5, 'so_exit': 6, 'so_nv': 7, 'so_prev_liab': 8, 'so_paid': 9}
-LATTICE_PARAMS = ('행사가격(원)', '가득일', '행사 시작일', '행사 종료일', '구간 수', '구간 길이(년)', '상승 배수 u',
-                  '하락 배수 d', '가득 시점', '행사 가능 시점', '구간 퇴사 확률', '구간 비가득조건 중단 확률',
-                  '시장조건 목표 주가(원)', '시장조건 판정', '조기행사 가정', '1주당 공정가치')
-LATTICE_TIME = ('시점', '격자일', '선도 무위험 금리(연속)', '상승 확률', '할인계수', '행사 가능')
-
-
-def lattice_layout(n):
-    """격자 시트의 자리 — 값 조서와 수식 조서가 같은 자리를 쓴다."""
-    param = {k: 3 + i for i, k in enumerate(LATTICE_PARAMS)}
-    top = 3 + len(LATTICE_PARAMS) + 1
-    time = {k: top + i for i, k in enumerate(LATTICE_TIME)}
-    val = top + len(LATTICE_TIME) + 2          # 옵션 가치 첫 줄 (자리 0)
-    px = val + n + 3                           # 주가 첫 줄 (자리 0)
-    wait = px + n + 3                          # 시장조건 «한 번이라도 도달» — 아직 닿지 않은 상태의 가치
-    return dict(param=param, time=time, top=top, val=val, px=px, wait=wait)
-
-
-def input_table(run):
-    """평가 입력값 — 수식 조서에서 고칠 수 있는 시장자료·가정 (값 조서는 같은 표를 값으로 싣는다)."""
-    t = run.terms
-    rows = [['항목', '값', '설명'],
-            ['측정기준일 주가(원)', float(t.S0), '격자의 출발 주가 · 블랙-숄즈 대조의 주가'],
-            ['변동성 σ (연)', float(t.sig), '상승 배수 u = e^(σ × √구간 길이), 하락 배수 d = 1 ÷ u'],
-            ['배당수익률 (연, 연속복리)', float(t.div_y), '상승 확률 = (e^((선도 금리 − 배당수익률) × 구간 길이) − d) ÷ (u − d)'],
-            ['행사 배수 (주가 ÷ 행사가격)', float(t.so_mult), '«행사 배수에 도달하면 행사» 가정에서만 씁니다'],
-            ['가득 뒤 연간 퇴사율', float(t.so_exit), '구간 퇴사 확률 = 1 − (1 − 퇴사율)^구간 길이'],
-            ['비가득조건 연간 중단율 (가득일까지)', float(t.so_nv),
-             '가득 전 구간마다 «1 − 구간 중단 확률» 을 곱함 · 구간 중단 확률 = 1 − (1 − 중단율)^구간 길이 (문단 21A)']]
-    if run.raw['mode'] == 'cash':
-        rows += [['전기말 주식보상부채(원, -1은 없음)', float(t.so_prev_liab), '당기 비용 = 당기말 부채 − 전기말 부채(없으면 0) + 당기 결제액'],
-                 ['당기 현금 결제액(원)', float(t.so_paid), '당기 중 행사되어 현금으로 지급한 금액']]
-    return rows
-
-
-def lattice_sheet(wb, run, row, name, title=None, formula=False):
-    """한 회차의 격자 — 위: 시점별 금리·확률, 가운데: 옵션 1주당 가치(행사 노드 색칠), 아래: 주가.
-
-    수식 조서는 같은 자리에 값 대신 수식을 넣는다 (formula_lattice). 행사 노드 색은 조건부 서식이 정한다.
-    """
-    import datetime as dt
-    t = run.terms
-    ws = wb.create_sheet(name)
-    ws.sheet_view.showGridLines = False
-    n = row['n']
-    pos = lattice_layout(n)
-    ws.cell(1, 2, f"{title or row['name']} — 이항격자 (옵션 1주당 가치와 주가, 원)").font = Font(bold=True, size=12, color='17365D')
-    values = dict(zip(LATTICE_PARAMS, (
-        float(row.get('K') or t.K0), row['vest'], row['start'], row['end'], n, row['dt'], row['u'], row['d'],
-        row['vest_step'], row['ex_step'], 1.0 - (1.0 - float(t.so_exit))**row['dt'] if t.so_exit else 0.0,
-        row['nv_step'], row.get('target'),
-        '측정기준일 전에 목표 도달 — 시장조건 충족' if row.get('hit') else SO.MKT_LABELS[int(row.get('mkt') or 0)],
-        SO.EX_LABELS[int(t.so_ex)], row['fv'])))
-    for a, r in pos['param'].items():
-        ws.cell(r, 2, a)
-        if values[a] is not None:
-            ws.cell(r, 3, values[a])
-    tr = pos['time']
-    db = dt.date.fromisoformat(t.d_base)
-    for h, r in tr.items():
-        c = ws.cell(r, 2, h)
-        c.font, c.fill = HEAD, NAVY
-    for i in range(n + 1):
-        col = 3 + i
-        ws.cell(tr['시점'], col, i)
-        ws.cell(tr['격자일'], col, (db + dt.timedelta(days=round(i*row['dt']*365))).isoformat())
-        if i < n:
-            ws.cell(tr['선도 무위험 금리(연속)'], col, row['fwd'][i]).number_format = '0.000000%'
-            ws.cell(tr['상승 확률'], col, row['p'][i]).number_format = '0.00000000'
-            ws.cell(tr['할인계수'], col, math.exp(-row['fwd'][i]*row['dt'])).number_format = '0.00000000'
-        ws.cell(tr['행사 가능'], col, '가능' if i >= row['ex_step'] else '불가')
-    blocks = [('옵션 1주당 가치 (색칠한 칸 = 그 노드에서 행사)', row['values'], pos['val'], True),
-              ('주가 (자리 0이 가장 높은 주가)', row['prices'], pos['px'], False)]
-    for head, grid, r0, mark in blocks:
-        c = ws.cell(r0 - 1, 2, head)
-        c.font = Font(bold=True, color='17365D')
-        for j in range(n + 1):
-            ws.cell(r0 + j, 2, f'자리 {j}')
-        for i in range(n + 1):
-            col = 3 + i
-            vals, go = grid[i], row['exercise'][i]
-            for j in range(i + 1):
-                c = ws.cell(r0 + j, col, vals[j])
-                c.number_format = '#,##0.00'
-                if mark and go[j] and not formula:
-                    c.fill = GO
-    if row.get('wait') is not None:
-        r0, k = pos['wait'], row['vest_step']
-        c = ws.cell(r0 - 1, 2, f"목표 주가에 아직 닿지 않은 상태의 가치 (가득 시점 {k}까지 · 닿으면 위 옵션 가치로 바뀜)")
-        c.font = Font(bold=True, color='17365D')
-        for j in range(k + 1):
-            ws.cell(r0 + j, 2, f'자리 {j}')
-        for i in range(k + 1):
-            for j in range(i + 1):
-                ws.cell(r0 + j, 3 + i, row['wait'][i][j]).number_format = '#,##0.00'
-    ws.column_dimensions['A'].width = 4
-    ws.column_dimensions['B'].width = 30
-    for i in range(n + 1):
-        ws.column_dimensions[get_column_letter(3 + i)].width = 12
-    ws.freeze_panes = ws.cell(tr['격자일'], 3)
-    if formula:
-        formula_lattice(ws, run, row, pos)
-    return ws
 
 
 def _sheet_name(base, used):
@@ -311,275 +177,12 @@ def _sheet_name(base, used):
 
 
 def detail_workbook(run, *, accounting=False, formula=False):
-    """상세 조서 — 값 조서는 평가 당시의 값으로 고정되고, 수식 조서는 같은 시트·같은 칸에 수식이 들어간다.
-
-    수식 조서를 다시 계산하면 값 조서와 같은 값이 나와야 한다 (tests/test_stock_option.py 가 리브레오피스로 대조).
-    """
-    from .report import basic_workbook
-    wb = basic_workbook(run, as_workbook=True)
-    ws = _table(wb, INPUT_SHEET, input_table(run), width=30)
-    ws.column_dimensions['C'].width = 70
-    wb.move_sheet(ws, offset=1 - wb.sheetnames.index(ws.title))      # 평가요약 바로 뒤
-    used = set(wb.sheetnames)
-    names = {}
-    for name, row in lattices(run).items():
-        names[name] = lattice_sheet(wb, run, row, _sheet_name(f"격자 {name}", used), title=name, formula=formula).title
-    if accounting:
-        append_accounting(wb, run)
-    if formula:
-        formula_tables(wb, run, names)
-    wb.so_key_cells = key_cells(wb, run, names)
-    return wb
+    """상세 조서 — 전환사채·상환전환우선주 상세 조서와 같은 서식 (stock_option_workpaper)."""
+    from .stock_option_workpaper import detail_workbook as build
+    return build(run, accounting=accounting, formula=formula)
 
 
 def append_accounting(wb, run):
-    if '회계처리' in wb.sheetnames:
-        del wb['회계처리']
-    _table(wb, '회계처리', journal_rows(run), width=30)
-
-
-# ── 수식 조서 ───────────────────────────────────────────────────────────────
-# 값 조서와 같은 칸에 엔진과 같은 순서의 계산식을 넣는다. 금리(선도 무위험 금리)·날짜·구간 수·행사 가능 시점은
-# 앱이 정한 값으로 둔다 — 바꾸려면 앱에서 다시 평가한다. 노란 칸(평가 입력값·가득 예상 비율·부여일 공정가치)만 고친다.
-
-def _q(name):
-    return "'" + name.replace("'", "''") + "'"
-
-
-def _in(key):
-    return f"{_q(INPUT_SHEET)}!$B${IN_ROW[key]}"
-
-
-def formula_lattice(ws, run, row, pos):
-    from openpyxl.formatting.rule import FormulaRule
-    t, n = run.terms, row['n']
-    P, tr, v0, p0 = pos['param'], pos['time'], pos['val'], pos['px']
-    K, DT, U, D, E = (f"$C${P[k]}" for k in ('행사가격(원)', '구간 길이(년)', '상승 배수 u', '하락 배수 d', '구간 퇴사 확률'))
-    S0, SIG, Q, MULT, EXIT = (_in(k) for k in ('S0', 'sig', 'div_y', 'so_mult', 'so_exit'))
-    ws.cell(P['상승 배수 u'], 3, f"=EXP({SIG}*SQRT({DT}))")
-    ws.cell(P['하락 배수 d'], 3, f"=1/{U}")
-    ws.cell(P['구간 퇴사 확률'], 3, f"=1-(1-{EXIT})^{DT}")
-    ws.cell(P['구간 비가득조건 중단 확률'], 3, f"=1-(1-{_in('so_nv')})^{DT}")
-    NVS, TGT = f"$C${P['구간 비가득조건 중단 확률']}", f"$C${P['시장조건 목표 주가(원)']}"
-    mkt, vest_step = int(row.get('mkt') or 0), int(row['vest_step'])
-    w0 = pos['wait']
-    ws.cell(P['1주당 공정가치'], 3, f"=C{w0}" if mkt == 2 else f"=C{v0}")
-    fr, pr, dr = tr['선도 무위험 금리(연속)'], tr['상승 확률'], tr['할인계수']
-    mode, ex_step = int(t.so_ex), int(row['ex_step'])
-    hit = lambda S: f"{S}>={TGT}*(1-{SO.MKT_TOL:g})"   # 목표 주가 이상 — 엔진과 같은 여유
-    L = get_column_letter
-    for i in range(n + 1):
-        c = L(3 + i)
-        if i < n:
-            ws.cell(pr, 3 + i, f"=(EXP(({c}{fr}-{Q})*{DT})-{D})/({U}-{D})")
-            ws.cell(dr, 3 + i, f"=EXP(-{c}{fr}*{DT})")
-        for j in range(i + 1):
-            ws.cell(p0 + j, 3 + i, f"={S0}*{U}^({i - 2*j})")
-            S = f"{c}{p0 + j}"
-            if i == n:
-                f = f"=MAX({S}-{K},0)"
-            else:
-                c1 = L(4 + i)
-                cont = f"{c}${dr}*({c}${pr}*{c1}{v0 + j}+(1-{c}${pr})*{c1}{v0 + j + 1})"
-                if i < vest_step:
-                    f = f"=(1-{NVS})*{cont}"              # 가득 전 비가득조건 (중단율 0이면 그대로)
-                elif i < ex_step:
-                    f = f"={cont}"
-                else:
-                    H = f"((1-{E})*{cont}+{E}*MAX({S}-{K},0))"
-                    if mode == 1:
-                        f = f"=IF({S}-{K}>{H}+1E-12*MAX(1,ABS({H})),{S}-{K},{H})"
-                    elif mode == 2:
-                        f = f"=IF(AND({S}>={MULT}*{K}-1E-12*{K},{S}-{K}>0),{S}-{K},{H})"
-                    else:
-                        f = f"={H}"
-            if mkt == 1 and i == vest_step:
-                # 가득일 주가가 목표 미만이면 소멸 — 목표가 걸친 노드는 구간 가운데 목표 이상인 비율만큼 (엔진 pass_share)
-                share = f"MIN(1,MAX(0,(LN({S})+LN({U})-LN({TGT}))/(2*LN({U}))))"
-                f = f"={share}*({f[1:]})"
-            ws.cell(v0 + j, 3 + i, f)
-    # 행사 노드 색 — 행사할 수 있는 시점에서 옵션 가치가 지금 행사한 값(주가 − 행사가격 > 0)과 같은 칸
-    last = L(3 + n)
-    rule = FormulaRule(formula=[f"AND(C${tr['행사 가능']}=\"가능\",C{p0}-{K}>0,"
-                                f"ABS(C{v0}-(C{p0}-{K}))<=1E-9*MAX(1,ABS(C{v0})))"], fill=GO)
-    ws.conditional_formatting.add(f"C{v0}:{last}{v0 + n}", rule)
-    if mkt == 2:
-        # 아직 목표 주가에 닿지 않은 상태 — 닿으면 위 옵션 가치, 가득 시점까지 못 닿으면 0
-        for i in range(vest_step + 1):
-            c = L(3 + i)
-            for j in range(i + 1):
-                S, V = f"{c}{p0 + j}", f"{c}{v0 + j}"
-                if i == vest_step:
-                    f = f"=IF({hit(S)},{V},0)"
-                else:
-                    c1 = L(4 + i)
-                    cont = f"{c}${dr}*({c}${pr}*{c1}{w0 + j}+(1-{c}${pr})*{c1}{w0 + j + 1})"
-                    f = f"=IF({hit(S)},{V},(1-{NVS})*{cont})"
-                ws.cell(w0 + j, 3 + i, f)
-
-
-def _rows_cols(wb, run):
-    ws = wb[ROWS_SHEET[run.raw['mode']]]
-    cols = {ws.cell(1, c).value: get_column_letter(c) for c in range(1, ws.max_column + 1)}
-    return ws, cols
-
-
-def formula_tables(wb, run, names):
-    """회차표·블랙-숄즈 대조·비용 배분·평가요약·회계처리를 격자와 평가 입력값에 잇는다."""
-    from .legacy import INPUT_FILL
-    yellow = PatternFill('solid', fgColor=INPUT_FILL)
-    t, raw, md = run.terms, run.raw, run.raw['mode']
-    S0, SIG, Q = (_in(k) for k in ('S0', 'sig', 'div_y'))
-    ins = wb[INPUT_SHEET]
-    for r in range(2, ins.max_row + 1):
-        ins.cell(r, 2).fill = yellow
-    fvrow = lattice_layout(1)['param']['1주당 공정가치']
-
-    def root(name):
-        return f"{_q(names[name])}!$C${fvrow}"
-
-    def strike(name):
-        return f"{_q(names[name])}!$C${lattice_layout(1)['param']['행사가격(원)']}"
-
-    # 회차표 입력 — 가득 예상 비율(F)은 평가자 추정이라 노란 칸
-    inp = wb['회차표 입력']
-    keep = {}
-    for k, r in enumerate(raw['rows'], start=2):
-        inp.cell(k, 6).fill = yellow
-        keep[r['name']] = f"{_q('회차표 입력')}!$F${k}"
-    gfv = {}
-    if md == 'mod':
-        mws = wb['조건 변경표 입력']
-        for k in range(2, mws.max_row + 1):
-            mws.cell(k, 7).fill = yellow
-            gfv[str(mws.cell(k, 1).value).strip()] = f"{_q('조건 변경표 입력')}!$G${k}"
-    # 블랙-숄즈 대조 — 행마다 (격자 이름, 만기 구분)
-    bs = wb['블랙-숄즈 대조']
-    bsrow = {}
-    for r in range(2, bs.max_row + 1):
-        name, kind = bs.cell(r, 1).value, bs.cell(r, 2).value
-        bsrow[name, kind] = r
-        K = strike(name)
-        if bs.cell(r, 5).value is None:          # 남은 기간이 없다 — 내재가치
-            bs.cell(r, 9, f"=MAX({S0}-{K},0)")
-        else:
-            bs.cell(r, 5, f"=(LN({S0}/{K})+(D{r}-{Q}+0.5*{SIG}*{SIG})*C{r})/({SIG}*SQRT(C{r}))")
-            bs.cell(r, 6, f"=E{r}-{SIG}*SQRT(C{r})")
-            bs.cell(r, 7, f"=NORMSDIST(E{r})")
-            bs.cell(r, 8, f"=NORMSDIST(F{r})")
-            bs.cell(r, 9, f"={S0}*EXP(-{Q}*C{r})*G{r}-{K}*EXP(-D{r}*C{r})*H{r}")
-        bs.cell(r, 10, f"={root(name)}")
-        bs.cell(r, 11, f"=J{r}-I{r}")
-    # 회차표 (평가 종류별 시트)
-    ws, cols = _rows_cols(wb, run)
-    m = len(raw['rows'])
-    at = {}
-    for k, r in enumerate(raw['rows'], start=2):
-        name = r['name']
-        cell = lambda h, k=k: f"{cols[h]}{k}"
-        at[name] = cell
-        ws[cell('가득 예상 비율')] = f"={keep[name]}"
-        if md == 'mod':
-            ws[cell('부여일 1주당 공정가치')] = f"={gfv[str(name).strip()]}"     # 조건 변경표는 이름 앞뒤 빈칸을 떼고 맞춘다
-            ws[cell('변경 전 1주당 (변경일)')] = f"={root(f'{name} 변경 전')}"      # lattices() 와 같은 이름 (숫자 회차명도)
-            ws[cell('변경 후 1주당 (변경일)')] = f"={root(f'{name} 변경 후')}"
-            ws[cell('1주당 증분')] = f"=MAX({cell('변경 후 1주당 (변경일)')}-{cell('변경 전 1주당 (변경일)')},0)"
-            ws[cell('당초 보상원가')] = f"={cell('부여일 1주당 공정가치')}*{cell('변경 전 수량')}*{cell('가득 예상 비율')}"
-            ws[cell('증분 공정가치')] = (f"={cell('1주당 증분')}*{cell('변경 전 수량')}+"
-                                     f"{cell('변경 후 1주당 (변경일)')}*{cell('늘어난 수량')}")
-            ws[cell('증분 보상원가')] = f"={cell('증분 공정가치')}*{cell('가득 예상 비율')}"
-            continue
-        ws[cell('1주당 공정가치')] = f"={root(name)}"
-        ws[cell('블랙-숄즈(행사 종료일)')] = f"={_q('블랙-숄즈 대조')}!$I${bsrow[name, '행사 종료일']}"
-        ws[cell('공정가치')] = f"={cell('1주당 공정가치')}*{cell('부여 수량')}"
-        if md == 'cash':
-            ws[cell('가득 예상 수량의 공정가치')] = f"={cell('1주당 공정가치')}*{cell('부여 수량')}*{cell('가득 예상 비율')}"
-            ws[cell('주식보상부채')] = f"={cell('가득 예상 수량의 공정가치')}*{cell('근무 경과율')}"
-        else:
-            ws[cell('보상원가')] = f"={cell('1주당 공정가치')}*{cell('부여 수량')}*{cell('가득 예상 비율')}"
-    total = {}
-    for h in SUM_COLS[md]:
-        ws[f"{cols[h]}{m + 2}"] = f"=SUM({cols[h]}2:{cols[h]}{m + 1})"
-        total[h] = f"{_q(ws.title)}!${cols[h]}${m + 2}"
-    # 비용 배분 — 누적 = 총액 × 누적 배분율, 당기 = 누적 − 직전 누적 (회차·구분마다)
-    sc = wb['비용 배분']
-    sh = {sc.cell(1, c).value: get_column_letter(c) for c in range(1, sc.max_column + 1)}
-    prev, by_end = {}, {}
-    for r, x in enumerate(raw['schedule'], start=2):
-        rr = f"{_q(ws.title)}!"
-        if md == 'cash':
-            sc[f"{sh['주식보상부채']}{r}"] = f"={rr}{at[x['name']]('주식보상부채')}"
-            continue
-        src = {'grant': '보상원가', 'mod': {'당초': '당초 보상원가', '증분': '증분 보상원가'}.get(x.get('part'))}[md]
-        sc[f"{sh['누적 비용']}{r}"] = f"={rr}{at[x['name']](src)}*{sh['누적 배분율']}{r}"
-        key = (x['name'], x.get('part'))
-        sc[f"{sh['당기 비용']}{r}"] = (f"={sh['누적 비용']}{r}-{sh['누적 비용']}{prev[key]}" if key in prev
-                                     else f"={sh['누적 비용']}{r}")
-        prev[key] = r
-        by_end.setdefault(x['fy_end'], []).append(f"{_q('비용 배분')}!{sh['당기 비용']}{r}")
-    # 평가요약
-    sm = wb['평가요약']
-    lab = {sm.cell(r, 1).value: r for r in range(1, sm.max_row + 1)}
-    from .service import AMOUNT_LABELS
-    sources = {'grant': ('공정가치', '보상원가'), 'mod': ('증분 공정가치', '증분 보상원가'),
-               'cash': ('공정가치', '주식보상부채')}[md]
-    qty = float(raw['qty'])
-    for key, h in zip(SO.AMOUNT_KEYS[md], sources):
-        r = lab[AMOUNT_LABELS[key]]
-        sm.cell(r, 2, f"={total[h]}")
-        sm.cell(r, 3, f"=B{r}/{qty!r}" if qty else "=0")      # 현금결제형에서 모두 결제했으면 남은 수량 0
-        sm.cell(r, 4, f"=C{r}/{S0}*100")
-    sm.cell(lab['측정기준일 주가(원)'], 2, f"={S0}")
-    sm.cell(lab['가득 뒤 연간 퇴사율'], 2, f"={_in('so_exit')}")
-    sm.cell(lab['비가득조건 연간 중단율 (가득일까지)'], 2, f"={_in('so_nv')}")
-    if md == 'mod':
-        sm.cell(lab['당초 보상원가(원) — 부여일 공정가치 기준'], 2, f"={total['당초 보상원가']}")
-    if md == 'cash':
-        rp, rq, re_ = lab['전기말 주식보상부채(원)'], lab['당기 현금 결제액(원)'], lab[EXPENSE_LABEL]
-        sm.cell(rp, 2, f"=MAX(0,{_in('so_prev_liab')})")
-        sm.cell(rq, 2, f"={_in('so_paid')}")
-        sm.cell(re_, 2, f"={total['주식보상부채']}-B{rp}+B{rq}")
-    # 회계처리
-    if '회계처리' not in wb.sheetnames:
-        return
-    jw = wb['회계처리']
-    if md == 'cash':
-        v = f"{_q('평가요약')}!$B${lab[EXPENSE_LABEL]}"
-        jw.cell(3, 2, f'=IF({v}>=0,"주식보상비용","주식보상부채")')
-        jw.cell(3, 3, f"=ABS({v})")
-        jw.cell(3, 4, f'=IF({v}>=0,"주식보상부채","주식보상비용 (환입)")')
-        jw.cell(3, 5, f"=ABS({v})")
-        at = {jw.cell(r, 1).value: r for r in range(4, jw.max_row + 1)}
-        paid = f"{_q('평가요약')}!$B${lab['당기 현금 결제액(원)']}"
-        jw.cell(at['당기 중'], 3, f"={paid}")
-        jw.cell(at['당기 중'], 5, f"={paid}")
-        jw.cell(at['전기말 주식보상부채'], 2, f"={_q('평가요약')}!$B${lab['전기말 주식보상부채(원)']}")
-        jw.cell(at['당기 현금 결제액'], 2, f"={paid}")
-        jw.cell(at['당기말 주식보상부채'], 2, f"={total['주식보상부채']}")
-        return
-    for r in range(3, jw.max_row + 1):
-        d = jw.cell(r, 1).value
-        if jw.cell(r, 2).value == '주식보상비용' and d in by_end:
-            jw.cell(r, 3, '=' + '+'.join(by_end[d]))
-            jw.cell(r, 5, f"=C{r}")
-
-
-def key_cells(wb, run, names):
-    """다시 계산했을 때 앱과 같아야 하는 칸 — [(항목, 시트, 칸, 앱 값)]. 조서의 «계산대사» 시트와 시험이 쓴다."""
-    from .service import AMOUNT_LABELS
-    raw, s = run.raw, run.summary
-    sm = wb['평가요약']
-    lab = {sm.cell(r, 1).value: r for r in range(1, sm.max_row + 1)}
-    out = []
-    for key in SO.AMOUNT_KEYS[raw['mode']]:
-        r = lab[AMOUNT_LABELS[key]]
-        out += [(AMOUNT_LABELS[key] + ' (원)', '평가요약', f'B{r}', s['amounts_total'][key]),
-                (AMOUNT_LABELS[key] + ' (주가 100 기준)', '평가요약', f'D{r}', s['amounts_100'][key])]
-    fvrow = lattice_layout(1)['param']['1주당 공정가치']
-    for name, row in lattices(run).items():
-        out.append((f'{name} 1주당 공정가치', names[name], f'C{fvrow}', row['fv']))
-    if raw['mode'] == 'mod':
-        out.append(('당초 보상원가 (원)', '평가요약', f"B{lab['당초 보상원가(원) — 부여일 공정가치 기준']}", raw['grant_cost']))
-    if raw['mode'] == 'cash':
-        out.append(('당기 비용 (원)', '평가요약', f"B{lab[EXPENSE_LABEL]}", raw['expense']))
-    return out
+    """기본 값 조서의 회계처리 — 전환사채 기본 조서와 같은 표 (report.calculation_table)."""
+    from .report import calculation_table
+    calculation_table(wb, '회계처리', journal_rows(run))

@@ -19,24 +19,28 @@ const fx=v=>!precise?fmt(v):v==null||!Number.isFinite(v)?'—':new Intl.NumberFo
 const px=v=>!precise?pct(v):v==null?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:4}).format(v*100)+'%';
 const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let metric='value', curve=0, rowStart=0, selected=null, lastFocus=null;
-const nodeFields=[['stock','주가','원'],['P','전환확률','%'],['kind','의사결정',''],['hold','보유가치','원금 100'],['value','본체가치','원금 100'],...(D.model==='TF'?[['E','주식결제분','원금 100'],['B','현금결제분','원금 100'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%']]:[['ya','상승 할인율','%'],['yb','하락 할인율','%'],['df_up','상승 할인계수','%'],['df_down','하락 할인계수','%']])];
-const scheduleFields=[['rf','Rf 선도금리','%'],['cr','Kd 선도금리','%'],['q','상승 확률','%'],['down_q','하락 확률','%'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%'],['cv','전환 가능','bool'],['put','상환청구 가능','bool'],['call','계약상 콜 가능','bool'],['put_contract','계약 상환청구금액','원금 100'],['put_value','지급 제약 반영 상환가치','원금 100'],['call_contract','계약 콜금액','원금 100'],['coupon','이자·우선배당 지급','원금 100'],['host','권리 없는 주계약 가치','원금 100'],['u','상승계수 u','배'],['d','하락계수 d','배'],['refix','정기 리픽싱','bool'],['ipo','조건부 IPO 예정','bool'],['redemption','만기 지급가치','원금 100']];
+const SO=D.mode==='so_nodes'||D.mode==='so_schedule', NODES=D.mode==='nodes'||D.mode==='so_nodes', SCHED=D.mode==='schedule'||D.mode==='so_schedule';
+const f6=v=>v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:6,maximumFractionDigits:6}).format(v);
+const nodeFields=SO?[['value','옵션 가치','원'],['stock','주가','원'],['kind','의사결정',''],['hold','계속 보유 가치','원'],['intrinsic','지금 행사 가치','원'],...(D.mkt===2?[['wait','목표 주가 미도달 상태 가치','원']]:[])]:[['stock','주가','원'],['P','전환확률','%'],['kind','의사결정',''],['hold','보유가치','원금 100'],['value','본체가치','원금 100'],...(D.model==='TF'?[['E','주식결제분','원금 100'],['B','현금결제분','원금 100'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%']]:[['ya','상승 할인율','%'],['yb','하락 할인율','%'],['df_up','상승 할인계수','%'],['df_down','하락 할인계수','%']])];
+const scheduleFields=SO?[['rf','선도 무위험 금리','%'],['q','상승 확률','%'],['down_q','하락 확률','%'],['df','할인계수','%'],['can_ex','행사 가능','bool'],['before_vest','가득 전 (비가득조건 적용)','bool'],['judged','시장조건 판정 시점','bool'],['exit','구간 퇴사 확률','%'],['nv','구간 비가득조건 중단 확률','%'],['u','상승 배수 u','배'],['d','하락 배수 d','배']]:[['rf','Rf 선도금리','%'],['cr','Kd 선도금리','%'],['q','상승 확률','%'],['down_q','하락 확률','%'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%'],['cv','전환 가능','bool'],['put','상환청구 가능','bool'],['call','계약상 콜 가능','bool'],['put_contract','계약 상환청구금액','원금 100'],['put_value','지급 제약 반영 상환가치','원금 100'],['call_contract','계약 콜금액','원금 100'],['coupon','이자·우선배당 지급','원금 100'],['host','권리 없는 주계약 가치','원금 100'],['u','상승계수 u','배'],['d','하락계수 d','배'],['refix','정기 리픽싱','bool'],['ipo','조건부 IPO 예정','bool'],['redemption','만기 지급가치','원금 100']];
 function val(n,k){if(k==='df_rf'||k==='df_cr')return n.terminal?null:D.steps[n.i][k];return n[k];}
 function showVal(v,unit){return unit==='bool'?(v?'가능·해당':'—'):typeof v==='string'?v:unit==='%'?pct(v):fmt(v);}
 function tabButton(text,id,on){const b=document.createElement('button');b.textContent=text;b.dataset.tab=id;b.setAttribute('aria-pressed',String(on));$('tabs').appendChild(b);return b;}
 function columns(){return Array.from({length:(D.end??D.n)-(D.start??0)+1},(_,k)=>k+(D.start??0));}
 function head(cols,first){return '<thead><tr><th scope="col">'+first+'</th>'+cols.map(i=>'<th scope="col">'+i+'</th>').join('')+'</tr><tr><th scope="col">날짜</th>'+cols.map(i=>'<th scope="col">'+safe(D.steps[i].date)+'</th>').join('')+'</tr></thead>';}
-function dependencies(n){if(['stock','df_rf','df_cr'].includes(metric))return [];if(['ya','df_up'].includes(metric))return [n.up];if(['yb','df_down'].includes(metric))return [n.dn];return [n.up,n.dn];}
-function selectedClass(i,r){if(!selected||D.mode!=='nodes')return '';const n=D.nodes[selected];if(!n)return '';if(selected===i+','+r)return ' selected';return dependencies(n).some(k=>k&&k[0]===i&&k[0]-k[1]===r)?' reference':'';}
-function cell(text,i,r,extra=''){return '<td><button class="cell'+selectedClass(i,r)+extra+'" data-i="'+i+'" data-r="'+r+'" aria-label="'+safe(D.mode==='nodes'?`${metricLabel()} · 시점 ${i} · 하락 ${r} · ${text}`:`${scheduleFields[r][1]} · 시점 ${i} · ${text}`)+'">'+safe(text)+'</button></td>';}
+function soHit(n){return D.target!=null&&n.stock>=D.target*(1-1e-12);}
+function dependencies(n){if(SO){if(n.terminal||['stock','intrinsic','kind'].includes(metric))return [];if(metric==='wait')return n.wait!=null&&n.i<D.vest_step&&!soHit(n)?[n.up,n.dn]:[];return [n.up,n.dn];}if(['stock','df_rf','df_cr'].includes(metric))return [];if(['ya','df_up'].includes(metric))return [n.up];if(['yb','df_down'].includes(metric))return [n.dn];return [n.up,n.dn];}
+function selectedClass(i,r){if(!selected||!NODES)return '';const n=D.nodes[selected];if(!n)return '';if(selected===i+','+r)return ' selected';return dependencies(n).some(k=>k&&k[0]===i&&k[0]-k[1]===r)?' reference':'';}
+function cell(text,i,r,extra=''){return '<td><button class="cell'+selectedClass(i,r)+extra+'" data-i="'+i+'" data-r="'+r+'" aria-label="'+safe(NODES?`${metricLabel()} · 시점 ${i} · 하락 ${r} · ${text}`:`${scheduleFields[r][1]} · 시점 ${i} · ${text}`)+'">'+safe(text)+'</button></td>';}
+function kindClass(n){if(SO)return n.kind==='행사'?' decision-conv':n.kind.includes('소멸')?' decision-put':'';return n.kind.includes('전환')?' decision-conv':n.kind.includes('상환')?' decision-put':'';}
 function metricLabel(){return nodeFields.find(f=>f[0]===metric)?.[1]||metric;}
 function render(){
  const scrollLeft=$('scroll').scrollLeft,scrollTop=$('scroll').scrollTop;
- if(D.mode==='nodes'){
+ if(NODES){
   const cols=columns(), field=nodeFields.find(x=>x[0]===metric);let out=head(cols,'하락 횟수');
-  out+='<tbody>';for(let r=rowStart;r<=Math.min(D.end,rowStart+39);r++){out+='<tr><th scope="row">'+r+'</th>';for(const i of cols){const n=D.nodes[i+','+r];if(r>i)out+='<td class="empty"></td>';else if(!n)out+='<td class="empty" title="강제전환 등으로 계산되지 않은 노드">—</td>';else out+=cell(showVal(val(n,metric),field[2]),i,r,metric==='kind'?(n.kind.includes('전환')?' decision-conv':n.kind.includes('상환')?' decision-put':''):'');}out+='</tr>';}out+='</tbody>';$('grid').innerHTML=out;
+  out+='<tbody>';for(let r=rowStart;r<=Math.min(D.end,rowStart+39);r++){out+='<tr><th scope="row">'+r+'</th>';for(const i of cols){const n=D.nodes[i+','+r];if(r>i)out+='<td class="empty"></td>';else if(!n)out+='<td class="empty" title="강제전환 등으로 계산되지 않은 노드">—</td>';else out+=cell(showVal(val(n,metric),field[2]),i,r,metric==='kind'?kindClass(n):'');}out+='</tr>';}out+='</tbody>';$('grid').innerHTML=out;
   $('instruction').textContent=field[1]+' · '+(field[2]||'행사 판단')+' | 셀을 누르면 계산식과 참조값이 열립니다.';
- }else if(D.mode==='schedule'){
+ }else if(SCHED){
   let out=head(columns(),'적용 항목')+'<tbody>';scheduleFields.forEach(([key,label,unit],r)=>{out+='<tr><th scope="row">'+label+(unit==='원금 100'?' (100)':'')+'</th>';D.steps.forEach((s,i)=>{let v=key==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(key)?D[key]:s[key];out+=cell(showVal(v,unit),i,r);});out+='</tr>';});$('grid').innerHTML=out+'</tbody>';
  }else{
   const c=D.curves[curve];$('input-note').hidden=false;$('input-note').textContent='입력 곡선: '+c.inputs.map(p=>fmt(p[0])+'년 '+pct(p[1])).join(' · ')+` | 연 ${c.m}회 복리`;
@@ -81,6 +85,54 @@ function nodeDetail(key,focus=true){
  body+='<p class="sub">좌표: 시점 / 하락 횟수. 초록색은 참조하는 다음 노드의 위치이며, 참조 항목은 위에 표시합니다. 주가는 원, 본체 금액은 원금 100 기준입니다. 본체는 별도 콜 차감 전입니다. 표시값은 반올림되므로 표시 숫자만으로 다시 계산하면 차이가 날 수 있습니다.</p>';
  openDetail(metricLabel()+' 계산내역',`${D.model} · 시점 ${n.i} / 하락 ${n.down} · ${s.date}`,body);if(focus)$('close').focus({preventScroll:true});
 }
+function soNodeDetail(key,focus=true){
+ lastDetail=()=>soNodeDetail(key,false);
+ const n=D.nodes[key];if(!n)return;selected=key;rowStart=Math.floor(n.down/40)*40;$('rows').value=String(rowStart);render();
+ const s=D.steps[n.i],a=n.up?D.nodes[n.up[0]+','+(n.up[0]-n.up[1])]:null,b=n.dn?D.nodes[n.dn[0]+','+(n.dn[0]-n.dn[1])]:null;
+ const f=nodeFields.find(x=>x[0]===metric),v=val(n,metric),share=n.share??1,K=D.K;let text='';
+ const cont=()=>a&&b?`계속 보유 C = exp(−r × Δt) × [p × V↑ + (1−p) × V↓]\n= ${px(s.df)} × [${px(s.q)} × ${fx(a.value)} + ${px(1-s.q)} × ${fx(b.value)}]\n= ${fx(n.cont)}`:'다음 시점 노드가 이 구간에 없어 계산표 시점 구간을 다음 구간으로 바꿔 확인하세요.';
+ const hold=()=>{let t=cont();
+  if(s.nv>0)t+=`\n\n비가득조건 (가득 전): H = (1 − 구간 중단 확률) × C\n= (1 − ${px(s.nv)}) × ${fx(n.cont)}\n= ${fx(n.hold)}`;
+  else if(s.exit>0)t+=`\n\n가득 뒤 퇴사: H = (1 − e) × C + e × 큰 값(S − K, 0)\n= (1 − ${px(s.exit)}) × ${fx(n.cont)} + ${px(s.exit)} × ${fx(Math.max(n.intrinsic,0))}\n= ${fx(n.hold)}`;
+  else t+=`\n\nH = C = ${fx(n.hold)}`;return t;};
+ const raw=n.terminal?Math.max(n.intrinsic,0):n.before_share;
+ const decide=()=>{if(n.terminal)return `행사 종료일: V = 큰 값(S − K, 0)\n= 큰 값(${fx(n.stock)} − ${fx(K)}, 0) = ${fx(raw)}`;
+  if(!s.can_ex)return `행사 시작 전이라 행사할 수 없습니다 (행사 가능 시점 ${D.ex_step}부터): V = H = ${fx(n.hold)}`;
+  if(D.so_ex===1)return `가득 뒤 최적 행사: V = 큰 값(S − K, H)\n= 큰 값(${fx(n.intrinsic)}, ${fx(n.hold)}) = ${fx(raw)}`;
+  if(D.so_ex===2)return `행사 배수 ${fx(D.so_mult)}배: 주가가 배수 × K 이상이고 내가격이면 V = S − K, 아니면 V = H\n주가 ${fx(n.stock)} ${n.stock>=D.so_mult*K*(1-1e-12)?'≥':'<'} ${fx(D.so_mult)} × ${fx(K)} = ${fx(D.so_mult*K)}\n→ V = ${fx(raw)}`;
+  return `만기에만 행사 (유럽형): V = H = ${fx(n.hold)}`;};
+ const cut=()=>share<1?`\n\n시장조건 (가득일 판정): 목표 주가 ${fx(D.target)}원 — 노드는 로그 주가로 위아래 반 칸씩의 구간을 대표하므로, 구간 가운데 목표 이상인 비율 w 만큼만 남깁니다.\nw = 최솟값(1, 큰 값(0, (ln S + ln u − ln 목표) ÷ (2 × ln u)))\n= ${f6(share)}\nV = w × ${fx(raw)} = ${fx(n.value)}`:'';
+ if(metric==='stock')text=`S = S₀ × u^(상승 횟수) × d^(하락 횟수)\n= ${fx(D.S0)} × ${fx(D.u)}^${n.j} × ${fx(D.d)}^${n.down}\n= ${fx(n.stock)} 원\n\nu = exp(σ × √Δt) = exp(${px(D.sig)} × √${fx(D.delta)}) = ${fx(D.u)}, d = 1 ÷ u = ${fx(D.d)}`;
+ else if(metric==='intrinsic')text=`지금 행사 가치 = S − K\n= ${fx(n.stock)} − ${fx(K)}\n= ${fx(n.intrinsic)} 원\n음수면 행사하지 않습니다.`;
+ else if(metric==='hold')text=n.terminal?'행사 종료일에는 다음 시점이 없어 계속 보유 계산이 없습니다.':hold();
+ else if(metric==='wait'){
+  if(n.wait==null)text=`이 시점은 시장조건 판정 기간(가득 시점 ${D.vest_step}까지) 뒤라 «아직 닿지 않은 상태»가 없습니다.`;
+  else if(soHit(n))text=`주가 ${fx(n.stock)} ≥ 목표 주가 ${fx(D.target)} — 목표에 닿아 보통 격자 가치로 바뀝니다.\nW = V = ${fx(n.value)}`;
+  else if(n.i>=D.vest_step)text=`가득 시점까지 목표 주가 ${fx(D.target)}에 닿지 못해 소멸합니다.\nW = 0`;
+  else text=`아직 목표 주가 미만 — 다음 시점의 «닿지 않은 상태» 가치를 할인합니다.\nW = (1 − 구간 중단 확률) × exp(−r × Δt) × [p × W↑ + (1−p) × W↓]\n= (1 − ${px(s.nv)}) × ${px(s.df)} × [${px(s.q)} × ${fx(a?.wait)} + ${px(1-s.q)} × ${fx(b?.wait)}]\n= ${fx(n.wait)}`;
+  text+='\n\n«가득일까지 한 번이라도 목표 주가 이상» 은 격자 노드(계산 간격)마다 관찰합니다. 시점 0의 W 가 1주당 공정가치입니다.';
+ }else{text=(n.terminal?'':hold()+'\n\n')+decide()+cut()+(metric==='kind'?`\n\n판단: ${n.kind}`:'')+`\n\n${n.rule}`;}
+ const rr=[['주가 S',fx(n.stock)+' 원'],['행사가격 K',fx(K)+' 원'],['상승 확률 p',px(s.q)],['선도 무위험 금리',px(s.rf)],['할인계수',px(s.df)],['구간 Δt',fx(D.delta)+' 년'],['구간 퇴사 확률',px(s.exit)],['구간 비가득조건 중단 확률',px(s.nv)],['조기행사 가정',D.ex_label],['행사 판단',n.kind]];
+ if(D.mkt)rr.push(['시장조건 목표 주가',fx(D.target)+' 원'],['시장조건 판정',D.mkt_label]);
+ let body='<span class="badge">'+safe(f[2]||'의사결정')+'</span><div class="result">'+safe(showVal(v,f[2]))+'</div>'+formula(text)+refs(rr);
+ if(a&&b&&dependencies(n).length){const w=metric==='wait',refValue=x=>fx(w?x.wait:x.value),refName=w?'목표 주가 미도달 상태 가치':'옵션 가치';
+  body+='<div class="section-title">다음 시점의 '+refName+' · 버튼으로 참조 위치 이동</div><div class="flow"><div class="current">현재 '+n.i+' / '+n.down+'<br><strong>'+safe(showVal(v,f[2]))+'</strong></div><span>←</span><div class="children">'+[['상승',a],['하락',b]].map(([label,x])=>'<button '+(x.i>D.end?'disabled ':'')+'data-node="'+x.i+','+x.down+'">'+label+' '+x.i+' / '+x.down+' · '+refValue(x)+'</button>').join('')+'</div></div>';}
+ if(!n.terminal&&(!a||a.i>D.end))body+='<p class="sub">다음 참조 노드를 열려면 위의 계산표 시점 구간을 다음 구간으로 변경하세요.</p>';
+ body+='<p class="sub">좌표: 시점 / 하락 횟수. 금액은 옵션 1주당 원입니다. 할인계수 99.79%는 0.9979배입니다. 표시값은 반올림되므로 표시 숫자만으로 다시 계산하면 차이가 날 수 있습니다.</p>';
+ openDetail(metricLabel()+' 계산내역',`${D.name} · 시점 ${n.i} / 하락 ${n.down} · ${s.date}`,body);if(focus)$('close').focus({preventScroll:true});
+}
+function soScheduleDetail(i,row,focus=true){lastDetail=()=>soScheduleDetail(i,row,false);const s=D.steps[i],[k,label,unit]=scheduleFields[row];let v=k==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(k)?D[k]:s[k],text='';
+ if(k==='rf')text=`f(t₀,t₁) = [z(t₁) × t₁ − z(t₀) × t₀] ÷ (t₁ − t₀)\n무위험 곡선의 연속복리 현물금리에서 구간 선도금리를 계산합니다.\n현재 열 → 다음 열 구간 적용값 = ${px(v)}`;
+ else if(['q','down_q'].includes(k))text=`p = [exp((r − 배당수익률) × Δt) − d] ÷ (u − d)\n= [exp((${px(s.rf)} − ${px(D.div_y)}) × ${fx(D.delta)}) − ${fx(D.d)}] ÷ (${fx(D.u)} − ${fx(D.d)})\n상승 p = ${px(s.q)}, 하락 1 − p = ${s.q==null?'—':px(1-s.q)}`;
+ else if(k==='df')text=`할인계수 = exp(−r × Δt)\n= exp(−${px(s.rf)} × ${fx(D.delta)})\n= ${px(v)}`;
+ else if(['u','d'].includes(k))text=`u = exp(σ × √Δt) = exp(${px(D.sig)} × √${fx(D.delta)}) = ${fx(D.u)}\nd = 1 ÷ u = ${fx(D.d)}`;
+ else if(k==='can_ex')text=`행사 가능 시점 = 행사 시작일 이후 첫 노드 (시점 ${D.ex_step}).\n그 전에는 행사할 수 없어 계속 보유 가치만 씁니다. 조기행사 가정: ${D.ex_label}`;
+ else if(k==='before_vest')text=`가득 시점 = 가득일 이후 첫 노드 (시점 ${D.vest_step}).\n그 전 구간에는 비가득조건 중단 확률을 곱합니다 (연 중단율 ${px(D.nv)}).`;
+ else if(k==='judged')text=D.mkt===1?`가득일 판정: 가득 시점 ${D.vest_step}의 노드에서 목표 주가 ${fx(D.target)}원 이상인지 봅니다.`:D.mkt===2?`한 번이라도 판정: 시점 0부터 가득 시점 ${D.vest_step}까지 노드마다 목표 주가 ${fx(D.target)}원 도달을 봅니다.`:'이 회차에는 시장조건이 없습니다.';
+ else if(k==='exit')text=`구간 퇴사 확률 e = 1 − (1 − 연 퇴사율)^Δt\n= 1 − (1 − ${px(D.so_exit)})^${fx(D.delta)}\n= ${px(D.exit_step)}\n행사 시작 뒤 구간에만 적용합니다. 이 열의 적용값 = ${px(v)}`;
+ else if(k==='nv')text=`구간 중단 확률 = 1 − (1 − 연 중단율)^Δt\n= 1 − (1 − ${px(D.nv)})^${fx(D.delta)}\n= ${px(D.nv_step)}\n가득 전 구간에만 적용합니다 (문단 21A). 이 열의 적용값 = ${px(v)}`;
+ if(i===D.n&&['rf','q','down_q','df','exit','nv'].includes(k))text='행사 종료일 열에는 다음 구간이 없으므로 적용값을 표시하지 않습니다.';
+ openDetail(label+' 계산내역',`${D.name} · 시점 ${i} · ${s.date}`,`<div class="result">${safe(showVal(v,unit))}</div>`+formula(text)+refs([['현재 격자일',s.date],['다음 격자일',D.steps[i+1]?.date||'행사 종료일'],['구간 Δt',fx(D.delta)+' 년'],['연 변동성 σ',px(D.sig)]])+'<p class="sub">금리와 확률은 현재 열에서 다음 열로 가는 구간 값입니다. 날짜는 격자일이며 계약상 날짜와 차이가 있을 수 있습니다.</p>');if(focus)$('close').focus({preventScroll:true});}
 function scheduleDetail(i,row,focus=true){lastDetail=()=>scheduleDetail(i,row,false);const s=D.steps[i],[k,label,unit]=scheduleFields[row];let v=k==='down_q'?(s.q==null?null:1-s.q):['u','d'].includes(k)?D[k]:s[k],text='';
  if(['rf','cr'].includes(k))text='f(t₀,t₁) = [z(t₁) × t₁ − z(t₀) × t₀] ÷ (t₁−t₀)\n입력곡선의 연속복리 현물금리에서 구간 선도금리를 계산합니다.\n현재 열 → 다음 열 구간 적용값 = '+px(v);
  else if(['q','down_q'].includes(k))text=`p = [exp((Rf − 배당수익률) × Δt) − d] ÷ (u−d)\n= [exp((${px(s.rf)} − ${px(D.div_y)}) × ${fx(D.delta)}) − ${fx(D.d)}] ÷ (${fx(D.u)} − ${fx(D.d)})\n상승 p = ${px(s.q)}, 하락 1−p = ${s.q==null?'—':px(1-s.q)}`;
@@ -102,23 +154,23 @@ function bootDetail(idx,focus=true){lastDetail=()=>bootDetail(idx,false);const c
  if(r.refs.length)body+='<div class="section-title">참조한 이전 이표 · 짧은 첫 이표는 기간비율 반영</div>'+refs(r.refs.map(x=>[fx(x.t)+'년 × 기간비율 '+fx(x.weight),'DF '+px(x.df)]));
  body+='<p class="sub">입력 만기 사이 수익률은 선형보간하며 범위 밖은 끝점 값을 사용합니다. 모든 참조값은 반올림 전 원값으로 계산합니다.</p>';
  openDetail('부트스트래핑 계산내역',c.name+' · '+fx(r.t)+'년',body);if(focus)$('close').focus({preventScroll:true});}
-if(D.mode==='nodes'){
- $('heading').textContent=D.model+' 모형 · 노드 계산표';nodeFields.forEach(f=>tabButton(f[1],f[0],f[0]===metric));
+if(NODES){
+ $('heading').textContent=SO?D.name+' · 이항격자 노드 계산표':D.model+' 모형 · 노드 계산표';nodeFields.forEach(f=>tabButton(f[1],f[0],f[0]===metric));
  for(let r=0;r<=D.end;r+=40){const o=document.createElement('option');o.value=r;o.textContent=r+'–'+Math.min(D.end,r+39);$('rows').appendChild(o);}
- $('scope').textContent=`시점 ${D.start}–${D.end} / 전체 ${D.n} · 별도 콜 차감 전 본체`;
+ $('scope').textContent=SO?`시점 ${D.start}–${D.end} / 전체 ${D.n} · 옵션 1주당 가치(원)`:`시점 ${D.start}–${D.end} / 전체 ${D.n} · 별도 콜 차감 전 본체`;
 }else{
  $('rows-label').hidden=true;$('ref-legend').hidden=true;
- if(D.mode==='schedule'){$('heading').textContent='노드 스케줄';$('instruction').textContent='금리·확률은 현재 열 → 다음 열 구간 값 · 셀을 눌러 근거 확인';$('scope').textContent='금액: 원금 100 · 행사는 격자일 기준';}
+ if(SCHED){$('heading').textContent=SO?D.name+' · 노드 스케줄':'노드 스케줄';$('instruction').textContent='금리·확률은 현재 열 → 다음 열 구간 값 · 셀을 눌러 근거 확인';$('scope').textContent=SO?'행사·가득·판정은 격자일 기준':'금액: 원금 100 · 행사는 격자일 기준';}
  else{$('heading').textContent=D.y_type==='spot'?'현물금리 환산':'부트스트래핑';D.curves.forEach((c,i)=>tabButton(c.name,String(i),i===curve));$('instruction').textContent='입력 수익률 → 할인계수 → 연속복리 현물금리 · 셀을 눌러 산식 확인';$('scope').textContent='평가에 적용한 곡선과 동일한 산출 방식';$('grid').setAttribute('aria-label','부트스트래핑 계산표');}
 }
-$('tabs').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(!b)return;D.mode==='nodes'?metric=b.dataset.tab:curve=Number(b.dataset.tab);for(const x of $('tabs').children)x.setAttribute('aria-pressed',String(x===b));$('drawer').hidden=true;render();});
+$('tabs').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(!b)return;NODES?metric=b.dataset.tab:curve=Number(b.dataset.tab);for(const x of $('tabs').children)x.setAttribute('aria-pressed',String(x===b));$('drawer').hidden=true;render();});
 $('rows').addEventListener('change',()=>{rowStart=Number($('rows').value);render();$('scroll').scrollTop=0;});
 $('precision').addEventListener('change',()=>{precise=$('precision').checked;if(!$('drawer').hidden&&lastDetail)lastDetail();});
 $('zoom').addEventListener('change',()=>document.documentElement.style.setProperty('--zoom',$('zoom').value));
 $('root').addEventListener('click',()=>{rowStart=0;$('rows').value='0';selected=null;$('drawer').hidden=true;render();$('scroll').scrollTo(0,0);});
 $('close').addEventListener('click',()=>{$('drawer').hidden=true;const current=selected?document.querySelector(`[data-i="${selected.split(',')[0]}"][data-r="${selected.split(',')[1]}"]`):null;(current||lastFocus)?.focus({preventScroll:true});});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')$('close').click();});
-$('grid').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;lastFocus=b;if(b.dataset.boot!==undefined)bootDetail(Number(b.dataset.boot));else if(D.mode==='nodes')nodeDetail(b.dataset.i+','+b.dataset.r);else scheduleDetail(Number(b.dataset.i),Number(b.dataset.r));});
-$('detail').addEventListener('click',e=>{const b=e.target.closest('[data-node]');if(b)nodeDetail(b.dataset.node);});
+$('grid').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;lastFocus=b;if(b.dataset.boot!==undefined)bootDetail(Number(b.dataset.boot));else if(D.mode==='so_nodes')soNodeDetail(b.dataset.i+','+b.dataset.r);else if(D.mode==='nodes')nodeDetail(b.dataset.i+','+b.dataset.r);else if(SO)soScheduleDetail(Number(b.dataset.i),Number(b.dataset.r));else scheduleDetail(Number(b.dataset.i),Number(b.dataset.r));});
+$('detail').addEventListener('click',e=>{const b=e.target.closest('[data-node]');if(b)(SO?soNodeDetail:nodeDetail)(b.dataset.node);});
 render();
 </script></body></html>

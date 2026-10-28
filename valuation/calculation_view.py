@@ -167,11 +167,16 @@ def schedule_values(run):
     )
 
 
-def bootstrap_values(run):
-    """Explain the same curve builder, including stub and short first maturities."""
+def bootstrap_values(run, *, horizon=None, risk_free_only=False):
+    """Explain the same curve builder, including stub and short first maturities.
+
+    주식선택권은 무위험 곡선만 쓰고, 가장 긴 회차의 행사 종료일까지 푼다 (stock_option.rate_fn 과 같은 만기).
+    """
     t = run.terms
+    Tmax = t.T if horizon is None else horizon
     result = []
-    for name, pts, m in [('무위험금리 Rf', t.rf_curve, t.cmp_rf), ('위험금리 Kd', L.credit_curve(t), t.cmp_cr)]:
+    curves = [('무위험금리 Rf', t.rf_curve, t.cmp_rf)] + ([] if risk_free_only else [('위험금리 Kd', L.credit_curve(t), t.cmp_cr)])
+    for name, pts, m in curves:
         rows = []
         if t.y_type == 'spot':
             for term, rate in pts:
@@ -190,9 +195,9 @@ def bootstrap_values(run):
                     )
                 )
         else:
-            dfs = dict(L.bootstrap_df(pts, t.T, m))
+            dfs = dict(L.bootstrap_df(pts, Tmax, m))
             known, grid = [], []
-            for term, kind in L.boot_times(pts, t.T, m):
+            for term, kind in L.boot_times(pts, Tmax, m):
                 y = L._lin(pts, term)
                 c = y / m
                 refs = []
@@ -222,6 +227,78 @@ def bootstrap_values(run):
                 known.sort()
         result.append(dict(name=name, m=m, inputs=pts, rows=rows))
     return dict(mode='bootstrap', curves=result, y_type=t.y_type, run_id=run.summary['run_id'])
+
+
+# ── 주식선택권 — value_row 가 남긴 회차 격자를 읽는다 (다시 평가하지 않는다) ─────────────────────
+
+def _so_kind(row, tr):
+    if tr['exercise']:
+        return '행사'
+    share = tr.get('pass_share', 1.0)
+    if share == 0:
+        return '소멸 (시장조건)'
+    if share < 1:
+        return '일부 소멸 (시장조건)'
+    if tr['terminal']:
+        return '소멸 (외가격)'
+    if not tr['vested']:
+        return '가득 전' if tr['step'] < row['vest_step'] else '행사 시작 전'
+    return '계속 보유'
+
+
+def _so_steps(t, row, e_step):
+    n, delta = row['n'], row['dt']
+    steps = []
+    for i in range(n + 1):
+        s = dict(i=i, date=_date(t, i, delta), can_ex=i >= row['ex_step'], before_vest=i < row['vest_step'],
+                 judged=bool(row.get('mkt')) and (i == row['vest_step'] if row['mkt'] == 1 else i <= row['vest_step']))
+        if i < n:
+            s.update(q=row['p'][i], rf=row['fwd'][i], df=math.exp(-row['fwd'][i]*delta),
+                     exit=e_step if i >= row['ex_step'] else 0.0,
+                     nv=row['nv_step'] if i < row['vest_step'] else 0.0)
+        steps.append(s)
+    return steps
+
+
+def _so_head(run, row, mode):
+    from . import stock_option as SO
+    t, delta = run.terms, row['dt']
+    e_step = 1.0 - (1.0 - float(t.so_exit))**delta
+    return dict(mode=mode, name=row['name'], n=row['n'], start=0, end=row['n'], steps=_so_steps(t, row, e_step),
+                nodes={}, delta=delta, u=row['u'], d=row['d'], S0=float(t.S0), K=float(row.get('K') or t.K0),
+                sig=float(t.sig), div_y=float(t.div_y), so_ex=int(t.so_ex), so_mult=float(t.so_mult),
+                so_exit=float(t.so_exit), nv=float(getattr(t, 'so_nv', 0.0)), nv_step=row.get('nv_step', 0.0),
+                exit_step=e_step, mkt=int(row.get('mkt') or 0),
+                mkt_label=('측정기준일 전에 목표 도달 — 시장조건 충족' if row.get('hit') else SO.MKT_LABELS[int(row.get('mkt') or 0)]),
+                target=row.get('target'), vest_step=row['vest_step'], ex_step=row['ex_step'],
+                ex_label=SO.EX_LABELS[int(t.so_ex)], run_id=run.summary['run_id'])
+
+
+def so_node_values(run, row, start=0, end=None):
+    """회차 하나의 격자 노드 — 칸마다 node_trace 의 풀이를 싣는다 (화면 계산식 = 엔진 계산)."""
+    from . import stock_option as SO
+    t, n = run.terms, row['n']
+    end = n if end is None else min(end, n)
+    view = _so_head(run, row, 'so_nodes')
+    nodes = view['nodes']
+    for i in range(start, min(end + 1, n) + 1):          # 마지막 열이 참조하는 다음 열까지 싣는다
+        for down in range(i + 1):
+            tr = SO.node_trace(t, row, i, down)
+            r = dict(i=i, j=i - down, down=down, stock=tr['stock'], K=tr['strike'], value=tr['value'],
+                     intrinsic=tr['intrinsic'], exercise=tr['exercise'], terminal=tr['terminal'], kind=_so_kind(row, tr),
+                     rule=tr['rule'], share=tr.get('pass_share', 1.0), before_share=tr.get('before_share'),
+                     hold=tr.get('hold'), cont=tr.get('cont'), wait=_finite(tr.get('wait')), wait_rule=tr.get('wait_rule'),
+                     up=None, dn=None)
+            if not tr['terminal']:
+                r.update(up=[i + 1, i + 1 - down], dn=[i + 1, i - down])
+            nodes[f'{i},{down}'] = r
+    view.update(start=start, end=end)
+    return view
+
+
+def so_schedule_values(run, row):
+    """회차 하나의 시점별 금리·확률·행사 가능 여부."""
+    return _so_head(run, row, 'so_schedule')
 
 
 def worksheet_html(payload):
