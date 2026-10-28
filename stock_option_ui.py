@@ -5,7 +5,6 @@
 """
 
 import datetime as dt
-import math
 
 import pandas as pd
 import streamlit as st
@@ -348,22 +347,26 @@ def _pick_row(run, key):
     return rows[name]
 
 
-def node_table(run, row, start, end):
-    """시점 start~end 의 노드 — 칸마다 «옵션가치 / 주가», 행사 노드는 ●."""
-    cols = {}
-    for i in range(start, end + 1):
-        cols[f"{i}"] = [f"{'● ' if row['exercise'][i][j] else ''}{row['values'][i][j]:,.2f} / {row['prices'][i][j]:,.0f}"
-                        if j <= i else '' for j in range(end + 1)]
-    frame = pd.DataFrame(cols)
-    frame.insert(0, '자리', range(end + 1))
-    return frame
+TOPICS = ['노드 계산표', '노드 스케줄', '부트스트래핑', '비용 배분']
+OLD_TOPICS = {'노드 따라가기': '노드 계산표', '금리·확률': '노드 스케줄'}   # 예전 화면 이름으로 저장된 선택
+
+
+def _worksheet(payload):
+    from valuation.calculation_view import worksheet_html
+    if hasattr(st, 'iframe'):
+        st.iframe(worksheet_html(payload), height=730)
+    else:
+        import streamlit.components.v1 as components
+        components.html(worksheet_html(payload), height=730, scrolling=True)
 
 
 def calculation_panel(run):
-    topics = ['노드 계산표', '노드 따라가기', '금리·확률', '비용 배분']
-    if st.session_state.get('_calc_topic') not in topics:
-        st.session_state['_calc_topic'] = topics[0]
-    topic = st.radio('계산내역 선택', topics, horizontal=True, key='_calc_topic')
+    """계산내역 — 전환사채·상환전환우선주와 같은 계산표: 셀을 누르면 계산식과 참조 노드가 열린다."""
+    from valuation.calculation_view import so_node_values, so_schedule_values, bootstrap_values
+    old = st.session_state.get('_calc_topic')
+    if old not in TOPICS:
+        st.session_state['_calc_topic'] = OLD_TOPICS.get(old, TOPICS[0])
+    topic = st.radio('계산내역 선택', TOPICS, horizontal=True, key='_calc_topic')
     t = run.terms
     if topic == '비용 배분':
         frame = pd.DataFrame(run.summary['so_schedule'])
@@ -375,67 +378,32 @@ def calculation_panel(run):
                    '누적 배분율 = (결산일 − 배분 시작일) ÷ (가득일 − 배분 시작일), 1을 넘지 않음. 배분 시작일은 부여일, '
                    '조건 변경의 증분은 조건 변경일. 당기 비용 = 누적 비용 − 전기 누적 비용.')
         return
+    if topic == '부트스트래핑':
+        horizon = max(r['t_end'] for r in lattices(run).values())
+        st.caption(f"{label('rf_curve')} 출처: {run.case.sources.get('rf_curve', '미기록')} · 신용위험이 없는 지분상품이라 "
+                   '무위험 곡선만 씁니다.')
+        _worksheet(bootstrap_values(run, horizon=horizon, risk_free_only=True))
+        return
     row = _pick_row(run, '_so_calc_row')
     st.caption(f"{row['name']} · 가득일 {row['vest']} · 행사 시작일 {row['start']} · 행사 종료일 {row['end']} · {row['n']}구간 · "
-               f"구간 {row['dt']*365:.2f}일 · 상승 배수 u = {row['u']:.6f} · 하락 배수 d = {row['d']:.6f} · "
-               f"행사 가능 시점 {row['ex_step']}부터"
+               f"구간 {row['dt']*365:.2f}일 · 행사 가능 시점 {row['ex_step']}부터"
                + (f" · 가득 시점 {row['vest_step']} · 목표 주가 {row['target']:,.0f}원 ({SO.MKT_LABELS[row['mkt']]})"
                   if row.get('mkt') else '')
                + (f" · 비가득조건 구간 중단 확률 {row['nv_step']:.6%}" if row.get('nv_step') else ''))
-    if topic == '노드 계산표':
-        n = row['n']
-        spans = list(range(0, n + 1, 16))
-        start = st.selectbox('계산표 시점 구간', spans, format_func=lambda i: f'{i}–{min(i+15, n)} 시점',
+    if topic == '노드 스케줄':
+        _worksheet(so_schedule_values(run, row))
+        return
+    n, span = row['n'], 32
+    start, end = 0, n
+    if n > 64:
+        # 큰 격자는 32시점씩 — 화면에 싣는 자료가 커지지 않게 한다 (전환사채 계산표와 같은 방식)
+        spans = list(range(0, n + 1, span))
+        start = st.selectbox('계산표 시점 구간', spans, format_func=lambda i: f'{i}–{min(i + span - 1, n)} 시점',
                              key='_so_span_' + run.summary['run_id'] + row['name'])
-        end = min(start + 15, n)
-        table = node_table(run, row, start, end)
-        dataframe(table, hide_index=True, width='stretch',
-                  column_config={c: st.column_config.TextColumn(width='medium') for c in table.columns if c != '자리'})
-        st.caption('칸마다 «옵션 1주당 가치 / 주가». ● 는 그 노드에서 행사한다는 뜻입니다. 자리 0이 가장 높은 주가입니다. '
-                   '열 이름은 시점(구간 번호)입니다.')
-    elif topic == '노드 따라가기':
-        c1, c2 = st.columns(2)
-        i = c1.number_input('시점', min_value=0, max_value=row['n'], value=0, step=1, key='_so_trace_i')
-        j = c2.number_input('자리 (0 = 가장 높은 주가)', min_value=0, max_value=int(i), value=0, step=1,
-                            key='_so_trace_j')
-        tr = SO.node_trace(t, row, int(i), min(int(j), int(i)))
-        st.write(f"**{tr['date']}** · 주가 {tr['stock']:,.2f}원 · 행사가격 {tr['strike']:,.2f}원 · 판단: {tr['rule']}")
-        share = tr.get('pass_share', 1.0)
-        if tr['terminal']:
-            _formula(f"가치 = {'' if share == 1 else f'{share:.6f} × '}max({tr['stock']:,.4f} − {tr['strike']:,.4f}, 0)"
-                     f" = {tr['value']:,.6f}")
-        else:
-            text = (f"계속 보유(퇴사 전) = exp(−{tr['fwd']:.6%} × {row['dt']:.6f}) × "
-                    f"[{tr['p']:.8f} × {tr['up']:,.6f} + (1 − {tr['p']:.8f}) × {tr['down']:,.6f}]\n"
-                    f"= {tr['disc']:.8f} × {tr['p']*tr['up'] + (1-tr['p'])*tr['down']:,.6f} = {tr['cont']:,.6f}")
-            if tr['exit_step'] > 0:
-                text += (f"\n퇴사 반영 = (1 − {tr['exit_step']:.8f}) × {tr['cont']:,.6f} + {tr['exit_step']:.8f} × "
-                         f"max({tr['intrinsic']:,.4f}, 0) = {tr['hold']:,.6f}")
-            if tr['nv_step'] > 0:
-                text += (f"\n비가득조건 반영 = (1 − {tr['nv_step']:.8f}) × {tr['cont']:,.6f} = {tr['hold']:,.6f}")
-            if tr['vested']:
-                text += f"\n지금 행사 = {tr['stock']:,.4f} − {tr['strike']:,.4f} = {tr['intrinsic']:,.6f}"
-            if share < 1:
-                text += (f"\n시장조건 반영 = 목표 주가 이상인 비율 {share:.6f} × {tr['before_share']:,.6f}"
-                         f" = {share*tr['before_share']:,.6f}")
-            text += f"\n이 노드의 가치 = {tr['value']:,.6f}  (다시 계산한 값과의 차이 {abs(tr['reconciliation']):.6f})"
-            _formula(text)
-            st.caption(f"위 노드: 주가 {tr['up_stock']:,.2f} · 가치 {tr['up']:,.6f} / 아래 노드: 주가 {tr['down_stock']:,.2f} · "
-                       f"가치 {tr['down']:,.6f}")
-        if 'wait' in tr:
-            _formula(f"목표 주가에 아직 닿지 않은 상태의 가치 = {tr['wait']:,.6f} — {tr['wait_rule']}"
-                     + (f"\n= (1 − {tr['nv_step']:.8f}) × {tr['disc']:.8f} × [{tr['p']:.8f} × {tr['wait_up']:,.6f} + "
-                        f"(1 − {tr['p']:.8f}) × {tr['wait_down']:,.6f}]" if 'wait_up' in tr else '')
-                     + f"\n(다시 계산한 값과의 차이 {abs(tr['wait_reconciliation']):.6f})")
-    else:
-        rows = [{'시점': i, '격자일': (dt.date.fromisoformat(t.d_base) + dt.timedelta(days=round(i*row['dt']*365))).isoformat(),
-                 '선도 무위험 금리(연속)': row['fwd'][i], '할인계수': math.exp(-row['fwd'][i]*row['dt']),
-                 '상승 확률': row['p'][i], '행사 가능': '가능' if i >= row['ex_step'] else '불가'}
-                for i in range(row['n'])]
-        dataframe(pd.DataFrame(rows).style.format({'선도 무위험 금리(연속)': '{:.6%}', '할인계수': '{:.8f}',
-                                                    '상승 확률': '{:.8f}'}), hide_index=True, width='stretch')
-        st.caption(f"상승 확률 = (e^((선도 금리 − 배당수익률 {t.div_y:.2%}) × 구간) − d) ÷ (u − d). "
-                   f"무위험 금리곡선 출처: {run.case.sources.get('rf_curve', '미기록')}")
+        end = min(start + span - 1, n)
+        st.caption('큰 격자는 32시점씩 표시합니다. 구간을 바꾸면 행사 종료일까지 모든 노드를 확인할 수 있습니다.')
+    st.caption('셀을 누르면 계산식과 참조하는 다음 시점 노드가 열립니다. «의사결정» 에서 행사한 노드를 색으로 봅니다.')
+    _worksheet(so_node_values(run, row, start, end))
 
 
 def _formula(text):

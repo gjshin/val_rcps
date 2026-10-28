@@ -345,7 +345,7 @@ def test_screens_open_evaluate_and_show_calculations():
     assert not app.exception, app.exception
     assert [h.value for h in app.subheader][:2] == ['회차별 공정가치', '회계연도별 보상원가 배분']
     assert any(m.label.startswith('1주당 공정가치') for m in app.metric)
-    for topic in ('노드 계산표', '노드 따라가기', '금리·확률', '비용 배분'):
+    for topic in ('노드 계산표', '노드 스케줄', '부트스트래핑', '비용 배분'):
         app.session_state['_workflow_stage'] = '계산내역'
         app.session_state['_calc_topic'] = topic
         app.run()
@@ -381,11 +381,10 @@ def test_screens_take_market_and_non_vesting_conditions():
         r = run.raw['rows'][0]
         assert r['mkt'] == mkt and r['nv_step'] > 0
         app.session_state['_workflow_stage'] = '계산내역'
-        app.session_state['_calc_topic'] = '노드 따라가기'
-        for i in (0, r['vest_step']):
-            app.session_state['_so_trace_i'] = i
+        for topic in ('노드 계산표', '노드 스케줄'):
+            app.session_state['_calc_topic'] = topic
             app.run()
-            assert not app.exception, (mkt, i, app.exception)
+            assert not app.exception, (mkt, topic, app.exception)
 
 
 def test_new_stock_option_case_from_the_sidebar():
@@ -812,3 +811,48 @@ def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
     assert rows['당기 중'][1:5] == ('주식보상부채', 3000.0, '현금', 3000.0)
     c.method['so_paid'] = 3000.0
     assert rows[c.method['d_base']][2] == pytest.approx(calculate(c).raw['expense'], rel=1e-10)
+
+
+# ── 계산표 — 전환사채·상환전환우선주와 같은 화면, 셀을 누르면 계산식과 참조 노드 ─────────────────────
+
+@pytest.mark.parametrize('mkt', [0, 1, 2])
+def test_calculation_grid_reads_the_engine_lattice(mkt, monkeypatch):
+    import json
+    from valuation.calculation_view import so_node_values, so_schedule_values, bootstrap_values, worksheet_html
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0, target=130.0 if mkt else None)]
+    run = calculate(case(so_ex=2, so_mult=1.8, so_exit=0.05, so_nv=0.05, div_y=0.01, so_mkt=mkt, so_rows=rows,
+                         grid_days=14.0))
+    r = run.raw['rows'][0]
+    monkeypatch.setattr(SO, 'value_row', lambda *a, **k: pytest.fail('화면이 다시 평가했습니다'))
+    view = so_node_values(run, r, 30, 61)
+    assert {n['i'] for n in view['nodes'].values()} == set(range(30, 63))     # 마지막 열이 참조하는 다음 열까지
+    for key, n in view['nodes'].items():
+        i, down = n['i'], n['down']
+        assert key == f'{i},{down}' and n['j'] == i - down
+        assert n['value'] == r['values'][i][down] and n['stock'] == r['prices'][i][down]
+        assert n['exercise'] == r['exercise'][i][down] and (n['kind'] == '행사') == n['exercise']
+        up = view['nodes'].get(f"{n['up'][0]},{n['up'][0] - n['up'][1]}") if n['up'] else None
+        dn = view['nodes'].get(f"{n['dn'][0]},{n['dn'][0] - n['dn'][1]}") if n['dn'] else None
+        if up and dn:                     # 화면 계산식 C = 할인계수 × [p × V↑ + (1 − p) × V↓]
+            s = view['steps'][i]
+            assert (up['down'], dn['down']) == (down, down + 1)
+            assert n['cont'] == pytest.approx(s['df']*(s['q']*up['value'] + (1 - s['q'])*dn['value']), rel=1e-12)
+            if mkt == 2 and n['wait'] is not None and i < r['vest_step'] and n['stock'] < 130.0:
+                assert n['wait'] == pytest.approx((1 - s['nv'])*s['df']*(s['q']*up['wait'] + (1 - s['q'])*dn['wait']),
+                                                  rel=1e-12)
+    page = worksheet_html(view)
+    payload = json.loads(page.split('type="application/json">')[1].split('</script>')[0])
+    assert payload['nodes']['30,0']['value'] == r['values'][30][0] and 'NaN' not in page
+    if mkt == 1:
+        judged = [n for n in so_node_values(run, r, r['vest_step'], r['vest_step'])['nodes'].values()
+                  if n['i'] == r['vest_step']]
+        assert any(0 < n['share'] < 1 for n in judged) and any(n['kind'] == '소멸 (시장조건)' for n in judged)
+    sched = so_schedule_values(run, r)
+    assert [s['q'] for s in sched['steps'][:-1]] == r['p'] and [s['rf'] for s in sched['steps'][:-1]] == r['fwd']
+    assert sum(s['before_vest'] for s in sched['steps']) == r['vest_step']
+    assert sum(not s['can_ex'] for s in sched['steps']) == r['ex_step']
+    assert all(s['nv'] == (r['nv_step'] if s['i'] < r['vest_step'] else 0.0) for s in sched['steps'][:-1])
+    boot = bootstrap_values(run, horizon=r['t_end'], risk_free_only=True)
+    curve = SO.rate_fn(run.terms, r['t_end'])
+    assert len(boot['curves']) == 1
+    assert all(row['spot'] == pytest.approx(curve(row['t'])) for row in boot['curves'][0]['rows'])
