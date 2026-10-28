@@ -37,14 +37,12 @@ DP_INPUT_CELLS = {(7, 3), (8, 3), (8, 4), (5, 6)}
 DP_FIRST_YEAR_ROW = 10
 
 
-# 주식선택권 수식 조서의 입력 칸 — 시트 이름: 열 번호 (머리줄 아래 전부)
-SO_INPUT_COLUMNS = {'평가 입력값': 2, '회차표 입력': 6, '조건 변경표 입력': 7}
-
-
 def excel_input(ws, cell):
     """수식 조서에서 고칠 수 있는 노란 입력 칸인가."""
-    if ws.title in SO_INPUT_COLUMNS:
-        return cell.column == SO_INPUT_COLUMNS[ws.title] and cell.row >= 2
+    so_inputs = getattr(ws.parent, 'so_inputs', None)
+    if so_inputs is not None:
+        # 주식선택권 조서는 만들 때 고칠 수 있는 칸을 적어 둔다 (stock_option_workpaper._Writer.value_in)
+        return (ws.title, cell.coordinate) in so_inputs
     if re.fullmatch(r'(?:\d+·)?가정', ws.title):
         return cell.column == 3 and ws.cell(cell.row, 2).value in EXCEL_INPUTS
     if ws.title == DP_SHEET:
@@ -79,7 +77,7 @@ def add_workpaper_guide(wb, run, *, formula=False):
         [
             '사용 범위',
             (
-                '파란 글씨의 노란 칸만 고칠 수 있습니다: «평가 입력값» 시트의 주가·변동성·배당수익률·행사 배수·퇴사율(현금결제형은 전기말 부채·당기 결제액), «회차표 입력» 의 가득 예상 비율, «조건 변경표 입력» 의 부여일 1주당 공정가치. 날짜·행사 일정·행사가격·수량·구간 수·금리는 앱에서 바꾼 뒤 다시 만드십시오. 기대존속기간은 평가 당시 값입니다. 시트 보호는 실수 방지용이며 암호 보안이 아닙니다.'
+                '파란 글씨의 노란 칸만 고칠 수 있습니다: «가정» 시트의 평가 입력값(주가·변동성·배당수익률·행사 배수·퇴사율·비가득조건 중단율, 현금결제형은 전기말 부채·당기 결제액), 가득 회차 표의 가득 예상 비율, 조건 변경표의 부여일 1주당 공정가치. 날짜·행사 일정·행사가격·수량·구간 수·금리는 앱에서 바꾼 뒤 다시 만드십시오. 기대존속기간은 평가 당시 값입니다. 시트 보호는 실수 방지용이며 암호 보안이 아닙니다.'
                 if formula and so else
                 '파란 글씨의 노란 칸만 고칠 수 있습니다: 주가·변동성·배당수익률, 표면이자율(우선배당률)·보장수익률, 배당가능이익 시트의 연도별 금액·가산율·재원 사용 시작일·만기 미상환 처리. 날짜·행사 일정·구간 수·모형·기준금리·금리곡선은 앱에서 바꾼 뒤 다시 만드십시오. 시트 보호는 실수 방지용이며 암호 보안이 아닙니다.'
                 if formula
