@@ -374,6 +374,15 @@ def test_cash_settled_liability_is_remeasured_at_year_end():
     wb = _workbook(paid, accounting=True)
     rows = list(wb['회계처리'].iter_rows(values_only=True))
     assert ('당기 중', '주식보상부채', 4000.0, '현금', 4000.0) in [r[:5] for r in rows]
+    # 당기 중 모두 결제 — 남은 수량 0, 부채 0, 비용 = 결제액 − 전기말 부채 (자동 검토 지적)
+    done = cash_case(so_prev_liab=10000.0, so_paid=12000.0)
+    for r in done.contract['so_rows']:
+        r['qty'] = 0.0
+    gone = calculate(done)
+    assert gone.raw['liab'] == 0 and gone.raw['expense'] == pytest.approx(2000.0)
+    assert gone.summary['amounts_per_share'] == {'so_fair': 0.0, 'so_liab': 0.0}
+    assert '부채 재측정' in _workbook(gone, detail=True, accounting=True).sheetnames
+    assert any('부여 수량' in i.message for i in inspect_case(case(so_rows=[dict(name='1차', vest='2028-01-01', qty=0.0)])))
 
 
 def test_mode_workpapers():

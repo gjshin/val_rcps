@@ -145,8 +145,9 @@ def issues(tm) -> list[str]:
             out.append(f"{label}: 행사 종료일이 행사기간 종료일({tm.d_mat})보다 늦습니다.")
         if end <= db:
             out.append(f"{label}: 행사 종료일이 측정기준일 이전이라 평가할 기간이 없습니다.")
-        if not (isinstance(r["qty"], (int, float)) and math.isfinite(r["qty"]) and r["qty"] > 0):
-            out.append(f"{label}: 부여 수량은 0보다 커야 합니다.")
+        cash = int(tm.so_settle) == 1           # 현금결제형은 결산일에 남은 수량 — 모두 결제했으면 0
+        if not (isinstance(r["qty"], (int, float)) and math.isfinite(r["qty"]) and (r["qty"] >= 0 if cash else r["qty"] > 0)):
+            out.append(f"{label}: 남은 수량은 0 이상이어야 합니다." if cash else f"{label}: 부여 수량은 0보다 커야 합니다.")
         if not (isinstance(r["keep"], (int, float)) and math.isfinite(r["keep"]) and 0 < r["keep"] <= 1):
             out.append(f"{label}: 가득 예상 비율은 0%보다 크고 100% 이하여야 합니다.")
     if tm.so_exit > 0:
@@ -559,7 +560,7 @@ def amounts(tm, raw):
     k1, k2 = AMOUNT_KEYS[raw["mode"]]
     total = {k1: float(raw["fair"]), k2: float(raw["liab"] if raw["mode"] == "cash" else raw["cost"])}
     qty, S0 = float(raw["qty"]), float(tm.S0)
-    share = {k: v/qty for k, v in total.items()}
+    share = {k: v/qty if qty else 0.0 for k, v in total.items()}     # 현금결제형에서 모두 결제했으면 수량 0
     return total, share, {k: v/S0*100 for k, v in share.items()}
 
 
