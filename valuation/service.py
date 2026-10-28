@@ -354,10 +354,8 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
         pack = run.case.market_evidence.get('sig')
         attach = dict(px=(pack['series'], pack['opt']) if pack else None, ir=True)
         if legacy.is_so(terms):
-            if formula:
-                raise ValueError('주식선택권의 상세 계산 수식 조서는 2단계에서 지원합니다. 상세 계산 값 조서를 고르십시오.')
             from .stock_option_report import detail_workbook
-            wb = detail_workbook(run, accounting=accounting)
+            wb = detail_workbook(run, accounting=accounting, formula=formula)
         elif legacy.is_sha(terms):
             wb = legacy.build_xlsx_sha(terms, run.raw, formula=formula, attach=attach, as_workbook=True)
         else:

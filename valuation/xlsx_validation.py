@@ -47,6 +47,23 @@ def compare_cells(wb, expected, tol=1e-6):
     return rows
 
 
+def recalculate(data, executable=None):
+    """리브레오피스로 다시 계산해 저장한 통합문서(바이트). 칸마다 값을 견주는 시험이 쓴다."""
+    exe = executable or os.environ.get('VALUATION_SOFFICE') or shutil.which('libreoffice') or shutil.which('soffice')
+    if not exe:
+        raise ValueError('수식 재계산 검사에는 LibreOffice가 필요합니다. 설치 후 실행하거나 VALUATION_SOFFICE 경로를 지정하십시오.')
+    with tempfile.TemporaryDirectory(prefix='valuation-xlsx-') as folder:
+        base = Path(folder); source = base/'source.xlsx'; source.write_bytes(data)
+        out = base/'recalculated'; out.mkdir()
+        result = subprocess.run([exe, '-env:UserInstallation=' + (base/'profile').as_uri(),
+            '--headless', '--convert-to', 'xlsx', '--outdir', str(out), str(source)],
+            capture_output=True, text=True, timeout=1800)
+        target = out/source.name
+        if result.returncode or not target.exists():
+            raise ValueError('엑셀 재계산 실패: '+(result.stderr or result.stdout)[-2000:])
+        return target.read_bytes()
+
+
 def recalculate_and_compare(data, executable=None, expected=None):
     """Recalculate the ACTUAL export, without changing inputs or step count.
 

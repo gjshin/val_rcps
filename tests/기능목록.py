@@ -495,6 +495,11 @@ def collect_coverage(G):
         "test_added_options_are_valued_at_the_modified_value": ([("SO", "so_mod", 1)], "invariants"),
         # 현금결제형 — 부채 = 같은 날 부여일 평가 값 × 수량 × 가득 예상 비율 × 근무 경과율
         "test_cash_settled_liability_is_remeasured_at_year_end": ([("SO", "so_settle", 1)], "hand_calc_independent"),
+        # 수식 조서 — 리브레오피스로 다시 계산해 상세 값 조서의 모든 숫자 칸과 맞춘다 (엔진 = 조서)
+        "test_formula_workbook_recalculates_to_the_value_workbook":
+            ([("SO", "so_ex", 1), ("SO", "so_ex", 2), ("SO", "so_mod", 1), ("SO", "so_settle", 1)],
+             "engine_vs_formula_workbook"),
+        "test_formula_workbook_follows_changed_estimates_like_the_app": ([("SO", "so_ex", 2)], "engine_vs_formula_workbook"),
     }
     tf = "tests/test_stock_option.py"
     src = open(os.path.join(ROOT, tf), encoding="utf-8").read()

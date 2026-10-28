@@ -463,8 +463,8 @@ def schedule_mod(tm, rows_out: list[dict]) -> list[dict]:
     for r in rows_out:
         v_old, v_new = _date(r["vest_before"]), _date(r["vest"])
         spread(r["name"], "당초", r["grant_cost"], di, min(v_old, v_new), vest_past=v_old)
-        if r["cost"] > 0:
-            spread(r["name"], "증분", r["cost"], db, v_new)
+        # 증분이 0이어도 줄을 만든다 — 수식 조서에서 주가 등을 바꿔 증분이 생기면 이 줄이 받는다
+        spread(r["name"], "증분", r["cost"], db, v_new)
     return out
 
 

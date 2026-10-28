@@ -1,6 +1,6 @@
 {
- "generated": "2026-10-28T02:54:48",
- "head": "87dc4ac",
+ "generated": "2026-10-28T03:16:15",
+ "head": "ae9754e",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -7658,9 +7658,10 @@
    "independent_oracle": false,
    "covered_by": [
     "tests/test_stock_option.py::test_no_dividend_optimal_exercise_equals_european_and_dividend_makes_it_worth_more",
-    "tests/test_stock_option.py::test_exercise_multiple_and_exit_rate_lower_the_value"
+    "tests/test_stock_option.py::test_exercise_multiple_and_exit_rate_lower_the_value",
+    "tests/test_stock_option.py::test_formula_workbook_recalculates_to_the_value_workbook"
    ],
-   "n_tests": 2
+   "n_tests": 3
   },
   {
    "case_id": "SO-so_ex-2",
@@ -7675,9 +7676,11 @@
    "independent_oracle": false,
    "covered_by": [
     "tests/test_stock_option.py::test_exercise_multiple_and_exit_rate_lower_the_value",
-    "tests/test_stock_option.py::test_node_trace_reconciles_every_node"
+    "tests/test_stock_option.py::test_node_trace_reconciles_every_node",
+    "tests/test_stock_option.py::test_formula_workbook_recalculates_to_the_value_workbook",
+    "tests/test_stock_option.py::test_formula_workbook_follows_changed_estimates_like_the_app"
    ],
-   "n_tests": 2
+   "n_tests": 4
   },
   {
    "case_id": "SO-so_settle-0",
@@ -7707,9 +7710,10 @@
    "oracle": "hand_calc_independent",
    "independent_oracle": true,
    "covered_by": [
-    "tests/test_stock_option.py::test_cash_settled_liability_is_remeasured_at_year_end"
+    "tests/test_stock_option.py::test_cash_settled_liability_is_remeasured_at_year_end",
+    "tests/test_stock_option.py::test_formula_workbook_recalculates_to_the_value_workbook"
    ],
-   "n_tests": 1
+   "n_tests": 2
   },
   {
    "case_id": "SO-so_mod-0",
@@ -7741,9 +7745,10 @@
    "covered_by": [
     "tests/test_stock_option.py::test_repricing_measures_the_increment_on_the_modification_date",
     "tests/test_stock_option.py::test_unfavourable_change_adds_nothing",
-    "tests/test_stock_option.py::test_added_options_are_valued_at_the_modified_value"
+    "tests/test_stock_option.py::test_added_options_are_valued_at_the_modified_value",
+    "tests/test_stock_option.py::test_formula_workbook_recalculates_to_the_value_workbook"
    ],
-   "n_tests": 3
+   "n_tests": 4
   },
   {
    "case_id": "CB-put-ON",

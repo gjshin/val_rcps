@@ -2,7 +2,9 @@
 
 숫자는 모두 가상의 값이다 (실제 회사 자료 아님).
 """
+import copy
 import io
+import shutil
 import zipfile
 
 import pytest
@@ -199,8 +201,8 @@ def test_value_workpapers_carry_the_run_values():
              if isinstance(c.value, float) and abs(c.value - r['values'][0][0]) <= 1e-12*abs(r['values'][0][0])]
     assert found                                          # 격자 시점 0의 가치 = 회차 1주당 공정가치
     assert r['values'][0][0] == r['fv']
-    with pytest.raises(ValueError, match='2단계'):
-        export_bundle(run, detail=True, formula=True)
+    inputs = [r[:2] for r in detail['평가 입력값'].iter_rows(values_only=True)]
+    assert inputs[1] == ('측정기준일 주가(원)', run.terms.S0) and inputs[2] == ('변동성 σ (연)', run.terms.sig)
 
 
 def test_screens_open_evaluate_and_show_calculations():
@@ -224,7 +226,7 @@ def test_screens_open_evaluate_and_show_calculations():
     app.session_state['_workflow_stage'] = '조서 출력'
     app.run()
     choice = next(r for r in app.radio if r.label == '조서 구성')
-    assert choice.options == ['기본 값 조서', '상세 계산 값 조서']
+    assert choice.options == ['기본 값 조서', '상세 계산 값 조서', '상세 계산 수식 조서']
     app.session_state['_workflow_stage'] = '입력·시장자료'
     app.session_state['_input_area'] = '주가·변동성·금리 자료'
     app.run()
@@ -299,7 +301,7 @@ def test_unfavourable_change_adds_nothing():
     run = calculate(mod_case([dict(name='1차', K=120.0, grant_fv=20.0)]))
     r = run.raw['rows'][0]
     assert r['fv'] < r['fv_before'] and r['incr'] == 0 and r['cost'] == 0
-    assert {x['part'] for x in run.raw['schedule']} == {'당초'}
+    assert all(x['expense'] == 0 for x in run.raw['schedule'] if x['part'] == '증분')   # 줄은 있고 금액은 0
     assert 'so_mod_no_increment' in {i.code for i in run.issues}
 
 
@@ -436,6 +438,14 @@ def test_screens_switch_between_grant_modification_and_cash():
     assert not app.exception, app.exception
     assert app.session_state.case.contract['so_mod'] == 0
     assert [h.value for h in app.subheader][:2] == ['회차별 공정가치와 부채', '결산일 부채와 당기 비용']
+    app.session_state['_workflow_stage'] = '조서 출력'
+    app.run()
+    next(r for r in app.radio if r.label == '조서 구성').set_value('상세 계산 수식 조서').run()
+    next(b for b in app.button if b.label == '조서 생성').click().run()
+    assert not app.exception, app.exception
+    with zipfile.ZipFile(io.BytesIO(app.session_state.bundle)) as z:
+        assert 'formula_review.xlsx' in z.namelist()
+
     # 결제액을 넣은 현금결제형을 주식결제형으로 바꾼 입력 (자동 검토 지적) — 숨은 결제액이 평가를 막지 않는다
     back = case(so_rows=ONE)
     back.method['so_paid'] = 4000.0
@@ -449,3 +459,161 @@ def test_screens_switch_between_grant_modification_and_cash():
     assert not app.exception, app.exception
     assert app.session_state.case.method['so_paid'] == 0.0
     assert [h.value for h in app.subheader][:2] == ['회차별 공정가치', '회계연도별 보상원가 배분']
+
+# ── 2단계 ③ 수식 조서 — 상세 값 조서와 같은 시트·같은 칸, 다시 계산하면 같은 값 ─────────────────────
+
+LIBRE = shutil.which('libreoffice') or shutil.which('soffice')
+THREE = [dict(name='1차', vest='2027-01-01', end='2029-01-01', qty=1000.0, keep=0.9),
+         dict(name='2차', vest='2028-01-01', end='', qty=2000.0, keep=0.8)]
+FORMULA_CASES = {
+    '부여일 · 행사 배수 · 퇴사율': lambda: case(so_ex=2, so_mult=1.8, so_exit=0.05, div_y=0.01, d_mat='2029-07-01',
+                                       so_rows=THREE, grid_days=14.0),
+    '부여일 · 최적 행사 · 배당': lambda: case(so_ex=1, div_y=0.03, d_mat='2029-07-01', so_rows=THREE, grid_days=14.0),
+    '조건 변경': lambda: mod_case([dict(name='1차', K=80.0, qty=1200.0, vest='2028-07-01', grant_fv=20.0)],
+                              grid_days=14.0, so_ex=1, div_y=0.02),
+    '현금결제형': lambda: cash_case(so_prev_liab=5000.0, so_paid=1500.0, grid_days=14.0, so_ex=2, so_mult=2.0),
+    '현금결제형 · 모두 결제': lambda: _settled(cash_case(so_prev_liab=10000.0, so_paid=12000.0, grid_days=14.0)),
+    # 가득된 선택권의 행사기간 연장 — 주가가 행사 배수를 넘어 변경 전·후 모두 바로 행사하므로 처음 증분 0
+    '조건 변경 · 증분 0': lambda: mod_case([dict(name='1차', end='2032-01-01', grant_fv=20.0)], grid_days=14.0, so_ex=2,
+                                       so_mult=2.0, S0=250.0,
+                                       rows=[dict(name='1차', vest='2026-06-30', end='', qty=1000.0, keep=1.0)]),
+}
+
+
+def _settled(c):
+    for r in c.contract['so_rows']:
+        r['qty'] = 0.0
+    return c
+
+
+def _xlsx(run, **kw):
+    with zipfile.ZipFile(io.BytesIO(export_bundle(run, **kw))) as z:
+        return z.read(next(n for n in z.namelist() if n.endswith('.xlsx')))
+
+
+def _recalc(data):
+    from valuation.xlsx_validation import recalculate
+    return load_workbook(io.BytesIO(recalculate(data)), data_only=True)
+
+
+def test_formula_workbook_has_live_lattices_and_only_estimates_open():
+    from valuation.xlsx_validation import inspect_workbook
+    run = calculate(FORMULA_CASES['조건 변경']())
+    data = _xlsx(run, detail=True, formula=True, accounting=True)
+    assert not inspect_workbook(data)['errors']
+    wb = load_workbook(io.BytesIO(data))
+    value = load_workbook(io.BytesIO(_xlsx(run, detail=True, accounting=True)))
+    assert wb.sheetnames == value.sheetnames                       # 값 조서와 같은 시트
+    ws = wb['격자 1차 변경 후']
+    assert ws['C14'].value == '=C24' and ws['C9'].value.startswith('=EXP(')
+    assert all(isinstance(c.value, str) and c.value.startswith('=') for c in ws[24][2:5])
+    assert isinstance(ws['C18'].value, float)                     # 금리는 앱이 정한 값 (엑셀에서 고치지 않는다)
+    editable = {(s.title, c.coordinate) for s in wb for row in s.iter_rows() for c in row
+                if c.protection.locked is False}
+    assert editable == ({('평가 입력값', f'B{r}') for r in range(2, 7)} | {('회차표 입력', 'F2')} |
+                        {('조건 변경표 입력', 'G2')})
+    assert all(s.protection.sheet for s in wb)
+    assert wb['계산대사']['C2'].value.startswith("='평가요약'!")
+
+
+def test_formula_workbook_matches_tranche_names_like_the_engine():
+    # 회차 이름 앞뒤 빈칸 — 조건 변경 계산은 떼고 맞추므로 수식 조서도 같아야 한다 (자동 검토 지적)
+    rows = [dict(name=' 1차 ', vest='2028-01-01', end='', qty=1000.0, keep=0.9)]
+    run = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=rows, grid_days=14.0))
+    wb = load_workbook(io.BytesIO(_xlsx(run, detail=True, formula=True)))
+    ws = wb['조건 변경']
+    head = [c.value for c in ws[1]]
+    assert ws.cell(2, head.index('부여일 1주당 공정가치') + 1).value == "='조건 변경표 입력'!$G$2"
+    # 숫자 회차명 — 불러온 평가파일에서 생길 수 있다 (자동 검토 지적)
+    num = [dict(name=1, vest='2028-01-01', end='', qty=1000.0, keep=0.9)]
+    for c in (mod_case([dict(name=1, K=80.0, grant_fv=20.0)], rows=num, grid_days=14.0),
+              case(so_rows=num, grid_days=14.0), case(so_settle=1, d_base='2026-12-31', so_rows=num, grid_days=14.0)):
+        wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
+        assert any(n.startswith('격자 1') for n in wb.sheetnames)
+
+
+@pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
+@pytest.mark.parametrize('name', list(FORMULA_CASES))
+def test_formula_workbook_recalculates_to_the_value_workbook(name):
+    run = calculate(FORMULA_CASES[name]())
+    value = load_workbook(io.BytesIO(_xlsx(run, detail=True, accounting=True)))
+    live = _recalc(_xlsx(run, detail=True, formula=True, accounting=True))
+    bad, count = [], 0
+    for ws in value:
+        if ws.title in ('00_안내', '계산대사'):                    # 출력 형식 안내 · 수식 대사 표는 조서마다 다르다
+            continue
+        other = live[ws.title]
+        for row in ws.iter_rows():
+            for c in row:
+                a, b = c.value, other[c.coordinate].value
+                if isinstance(a, (int, float)) and not isinstance(a, bool):
+                    count += 1
+                    if not (isinstance(b, (int, float)) and abs(a - b) <= 1e-9*max(1.0, abs(a))):
+                        bad.append((ws.title, c.coordinate, a, b))
+                elif a != b and not (a is None and b == ''):
+                    bad.append((ws.title, c.coordinate, a, b))
+    assert count > 10000 and not bad, bad[:10]
+    check = list(live['계산대사'].iter_rows(min_row=2, values_only=True))
+    assert check and all(abs(r[3]) <= 1e-9*max(1.0, abs(r[1])) for r in check), check
+
+
+@pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
+def test_formula_workbook_follows_changed_estimates_like_the_app():
+    c = FORMULA_CASES['부여일 · 행사 배수 · 퇴사율']()
+    wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True)))
+    edits = {'S0': 110.0, 'sig': 0.35, 'so_mult': 2.0, 'so_exit': 0.03}
+    rows = {'S0': 2, 'sig': 3, 'so_mult': 5, 'so_exit': 6}
+    for k, v in edits.items():
+        wb['평가 입력값'].cell(rows[k], 2).value = v
+    wb['회차표 입력']['F3'].value = 0.7
+    out = io.BytesIO()
+    wb.save(out)
+    live = _recalc(out.getvalue())
+    c2 = copy.deepcopy(c)
+    c2.market.update(S0=110.0, sig=0.35)
+    c2.method.update(so_mult=2.0, so_exit=0.03)
+    c2.contract['so_rows'][1]['keep'] = 0.7
+    app = calculate(c2)
+    from valuation.service import AMOUNT_LABELS
+    lab = {r[0]: r for r in live['평가요약'].iter_rows(values_only=True)}
+    for key, want in app.summary['amounts_total'].items():
+        assert lab[AMOUNT_LABELS[key]][1] == pytest.approx(want, rel=1e-10), key
+        assert lab[AMOUNT_LABELS[key]][3] == pytest.approx(app.summary['amounts_100'][key], rel=1e-10), key
+    sched = [r for r in live['비용 배분'].iter_rows(min_row=2, values_only=True)]
+    assert [x[3] for x in sched] == pytest.approx([x['당기 비용'] for x in app.summary['so_schedule']], rel=1e-10)
+
+
+@pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
+def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
+    # 처음에 0인 증분·결제액도 비용 배분·분개에 줄이 있어, 엑셀에서 입력을 바꾸면 따라온다 (자동 검토 지적)
+    c = FORMULA_CASES['조건 변경 · 증분 0']()
+    assert calculate(c).raw['rows'][0]['incr'] == 0
+    wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
+    wb['평가 입력값']['B2'].value = 150.0                  # 주가를 낮추면 바로 행사하지 않아 연장의 증분이 생긴다
+    wb['조건 변경표 입력']['G2'].value = 10.0
+    out = io.BytesIO()
+    wb.save(out)
+    live = _recalc(out.getvalue())
+    c2 = copy.deepcopy(c)
+    c2.market['S0'] = 150.0
+    c2.contract['so_mod_rows'][0]['grant_fv'] = 10.0
+    app = calculate(c2)
+    assert app.raw['cost'] > 1000
+    sched = [r for r in live['비용 배분'].iter_rows(min_row=2, values_only=True)]
+    assert [x[4] for x in sched] == pytest.approx([x['당기 비용'] for x in app.summary['so_schedule']], rel=1e-10)
+    journal = {r[0]: r[2] for r in live['회계처리'].iter_rows(min_row=3, values_only=True)
+               if r and r[1] == '주식보상비용'}
+    want = {}
+    for x in app.summary['so_schedule']:
+        want[x['결산일']] = want.get(x['결산일'], 0.0) + x['당기 비용']
+    assert journal == pytest.approx(want, rel=1e-10)
+    # 현금결제형 — 처음 결제액 0, 엑셀에서 3,000원을 넣는다
+    c = cash_case(grid_days=14.0, so_prev_liab=5000.0)
+    wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
+    wb['평가 입력값']['B8'].value = 3000.0
+    out = io.BytesIO()
+    wb.save(out)
+    rows = {r[0]: r for r in _recalc(out.getvalue())['회계처리'].iter_rows(values_only=True) if r and r[0]}
+    assert rows['당기 중'][1:5] == ('주식보상부채', 3000.0, '현금', 3000.0)
+    c.method['so_paid'] = 3000.0
+    assert rows[c.method['d_base']][2] == pytest.approx(calculate(c).raw['expense'], rel=1e-10)
