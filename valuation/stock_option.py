@@ -668,6 +668,12 @@ def node_trace(tm, row: dict, i: int, j: int) -> dict:
             out.update(pass_share=share, forfeit=share < 1.0, reconciliation=out["value"] - share*max(S - K, 0.0))
             if share < 1.0:
                 out["rule"] += f" × 목표 주가 이상인 비율 {share:.4f} (가득일 시장조건 판정)"
+        if row.get("wait") is not None and n <= row["vest_step"]:
+            # 가득일 = 행사 종료일인 «한 번이라도» 판정 — 종료 노드에도 «닿지 않은 상태» 가치가 있다
+            hit = S >= row["target"]*(1 - MKT_TOL)
+            w = row["wait"][n][j]
+            out.update(wait=w, wait_rule=("목표 주가 이상 — 보통 격자 가치로 바뀜" if hit else "가득일까지 목표 주가에 닿지 못해 소멸"),
+                       wait_reconciliation=w - (out["value"] if hit else 0.0))
         return out
     p, f = row["p"][i], row["fwd"][i]
     up, dn = row["values"][i + 1][j], row["values"][i + 1][j + 1]

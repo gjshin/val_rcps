@@ -937,6 +937,22 @@ def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
 
 # ── 계산표 — 전환사채·상환전환우선주와 같은 화면, 셀을 누르면 계산식과 참조 노드 ─────────────────────
 
+def test_calculation_grid_keeps_the_unmet_target_values_at_expiry():
+    # 가득일 = 행사 종료일인 «한 번이라도» 판정 — 마지막 열의 미도달 상태 가치도 싣는다 (자동 검토 지적)
+    from valuation.calculation_view import so_node_values
+    run = calculate(case(so_mkt=2, so_rows=_target_row(130.0), d_mat='2028-01-01', div_y=0.01, grid_days=14.0))
+    r = run.raw['rows'][0]
+    assert r['vest_step'] == r['n']
+    view = so_node_values(run, r, r['n'] - 1, r['n'])
+    for down in range(r['n'] + 1):
+        node = view['nodes'][f"{r['n']},{down}"]
+        assert node['wait'] == r['wait'][r['n']][down]
+        tr = SO.node_trace(run.terms, r, r['n'], down)
+        assert abs(tr['wait_reconciliation']) <= 1e-12
+    parent = view['nodes'][f"{r['n'] - 1},0"]
+    assert parent['wait'] == r['wait'][r['n'] - 1][0]
+
+
 @pytest.mark.parametrize('mkt', [0, 1, 2])
 def test_calculation_grid_reads_the_engine_lattice(mkt, monkeypatch):
     import json
