@@ -13,7 +13,8 @@ from test_v2_workflow import ROOT
 APP_SOURCES = ['application.py', 'v2_workspace.py', 'workspace_app.py', 'market_tools_ui.py',
                'vol_app.py', 'engagement_ui.py', 'judgment_ui.py', 'guide_ui.py',
                'valuation/presentation.py', 'valuation/explain.py', 'valuation/workpaper_v2.py',
-               'valuation/calculation_grid.html', 'valuation/calculation_view.py', 'valuation/service.py']
+               'valuation/calculation_grid.html', 'valuation/calculation_view.py', 'valuation/service.py',
+               'stock_option_ui.py']
 
 
 def _source():

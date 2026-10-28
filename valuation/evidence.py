@@ -123,6 +123,23 @@ TOPICS = [
          limitation='원인별 변동 분석은 변경 순서에 영향을 받습니다. 합계 대사와 적용 순서를 함께 보관하십시오.',
          sources=[standard('1113', '65', '공정가치 측정을 위해 사용하는 가치평가기법은 일관되게 적용한다.'),
                   book('4.6.2 평가기법 선택 근거 문서화', 151, '판단 근거 등을 제시하고 관련 내용을 문서화할 필요가 있다.')]),
+    # ── 주식선택권 (기업회계기준서 제1102호) ─────────────────────
+    dict(id='so_volatility', title='기대주가변동성을 어떤 자료로 정했나요?',
+         trigger='so', fields=['d_base', 'S0', 'sig', 'rf_curve'],
+         explanation='기대존속기간에 맞는 최근 기간의 과거 주가변동성을 기본으로, 상장기간이 짧거나 비상장이면 비슷한 기업의 변동성을 함께 봅니다. 비정상적 주가 등락 기간을 뺐다면 그 이유를 남깁니다.',
+         questions=[], limitation='변동성 값이 입력되었다는 사실만으로 추정의 적정성을 확인할 수 없습니다.',
+         sources=[standard('1102', 'B25, B26', '해당 주식의 거래행위를 관측할 수 있는 최장의 기간에 대해 과거 주가변동성을 산정한다.', 'b')]),
+    dict(id='so_early_exercise', title='조기행사 가정의 근거가 있나요?',
+         trigger='so', fields=['so_ex', 'so_mult', 'so_exit', 'so_rows'],
+         explanation='가득일과 만기 사이에 행사할 수 있으면 조기행사 효과를 공정가치에 반영합니다. 행사 배수·퇴사율은 과거 행사 실적, 직급별 행사 경향, 유사 기업 자료로 정합니다.',
+         questions=[], limitation='행사 배수와 퇴사율은 추정치이며, 앱이 근거를 대신 정하지 않습니다.',
+         sources=[standard('1102', 'B5', '조기 행사 가능성이 있는 때에는 블랙-숄즈-머튼모형(Black-Scholes-Merton formula)이 적절하지 않을 수 있다.', 'b'),
+                  standard('1102', 'B16, B18', appendix='b')]),
+    dict(id='so_vesting', title='가득조건을 공정가치와 수량 중 어디에 반영했나요?',
+         trigger='so', fields=['so_rows'],
+         explanation='근무조건과 시장조건이 아닌 성과조건은 공정가치가 아니라 가득 예상 수량에 반영하고, 결산일마다 다시 추정합니다. 목표 주가 같은 시장조건은 공정가치에 반영합니다.',
+         questions=[], limitation='이 앱은 시장조건(목표 주가 등)을 공정가치에 반영하지 않습니다. 시장조건이 있으면 별도로 평가하십시오.',
+         sources=[standard('1102', '19, 20, 21', '시장조건이 아닌 가득조건은, 측정기준일 현재 주식 또는 주식선택권의 공정가치를 추정할 때 고려하지 아니한다.')]),
 ]
 
 
@@ -133,7 +150,10 @@ for _topic in TOPICS:
 
 def applicable(topic, values):
     trigger = topic['trigger']
-    return {'all': True, 'rcps': values.get('inst') == 'RCPS',
+    if values.get('inst') == 'SO':
+        # 주식선택권은 사채·우선주의 판단(분류·분리·콜·금리격자)이 없다 — 시장자료와 방법 변경만 함께 본다.
+        return trigger == 'so' or topic['id'] in ('fair_value_inputs', 'method_change')
+    return {'so': False, 'all': True, 'rcps': values.get('inst') == 'RCPS',
             'holder': values.get('view') == 'holder', 'issuer': values.get('view') == 'issuer',
             'bond': values.get('inst') != 'SHA',
             'call': bool(values.get('k_w', 0) or values.get('issuer_call', 0) or values.get('sha_call_e', 0))}[trigger]

@@ -15,7 +15,7 @@ def review_issues(case, tm, raw):
             '전기 또는 다른 시점의 자료가 남아 있을 수 있습니다.', '주당가치·변동성·금리의 기준일을 확인하고, 시점 차이가 있으면 근거를 기록하십시오.')
     if tm.s0_date and tm.s0_date != tm.d_base:
         add('price_date', 's0_date', f'사용 주가 거래일은 {tm.s0_date}입니다.', '평가기준일과 다릅니다.', '휴장 등 직전 거래일 사용 사유를 확인하십시오.')
-    for field in ['rf_curve', 'cr_curve']:
+    for field in (['rf_curve'] if legacy.is_so(tm) else ['rf_curve', 'cr_curve']):
         curve = getattr(tm, field)
         example = legacy.EXAMPLE_RF if field == 'rf_curve' else legacy.EXAMPLE_CR
         if legacy.curve_is_example(curve, example):
@@ -38,8 +38,9 @@ def review_issues(case, tm, raw):
         add('unmodeled', 'unmod_note', tm.unmod_note, '기재된 권리가 계산에 반영되지 않았을 수 있습니다.', '기본 계산 결과를 출력한 뒤 해당 조건의 영향을 별도로 검토하십시오.')
     if tm.dil_shares > 0:
         ratio = f' / 기존 보통주 {tm.base_shares:,.0f}주 = {tm.dil_shares/tm.base_shares:.2%} 증가' if tm.base_shares > 0 else ''
-        add('dilution', 'dil_shares', f'전환 증가 주식수 {tm.dil_shares:,.0f}주{ratio}.',
-            '이 주식수만으로 전환에 따른 자본구조·희석을 재계산하지 않습니다.', '기초자산 가치와 전환가액에 반영된 희석 범위를 대사하십시오.')
+        add('dilution', 'dil_shares', f"{'행사' if legacy.is_so(tm) else '전환'} 증가 주식수 {tm.dil_shares:,.0f}주{ratio}.",
+            f"이 주식수만으로 {'행사' if legacy.is_so(tm) else '전환'}에 따른 자본구조·희석을 재계산하지 않습니다.",
+            f"기초자산 가치와 {'행사가격' if legacy.is_so(tm) else '전환가액'}에 반영된 희석 범위를 대사하십시오.")
     pack = case.market_evidence.get('sig')
     if pack and pack.get('listed') and pack['series']:
         name, prices = pack['series'][0]
@@ -51,6 +52,9 @@ def review_issues(case, tm, raw):
     if tm.rfx_mode and tm.S0 < tm.K0*.8:
         add('low_price_refixing', 'rfx_mode', f'주가가 전환가액의 {tm.S0/tm.K0:.2%}이며 리픽싱이 켜져 있습니다.',
             '첫 조정일부터 전환가액이 하락할 수 있습니다.', '현재 전환가액과 다음 조정일, 조정 하한을 확인하십시오.')
+    if legacy.is_so(tm):
+        so_review(tm, raw, add)
+        return out
     if legacy.is_sha(tm):
         return out
     full = raw['full']
@@ -88,7 +92,34 @@ def review_issues(case, tm, raw):
     return out
 
 
+def so_review(tm, raw, add):
+    """주식선택권 확인할 사항 — 기준서가 정한 판단을 평가자가 했는지 묻는다(값을 바꾸지 않는다)."""
+    from .stock_option import EX_LABELS
+    if tm.d_base != tm.d_issue:
+        add('so_measure_date', 'd_base', f'측정기준일({tm.d_base})이 부여일({tm.d_issue})과 다릅니다.',
+            '주식결제형은 부여일 현재 공정가치로 측정하고 다시 재지 않습니다 (기업회계기준서 제1102호 문단 11).',
+            '조건 변경 등 다른 측정기준일을 쓴 근거를 기록하십시오.')
+    if int(tm.so_ex) == 0 and any(r['t_end'] - r['t_ex'] > 1e-9 for r in raw['rows']):
+        add('so_early_exercise', 'so_ex', f"조기행사 가정: {EX_LABELS[0]}.",
+            '행사 시작일과 행사 종료일 사이에 행사할 수 있는데 조기행사를 반영하지 않았습니다 (문단 B5·B16~B19).',
+            '행사 기간이 짧거나 조기행사 영향이 작다는 근거를 기록하거나 최적 행사·행사 배수 가정을 고르십시오.')
+    if int(tm.so_ex) == 2:
+        add('so_multiple', 'so_mult', f'행사 배수 {tm.so_mult:g}배 — 주가가 행사가격의 {tm.so_mult:g}배 이상이면 행사한다고 봤습니다.',
+            '행사 배수는 과거 행사 실적이나 유사 기업 자료로 정하는 추정치입니다 (문단 B17~B19).',
+            '배수를 정한 근거(과거 행사 자료·업계 자료)를 기록하십시오.')
+    if all(r['keep'] >= 1 for r in raw['rows']):
+        add('so_vesting', 'so_rows', '가득 예상 비율이 모든 회차에서 100%입니다.',
+            '가득기간 중 퇴사로 가득되지 않을 수량을 보상원가에 반영하지 않았습니다 (문단 19·20).',
+            '퇴사 예상이 없다는 근거를 기록하거나, 회차표의 가득 예상 비율을 고치십시오. 매 결산일에 다시 추정합니다.')
+    if tm.div_y == 0:
+        add('so_dividend', 'div_y', '배당수익률 0%로 평가했습니다.',
+            '기대배당은 공정가치에 영향을 줍니다 (문단 B31~B36).', '배당 정책·과거 배당 실적을 확인하고 근거를 기록하십시오.')
+
+
 def arithmetic_checks(tm, raw, amounts):
+    if legacy.is_so(tm):
+        from .stock_option import checks
+        return checks(tm, raw)
     full = raw if legacy.is_sha(tm) else raw['full']
     checks = [dict(name='유한한 평가금액', passed=all(math.isfinite(v) for v in amounts.values()),
                    detail='숫자가 아닌 값·무한대가 없는지 확인'),
@@ -121,6 +152,8 @@ def input_warnings(tm, px_last=None):
     """옛 입력 경고를 확인할 사항으로 — 계산을 다시 돌지 않는 검사만(BDT 비교는 BDT 를 켰을 때만)."""
     out = []
     # 주주간계약은 사채 경고(전환기간·만기상환 등)가 뜻이 없다 — 주주간계약 경고만 싣는다.
+    if legacy.is_so(tm):
+        return out                       # 주식선택권 확인할 사항은 review_issues(so_review) 가 싣는다
     msgs = (legacy.sha_validate(copy.deepcopy(tm)) if legacy.is_sha(tm)
             else legacy.validate(copy.deepcopy(tm), px_last))
     for msg in msgs:

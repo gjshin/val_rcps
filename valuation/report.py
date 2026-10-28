@@ -32,6 +32,10 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
         return ws
 
     tm, summary = run.terms, run.summary
+    from . import legacy
+    so = legacy.is_so(tm)
+    if so:
+        from . import stock_option_report as SOR
     result_rows = [['평가 결과', '총액(원)', '1주당 가치(원, RCPS·SHA 단일 계약)', '원금 100 기준' if tm.inst != 'SHA' else '계산기준금액 100 기준'],
                    ['건명', run.case.name], ['평가기준일', tm.d_base], ['상품·회차', tm.inst, tm.tranche],
                    [('계산기준금액(원) — 주당 기준가격 × 대상 주식수' if tm.inst == 'SHA' else '평가대상 발행금액·투자원금(원)'), tm.face_total],
@@ -44,7 +48,9 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
                    ['계산 소요시간(초)', summary['calculation_seconds']],
                    ['입력 식별값', summary['case_sha256']], ['계산 코드 식별값', summary['code_sha256']],
                    ['검토메모', run.case.notes]]
-    sheet('평가요약', result_rows)
+    sheet('평가요약', SOR.summary_rows(run) if so else result_rows)
+    if so:
+        SOR.add_basic_sheets(wb, run, sheet)
     if summary.get('sha_rows'):
         # 주주간계약 회차별 표 — 회차마다 따로 잰 풋·콜과 합계 (미행사 물량은 다음 회차로 넘기지 않는다).
         cols = list(summary['sha_rows'][0])
@@ -75,25 +81,26 @@ def basic_workbook(run, previous=None, *, as_workbook=False):
         rows = [header]
         from .case import section_for
         for key in sorted(FIELDS):
-            if section_for(key) != group:
+            if section_for(key) != group or (so and key not in SOR.INPUT_KEYS):
                 continue
             value = summary['applied_terms'][key]
             # Curves have their own numeric table with explicit percent units.
             if isinstance(value, list):
                 continue
-            rows.append([label(key), display_value(key, run.case.facts().get(key), tm.d_issue, tm.inst),
+            rows.append([label(key, 'SO' if so else None), display_value(key, run.case.facts().get(key), tm.d_issue, tm.inst),
                          display_value(key, value, tm.d_issue, tm.inst), assumptions.get(key, {}).get('rationale', ''),
                          run.case.sources.get(key, ''), '기본값 적용' if key in run.case.imported_defaults or key in summary['engine_defaults'] else ''])
         sheet(name, rows)
-    sheet('행사방식', [['권리·조정 항목', '계약상 방식', '계산 반영']] +
-          [[label(k) if k != 'cv' else '전환·신주인수권', {'any':'기간 중 언제든지', 'periodic':'정기 행사·조정', 'single':'특정일에만 행사'}[v],
-            '행사기간 내 모든 계산시점에 적용' if v == 'any' else '계약상 주기 또는 특정일 적용'] for k,v in run.case.exercise_styles.items()])
+    if not so:  # 주식선택권의 행사 가정은 평가요약·평가방법 시트에 있다
+        sheet('행사방식', [['권리·조정 항목', '계약상 방식', '계산 반영']] +
+              [[label(k) if k != 'cv' else '전환·신주인수권', {'any':'기간 중 언제든지', 'periodic':'정기 행사·조정', 'single':'특정일에만 행사'}[v],
+                '행사기간 내 모든 계산시점에 적용' if v == 'any' else '계약상 주기 또는 특정일 적용'] for k,v in run.case.exercise_styles.items()])
     sheet('계약검토안', [['문서', '조항·쪽수', '원문 발췌', '해석 초안', '후속 작업', '연결 입력']] +
           [[r['document'], r['clause'], r['quote'], r['interpretation'], r['action'], ', '.join(label(k) for k in r['fields'])] for r in run.case.contract_review.get('findings', [])])
     if run.case.contract_review.get('open_items'):
         sheet('추가확인자료', [['미확인 사항']] + [[x] for x in run.case.contract_review['open_items']])
     curves = [['금리곡선', '만기(년)', '원본 연이율(%)', '가정 적용 연이율(%)', '출처']]
-    for key in ['rf_curve', 'cr_curve', 'cr_curve_b']:
+    for key in (['rf_curve'] if so else ['rf_curve', 'cr_curve', 'cr_curve_b']):
         original = dict(run.case.facts().get(key, []))
         applied = dict(summary['applied_terms'][key])
         for tenor in sorted(original.keys() | applied.keys()):
@@ -279,7 +286,9 @@ def info_sheet(wb, run, *, formula=False):
         return r[0] - 1
 
     title('계산 정보'); head(['항목', '내용'])
-    for k, v in [['건명', run.case.name], ['평가기준일', t.d_base], ['평가모형', t.model], ['구간 수', t.n],
+    from . import legacy
+    model = '이항격자 (주식선택권 · 회차마다 따로)' if legacy.is_so(t) else t.model
+    for k, v in [['건명', run.case.name], ['평가기준일', t.d_base], ['평가모형', model], ['구간 수', t.n],
                  ['간격 설정', f'{t.grid_days:g}일 기준' if t.grid_days else f'{t.gap_m:g}개월'],
                  ['평균 간격(일)', s['grid']['average_days']], ['입력 식별값', s['case_sha256']],
                  ['계산 코드 식별값', s['code_sha256']]]:
@@ -342,6 +351,10 @@ def append_basic_accounting(wb, run):
     """Optional numeric accounting draft, without rebuilding stock lattices."""
     from . import legacy
     t, r = run.terms, run.raw
+    if legacy.is_so(t):
+        from .stock_option_report import append_accounting
+        append_accounting(wb, run)
+        return
     if legacy.is_sha(t):
         # 세 당사자 — 발행회사 · 콜 권리자 · 풋 권리자. 원 단위(풋·콜 수량을 각각 곱한 값). 회차가 여럿이면 합계.
         items = r['rows'] if r.get('portfolio') else [dict(tm=t, R=r)]
@@ -402,7 +415,7 @@ def judgment_rows(run):
         exported_memos.add(memo_key)
         used.append(topic)
 
-    if not legacy.is_sha(t):
+    if not (legacy.is_sha(t) or legacy.is_so(t)):
         args = (t, r['full'], r['b0'], r['b1'], r['b2'], r['ca'])
         ah = legacy.acc_host(*args)
         sp = legacy.split_test(*args, [] if ah is None else legacy.eir_table(t, ah)[1])

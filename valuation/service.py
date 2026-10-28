@@ -20,6 +20,7 @@ AMOUNT_LABELS = {
     "net": "순포지션 가치", "host_reference": "주계약(참고)",
     "put_increment": "상환권 증분(참고)", "conversion_increment": "전환권 증분(참고)",
     "put": "풋옵션", "call": "콜옵션",
+    "so_fair": "주식선택권 공정가치(부여 수량)", "so_cost": "총 보상원가(가득 예상 수량)",
 }
 
 
@@ -56,7 +57,7 @@ def day1_summary(terms, raw):
     발행자는 회계기준원 질의회신 2019-I-KQA018 대로 순평가금액(콜 차감 후)을 거래가격과 견준다.
     전환권이 부채(복합계약)면 이연(기본) 또는 당기손익을 고르고, 자본이면 차이가 자본요소에 흡수된다.
     """
-    if legacy.is_sha(terms) or terms.elapsed_m > 0.01:
+    if legacy.is_sha(terms) or legacy.is_so(terms) or terms.elapsed_m > 0.01:
         return None
     if legacy.holder_on(terms):
         net = float(raw["b2"] - raw["ca"])
@@ -106,6 +107,8 @@ def _prepare(case: Case):
         raise CaseError(issues)
     normalized = {k: {"input": before[k], "applied": v}
                   for k, v in asdict(terms).items() if k in FIELDS and before[k] != v}
+    if legacy.is_so(terms):
+        normalized = {}                  # 사채 전용 칸을 끈 것뿐 — 주식선택권 입력은 바뀌지 않는다
     if normalized:
         issues.append(Issue("review", "normalized", "applied_terms", "상품별 비적용 설정이 정규화되었습니다. 적용입력표의 변경내역을 확인하십시오."))
     return case, terms, issues, normalized
@@ -114,7 +117,10 @@ def _prepare(case: Case):
 def calculate(case: Case) -> Run:
     started = time.perf_counter()
     case, terms, issues, normalized = _prepare(case)
-    if legacy.is_sha(terms):
+    if legacy.is_so(terms):
+        from .stock_option import value
+        raw = value(terms)               # 회차마다 격자로 재고, 계산 점검(integrity)까지 붙인다
+    elif legacy.is_sha(terms):
         # 회차별 표가 있으면 회차마다 따로 재어 더한다 (sha_portfolio). 없으면 단일 계약.
         raw = legacy.sha_portfolio(terms)
         raw["integrity"] = legacy.sha_portfolio_integrity(terms, raw)
@@ -148,7 +154,14 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
     # 입력 경고는 계산할 때 한 번 만든다. 증빙만 바꾼 갱신(refresh_run)은 다시 만들지 않는다.
     from .review import review_issues, arithmetic_checks, input_warnings
     from .evidence import evidence_cards
-    if legacy.is_sha(terms):
+    if legacy.is_so(terms):
+        # 100 기준 = 부여일 주가 100. 1주당 금액 = 합계 ÷ 부여 수량(가중평균).
+        qty, S0 = float(raw["qty"]), float(terms.S0)
+        so_total = {"so_fair": float(raw["fair"]), "so_cost": float(raw["cost"])}
+        so_share = {k: v/qty for k, v in so_total.items()}
+        amounts = {k: v/S0*100 for k, v in so_share.items()}
+        full = raw
+    elif legacy.is_sha(terms):
         # 100 기준 = 계산기준금액(회차마다 주당 기준가격 × 대상 주식수의 합) 100. 원 단위는
         # 풋·콜 수량을 각각 곱한 값이다 — 두 권리의 수량이 달라도 된다.
         amounts = {"put": float(raw["put"]), "call": float(raw["call"])}
@@ -183,12 +196,15 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
         "case_sha256": case.fingerprint(), "code_sha256": code_fingerprint(),
         "generated_at": now, "calculated_at": now,
         "calculation_key": calculation_key(case), "checks": checks,
-        "basis": ("계산기준금액(주당 기준가격 × 대상 주식수) 100 기준" if legacy.is_sha(terms)
+        "basis": ("부여일 주가 100 기준 (1주당 금액 ÷ 주가 × 100)" if legacy.is_so(terms)
+                  else "계산기준금액(주당 기준가격 × 대상 주식수) 100 기준" if legacy.is_sha(terms)
                   else "발행금액 또는 투자원금 100 기준"), "amounts_100": amounts,
-        "amounts_total": ({"put": float(raw["put_krw"]), "call": float(raw["call_krw"])}
+        "amounts_total": (so_total if legacy.is_so(terms) else
+                          {"put": float(raw["put_krw"]), "call": float(raw["call_krw"])}
                           if legacy.is_sha(terms) else
                           {k: v * terms.face_total / 100 for k, v in amounts.items()}),
-        "amounts_per_share": ({k: v * terms.issue_px / 100 for k, v in amounts.items()}
+        "amounts_per_share": (so_share if legacy.is_so(terms) else
+                              {k: v * terms.issue_px / 100 for k, v in amounts.items()}
                               if legacy.is_rcps(terms) else
                               {k: v * terms.K0 / 100 for k, v in amounts.items()}
                               if legacy.is_sha(terms) and not raw.get("portfolio") else None),
@@ -203,6 +219,14 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
         "sha_recon": ([{"회차": a, "평가 대상 상태": b, "풋 주식수": c, "콜 주식수": d, "계약 대상 주식": e,
                         "평가 반영": f, "같은 주식 묶음": g} for a, b, c, d, e, f, g in raw.get("recon", [])]
                       if legacy.is_sha(terms) and raw.get("portfolio") else None),
+        "so_rows": ([{"회차": x["name"], "가득일": x["vest"], "행사 시작일": x["start"], "행사 종료일": x["end"],
+                      "부여 수량": x["qty"], "가득 예상 비율": x["keep"], "구간 수": x["n"],
+                      "1주당 공정가치": x["fv"], "블랙-숄즈(행사 종료일)": x["bs_end"],
+                      "기대존속기간(년)": x["life"], "공정가치": x["fair"], "보상원가": x["cost"]}
+                     for x in raw["rows"]] if legacy.is_so(terms) else None),
+        "so_schedule": ([{"결산일": x["fy_end"], "회차": x["name"], "누적 배분율": x["share"],
+                          "당기 비용": x["expense"], "누적 비용": x["cum"]}
+                         for x in raw["schedule"]] if legacy.is_so(terms) else None),
         "grid": {"intervals": terms.n, "average_days": terms.T*365/terms.n,
                  "requested_months": terms.gap_m, "requested_days": terms.grid_days,
                  "type": "day_target_equal_time" if terms.grid_days else "legacy_equal_time"},
@@ -331,7 +355,12 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
     else:
         pack = run.case.market_evidence.get('sig')
         attach = dict(px=(pack['series'], pack['opt']) if pack else None, ir=True)
-        if legacy.is_sha(terms):
+        if legacy.is_so(terms):
+            if formula:
+                raise ValueError('주식선택권의 상세 계산 수식 조서는 2단계에서 지원합니다. 상세 계산 값 조서를 고르십시오.')
+            from .stock_option_report import detail_workbook
+            wb = detail_workbook(run, accounting=accounting)
+        elif legacy.is_sha(terms):
             wb = legacy.build_xlsx_sha(terms, run.raw, formula=formula, attach=attach, as_workbook=True)
         else:
             r = run.raw
@@ -346,7 +375,7 @@ def export_bundle(run: Run, *, formula: bool = False, previous: Case | None = No
           f"- 입력 SHA256: {run.summary['case_sha256']}",
           f"- 코드 SHA256: {run.summary['code_sha256']}",
           f"- 구간 수: {terms.n}; 평균 일수: {run.summary['grid']['average_days']:.6f}", "",
-          "| 결과 | 100 기준 | 총액 |", "|---|---:|---:|"]
+          "| 결과 | " + ("주가 100 기준" if legacy.is_so(terms) else "100 기준") + " | 총액 |", "|---|---:|---:|"]
     for key, value in run.summary["amounts_100"].items():
         md.append(f"| {AMOUNT_LABELS[key]} | {value:,.6f} | {run.summary['amounts_total'][key]:,.0f} |")
     numeric_issues = [i for i in run.issues if i.code not in {'source', 'legacy_defaults', 'engine_defaults', 'judgement_scope', 'market_date'}]

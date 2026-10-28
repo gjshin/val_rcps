@@ -27,6 +27,7 @@ METHOD = frozenset({
     "k_method", "k_split", "put_bdt", "fvpl_whole", "bs_target", "bs_net",
     "prev_hold", "d1_pl", "d1_reason", "prev_host", "prev_deriv", "eir_issue", "cur_periods", "settle_amt",
     "split_tol", "split_base_in", "split_base_why",
+    "so_ex", "so_mult", "so_exit",
 })
 DERIVED = frozenset({"T", "n", "elapsed_m", "rem_m", "scen_md5"})
 FIELDS = frozenset(Terms.__dataclass_fields__) - DERIVED
@@ -36,6 +37,9 @@ REQUIRED = frozenset({
     "cv_s", "cv_e", "p_s", "p_e", "k_w",
 })
 RCPS_REQUIRED = frozenset({"issue_px", "par", "mat_mode", "div_mode", "div_basis", "issuer_call"})
+# 주식선택권 — 사채·위험 곡선이 없다. 행사가격은 K0, 부여일은 d_issue (valuation/stock_option.py).
+SO_REQUIRED = frozenset({"inst", "d_issue", "d_mat", "d_base", "S0", "K0", "sig", "rf_curve", "gap_m",
+                         "so_rows", "so_ex", "so_exit", "so_settle", "so_fy_end"})
 RIGHT_KINDS = {
     "distributable_profit": "배당가능이익에 따른 상환 제약",
     "unpaid_dividend_extension": "미지급 배당에 따른 존속기간 연장",
@@ -269,10 +273,11 @@ def inspect_case(case: Case) -> list[Issue]:
     for freq, sched in [('p_f', 'p_sched'), ('k_f', 'k_sched')]:
         if case.exercise_styles.get(freq) == 'any' and isinstance(values.get(sched), str) and values[sched].strip():
             add('error', 'exercise_conflict', freq, '상시 행사와 회차별 행사일·금액표가 함께 설정되어 있습니다. 계약상 행사일을 확인하여 하나의 방식으로 입력하십시오.')
-    required = REQUIRED | (RCPS_REQUIRED if values.get("inst") == "RCPS" else set())
-    if values.get('k_w', 0) or values.get('issuer_call', 0):
+    is_so = values.get("inst") == "SO"
+    required = SO_REQUIRED if is_so else REQUIRED | (RCPS_REQUIRED if values.get("inst") == "RCPS" else set())
+    if not is_so and (values.get('k_w', 0) or values.get('issuer_call', 0)):
         required = required | {'k_s', 'k_e', 'k_f', 'k_prem', 'k_cmp'}
-    if values.get('rfx_mode', 0):
+    if values.get('rfx_mode', 0) and not is_so:
         required = required | {'rfx_cyc', 'floor', 'carry'}
     for key in sorted(required - set(values)):
         add("error", "required", key, "필수 입력값이 없습니다.")
@@ -288,7 +293,7 @@ def inspect_case(case: Case) -> list[Issue]:
         return issues
     if not all(isinstance(k, str) and isinstance(v, str) for k, v in case.sources.items()):
         add('error', 'source_type', 'sources', '자료 출처에는 항목명과 문자열 기록이 필요합니다.')
-    for key, allowed in {"inst": {"CB", "BW", "RCPS", "SHA"}, "model": {"TF", "GS"},
+    for key, allowed in {"inst": {"CB", "BW", "RCPS", "SHA", "SO"}, "model": {"TF", "GS"},
                          "view": {"holder", "issuer"}, "y_type": {"par", "spot"},
                          "conv_class": {"equity", "liability"},
                          "p_mode": {"fixed", "accrue"},
@@ -299,7 +304,7 @@ def inspect_case(case: Case) -> list[Issue]:
         if key in values and values[key] not in allowed:
             add("error", "enum", key, f"지원하는 값: {sorted(allowed)}")
     counts = {"sha_put_cmp", "sha_call_cmp", "cur_periods", "ytm_cmp", "k_cmp", "cmp_rf", "cmp_cr", "p_cmp"}
-    multi = {"sha_writer": 2, "sha_disc": 2, "issuer_call": 2, "rfx_mode": 2,
+    multi = {"sha_writer": 2, "sha_disc": 2, "issuer_call": 2, "rfx_mode": 2, "so_ex": 2,
              "carry": 3, "k_method": 2, "k_less_cpn": 2, "p_less_cpn": 2, "m_less_cpn": 2,
              "rfx_round": 2}            # 원 단위 미만 0 처리 없음 / 1 절상 / 2 절사
     for key, value in values.items():
@@ -349,6 +354,13 @@ def inspect_case(case: Case) -> list[Issue]:
         elif not any(i.severity == 'error' for i in issues):
             for k, message in sha_row_issues(Terms(**values)):
                 add('error', 'sha_rows', 'sha_rows', sha_row_issue_text(k, message))
+    if is_so and not any(i.severity == 'error' for i in issues):
+        from .stock_option import ROW_KEYS, issues as so_issues
+        if not all(isinstance(r, dict) and set(r) <= set(ROW_KEYS) for r in values.get('so_rows', [])):
+            add('error', 'so_rows', 'so_rows', '회차표의 형식이 올바르지 않습니다.')
+        else:
+            for message in so_issues(Terms(**values)):
+                add('error', 'so_rows', 'so_rows', message)
     if values.get('inst') == 'RCPS' and (values.get('dp_rows') or values.get('dp_others')):
         from .legacy import dp_issues
         for message in dp_issues(Terms(**values)):
@@ -369,6 +381,8 @@ def inspect_case(case: Case) -> list[Issue]:
         curve = values.get(key, [])
         if key == "cr_curve_b" and not curve and values.get("rate_mode") != "rating":
             continue
+        if is_so and key != "rf_curve":
+            continue                     # 주식선택권은 무위험 곡선만 쓴다
         ok = len(curve) >= 2 and all(isinstance(p, (list, tuple)) and len(p) == 2
                                     and _finite(p[0]) and p[0] > 0 and _finite(p[1])
                                     for p in curve)
@@ -398,7 +412,7 @@ def inspect_case(case: Case) -> list[Issue]:
     missing_optional = FIELDS - set(values)
     if missing_optional:
         add("review", "engine_defaults", "defaults", "미입력 선택항목에는 기존 엔진 기본값을 적용합니다. 적용입력표에 전부 표시합니다.")
-    for key in ("S0", "sig", "rf_curve", "cr_curve"):
+    for key in (("S0", "sig", "rf_curve") if values.get("inst") == "SO" else ("S0", "sig", "rf_curve", "cr_curve")):
         if not case.sources.get(key):
             add("review", "source", key, "기준일·출처·산출근거를 기록하십시오.")
     for idx, row in enumerate(case.additional_rights):
