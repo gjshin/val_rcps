@@ -84,9 +84,9 @@ def mod_input_table(run):
 
 def input_rows_table(run):
     heads = ['회차', '가득일 (비용 배분 종료)', '행사 시작일', '행사 종료일', '부여 수량(주)', '가득 예상 비율',
-             '시장조건 목표 주가(원)']
-    return [heads] + [[r['name'], r['vest'], r['start'], r['end'], r['qty'], r['keep'], SO.target(r)]
-                      for r in SO.rows(run.terms)]
+             '시장조건 목표 주가(원)', '목표 도달 (측정기준일 전)']
+    return [heads] + [[r['name'], r['vest'], r['start'], r['end'], r['qty'], r['keep'], SO.target(r),
+                       '예' if SO.reached(r) else ''] for r in SO.rows(run.terms)]
 
 
 def bs_table(run):
@@ -245,7 +245,8 @@ def lattice_sheet(wb, run, row, name, title=None, formula=False):
     values = dict(zip(LATTICE_PARAMS, (
         float(row.get('K') or t.K0), row['vest'], row['start'], row['end'], n, row['dt'], row['u'], row['d'],
         row['vest_step'], row['ex_step'], 1.0 - (1.0 - float(t.so_exit))**row['dt'] if t.so_exit else 0.0,
-        row['nv_step'], row.get('target'), SO.MKT_LABELS[int(row.get('mkt') or 0)],
+        row['nv_step'], row.get('target'),
+        '측정기준일 전에 목표 도달 — 시장조건 충족' if row.get('hit') else SO.MKT_LABELS[int(row.get('mkt') or 0)],
         SO.EX_LABELS[int(t.so_ex)], row['fv'])))
     for a, r in pos['param'].items():
         ws.cell(r, 2, a)
