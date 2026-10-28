@@ -44,13 +44,13 @@ def rows_editor(edited):
     market = bool(edited.get('so_mkt')) or any(not _blank(r.get('target')) for r in old)
     # 목표 도달 칸 — «한 번이라도» 판정을 부여일 뒤에 다시 잴 때(현금결제형 결산일·조건 변경일)만 보인다
     touch = (int(edited.get('so_mkt') or 0) == 2 and str(edited.get('d_base') or '') > str(edited.get('d_issue') or '')
-             ) or any(r.get('hit') for r in old)
+             ) or any(SO.reached(r) for r in old)
     cols = (COLS if market else COLS[:-1]) + ([('hit', HIT)] if touch else [])
     frame = pd.DataFrame([{'회차': r.get('name', ''), '가득일': _day(r.get('vest')),
                            '행사 시작일': _day(r.get('start')), '행사 종료일': _day(r.get('end')),
                            '부여 수량(주)': r.get('qty'),
                            '가득 예상 비율(%)': None if r.get('keep') is None else float(r['keep'])*100,
-                           '목표 주가(원)': r.get('target'), HIT: r.get('hit') is True}
+                           '목표 주가(원)': r.get('target'), HIT: SO.reached(r)}      # 불러온 파일의 1 도 켠 것으로
                           for r in shown], columns=[t for _, t in cols])
     for col in ('가득일', '행사 시작일', '행사 종료일'):
         frame[col] = pd.to_datetime(frame[col])      # 빈 날짜는 빈칸으로 보인다 (글자 «None» 이 아니라)

@@ -223,6 +223,12 @@ def test_touch_condition_already_met_before_remeasurement_uses_the_ordinary_latt
     app.run()
     assert not app.exception, app.exception
     assert app.session_state.case.contract['so_rows'][0].get('hit') is True
+    # 불러온 평가파일의 1 도 켠 것으로 보이고, 화면을 그려도 지워지지 않는다 (자동 검토 지적)
+    app.session_state['case'] = cash([dict(rows[0], hit=1)], so_mkt=2)
+    app.run()
+    app.run()
+    assert not app.exception, app.exception
+    assert SO.reached(app.session_state.case.contract['so_rows'][0])
 
 
 def test_condition_inputs_reach_the_workpapers_and_review():
