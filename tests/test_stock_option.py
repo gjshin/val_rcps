@@ -425,6 +425,19 @@ def test_screens_switch_between_grant_modification_and_cash():
     with zipfile.ZipFile(io.BytesIO(app.session_state.bundle)) as z:
         assert 'formula_review.xlsx' in z.namelist()
 
+    # 결제액을 넣은 현금결제형을 주식결제형으로 바꾼 입력 (자동 검토 지적) — 숨은 결제액이 평가를 막지 않는다
+    back = case(so_rows=ONE)
+    back.method['so_paid'] = 4000.0
+    app.session_state['case'] = back
+    app.session_state['_workflow_stage'] = '입력·시장자료'
+    app.run()
+    assert '당기 현금 결제액(원)' not in [n.label for n in app.number_input]
+    app.session_state['_workflow_stage'] = '평가·분석'
+    app.run()
+    next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
+    assert not app.exception, app.exception
+    assert app.session_state.case.method['so_paid'] == 0.0
+    assert [h.value for h in app.subheader][:2] == ['회차별 공정가치', '회계연도별 보상원가 배분']
 
 # ── 2단계 ③ 수식 조서 — 상세 값 조서와 같은 시트·같은 칸, 다시 계산하면 같은 값 ─────────────────────
 
