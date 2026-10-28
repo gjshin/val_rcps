@@ -18,7 +18,7 @@ from . import stock_option as SO
 INPUT_KEYS = frozenset({
     'inst', 'tranche', 'd_issue', 'd_base', 'd_mat', 'K0', 'so_settle', 'so_fy_end', 'base_shares', 'dil_shares',
     'unmod_note', 'S0', 'sig', 'div_y', 'y_type', 'cmp_rf', 'ticker', 's0_src', 's0_date', 's0_raw', 's0_adj',
-    's0_splits', 'so_ex', 'so_mult', 'so_exit', 'grid_days', 'gap_m', 'so_mod', 'so_prev_liab', 'so_paid',
+    's0_splits', 'so_ex', 'so_mult', 'so_exit', 'grid_days', 'gap_m', 'so_mod', 'so_prev_liab', 'so_paid', 'so_mkt', 'so_nv',
 })
 # 합계 줄에 더할 칸 — 평가 종류마다
 SUM_COLS = {'grant': ('부여 수량', '공정가치', '보상원가'),
@@ -47,6 +47,8 @@ def summary_rows(run):
             ['평가모형', '이항격자 (CRR) — 회차마다 따로 · 블랙-숄즈 대조'],
             ['조기행사 가정', SO.EX_LABELS[int(t.so_ex)] + (f' · 행사 배수 {t.so_mult:g}배' if int(t.so_ex) == 2 else '')],
             ['가득 뒤 연간 퇴사율', t.so_exit],
+            ['시장조건 판정', SO.MKT_LABELS[int(t.so_mkt)]],
+            ['비가득조건 연간 중단율 (가득일까지)', t.so_nv],
             ['산출물 범위', '입력 조건에 따른 계산 결과']]
     for key in SO.AMOUNT_KEYS[md]:
         rows.append([AMOUNT_LABELS[key], tot[key], ps[key], a[key]])
@@ -81,8 +83,10 @@ def mod_input_table(run):
 
 
 def input_rows_table(run):
-    heads = ['회차', '가득일 (비용 배분 종료)', '행사 시작일', '행사 종료일', '부여 수량(주)', '가득 예상 비율']
-    return [heads] + [[r['name'], r['vest'], r['start'], r['end'], r['qty'], r['keep']] for r in SO.rows(run.terms)]
+    heads = ['회차', '가득일 (비용 배분 종료)', '행사 시작일', '행사 종료일', '부여 수량(주)', '가득 예상 비율',
+             '시장조건 목표 주가(원)', '목표 도달 (측정기준일 전)']
+    return [heads] + [[r['name'], r['vest'], r['start'], r['end'], r['qty'], r['keep'], SO.target(r),
+                       '예' if SO.reached(r) else ''] for r in SO.rows(run.terms)]
 
 
 def bs_table(run):
@@ -191,9 +195,10 @@ def add_basic_sheets(wb, run, sheet):
 ROWS_SHEET = {'grant': '회차별 공정가치', 'mod': '조건 변경', 'cash': '부채 재측정'}
 INPUT_SHEET = '평가 입력값'
 # 평가 입력값 시트의 칸 — 수식 조서의 격자·표가 이 칸을 가리킨다
-IN_ROW = {'S0': 2, 'sig': 3, 'div_y': 4, 'so_mult': 5, 'so_exit': 6, 'so_prev_liab': 7, 'so_paid': 8}
+IN_ROW = {'S0': 2, 'sig': 3, 'div_y': 4, 'so_mult': 5, 'so_exit': 6, 'so_nv': 7, 'so_prev_liab': 8, 'so_paid': 9}
 LATTICE_PARAMS = ('행사가격(원)', '가득일', '행사 시작일', '행사 종료일', '구간 수', '구간 길이(년)', '상승 배수 u',
-                  '하락 배수 d', '행사 가능 시점', '구간 퇴사 확률', '조기행사 가정', '1주당 공정가치')
+                  '하락 배수 d', '가득 시점', '행사 가능 시점', '구간 퇴사 확률', '구간 비가득조건 중단 확률',
+                  '시장조건 목표 주가(원)', '시장조건 판정', '조기행사 가정', '1주당 공정가치')
 LATTICE_TIME = ('시점', '격자일', '선도 무위험 금리(연속)', '상승 확률', '할인계수', '행사 가능')
 
 
@@ -204,7 +209,8 @@ def lattice_layout(n):
     time = {k: top + i for i, k in enumerate(LATTICE_TIME)}
     val = top + len(LATTICE_TIME) + 2          # 옵션 가치 첫 줄 (자리 0)
     px = val + n + 3                           # 주가 첫 줄 (자리 0)
-    return dict(param=param, time=time, top=top, val=val, px=px)
+    wait = px + n + 3                          # 시장조건 «한 번이라도 도달» — 아직 닿지 않은 상태의 가치
+    return dict(param=param, time=time, top=top, val=val, px=px, wait=wait)
 
 
 def input_table(run):
@@ -215,7 +221,9 @@ def input_table(run):
             ['변동성 σ (연)', float(t.sig), '상승 배수 u = e^(σ × √구간 길이), 하락 배수 d = 1 ÷ u'],
             ['배당수익률 (연, 연속복리)', float(t.div_y), '상승 확률 = (e^((선도 금리 − 배당수익률) × 구간 길이) − d) ÷ (u − d)'],
             ['행사 배수 (주가 ÷ 행사가격)', float(t.so_mult), '«행사 배수에 도달하면 행사» 가정에서만 씁니다'],
-            ['가득 뒤 연간 퇴사율', float(t.so_exit), '구간 퇴사 확률 = 1 − (1 − 퇴사율)^구간 길이']]
+            ['가득 뒤 연간 퇴사율', float(t.so_exit), '구간 퇴사 확률 = 1 − (1 − 퇴사율)^구간 길이'],
+            ['비가득조건 연간 중단율 (가득일까지)', float(t.so_nv),
+             '가득 전 구간마다 «1 − 구간 중단 확률» 을 곱함 · 구간 중단 확률 = 1 − (1 − 중단율)^구간 길이 (문단 21A)']]
     if run.raw['mode'] == 'cash':
         rows += [['전기말 주식보상부채(원, -1은 없음)', float(t.so_prev_liab), '당기 비용 = 당기말 부채 − 전기말 부채(없으면 0) + 당기 결제액'],
                  ['당기 현금 결제액(원)', float(t.so_paid), '당기 중 행사되어 현금으로 지급한 금액']]
@@ -236,11 +244,14 @@ def lattice_sheet(wb, run, row, name, title=None, formula=False):
     ws.cell(1, 2, f"{title or row['name']} — 이항격자 (옵션 1주당 가치와 주가, 원)").font = Font(bold=True, size=12, color='17365D')
     values = dict(zip(LATTICE_PARAMS, (
         float(row.get('K') or t.K0), row['vest'], row['start'], row['end'], n, row['dt'], row['u'], row['d'],
-        row['ex_step'], 1.0 - (1.0 - float(t.so_exit))**row['dt'] if t.so_exit else 0.0,
+        row['vest_step'], row['ex_step'], 1.0 - (1.0 - float(t.so_exit))**row['dt'] if t.so_exit else 0.0,
+        row['nv_step'], row.get('target'),
+        '측정기준일 전에 목표 도달 — 시장조건 충족' if row.get('hit') else SO.MKT_LABELS[int(row.get('mkt') or 0)],
         SO.EX_LABELS[int(t.so_ex)], row['fv'])))
     for a, r in pos['param'].items():
         ws.cell(r, 2, a)
-        ws.cell(r, 3, values[a])
+        if values[a] is not None:
+            ws.cell(r, 3, values[a])
     tr = pos['time']
     db = dt.date.fromisoformat(t.d_base)
     for h, r in tr.items():
@@ -270,6 +281,15 @@ def lattice_sheet(wb, run, row, name, title=None, formula=False):
                 c.number_format = '#,##0.00'
                 if mark and go[j] and not formula:
                     c.fill = GO
+    if row.get('wait') is not None:
+        r0, k = pos['wait'], row['vest_step']
+        c = ws.cell(r0 - 1, 2, f"목표 주가에 아직 닿지 않은 상태의 가치 (가득 시점 {k}까지 · 닿으면 위 옵션 가치로 바뀜)")
+        c.font = Font(bold=True, color='17365D')
+        for j in range(k + 1):
+            ws.cell(r0 + j, 2, f'자리 {j}')
+        for i in range(k + 1):
+            for j in range(i + 1):
+                ws.cell(r0 + j, 3 + i, row['wait'][i][j]).number_format = '#,##0.00'
     ws.column_dimensions['A'].width = 4
     ws.column_dimensions['B'].width = 30
     for i in range(n + 1):
@@ -339,9 +359,14 @@ def formula_lattice(ws, run, row, pos):
     ws.cell(P['상승 배수 u'], 3, f"=EXP({SIG}*SQRT({DT}))")
     ws.cell(P['하락 배수 d'], 3, f"=1/{U}")
     ws.cell(P['구간 퇴사 확률'], 3, f"=1-(1-{EXIT})^{DT}")
-    ws.cell(P['1주당 공정가치'], 3, f"=C{v0}")
+    ws.cell(P['구간 비가득조건 중단 확률'], 3, f"=1-(1-{_in('so_nv')})^{DT}")
+    NVS, TGT = f"$C${P['구간 비가득조건 중단 확률']}", f"$C${P['시장조건 목표 주가(원)']}"
+    mkt, vest_step = int(row.get('mkt') or 0), int(row['vest_step'])
+    w0 = pos['wait']
+    ws.cell(P['1주당 공정가치'], 3, f"=C{w0}" if mkt == 2 else f"=C{v0}")
     fr, pr, dr = tr['선도 무위험 금리(연속)'], tr['상승 확률'], tr['할인계수']
     mode, ex_step = int(t.so_ex), int(row['ex_step'])
+    hit = lambda S: f"{S}>={TGT}*(1-{SO.MKT_TOL:g})"   # 목표 주가 이상 — 엔진과 같은 여유
     L = get_column_letter
     for i in range(n + 1):
         c = L(3 + i)
@@ -356,7 +381,9 @@ def formula_lattice(ws, run, row, pos):
             else:
                 c1 = L(4 + i)
                 cont = f"{c}${dr}*({c}${pr}*{c1}{v0 + j}+(1-{c}${pr})*{c1}{v0 + j + 1})"
-                if i < ex_step:
+                if i < vest_step:
+                    f = f"=(1-{NVS})*{cont}"              # 가득 전 비가득조건 (중단율 0이면 그대로)
+                elif i < ex_step:
                     f = f"={cont}"
                 else:
                     H = f"((1-{E})*{cont}+{E}*MAX({S}-{K},0))"
@@ -366,12 +393,29 @@ def formula_lattice(ws, run, row, pos):
                         f = f"=IF(AND({S}>={MULT}*{K}-1E-12*{K},{S}-{K}>0),{S}-{K},{H})"
                     else:
                         f = f"={H}"
+            if mkt == 1 and i == vest_step:
+                # 가득일 주가가 목표 미만이면 소멸 — 목표가 걸친 노드는 구간 가운데 목표 이상인 비율만큼 (엔진 pass_share)
+                share = f"MIN(1,MAX(0,(LN({S})+LN({U})-LN({TGT}))/(2*LN({U}))))"
+                f = f"={share}*({f[1:]})"
             ws.cell(v0 + j, 3 + i, f)
     # 행사 노드 색 — 행사할 수 있는 시점에서 옵션 가치가 지금 행사한 값(주가 − 행사가격 > 0)과 같은 칸
     last = L(3 + n)
     rule = FormulaRule(formula=[f"AND(C${tr['행사 가능']}=\"가능\",C{p0}-{K}>0,"
                                 f"ABS(C{v0}-(C{p0}-{K}))<=1E-9*MAX(1,ABS(C{v0})))"], fill=GO)
     ws.conditional_formatting.add(f"C{v0}:{last}{v0 + n}", rule)
+    if mkt == 2:
+        # 아직 목표 주가에 닿지 않은 상태 — 닿으면 위 옵션 가치, 가득 시점까지 못 닿으면 0
+        for i in range(vest_step + 1):
+            c = L(3 + i)
+            for j in range(i + 1):
+                S, V = f"{c}{p0 + j}", f"{c}{v0 + j}"
+                if i == vest_step:
+                    f = f"=IF({hit(S)},{V},0)"
+                else:
+                    c1 = L(4 + i)
+                    cont = f"{c}${dr}*({c}${pr}*{c1}{w0 + j}+(1-{c}${pr})*{c1}{w0 + j + 1})"
+                    f = f"=IF({hit(S)},{V},(1-{NVS})*{cont})"
+                ws.cell(w0 + j, 3 + i, f)
 
 
 def _rows_cols(wb, run):
@@ -487,6 +531,7 @@ def formula_tables(wb, run, names):
         sm.cell(r, 4, f"=C{r}/{S0}*100")
     sm.cell(lab['측정기준일 주가(원)'], 2, f"={S0}")
     sm.cell(lab['가득 뒤 연간 퇴사율'], 2, f"={_in('so_exit')}")
+    sm.cell(lab['비가득조건 연간 중단율 (가득일까지)'], 2, f"={_in('so_nv')}")
     if md == 'mod':
         sm.cell(lab['당초 보상원가(원) — 부여일 공정가치 기준'], 2, f"={total['당초 보상원가']}")
     if md == 'cash':
