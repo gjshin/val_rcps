@@ -27,7 +27,7 @@ METHOD = frozenset({
     "k_method", "k_split", "put_bdt", "fvpl_whole", "bs_target", "bs_net",
     "prev_hold", "d1_pl", "d1_reason", "prev_host", "prev_deriv", "eir_issue", "cur_periods", "settle_amt",
     "split_tol", "split_base_in", "split_base_why",
-    "so_ex", "so_mult", "so_exit", "so_prev_liab",
+    "so_ex", "so_mult", "so_exit", "so_prev_liab", "so_paid",
 })
 DERIVED = frozenset({"T", "n", "elapsed_m", "rem_m", "scen_md5"})
 FIELDS = frozenset(Terms.__dataclass_fields__) - DERIVED

@@ -17,7 +17,7 @@ from . import stock_option as SO
 INPUT_KEYS = frozenset({
     'inst', 'tranche', 'd_issue', 'd_base', 'd_mat', 'K0', 'so_settle', 'so_fy_end', 'base_shares', 'dil_shares',
     'unmod_note', 'S0', 'sig', 'div_y', 'y_type', 'cmp_rf', 'ticker', 's0_src', 's0_date', 's0_raw', 's0_adj',
-    's0_splits', 'so_ex', 'so_mult', 'so_exit', 'grid_days', 'gap_m', 'so_mod', 'so_prev_liab',
+    's0_splits', 'so_ex', 'so_mult', 'so_exit', 'grid_days', 'gap_m', 'so_mod', 'so_prev_liab', 'so_paid',
 })
 # 합계 줄에 더할 칸 — 평가 종류마다
 SUM_COLS = {'grant': ('부여 수량', '공정가치', '보상원가'),
@@ -51,7 +51,8 @@ def summary_rows(run):
     if md == 'mod':
         rows.append(['당초 보상원가(원) — 부여일 공정가치 기준', raw['grant_cost']])
     if md == 'cash':
-        rows += [['전기말 주식보상부채(원)', raw['prev_liab']], ['당기 비용(원) = 당기말 부채 − 전기말 부채', raw['expense']]]
+        rows += [['전기말 주식보상부채(원)', raw['prev_liab']], ['당기 현금 결제액(원)', raw['paid']],
+                 ['당기 비용(원) = 당기말 부채 − 전기말 부채 + 당기 결제액', raw['expense']]]
     rows += [['계산 구간 수 (가장 긴 회차)', max(r['n'] for r in raw['rows'])],
              ['계산시각(UTC)', s['calculated_at']], ['기록 갱신시각(UTC)', s['generated_at']],
              ['계산 소요시간(초)', s['calculation_seconds']],
@@ -135,7 +136,9 @@ def journal_rows(run):
         v = raw['expense']
         rows = [[DRAFT_NOTE], ['결산일', '차변 계정', '차변 금액(원)', '대변 계정', '대변 금액(원)']]
         rows.append([d, '주식보상비용', v, '주식보상부채', v] if v >= 0 else [d, '주식보상부채', -v, '주식보상비용 (환입)', -v])
-        rows += [[], ['전기말 주식보상부채', raw['prev_liab']], ['당기말 주식보상부채', raw['liab']],
+        if raw['paid'] > 0:
+            rows.append(['당기 중', '주식보상부채', raw['paid'], '현금', raw['paid']])
+        rows += [[], ['전기말 주식보상부채', raw['prev_liab']], ['당기 현금 결제액', raw['paid']], ['당기말 주식보상부채', raw['liab']],
                  ['재측정', '결제될 때까지 매 결산일과 결제일에 공정가치로 다시 재고, 변동액을 당기손익으로 인식합니다 (문단 30).'],
                  ['결제 시', '(차) 주식보상부채 (대) 현금 — 행사일의 주가 − 행사가격 차액']]
         return rows

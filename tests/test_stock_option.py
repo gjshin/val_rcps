@@ -23,7 +23,8 @@ def case(**over):
     contract = dict(inst='SO', tranche='가상', d_issue='2026-01-01', d_mat='2031-01-01', K0=100.0, so_settle=0,
                     so_fy_end='12-31', so_rows=rows, so_mod=0, so_mod_rows=[])
     market = dict(S0=100.0, sig=0.3, div_y=0.0, rf_curve=[[1, 0.03], [5, 0.03]], y_type='spot', cmp_rf=1)
-    method = dict(d_base='2026-01-01', so_ex=0, so_mult=2.0, so_exit=0.0, grid_days=7.0, gap_m=1.0, so_prev_liab=-1.0)
+    method = dict(d_base='2026-01-01', so_ex=0, so_mult=2.0, so_exit=0.0, grid_days=7.0, gap_m=1.0, so_prev_liab=-1.0,
+                  so_paid=0.0)
     for key, value in over.items():
         for group in (contract, market, method):
             if key in group:
@@ -127,6 +128,8 @@ def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', end='2032-01-01', grant_fv=10.0)]),
      '행사기간 종료일을 가장 늦은'),
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', price=1.0, grant_fv=10.0)]), '조건 변경표의 형식'),
+    (dict(so_settle=1, d_base='2026-12-31', so_paid=-1.0), '결제액은 0 이상'),
+    (dict(so_paid=100.0), '현금결제형에서만'),
     (dict(so_ex=2, so_mult=1.0), '행사 배수'),
     (dict(so_exit=1.0), '퇴사율'),
     (dict(so_fy_end='12/31'), '결산일'),
@@ -364,6 +367,13 @@ def test_cash_settled_liability_is_remeasured_at_year_end():
     assert 'so_cash_prev' not in codes and 'so_cash_date' not in codes and 'so_measure_date' not in codes
     codes = {i.code for i in calculate(cash_case(d_base='2026-11-30')).issues}
     assert {'so_cash_prev', 'so_cash_date'} <= codes
+    # 당기 중 결제 — 부채 증감만 보면 결제한 4,000원만큼 비용이 줄어든다 (자동 검토 지적)
+    paid = calculate(cash_case(so_prev_liab=5000.0, so_paid=4000.0))
+    assert paid.raw['expense'] == pytest.approx(run.raw['expense'] + 4000.0)
+    assert paid.summary['so_cash']['당기 현금 결제액'] == 4000.0
+    wb = _workbook(paid, accounting=True)
+    rows = list(wb['회계처리'].iter_rows(values_only=True))
+    assert ('당기 중', '주식보상부채', 4000.0, '현금', 4000.0) in [r[:5] for r in rows]
 
 
 def test_mode_workpapers():
@@ -390,13 +400,18 @@ def test_screens_switch_between_grant_modification_and_cash():
     next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
     assert not app.exception, app.exception
     assert [h.value for h in app.subheader][:2] == ['회차별 조건 변경 전·후 공정가치', '회계연도별 보상원가 배분']
-    app.session_state['case'] = cash_case(so_prev_liab=5000.0)
+    stale = cash_case(so_prev_liab=5000.0)
+    stale.contract['so_mod'] = 1                 # 조건 변경을 켠 채 현금결제형으로 바꾼 입력 (자동 검토 지적)
+    app.session_state['case'] = stale
     app.session_state['_workflow_stage'] = '입력·시장자료'
     app.run()
     assert not app.exception, app.exception
     assert '조건 변경' not in [h.value for h in app.subheader]
+    labels = [n.label for n in app.number_input]
+    assert '당기 현금 결제액(원)' in labels and '전기말 주식보상부채(원, -1은 없음)' in labels
     app.session_state['_workflow_stage'] = '평가·분석'
     app.run()
     next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
     assert not app.exception, app.exception
+    assert app.session_state.case.contract['so_mod'] == 0
     assert [h.value for h in app.subheader][:2] == ['회차별 공정가치와 부채', '결산일 부채와 당기 비용']
