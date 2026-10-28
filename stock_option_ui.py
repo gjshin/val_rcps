@@ -91,7 +91,8 @@ def editor(edited, case, draft_errors):
     W.fields(['so_ex', 'so_exit'], edited, case)
     if edited.get('so_ex') == 2:
         W.field('so_mult', edited, case)
-    st.caption('가득 뒤 연간 퇴사율 — 가득된 뒤 퇴사하면 그때 내가격이면 바로 행사하고, 아니면 소멸한다고 봅니다. '
+    st.caption('가득 뒤 연간 퇴사율 — 행사할 수 있게 된 뒤 퇴사하면 그때 내가격이면 바로 행사하고, 아니면 소멸한다고 봅니다. '
+               '행사 시작일이 가득일보다 늦은 회차가 있으면 이 비율을 넣을 수 없습니다(그 사이 퇴사의 처리가 계약마다 다름). '
                '가득 전 퇴사는 위 «가득 예상 비율» 에 넣습니다.')
     st.subheader('시장자료 및 계산방법')
     W.fields(['S0', 'sig', 'div_y'], edited, case)

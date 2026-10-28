@@ -125,6 +125,7 @@ def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
     (dict(so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, keep=0.0)]), '가득 예상 비율'),
     (dict(so_rows=[dict(name='A', vest='2028-01-01', qty=1.0), dict(name='A', vest='2029-01-01', qty=1.0)]), '겹칩니다'),
     (dict(so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, price=3)]), '형식'),
+    (dict(so_exit=0.1, so_rows=[dict(name='1차', vest='2027-01-01', start='2028-01-01', qty=1.0)]), '행사 시작일이 가득일보다 늦은'),
 ])
 def test_input_checks_block_calculation(over, words):
     c = case(**over)
