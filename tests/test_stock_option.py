@@ -516,6 +516,16 @@ def test_formula_workbook_has_live_lattices_and_only_estimates_open():
     assert wb['계산대사']['C2'].value.startswith("='평가요약'!")
 
 
+def test_formula_workbook_matches_tranche_names_like_the_engine():
+    # 회차 이름 앞뒤 빈칸 — 조건 변경 계산은 떼고 맞추므로 수식 조서도 같아야 한다 (자동 검토 지적)
+    rows = [dict(name=' 1차 ', vest='2028-01-01', end='', qty=1000.0, keep=0.9)]
+    run = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=rows, grid_days=14.0))
+    wb = load_workbook(io.BytesIO(_xlsx(run, detail=True, formula=True)))
+    ws = wb['조건 변경']
+    head = [c.value for c in ws[1]]
+    assert ws.cell(2, head.index('부여일 1주당 공정가치') + 1).value == "='조건 변경표 입력'!$G$2"
+
+
 @pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
 @pytest.mark.parametrize('name', list(FORMULA_CASES))
 def test_formula_workbook_recalculates_to_the_value_workbook(name):

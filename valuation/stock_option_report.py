@@ -436,7 +436,7 @@ def formula_tables(wb, run, names):
         at[name] = cell
         ws[cell('가득 예상 비율')] = f"={keep[name]}"
         if md == 'mod':
-            ws[cell('부여일 1주당 공정가치')] = f"={gfv[name]}"
+            ws[cell('부여일 1주당 공정가치')] = f"={gfv[str(name).strip()]}"     # 조건 변경표는 이름 앞뒤 빈칸을 떼고 맞춘다
             ws[cell('변경 전 1주당 (변경일)')] = f"={root(name + ' 변경 전')}"
             ws[cell('변경 후 1주당 (변경일)')] = f"={root(name + ' 변경 후')}"
             ws[cell('1주당 증분')] = f"=MAX({cell('변경 후 1주당 (변경일)')}-{cell('변경 전 1주당 (변경일)')},0)"
