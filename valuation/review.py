@@ -95,10 +95,38 @@ def review_issues(case, tm, raw):
 def so_review(tm, raw, add):
     """주식선택권 확인할 사항 — 기준서가 정한 판단을 평가자가 했는지 묻는다(값을 바꾸지 않는다)."""
     from .stock_option import EX_LABELS
-    if tm.d_base != tm.d_issue:
+    md = raw.get('mode', 'grant')
+    if md == 'grant' and tm.d_base != tm.d_issue:
         add('so_measure_date', 'd_base', f'측정기준일({tm.d_base})이 부여일({tm.d_issue})과 다릅니다.',
             '주식결제형은 부여일 현재 공정가치로 측정하고 다시 재지 않습니다 (기업회계기준서 제1102호 문단 11).',
-            '조건 변경 등 다른 측정기준일을 쓴 근거를 기록하십시오.')
+            '조건 변경이면 «조건 변경 평가» 를 켜고, 아니면 측정기준일을 부여일로 넣으십시오.')
+    if md == 'mod':
+        rows = raw['rows']
+        if all(r['incr'] <= 0 for r in rows) and not any(r['qty_added'] > 0 for r in rows):
+            add('so_mod_no_increment', 'so_mod_rows', '변경 후 공정가치가 변경 전보다 크지 않습니다 — 증분 공정가치 0.',
+                '공정가치를 줄이거나 불리하게 바꾼 조건 변경은 없던 일로 보고 부여일 공정가치로 계속 인식합니다 (문단 27, 부록 나44).',
+                '변경 내용이 계약서와 맞는지 확인하고 판단을 기록하십시오.')
+        longer = [r['name'] for r in rows if r['vest'] > r['vest_before']]
+        shorter = [r['name'] for r in rows if r['vest'] < r['vest_before']]
+        if longer:
+            add('so_mod_vest_longer', 'so_mod_rows', '가득기간을 늘린 회차: ' + ', '.join(longer) + '.',
+                '불리하게 바꾼 가득조건은 없던 일로 봅니다 — 당초 보상원가는 당초 가득일까지 배분합니다 (부록 나44⑶). '
+                '증분은 변경 후 가득일까지 배분합니다 (나43⑴).', '근무 기간을 늘린 근거(변경계약서)를 기록하십시오.')
+        if shorter:
+            add('so_mod_vest_shorter', 'so_mod_rows', '가득기간을 줄인 회차: ' + ', '.join(shorter) + '.',
+                '유리하게 바꾼 가득조건을 반영해 당초 보상원가를 줄인 가득일까지 배분합니다 (부록 나43⑶).',
+                '변경계약서의 새 가득조건을 확인하십시오.')
+        add('so_mod_grant_fv', 'so_mod_rows', '부여일 1주당 공정가치를 조건 변경표에서 받았습니다.',
+            '당초 보상원가 = 부여일 공정가치 × 수량 × 가득 예상 비율 — 조건을 바꿔도 최소한 이 금액은 인식합니다 (문단 27).',
+            '부여일 평가 조서(평가파일)와 같은 값인지 대조하고 출처를 기록하십시오.')
+    if md == 'cash':
+        if tm.so_prev_liab < 0:
+            add('so_cash_prev', 'so_prev_liab', '전기말 주식보상부채를 넣지 않아 0으로 보고 당기 비용을 계산했습니다.',
+                '당기 비용 = 당기말 부채 − 전기말 부채 + 당기 현금 결제액 (문단 30).', '첫 결산이 아니면 전기말 장부금액을 넣으십시오.')
+        if str(tm.d_base)[5:] != str(tm.so_fy_end):
+            add('so_cash_date', 'd_base', f'측정기준일({tm.d_base})이 결산일({tm.so_fy_end})이 아닙니다.',
+                '현금결제형 부채는 매 보고기간 말과 결제일에 다시 잽니다 (문단 30).',
+                '결산일·분기말 또는 결제일로 평가했는지 확인하십시오.')
     if int(tm.so_ex) == 0 and any(r['t_end'] - r['t_ex'] > 1e-9 for r in raw['rows']):
         add('so_early_exercise', 'so_ex', f"조기행사 가정: {EX_LABELS[0]}.",
             '행사 시작일과 행사 종료일 사이에 행사할 수 있는데 조기행사를 반영하지 않았습니다 (문단 B5·B16~B19).',

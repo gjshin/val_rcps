@@ -1,6 +1,6 @@
 {
- "generated": "2026-10-27T23:54:47",
- "head": "ca83103",
+ "generated": "2026-10-28T02:54:48",
+ "head": "87dc4ac",
  "manifest_missing": [],
  "unlisted_hand_tests": [],
  "summary": {
@@ -33,7 +33,7 @@
    "NOT_TESTED": 0
   },
   "SO": {
-   "PASS": 4,
+   "PASS": 7,
    "EXPECTED_BLOCK": 0,
    "KNOWN_LIMITATION": 0,
    "FAIL": 0,
@@ -41,7 +41,7 @@
   },
   "ALL": {
    "PASS": 0,
-   "EXPECTED_BLOCK": 6,
+   "EXPECTED_BLOCK": 7,
    "KNOWN_LIMITATION": 26,
    "FAIL": 0,
    "NOT_TESTED": 0
@@ -7696,6 +7696,56 @@
    "n_tests": 1
   },
   {
+   "case_id": "SO-so_settle-1",
+   "product": "SO",
+   "branch": "so_settle",
+   "value": 1,
+   "label": "현금결제형 — 결산일마다 다시 잰다",
+   "meaning": "주식선택권 결제 방식",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/test_stock_option.py::test_cash_settled_liability_is_remeasured_at_year_end"
+   ],
+   "n_tests": 1
+  },
+  {
+   "case_id": "SO-so_mod-0",
+   "product": "SO",
+   "branch": "so_mod",
+   "value": 0,
+   "label": "부여일 평가",
+   "meaning": "주식선택권 조건 변경 평가",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/test_stock_option.py::test_repricing_measures_the_increment_on_the_modification_date"
+   ],
+   "n_tests": 1
+  },
+  {
+   "case_id": "SO-so_mod-1",
+   "product": "SO",
+   "branch": "so_mod",
+   "value": 1,
+   "label": "조건 변경 평가 — 증분 공정가치",
+   "meaning": "주식선택권 조건 변경 평가",
+   "kind": "enum",
+   "status": "PASS",
+   "oracle": "hand_calc_independent",
+   "independent_oracle": true,
+   "covered_by": [
+    "tests/test_stock_option.py::test_repricing_measures_the_increment_on_the_modification_date",
+    "tests/test_stock_option.py::test_unfavourable_change_adds_nothing",
+    "tests/test_stock_option.py::test_added_options_are_valued_at_the_modified_value"
+   ],
+   "n_tests": 3
+  },
+  {
    "case_id": "CB-put-ON",
    "product": "CB",
    "branch": "put",
@@ -8968,9 +9018,26 @@
   {
    "case_id": "BLOCK-06",
    "product": "ALL",
-   "branch": "현금결제형 주식선택권",
+   "branch": "현금결제형 주식선택권의 조건 변경 평가",
    "value": null,
-   "label": "2단계 기능이다. 입력 검사(stock_option.issues)가 평가를 막는다 — 화면·평가·조서가 같은 검사를 쓴다",
+   "label": "현금결제형은 결산일마다 다시 재므로 증분을 따로 재지 않는다. 입력 검사(stock_option.issues)가 평가를 막는다 — 화면·평가·조서가 같은 검사를 쓴다",
+   "meaning": "지원하지 않는 조합",
+   "kind": "block",
+   "status": "EXPECTED_BLOCK",
+   "oracle": "block_behaviour",
+   "independent_oracle": false,
+   "covered_by": [
+    "tests/test_stock_option.py::test_input_checks_block_calculation"
+   ],
+   "n_tests": 1,
+   "note": ""
+  },
+  {
+   "case_id": "BLOCK-07",
+   "product": "ALL",
+   "branch": "주식선택권 수량 감소·취소",
+   "value": null,
+   "label": "일부 취소(문단 28)는 조건 변경표에서 받지 않는다. 입력 검사가 평가를 막는다",
    "meaning": "지원하지 않는 조합",
    "kind": "block",
    "status": "EXPECTED_BLOCK",

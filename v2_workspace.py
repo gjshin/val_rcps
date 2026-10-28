@@ -279,7 +279,9 @@ def context(case, run, current):
     st.markdown('<div class="v2-title">' + html.escape(case.name) + '</div>', unsafe_allow_html=True)
     v = case.effective()
     if inst == 'SO':
-        st.caption(f"{v.get('d_base','기준일 미입력')} 측정 · 주식결제형 · 이항격자")
+        kind = ('현금결제형 결산일 재측정' if v.get('so_settle') == 1 else
+                '조건 변경 평가' if v.get('so_mod') else '주식결제형 부여일 평가')
+        st.caption(f"{v.get('d_base','기준일 미입력')} 측정 · {kind} · 이항격자")
     else:
         st.caption(
             f"{v.get('d_base','기준일 미입력')} 기준 · {'투자자' if v.get('view')=='holder' else '발행자'} 관점 · {v.get('model','TF')} 모형"

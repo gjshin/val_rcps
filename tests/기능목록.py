@@ -131,7 +131,8 @@ MANIFEST = {
     # ── 주식선택권 (valuation/stock_option.py) ──
     "so_ex":       ("주식선택권 조기행사 가정", {0: "만기에만 행사 (유럽형)", 1: "가득 뒤 최적 행사",
                                          2: "행사 배수에 도달하면 행사"}, ("SO",)),
-    "so_settle":   ("주식선택권 결제 방식", {0: "주식결제형", 1: "현금결제형 — 2단계 (입력 검사가 막음)"}, ("SO",)),
+    "so_settle":   ("주식선택권 결제 방식", {0: "주식결제형", 1: "현금결제형 — 결산일마다 다시 잰다"}, ("SO",)),
+    "so_mod":      ("주식선택권 조건 변경 평가", {0: "부여일 평가", 1: "조건 변경 평가 — 증분 공정가치"}, ("SO",)),
 }
 
 # 값이 아니라 **있고 없음**으로 갈리는 권리. 필드 하나로 못 잡아 술어로 적는다.
@@ -152,8 +153,6 @@ PRESENCE = {
 def selectable(G, product, field, value):
     # 상품 필드는 그 상품 값 하나만 「선택」이다 — CB 행에 RCPS 값이 있을 수 없다
     if field == "inst": return value == product
-    if product == "SO" and field == "so_settle":
-        return value == 0          # 현금결제형은 입력 검사가 막는다 (BLOCKS)
     if product == "SHA":
         forced = dict(mat_mode=1, issuer_call=0, div_mode=0, div_basis=0, view="issuer", rfx_mode=0, k_method=0,
                       p_sep=1, k_sep=1, put_bdt=0, ipo_conv=0, carry=1)
@@ -186,7 +185,10 @@ BLOCKS = [
      "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
     ("GS 또는 전환권 부채 + BDT", "compat() 이 put_bdt=0 으로 되돌린다 (COMPAT_BDT). 값은 전부터 같았고 이제 경고가 붙는다",
      "engine+ui+validate", "tests/손계산대조.py::test_unsupported_combos_agree"),
-    ("현금결제형 주식선택권", "2단계 기능이다. 입력 검사(stock_option.issues)가 평가를 막는다 — 화면·평가·조서가 같은 검사를 쓴다",
+    ("현금결제형 주식선택권의 조건 변경 평가", "현금결제형은 결산일마다 다시 재므로 증분을 따로 재지 않는다. "
+     "입력 검사(stock_option.issues)가 평가를 막는다 — 화면·평가·조서가 같은 검사를 쓴다",
+     "engine+ui", "tests/test_stock_option.py::test_input_checks_block_calculation"),
+    ("주식선택권 수량 감소·취소", "일부 취소(문단 28)는 조건 변경표에서 받지 않는다. 입력 검사가 평가를 막는다",
      "engine+ui", "tests/test_stock_option.py::test_input_checks_block_calculation"),
 ]
 
@@ -486,6 +488,13 @@ def collect_coverage(G):
             ([("SO", "so_ex", 0), ("SO", "so_ex", 1)], "invariants"),
         "test_exercise_multiple_and_exit_rate_lower_the_value": ([("SO", "so_ex", 1), ("SO", "so_ex", 2)], "invariants"),
         "test_node_trace_reconciles_every_node": ([("SO", "so_ex", 2)], "invariants"),
+        # 조건 변경 — 변경 전·후 값을 같은 날 부여일 평가로 따로 재어 맞춘다 (엔진 밖의 독립 계산)
+        "test_repricing_measures_the_increment_on_the_modification_date":
+            ([("SO", "so_mod", 0), ("SO", "so_mod", 1)], "hand_calc_independent"),
+        "test_unfavourable_change_adds_nothing": ([("SO", "so_mod", 1)], "invariants"),
+        "test_added_options_are_valued_at_the_modified_value": ([("SO", "so_mod", 1)], "invariants"),
+        # 현금결제형 — 부채 = 같은 날 부여일 평가 값 × 수량 × 가득 예상 비율 × 근무 경과율
+        "test_cash_settled_liability_is_remeasured_at_year_end": ([("SO", "so_settle", 1)], "hand_calc_independent"),
     }
     tf = "tests/test_stock_option.py"
     src = open(os.path.join(ROOT, tf), encoding="utf-8").read()

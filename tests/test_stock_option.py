@@ -21,9 +21,10 @@ from test_v2_workflow import ROOT
 def case(**over):
     rows = over.pop('so_rows', [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0)])
     contract = dict(inst='SO', tranche='가상', d_issue='2026-01-01', d_mat='2031-01-01', K0=100.0, so_settle=0,
-                    so_fy_end='12-31', so_rows=rows)
+                    so_fy_end='12-31', so_rows=rows, so_mod=0, so_mod_rows=[])
     market = dict(S0=100.0, sig=0.3, div_y=0.0, rf_curve=[[1, 0.03], [5, 0.03]], y_type='spot', cmp_rf=1)
-    method = dict(d_base='2026-01-01', so_ex=0, so_mult=2.0, so_exit=0.0, grid_days=7.0, gap_m=1.0)
+    method = dict(d_base='2026-01-01', so_ex=0, so_mult=2.0, so_exit=0.0, grid_days=7.0, gap_m=1.0, so_prev_liab=-1.0,
+                  so_paid=0.0)
     for key, value in over.items():
         for group in (contract, market, method):
             if key in group:
@@ -113,7 +114,23 @@ def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
 
 
 @pytest.mark.parametrize('over, words', [
-    (dict(so_settle=1), '현금결제형'),
+    (dict(so_settle=2), '지원하지 않는 선택값'),
+    (dict(so_settle=1, so_mod=1, d_base='2026-12-31'), '조건 변경 평가를 따로 하지 않습니다'),
+    (dict(so_mod=1, d_base='2026-01-01', so_mod_rows=[dict(name='1차', grant_fv=10.0)]), '부여일보다 뒤'),
+    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', K=80.0)]), '부여일 1주당 공정가치'),
+    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[]), '조건 변경표에 없는 회차'),
+    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', grant_fv=10.0), dict(name='9차', grant_fv=1.0)]),
+     '회차표에 없습니다'),
+    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', qty=900.0, grant_fv=10.0)]), '수량이 줄었습니다'),
+    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', K=0.0, grant_fv=10.0)]), '행사가격은 0보다'),
+    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', vest='2026-06-30', grant_fv=10.0)]),
+     '조건 변경일보다 빠릅니다'),
+    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', price=1.0, grant_fv=10.0)]), '조건 변경표의 형식'),
+    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', end='2051-01-01', grant_fv=10.0)]),
+     '1차 (변경 후): 격자가'),
+    (dict(grid_days=1.0), '계산 한도'),
+    (dict(so_settle=1, d_base='2026-12-31', so_paid=-1.0), '결제액은 0 이상'),
+    (dict(so_paid=100.0), '현금결제형에서만'),
     (dict(so_ex=2, so_mult=1.0), '행사 배수'),
     (dict(so_exit=1.0), '퇴사율'),
     (dict(so_fy_end='12/31'), '결산일'),
@@ -147,7 +164,8 @@ def test_review_prompts_follow_the_standard():
 def test_only_stock_option_judgment_topics_apply():
     values = case().effective()
     ids = {t['id'] for t in TOPICS if applicable(t, values)}
-    assert ids == {'so_volatility', 'so_early_exercise', 'so_vesting', 'fair_value_inputs', 'method_change'}
+    assert ids == {'so_volatility', 'so_early_exercise', 'so_vesting', 'so_modification', 'so_settlement',
+                   'fair_value_inputs', 'method_change'}
     cb = {**values, 'inst': 'CB', 'view': 'issuer'}
     assert not any(applicable(t, cb) for t in TOPICS if t['trigger'] == 'so')
 
@@ -241,3 +259,193 @@ def test_exercise_at_measurement_date_still_exports():
         rows = list(wb['블랙-숄즈 대조'].iter_rows(values_only=True))
         life_row = next(x for x in rows if x[1] == '기대존속기간')
         assert life_row[4] is None and life_row[8] == pytest.approx(150.0)
+
+
+# ── 2단계 ① 조건 변경 · ② 현금결제형 ─────────────────────────────────────────
+
+ONE = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=0.9)]
+
+
+def mod_case(mods, rows=ONE, **over):
+    return case(so_mod=1, d_base='2027-01-01', so_rows=rows, so_mod_rows=mods, **over)
+
+
+def test_repricing_measures_the_increment_on_the_modification_date():
+    run = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)]))
+    r = run.raw['rows'][0]
+    # 변경 전·후 값 = 같은 날·같은 시장자료로 따로 잰 부여일 평가 값 (문단 27, 부록 나43⑴)
+    before = fv(case(d_base='2027-01-01', so_rows=ONE))
+    after = fv(case(d_base='2027-01-01', so_rows=ONE, K0=80.0))
+    assert r['fv_before'] == pytest.approx(before, rel=1e-12) and r['fv'] == pytest.approx(after, rel=1e-12)
+    assert r['K'] == 80.0 and r['K_before'] == 100.0
+    assert r['incr'] == pytest.approx(after - before) and r['incr'] > 0
+    assert r['grant_cost'] == pytest.approx(20.0*1000*0.9)            # 당초 보상원가는 그대로 인식한다
+    assert r['fair'] == pytest.approx(r['incr']*1000) and r['cost'] == pytest.approx(r['incr']*1000*0.9)
+    total = run.summary['amounts_total']
+    assert list(total) == ['so_incr_fair', 'so_incr_cost'] and total['so_incr_cost'] == pytest.approx(r['cost'])
+    assert run.raw['integrity'] == []
+    sched = run.raw['schedule']
+    assert [(x['fy_end'], x['part']) for x in sched] == [
+        ('2026-12-31', '당초'), ('2027-12-31', '당초'), ('2028-12-31', '당초'), ('2027-12-31', '증분'), ('2028-12-31', '증분')]
+    inc = [x for x in sched if x['part'] == '증분']
+    assert inc[0]['share'] == pytest.approx(364/365)                    # 증분은 변경일부터 가득일까지
+    assert sum(x['expense'] for x in sched) == pytest.approx(r['grant_cost'] + r['cost'])
+    assert 'so_mod_grant_fv' in {i.code for i in run.issues} and 'so_measure_date' not in {i.code for i in run.issues}
+    check = next(c for c in run.summary['checks'] if c['name'].startswith('증분 공정가치'))
+    assert check['passed']
+
+
+def test_unfavourable_change_adds_nothing():
+    run = calculate(mod_case([dict(name='1차', K=120.0, grant_fv=20.0)]))
+    r = run.raw['rows'][0]
+    assert r['fv'] < r['fv_before'] and r['incr'] == 0 and r['cost'] == 0
+    assert {x['part'] for x in run.raw['schedule']} == {'당초'}
+    assert 'so_mod_no_increment' in {i.code for i in run.issues}
+
+
+def test_added_options_are_valued_at_the_modified_value():
+    run = calculate(mod_case([dict(name='1차', qty=1200.0, grant_fv=20.0)]))
+    r = run.raw['rows'][0]
+    assert r['incr'] == pytest.approx(0.0, abs=1e-12)                 # 다른 조건은 그대로
+    assert r['qty_before'] == 1000 and r['qty_added'] == 200
+    assert r['fair'] == pytest.approx(r['fv']*200) and r['cost'] == pytest.approx(r['fv']*200*0.9)
+    assert run.raw['qty'] == 1000
+    assert 'so_mod_no_increment' not in {i.code for i in run.issues}
+
+
+def test_shorter_vesting_catches_up_without_rewriting_past_years():
+    rows = [dict(name='1차', vest='2029-01-01', end='', qty=1000.0, keep=1.0)]
+    run = calculate(mod_case([dict(name='1차', vest='2027-06-30', grant_fv=20.0)], rows=rows))
+    first = [x for x in run.raw['schedule'] if x['part'] == '당초']
+    span = (L.dt.date(2029, 1, 1) - L.dt.date(2026, 1, 1)).days
+    assert first[0]['fy_end'] == '2026-12-31' and first[0]['share'] == pytest.approx(364/span)   # 지난 결산은 당초 추정
+    assert first[1]['fy_end'] == '2027-12-31' and first[1]['cum'] == pytest.approx(20000.0)    # 줄인 가득일로 따라잡음
+    assert len(first) == 2
+    assert run.raw['rows'][0]['start'] == '2027-06-30'                # 가득일부터 행사하던 회차는 새 가득일부터
+    late = [dict(name='1차', vest='2028-01-01', start='2028-07-01', end='', qty=1000.0, keep=1.0)]
+    run = calculate(mod_case([dict(name='1차', vest='2027-06-30', grant_fv=20.0)], rows=late))
+    assert run.raw['rows'][0]['start'] == '2028-07-01'                # 따로 정한 행사 시작일은 그대로
+    assert 'so_mod_vest_shorter' in {i.code for i in run.issues}
+
+
+def test_longer_vesting_keeps_the_original_cost_on_the_original_date():
+    run = calculate(mod_case([dict(name='1차', K=80.0, vest='2029-01-01', grant_fv=20.0)]))
+    first = [x for x in run.raw['schedule'] if x['part'] == '당초']
+    inc = [x for x in run.raw['schedule'] if x['part'] == '증분']
+    assert first[-1]['fy_end'] == '2028-12-31' and first[-2]['share'] == pytest.approx(729/730)   # 당초 가득일 2028-01-01
+    assert inc[-1]['fy_end'] == '2029-12-31' and inc[0]['share'] == pytest.approx(364/(365 + 366))
+    assert 'so_mod_vest_longer' in {i.code for i in run.issues}
+
+
+def test_extending_the_exercise_period_past_the_original_expiry():
+    # 회차 행사 종료일 빈칸 = 행사기간 종료일 2031-01-01. 연장한 종료일은 그보다 늦어도 되고, 변경 전은 그대로다 (자동 검토 지적)
+    run = calculate(mod_case([dict(name='1차', end='2032-01-01', grant_fv=20.0)]))
+    r = run.raw['rows'][0]
+    assert r['end_before'] == '2031-01-01' and r['end'] == '2032-01-01'
+    before = fv(case(d_base='2027-01-01', so_rows=ONE))
+    after = fv(case(d_base='2027-01-01', d_mat='2032-01-01', so_rows=ONE))
+    assert r['fv_before'] == pytest.approx(before, rel=1e-12) and r['fv'] == pytest.approx(after, rel=1e-12)
+    assert r['incr'] > 0 and run.raw['integrity'] == []
+
+
+def test_increment_after_vesting_is_recognised_at_once():
+    rows = [dict(name='1차', vest='2026-06-30', end='', qty=1000.0, keep=1.0)]
+    run = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=rows))
+    inc = [x for x in run.raw['schedule'] if x['part'] == '증분']
+    assert len(inc) == 1 and inc[0]['fy_end'] == '2027-12-31' and inc[0]['share'] == 1.0
+    assert inc[0]['expense'] == pytest.approx(run.raw['rows'][0]['cost'])
+    first = [x for x in run.raw['schedule'] if x['part'] == '당초']
+    assert len(first) == 1 and first[0]['fy_end'] == '2026-12-31'
+
+
+def cash_case(d_base='2026-12-31', **over):
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=0.9),
+            dict(name='2차', vest='2026-06-30', end='', qty=500.0, keep=1.0)]
+    return case(so_settle=1, d_base=d_base, so_rows=rows, **over)
+
+
+def test_cash_settled_liability_is_remeasured_at_year_end():
+    run = calculate(cash_case(so_prev_liab=5000.0))
+    one, two = run.raw['rows']
+    assert one['service'] == pytest.approx(364/730) and two['service'] == 1.0
+    assert one['fv'] == pytest.approx(fv(case(d_base='2026-12-31', so_rows=ONE)), rel=1e-12)
+    assert one['liab'] == pytest.approx(one['fv']*1000*0.9*364/730)
+    assert run.raw['liab'] == pytest.approx(one['liab'] + two['liab'])
+    assert run.raw['expense'] == pytest.approx(run.raw['liab'] - 5000.0)
+    assert run.summary['so_cash']['당기 비용'] == pytest.approx(run.raw['expense'])
+    assert list(run.summary['amounts_total']) == ['so_fair', 'so_liab']
+    assert run.raw['integrity'] == []
+    codes = {i.code for i in run.issues}
+    assert 'so_cash_prev' not in codes and 'so_cash_date' not in codes and 'so_measure_date' not in codes
+    codes = {i.code for i in calculate(cash_case(d_base='2026-11-30')).issues}
+    assert {'so_cash_prev', 'so_cash_date'} <= codes
+    # 당기 중 결제 — 부채 증감만 보면 결제한 4,000원만큼 비용이 줄어든다 (자동 검토 지적)
+    paid = calculate(cash_case(so_prev_liab=5000.0, so_paid=4000.0))
+    assert paid.raw['expense'] == pytest.approx(run.raw['expense'] + 4000.0)
+    assert paid.summary['so_cash']['당기 현금 결제액'] == 4000.0
+    wb = _workbook(paid, accounting=True)
+    rows = list(wb['회계처리'].iter_rows(values_only=True))
+    assert ('당기 중', '주식보상부채', 4000.0, '현금', 4000.0) in [r[:5] for r in rows]
+    # 당기 중 모두 결제 — 남은 수량 0, 부채 0, 비용 = 결제액 − 전기말 부채 (자동 검토 지적)
+    done = cash_case(so_prev_liab=10000.0, so_paid=12000.0)
+    for r in done.contract['so_rows']:
+        r['qty'] = 0.0
+    gone = calculate(done)
+    assert gone.raw['liab'] == 0 and gone.raw['expense'] == pytest.approx(2000.0)
+    assert gone.summary['amounts_per_share'] == {'so_fair': 0.0, 'so_liab': 0.0}
+    assert '부채 재측정' in _workbook(gone, detail=True, accounting=True).sheetnames
+    assert any('부여 수량' in i.message for i in inspect_case(case(so_rows=[dict(name='1차', vest='2028-01-01', qty=0.0)])))
+
+
+def test_mode_workpapers():
+    wb = _workbook(calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)])), detail=True, accounting=True)
+    for name in ('조건 변경', '조건 변경표 입력', '격자 1차 변경 후', '격자 1차 변경 전', '비용 배분', '회계처리'):
+        assert name in wb.sheetnames, name
+    assert '회차별 공정가치' not in wb.sheetnames
+    run = calculate(cash_case(so_prev_liab=5000.0))
+    wb = _workbook(run, accounting=True)
+    assert '부채 재측정' in wb.sheetnames and '조건 변경' not in wb.sheetnames
+    journal = [r for r in wb['회계처리'].iter_rows(values_only=True) if r and r[1] == '주식보상비용']
+    assert sum(r[2] for r in journal) == pytest.approx(run.raw['expense'])
+
+
+def test_screens_switch_between_grant_modification_and_cash():
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=180)
+    app.run()
+    app.session_state['case'] = mod_case([dict(name='1차', K=80.0, grant_fv=20.0)])
+    app.run()
+    assert not app.exception, app.exception
+    assert '조건 변경' in [h.value for h in app.subheader]
+    app.session_state['_workflow_stage'] = '평가·분석'
+    app.run()
+    next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
+    assert not app.exception, app.exception
+    assert [h.value for h in app.subheader][:2] == ['회차별 조건 변경 전·후 공정가치', '회계연도별 보상원가 배분']
+    stale = cash_case(so_prev_liab=5000.0)
+    stale.contract['so_mod'] = 1                 # 조건 변경을 켠 채 현금결제형으로 바꾼 입력 (자동 검토 지적)
+    app.session_state['case'] = stale
+    app.session_state['_workflow_stage'] = '입력·시장자료'
+    app.run()
+    assert not app.exception, app.exception
+    assert '조건 변경' not in [h.value for h in app.subheader]
+    labels = [n.label for n in app.number_input]
+    assert '당기 현금 결제액(원)' in labels and '전기말 주식보상부채(원, -1은 없음)' in labels
+    app.session_state['_workflow_stage'] = '평가·분석'
+    app.run()
+    next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
+    assert not app.exception, app.exception
+    assert app.session_state.case.contract['so_mod'] == 0
+    assert [h.value for h in app.subheader][:2] == ['회차별 공정가치와 부채', '결산일 부채와 당기 비용']
+    # 결제액을 넣은 현금결제형을 주식결제형으로 바꾼 입력 (자동 검토 지적) — 숨은 결제액이 평가를 막지 않는다
+    back = case(so_rows=ONE)
+    back.method['so_paid'] = 4000.0
+    app.session_state['case'] = back
+    app.session_state['_workflow_stage'] = '입력·시장자료'
+    app.run()
+    assert '당기 현금 결제액(원)' not in [n.label for n in app.number_input]
+    app.session_state['_workflow_stage'] = '평가·분석'
+    app.run()
+    next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
+    assert not app.exception, app.exception
+    assert app.session_state.case.method['so_paid'] == 0.0
+    assert [h.value for h in app.subheader][:2] == ['회차별 공정가치', '회계연도별 보상원가 배분']

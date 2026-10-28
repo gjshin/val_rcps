@@ -27,7 +27,7 @@ METHOD = frozenset({
     "k_method", "k_split", "put_bdt", "fvpl_whole", "bs_target", "bs_net",
     "prev_hold", "d1_pl", "d1_reason", "prev_host", "prev_deriv", "eir_issue", "cur_periods", "settle_amt",
     "split_tol", "split_base_in", "split_base_why",
-    "so_ex", "so_mult", "so_exit",
+    "so_ex", "so_mult", "so_exit", "so_prev_liab", "so_paid",
 })
 DERIVED = frozenset({"T", "n", "elapsed_m", "rem_m", "scen_md5"})
 FIELDS = frozenset(Terms.__dataclass_fields__) - DERIVED
@@ -355,9 +355,11 @@ def inspect_case(case: Case) -> list[Issue]:
             for k, message in sha_row_issues(Terms(**values)):
                 add('error', 'sha_rows', 'sha_rows', sha_row_issue_text(k, message))
     if is_so and not any(i.severity == 'error' for i in issues):
-        from .stock_option import ROW_KEYS, issues as so_issues
+        from .stock_option import ROW_KEYS, MOD_KEYS, issues as so_issues
         if not all(isinstance(r, dict) and set(r) <= set(ROW_KEYS) for r in values.get('so_rows', [])):
             add('error', 'so_rows', 'so_rows', '회차표의 형식이 올바르지 않습니다.')
+        elif not all(isinstance(r, dict) and set(r) <= set(MOD_KEYS) for r in values.get('so_mod_rows', [])):
+            add('error', 'so_rows', 'so_mod_rows', '조건 변경표의 형식이 올바르지 않습니다.')
         else:
             for message in so_issues(Terms(**values)):
                 add('error', 'so_rows', 'so_rows', message)
