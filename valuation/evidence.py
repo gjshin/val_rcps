@@ -147,7 +147,7 @@ TOPICS = [
          sources=[standard('1102', '27, 28', '유리하도록 조건을 변경하는 때에도 조건변경의 영향을 인식한다.'),
                   standard('1102', 'B43, B44', appendix='b')]),
     dict(id='so_settlement', title='결제 방식을 주식결제형·현금결제형 중 무엇으로 봤나요?',
-         trigger='so', fields=['so_settle', 'so_prev_liab'],
+         trigger='so', fields=['so_settle', 'so_prev_liab', 'so_paid'],
          explanation='회사가 현금과 주식 중 결제 방식을 고를 수 있어도, 현금으로 결제한 관행이나 명백한 방침이 있으면 현금결제형(부채)입니다. 현금결제형은 결산일마다 공정가치로 다시 잽니다.',
          questions=[], limitation='결제 방식은 계약과 관행으로 판단하며, 앱이 정하지 않습니다.',
          sources=[standard('1102', '41', '현금으로 결제한 과거의 실무관행'),

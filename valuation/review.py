@@ -122,7 +122,7 @@ def so_review(tm, raw, add):
     if md == 'cash':
         if tm.so_prev_liab < 0:
             add('so_cash_prev', 'so_prev_liab', '전기말 주식보상부채를 넣지 않아 0으로 보고 당기 비용을 계산했습니다.',
-                '당기 비용 = 당기말 부채 − 전기말 부채 (문단 30).', '첫 결산이 아니면 전기말 장부금액을 넣으십시오.')
+                '당기 비용 = 당기말 부채 − 전기말 부채 + 당기 현금 결제액 (문단 30).', '첫 결산이 아니면 전기말 장부금액을 넣으십시오.')
         if str(tm.d_base)[5:] != str(tm.so_fy_end):
             add('so_cash_date', 'd_base', f'측정기준일({tm.d_base})이 결산일({tm.so_fy_end})이 아닙니다.',
                 '현금결제형 부채는 매 보고기간 말과 결제일에 다시 잽니다 (문단 30).',

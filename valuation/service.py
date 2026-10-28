@@ -222,7 +222,8 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
         "so_mode": raw.get("mode") if legacy.is_so(terms) else None,
         "so_rows": (SO.summary_rows(terms, raw) if legacy.is_so(terms) else None),
         "so_schedule": (SO.summary_schedule(terms, raw) if legacy.is_so(terms) else None),
-        "so_cash": ({"전기말 주식보상부채": raw["prev_liab"], "당기말 주식보상부채": raw["liab"], "당기 비용": raw["expense"]}
+        "so_cash": ({"전기말 주식보상부채": raw["prev_liab"], "당기 현금 결제액": raw["paid"],
+                     "당기말 주식보상부채": raw["liab"], "당기 비용": raw["expense"]}
                     if legacy.is_so(terms) and raw.get("mode") == "cash" else None),
         "grid": {"intervals": terms.n, "average_days": terms.T*365/terms.n,
                  "requested_months": terms.gap_m, "requested_days": terms.grid_days,

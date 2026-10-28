@@ -126,9 +126,12 @@ def editor(edited, case, draft_errors):
                '결산일을 넣습니다.')
     W.fields(['tranche', 'so_settle', 'd_issue', 'd_base', 'd_mat', 'K0'], edited, case)
     if edited.get('so_settle') == 1:
+        if edited.get('so_mod'):
+            edited['so_mod'] = 0       # 현금결제형은 결산일마다 다시 재므로 조건 변경 평가가 없다 (끌 칸이 숨는다)
         st.caption('현금결제형(차액보상)은 부채입니다. 결제될 때까지 결산일마다 공정가치로 다시 재고(문단 30·33), '
-                   '«공정가치 × 가득 예상 수량 × 근무 경과율» 을 부채로 잡습니다. 당기 비용 = 당기말 부채 − 전기말 부채.')
-        W.field('so_prev_liab', edited, case)
+                   '«공정가치 × 가득 예상 수량 × 근무 경과율» 을 부채로 잡습니다. 당기 비용 = 당기말 부채 − 전기말 부채 + '
+                   '당기 현금 결제액. 회차표에는 결산일에 남아 있는 수량을 넣습니다.')
+        W.fields(['so_prev_liab', 'so_paid'], edited, case)
     st.subheader('가득 회차')
     st.caption('한 번에 모두 가득되면 한 줄, 2년 뒤 50%·3년 뒤 50% 처럼 나눠 가득되면 회차마다 한 줄을 넣습니다. '
                '회차마다 따로 평가하고 따로 비용을 나눕니다.')
@@ -171,10 +174,13 @@ def cost_tables(run):
     if s.get('so_mode') == 'cash':
         c = s['so_cash']
         table = pd.DataFrame([{'결산일': run.terms.d_base, '전기말 주식보상부채': c['전기말 주식보상부채'],
-                               '당기말 주식보상부채': c['당기말 주식보상부채'], '당기 비용': c['당기 비용']}])
+                               '당기 현금 결제액': c['당기 현금 결제액'], '당기말 주식보상부채': c['당기말 주식보상부채'],
+                               '당기 비용': c['당기 비용']}])
         v = c['당기 비용']
         journal = ([{'결산일': run.terms.d_base, '차변': '주식보상비용', '대변': '주식보상부채', '금액': v}] if v >= 0 else
                    [{'결산일': run.terms.d_base, '차변': '주식보상부채', '대변': '주식보상비용 (환입)', '금액': -v}])
+        if c['당기 현금 결제액'] > 0:
+            journal.append({'결산일': '당기 중', '차변': '주식보상부채', '대변': '현금', '금액': c['당기 현금 결제액']})
         return table, journal
     sched = pd.DataFrame(s['so_schedule'])
     by = '구분' if s.get('so_mode') == 'mod' else '회차'
@@ -224,7 +230,7 @@ def result_panel(run, case, current, pending):
                    f"조기행사 가정: {SO.EX_LABELS[int(t.so_ex)]}")
     elif md == 'cash':
         c1.metric('1주당 공정가치 (결산일, 원)', f"{ps['so_fair']:,.2f}")
-        c2.metric('당기 비용 (원)', f"{s['so_cash']['당기 비용']:,.0f}", help='당기말 부채 − 전기말 부채')
+        c2.metric('당기 비용 (원)', f"{s['so_cash']['당기 비용']:,.0f}", help='당기말 부채 − 전기말 부채 + 당기 현금 결제액')
         c3.metric('전기말 주식보상부채 (원)', f"{s['so_cash']['전기말 주식보상부채']:,.0f}")
         st.caption(f"결산일 {t.d_base} · 주가 {t.S0:,.0f}원 · 행사가격 {t.K0:,.0f}원 · 변동성 {t.sig:.2%} · "
                    f"조기행사 가정: {SO.EX_LABELS[int(t.so_ex)]}")

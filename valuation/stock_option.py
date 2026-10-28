@@ -101,6 +101,10 @@ def issues(tm) -> list[str]:
     if int(tm.so_settle) == 1 and int(tm.so_mod) == 1:
         out.append("현금결제형은 결산일마다 공정가치로 다시 재므로 조건 변경 평가를 따로 하지 않습니다. "
                    "변경된 조건으로 결산일 평가를 하십시오.")
+    if not (math.isfinite(float(tm.so_paid)) and tm.so_paid >= 0):
+        out.append("당기 현금 결제액은 0 이상이어야 합니다.")
+    if int(tm.so_settle) != 1 and tm.so_paid > 0:
+        out.append("당기 현금 결제액은 현금결제형에서만 넣습니다.")
     if int(tm.so_ex) not in EX_LABELS:
         out.append("조기행사 가정을 고르십시오.")
     if int(tm.so_ex) == 2 and not tm.so_mult > 1:
@@ -406,7 +410,9 @@ def value(tm) -> dict:
     elif md == "cash":
         raw["liab"] = sum(r["liab"] for r in out_rows)
         raw["prev_liab"] = max(0.0, float(tm.so_prev_liab))
-        raw["expense"] = raw["liab"] - raw["prev_liab"]
+        raw["paid"] = float(tm.so_paid)
+        # 부채 증감 = 비용 − 결제 → 비용 = 당기말 부채 − 전기말 부채 + 당기 결제액 (문단 30)
+        raw["expense"] = raw["liab"] - raw["prev_liab"] + raw["paid"]
         raw["schedule"] = [dict(fy_end=tm.d_base, name=r["name"], expense=r["liab"], cum=r["liab"], share=r["service"],
                                 part="부채") for r in out_rows]
     else:

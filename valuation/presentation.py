@@ -74,7 +74,7 @@ LABELS = {
     'so_rows': '주식선택권 회차표', 'so_ex': '조기행사 가정', 'so_mult': '행사 배수(배)',
     'so_exit': '가득 뒤 연간 퇴사율(%)', 'so_settle': '결제 방식', 'so_fy_end': '결산일(월-일, 예: 12-31)',
     'so_mod': '조건 변경 평가 (측정기준일 = 조건 변경일)', 'so_mod_rows': '조건 변경표',
-    'so_prev_liab': '전기말 주식보상부채(원, -1은 없음)',
+    'so_prev_liab': '전기말 주식보상부채(원, -1은 없음)', 'so_paid': '당기 현금 결제액(원)',
 }
 PERCENT = frozenset({'split_tol', 'sig', 'cpn', 'div_y', 'p_yield', 'k_prem', 'k_w', 'k_lock_w', 'ytm', 'bdt_sig',
                      'ipo_mult', 'sha_put_yield', 'sha_call_prem', 'sha_spread', 'eir_issue', 'dp_delay', 'so_exit'})
