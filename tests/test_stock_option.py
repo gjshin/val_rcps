@@ -524,6 +524,12 @@ def test_formula_workbook_matches_tranche_names_like_the_engine():
     ws = wb['조건 변경']
     head = [c.value for c in ws[1]]
     assert ws.cell(2, head.index('부여일 1주당 공정가치') + 1).value == "='조건 변경표 입력'!$G$2"
+    # 숫자 회차명 — 불러온 평가파일에서 생길 수 있다 (자동 검토 지적)
+    num = [dict(name=1, vest='2028-01-01', end='', qty=1000.0, keep=0.9)]
+    for c in (mod_case([dict(name=1, K=80.0, grant_fv=20.0)], rows=num, grid_days=14.0),
+              case(so_rows=num, grid_days=14.0), case(so_settle=1, d_base='2026-12-31', so_rows=num, grid_days=14.0)):
+        wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
+        assert any(n.startswith('격자 1') for n in wb.sheetnames)
 
 
 @pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')

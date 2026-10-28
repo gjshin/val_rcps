@@ -437,8 +437,8 @@ def formula_tables(wb, run, names):
         ws[cell('가득 예상 비율')] = f"={keep[name]}"
         if md == 'mod':
             ws[cell('부여일 1주당 공정가치')] = f"={gfv[str(name).strip()]}"     # 조건 변경표는 이름 앞뒤 빈칸을 떼고 맞춘다
-            ws[cell('변경 전 1주당 (변경일)')] = f"={root(name + ' 변경 전')}"
-            ws[cell('변경 후 1주당 (변경일)')] = f"={root(name + ' 변경 후')}"
+            ws[cell('변경 전 1주당 (변경일)')] = f"={root(f'{name} 변경 전')}"      # lattices() 와 같은 이름 (숫자 회차명도)
+            ws[cell('변경 후 1주당 (변경일)')] = f"={root(f'{name} 변경 후')}"
             ws[cell('1주당 증분')] = f"=MAX({cell('변경 후 1주당 (변경일)')}-{cell('변경 전 1주당 (변경일)')},0)"
             ws[cell('당초 보상원가')] = f"={cell('부여일 1주당 공정가치')}*{cell('변경 전 수량')}*{cell('가득 예상 비율')}"
             ws[cell('증분 공정가치')] = (f"={cell('1주당 증분')}*{cell('변경 전 수량')}+"
