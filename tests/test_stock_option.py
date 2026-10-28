@@ -428,7 +428,9 @@ def test_value_workpapers_carry_the_run_values():
     assert detail['가정'][_input(detail, '측정기준일 주가(원)')].value == run.terms.S0
     assert detail['가정'][_input(detail, '변동성 σ (연)')].value == run.terms.sig
     lay = SOW.layout(r['n'])
-    assert ws.cell(lay['value'], 3).value == r['fv'] and ws.cell(lay['stock'], 3).value == run.terms.S0
+    # 엑셀 파일은 숫자를 유효숫자 16자리까지만 적을 수 있다 (자동 시험의 openpyxl) — 마지막 자리까지 같기를 요구하지 않는다
+    assert ws.cell(lay['value'], 3).value == pytest.approx(r['fv'], rel=1e-12)
+    assert ws.cell(lay['stock'], 3).value == pytest.approx(run.terms.S0, rel=1e-12)
     assert ws['B1'].value == '날짜' and ws.cell(lay['stock'] - 1, 2).value == '하락 횟수 r ＼ 스텝'
     res = _amount_rows(detail['결과'])
     from valuation.service import AMOUNT_LABELS
