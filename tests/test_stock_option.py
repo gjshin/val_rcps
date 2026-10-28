@@ -301,7 +301,7 @@ def test_unfavourable_change_adds_nothing():
     run = calculate(mod_case([dict(name='1차', K=120.0, grant_fv=20.0)]))
     r = run.raw['rows'][0]
     assert r['fv'] < r['fv_before'] and r['incr'] == 0 and r['cost'] == 0
-    assert {x['part'] for x in run.raw['schedule']} == {'당초'}
+    assert all(x['expense'] == 0 for x in run.raw['schedule'] if x['part'] == '증분')   # 줄은 있고 금액은 0
     assert 'so_mod_no_increment' in {i.code for i in run.issues}
 
 
@@ -473,6 +473,10 @@ FORMULA_CASES = {
                               grid_days=14.0, so_ex=1, div_y=0.02),
     '현금결제형': lambda: cash_case(so_prev_liab=5000.0, so_paid=1500.0, grid_days=14.0, so_ex=2, so_mult=2.0),
     '현금결제형 · 모두 결제': lambda: _settled(cash_case(so_prev_liab=10000.0, so_paid=12000.0, grid_days=14.0)),
+    # 가득된 선택권의 행사기간 연장 — 주가가 행사 배수를 넘어 변경 전·후 모두 바로 행사하므로 처음 증분 0
+    '조건 변경 · 증분 0': lambda: mod_case([dict(name='1차', end='2032-01-01', grant_fv=20.0)], grid_days=14.0, so_ex=2,
+                                       so_mult=2.0, S0=250.0,
+                                       rows=[dict(name='1차', vest='2026-06-30', end='', qty=1000.0, keep=1.0)]),
 }
 
 
@@ -561,3 +565,39 @@ def test_formula_workbook_follows_changed_estimates_like_the_app():
         assert lab[AMOUNT_LABELS[key]][3] == pytest.approx(app.summary['amounts_100'][key], rel=1e-10), key
     sched = [r for r in live['비용 배분'].iter_rows(min_row=2, values_only=True)]
     assert [x[3] for x in sched] == pytest.approx([x['당기 비용'] for x in app.summary['so_schedule']], rel=1e-10)
+
+
+@pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
+def test_formula_workbook_keeps_rows_for_amounts_that_start_at_zero():
+    # 처음에 0인 증분·결제액도 비용 배분·분개에 줄이 있어, 엑셀에서 입력을 바꾸면 따라온다 (자동 검토 지적)
+    c = FORMULA_CASES['조건 변경 · 증분 0']()
+    assert calculate(c).raw['rows'][0]['incr'] == 0
+    wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
+    wb['평가 입력값']['B2'].value = 150.0                  # 주가를 낮추면 바로 행사하지 않아 연장의 증분이 생긴다
+    wb['조건 변경표 입력']['G2'].value = 10.0
+    out = io.BytesIO()
+    wb.save(out)
+    live = _recalc(out.getvalue())
+    c2 = copy.deepcopy(c)
+    c2.market['S0'] = 150.0
+    c2.contract['so_mod_rows'][0]['grant_fv'] = 10.0
+    app = calculate(c2)
+    assert app.raw['cost'] > 1000
+    sched = [r for r in live['비용 배분'].iter_rows(min_row=2, values_only=True)]
+    assert [x[4] for x in sched] == pytest.approx([x['당기 비용'] for x in app.summary['so_schedule']], rel=1e-10)
+    journal = {r[0]: r[2] for r in live['회계처리'].iter_rows(min_row=3, values_only=True)
+               if r and r[1] == '주식보상비용'}
+    want = {}
+    for x in app.summary['so_schedule']:
+        want[x['결산일']] = want.get(x['결산일'], 0.0) + x['당기 비용']
+    assert journal == pytest.approx(want, rel=1e-10)
+    # 현금결제형 — 처음 결제액 0, 엑셀에서 3,000원을 넣는다
+    c = cash_case(grid_days=14.0, so_prev_liab=5000.0)
+    wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True, accounting=True)))
+    wb['평가 입력값']['B8'].value = 3000.0
+    out = io.BytesIO()
+    wb.save(out)
+    rows = {r[0]: r for r in _recalc(out.getvalue())['회계처리'].iter_rows(values_only=True) if r and r[0]}
+    assert rows['당기 중'][1:5] == ('주식보상부채', 3000.0, '현금', 3000.0)
+    c.method['so_paid'] = 3000.0
+    assert rows[c.method['d_base']][2] == pytest.approx(calculate(c).raw['expense'], rel=1e-10)
