@@ -127,8 +127,6 @@ def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', K=0.0, grant_fv=10.0)]), '행사가격은 0보다'),
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', vest='2026-06-30', grant_fv=10.0)]),
      '조건 변경일보다 빠릅니다'),
-    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', end='2032-01-01', grant_fv=10.0)]),
-     '행사기간 종료일을 가장 늦은'),
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', price=1.0, grant_fv=10.0)]), '조건 변경표의 형식'),
     (dict(so_settle=1, d_base='2026-12-31', so_paid=-1.0), '결제액은 0 이상'),
     (dict(so_paid=100.0), '현금결제형에서만'),
@@ -338,6 +336,17 @@ def test_longer_vesting_keeps_the_original_cost_on_the_original_date():
     assert 'so_mod_vest_longer' in {i.code for i in run.issues}
 
 
+def test_extending_the_exercise_period_past_the_original_expiry():
+    # 회차 행사 종료일 빈칸 = 행사기간 종료일 2031-01-01. 연장한 종료일은 그보다 늦어도 되고, 변경 전은 그대로다 (자동 검토 지적)
+    run = calculate(mod_case([dict(name='1차', end='2032-01-01', grant_fv=20.0)]))
+    r = run.raw['rows'][0]
+    assert r['end_before'] == '2031-01-01' and r['end'] == '2032-01-01'
+    before = fv(case(d_base='2027-01-01', so_rows=ONE))
+    after = fv(case(d_base='2027-01-01', d_mat='2032-01-01', so_rows=ONE))
+    assert r['fv_before'] == pytest.approx(before, rel=1e-12) and r['fv'] == pytest.approx(after, rel=1e-12)
+    assert r['incr'] > 0 and run.raw['integrity'] == []
+
+
 def test_increment_after_vesting_is_recognised_at_once():
     rows = [dict(name='1차', vest='2026-06-30', end='', qty=1000.0, keep=1.0)]
     run = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=rows))
@@ -376,6 +385,15 @@ def test_cash_settled_liability_is_remeasured_at_year_end():
     wb = _workbook(paid, accounting=True)
     rows = list(wb['회계처리'].iter_rows(values_only=True))
     assert ('당기 중', '주식보상부채', 4000.0, '현금', 4000.0) in [r[:5] for r in rows]
+    # 당기 중 모두 결제 — 남은 수량 0, 부채 0, 비용 = 결제액 − 전기말 부채 (자동 검토 지적)
+    done = cash_case(so_prev_liab=10000.0, so_paid=12000.0)
+    for r in done.contract['so_rows']:
+        r['qty'] = 0.0
+    gone = calculate(done)
+    assert gone.raw['liab'] == 0 and gone.raw['expense'] == pytest.approx(2000.0)
+    assert gone.summary['amounts_per_share'] == {'so_fair': 0.0, 'so_liab': 0.0}
+    assert '부채 재측정' in _workbook(gone, detail=True, accounting=True).sheetnames
+    assert any('부여 수량' in i.message for i in inspect_case(case(so_rows=[dict(name='1차', vest='2028-01-01', qty=0.0)])))
 
 
 def test_mode_workpapers():

@@ -100,7 +100,9 @@ def mod_editor(edited):
             '변경 후 행사 시작일': st.column_config.DateColumn(format='YYYY-MM-DD',
                                                      help='비우면 변경 후 가득일부터 (변경 전에 행사 시작일을 따로 '
                                                           '정했으면 그날과 변경 후 가득일 중 늦은 날)'),
-            '변경 후 행사 종료일': st.column_config.DateColumn(format='YYYY-MM-DD', help='비우면 변경 없음'),
+            '변경 후 행사 종료일': st.column_config.DateColumn(
+                format='YYYY-MM-DD', help='비우면 변경 없음. 행사기간을 연장하면 부여 조건의 행사기간 종료일보다 늦어도 됩니다 '
+                                          '(행사기간 종료일은 변경 전 그대로 둡니다).'),
             '변경 후 수량(주)': st.column_config.NumberColumn(min_value=0., format='%,.0f', help='비우면 변경 없음'),
             '부여일 1주당 공정가치(원)': st.column_config.NumberColumn(
                 min_value=0., format='%,.2f', help='부여일 평가 결과 — 당초 보상원가 배분에 씁니다. 바뀌지 않은 회차도 넣습니다.'),
