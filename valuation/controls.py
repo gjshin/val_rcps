@@ -144,7 +144,9 @@ def final_key(run):
 
 def verification_keys(run):
     """독립 검산으로 맞춰 볼 결과 — 상품마다 대표 금액(100 기준)."""
-    return {'SHA': ['put', 'call'], 'SO': ['so_fair']}.get(run.terms.inst, ['net'])
+    if run.terms.inst == 'SO':
+        return [next(iter(run.summary['amounts_100']))]     # 부여일·현금결제형 공정가치, 조건 변경이면 증분 공정가치
+    return {'SHA': ['put', 'call']}.get(run.terms.inst, ['net'])
 
 
 def verification_rows(run):

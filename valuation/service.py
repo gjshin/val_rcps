@@ -21,6 +21,8 @@ AMOUNT_LABELS = {
     "put_increment": "상환권 증분(참고)", "conversion_increment": "전환권 증분(참고)",
     "put": "풋옵션", "call": "콜옵션",
     "so_fair": "주식선택권 공정가치(부여 수량)", "so_cost": "총 보상원가(가득 예상 수량)",
+    "so_incr_fair": "조건 변경 증분 공정가치", "so_incr_cost": "증분 보상원가(가득 예상 수량)",
+    "so_liab": "주식보상부채(결산일)",
 }
 
 
@@ -154,12 +156,10 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
     # 입력 경고는 계산할 때 한 번 만든다. 증빙만 바꾼 갱신(refresh_run)은 다시 만들지 않는다.
     from .review import review_issues, arithmetic_checks, input_warnings
     from .evidence import evidence_cards
+    from . import stock_option as SO
     if legacy.is_so(terms):
-        # 100 기준 = 부여일 주가 100. 1주당 금액 = 합계 ÷ 부여 수량(가중평균).
-        qty, S0 = float(raw["qty"]), float(terms.S0)
-        so_total = {"so_fair": float(raw["fair"]), "so_cost": float(raw["cost"])}
-        so_share = {k: v/qty for k, v in so_total.items()}
-        amounts = {k: v/S0*100 for k, v in so_share.items()}
+        # 100 기준 = 측정기준일 주가 100. 1주당 금액 = 합계 ÷ 부여 수량(가중평균).
+        so_total, so_share, amounts = SO.amounts(terms, raw)
         full = raw
     elif legacy.is_sha(terms):
         # 100 기준 = 계산기준금액(회차마다 주당 기준가격 × 대상 주식수의 합) 100. 원 단위는
@@ -196,7 +196,7 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
         "case_sha256": case.fingerprint(), "code_sha256": code_fingerprint(),
         "generated_at": now, "calculated_at": now,
         "calculation_key": calculation_key(case), "checks": checks,
-        "basis": ("부여일 주가 100 기준 (1주당 금액 ÷ 주가 × 100)" if legacy.is_so(terms)
+        "basis": ("측정기준일 주가 100 기준 (1주당 금액 ÷ 주가 × 100)" if legacy.is_so(terms)
                   else "계산기준금액(주당 기준가격 × 대상 주식수) 100 기준" if legacy.is_sha(terms)
                   else "발행금액 또는 투자원금 100 기준"), "amounts_100": amounts,
         "amounts_total": (so_total if legacy.is_so(terms) else
@@ -219,14 +219,11 @@ def _assemble(case, terms, raw, issues, normalized, warnings=None):
         "sha_recon": ([{"회차": a, "평가 대상 상태": b, "풋 주식수": c, "콜 주식수": d, "계약 대상 주식": e,
                         "평가 반영": f, "같은 주식 묶음": g} for a, b, c, d, e, f, g in raw.get("recon", [])]
                       if legacy.is_sha(terms) and raw.get("portfolio") else None),
-        "so_rows": ([{"회차": x["name"], "가득일": x["vest"], "행사 시작일": x["start"], "행사 종료일": x["end"],
-                      "부여 수량": x["qty"], "가득 예상 비율": x["keep"], "구간 수": x["n"],
-                      "1주당 공정가치": x["fv"], "블랙-숄즈(행사 종료일)": x["bs_end"],
-                      "기대존속기간(년)": x["life"], "공정가치": x["fair"], "보상원가": x["cost"]}
-                     for x in raw["rows"]] if legacy.is_so(terms) else None),
-        "so_schedule": ([{"결산일": x["fy_end"], "회차": x["name"], "누적 배분율": x["share"],
-                          "당기 비용": x["expense"], "누적 비용": x["cum"]}
-                         for x in raw["schedule"]] if legacy.is_so(terms) else None),
+        "so_mode": raw.get("mode") if legacy.is_so(terms) else None,
+        "so_rows": (SO.summary_rows(terms, raw) if legacy.is_so(terms) else None),
+        "so_schedule": (SO.summary_schedule(terms, raw) if legacy.is_so(terms) else None),
+        "so_cash": ({"전기말 주식보상부채": raw["prev_liab"], "당기말 주식보상부채": raw["liab"], "당기 비용": raw["expense"]}
+                    if legacy.is_so(terms) and raw.get("mode") == "cash" else None),
         "grid": {"intervals": terms.n, "average_days": terms.T*365/terms.n,
                  "requested_months": terms.gap_m, "requested_days": terms.grid_days,
                  "type": "day_target_equal_time" if terms.grid_days else "legacy_equal_time"},
