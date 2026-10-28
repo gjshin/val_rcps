@@ -37,8 +37,14 @@ DP_INPUT_CELLS = {(7, 3), (8, 3), (8, 4), (5, 6)}
 DP_FIRST_YEAR_ROW = 10
 
 
+# 주식선택권 수식 조서의 입력 칸 — 시트 이름: 열 번호 (머리줄 아래 전부)
+SO_INPUT_COLUMNS = {'평가 입력값': 2, '회차표 입력': 6, '조건 변경표 입력': 7}
+
+
 def excel_input(ws, cell):
     """수식 조서에서 고칠 수 있는 노란 입력 칸인가."""
+    if ws.title in SO_INPUT_COLUMNS:
+        return cell.column == SO_INPUT_COLUMNS[ws.title] and cell.row >= 2
     if re.fullmatch(r'(?:\d+·)?가정', ws.title):
         return cell.column == 3 and ws.cell(cell.row, 2).value in EXCEL_INPUTS
     if ws.title == DP_SHEET:
@@ -73,12 +79,14 @@ def add_workpaper_guide(wb, run, *, formula=False):
         [
             '사용 범위',
             (
+                '파란 글씨의 노란 칸만 고칠 수 있습니다: «평가 입력값» 시트의 주가·변동성·배당수익률·행사 배수·퇴사율(현금결제형은 전기말 부채), «회차표 입력» 의 가득 예상 비율, «조건 변경표 입력» 의 부여일 1주당 공정가치. 날짜·행사 일정·행사가격·수량·구간 수·금리는 앱에서 바꾼 뒤 다시 만드십시오. 기대존속기간은 평가 당시 값입니다. 시트 보호는 실수 방지용이며 암호 보안이 아닙니다.'
+                if formula and so else
                 '파란 글씨의 노란 칸만 고칠 수 있습니다: 주가·변동성·배당수익률, 표면이자율(우선배당률)·보장수익률, 배당가능이익 시트의 연도별 금액·가산율·재원 사용 시작일·만기 미상환 처리. 날짜·행사 일정·구간 수·모형·기준금리·금리곡선은 앱에서 바꾼 뒤 다시 만드십시오. 시트 보호는 실수 방지용이며 암호 보안이 아닙니다.'
                 if formula
                 else '평가 당시의 고정값입니다. 입력을 고쳐도 재계산되지 않습니다.'
             ),
         ],
-        ['주가 100 기준', '1주당 금액 ÷ 부여일 주가 × 100. 총액 = 1주당 금액 × 수량. 단위가 다른 값을 직접 합산하지 마십시오.']
+        ['주가 100 기준', '1주당 금액 ÷ 측정기준일 주가 × 100. 총액 = 1주당 금액 × 수량. 단위가 다른 값을 직접 합산하지 마십시오.']
         if so else ['원금 100 기준', '단위가 다른 값을 직접 합산하지 마십시오. 총액 = 원금100 기준 × 평가대상 원금 ÷ 100.'],
         ['공정가치와 보상원가', '공정가치는 부여 수량 전체, 보상원가는 가득 예상 수량(근무조건 반영) 기준입니다.']
         if so else ['분해와 회계', 'TF 주식/현금 결제분, 권리별 증분, 회계상 인식액은 서로 다른 구분입니다.'],
@@ -129,12 +137,10 @@ def add_workpaper_guide(wb, run, *, formula=False):
             ws['A1'] = '목차로 돌아가기'
             ws['A1'].hyperlink = "#'00_안내'!A1"
             ws['A1'].style = 'Hyperlink'
-    check_rows = [['대사 항목', '생성 당시 앱값(원금100)', '조서 계산값(원금100)', '차이', '출처']]
-    refs = (
-        []
-        if L.is_sha(t) or not formula
-        else [dict(zip(('name', 'sheet', 'cell', 'expected'), row)) for row in L.formula_key_cells(t, run.raw)]
-    )
+    check_rows = [['대사 항목', '생성 당시 앱값' if so else '생성 당시 앱값(원금100)',
+                   '조서 계산값' if so else '조서 계산값(원금100)', '차이', '출처']]
+    keys = getattr(wb, 'so_key_cells', []) if so else ([] if L.is_sha(t) else L.formula_key_cells(t, run.raw))
+    refs = [] if not formula else [dict(zip(('name', 'sheet', 'cell', 'expected'), row)) for row in keys]
     for ref in refs:
         # Each record is supplied by the calculation exporter, not a guessed address.
         if ref['sheet'] not in wb:
