@@ -210,7 +210,7 @@ def assumption_sheet(w, wb, run):
     t, s, raw, md = run.terms, run.summary, run.raw, run.raw['mode']
     A = wb.create_sheet(ASSUME)
     A.sheet_view.showGridLines = False
-    for cc, wd in (("B", 34), ("C", 24), ("D", 16), ("E", 16), ("F", 16), ("G", 16), ("H", 20)):
+    for cc, wd in (("B", 34), ("C", 24), ("D", 16), ("E", 16), ("F", 16), ("G", 16), ("H", 20), ("I", 20)):
         A.column_dimensions[cc].width = wd
     span = 7
     w.title(A, 2, "주식선택권 평가 조서", span=span)
@@ -283,14 +283,14 @@ def assumption_sheet(w, wb, run):
     w.sec(A, r, "4. 가득 회차", span=span)
     r += 1
     heads = ['회차', '가득일 (비용 배분 종료)', '행사 시작일', '행사 종료일', '부여 수량(주)', '가득 예상 비율',
-             '시장조건 목표 주가(원)']
+             '시장조건 목표 주가(원)', '목표 도달 (측정기준일 전)']
     w.head(A, r, 2, heads)
     A.row_dimensions[r].height = 30
     r += 1
     refs['keep'] = {}
     for x, out in zip(SO.rows(t), raw['rows']):
-        vals = [x['name'], x['vest'], x['start'], x['end'], x['qty'], None, SO.target(x)]
-        fmts = [None, None, None, None, N0, None, N2]
+        vals = [x['name'], x['vest'], x['start'], x['end'], x['qty'], None, SO.target(x), '예' if SO.reached(x) else '']
+        fmts = [None, None, None, None, N0, None, N2, None]
         for k, (v, fm) in enumerate(zip(vals, fmts)):
             if k == 5:
                 w.value_in(A, r, 7, float(x['keep']), IN_PCT)
@@ -394,7 +394,8 @@ def lattice_sheet(w, wb, run, row, name, title, refs):
                 go = mark and row['exercise'][i][r] and not w.formula
                 w.put(W, r0 + r, 3 + i, grid[i][r], fmt=N2, size=8, align="right", fill=(RFXC if go else None))
     end = (pos['wait'] + vest_step) if row.get('wait') is not None else (pos['value'] + n)
-    w.note(W, end + 2, "r 은 하락 횟수. 위로 갈수록 주가가 높다. 주황 열은 가득 시점이다.")
+    w.note(W, end + 2, "r 은 하락 횟수. 위로 갈수록 주가가 높다. 주황 열은 가득 시점이다."
+           + (" 측정기준일 전에 목표 주가에 닿아 시장조건을 채운 회차라 보통 격자로 잰다." if row.get('hit') else ""))
     w.put(W, end + 3, 2, "이 시트가 참조하는 시트: 가정", color=GREEN, size=9)
     W.freeze_panes = "C20"
     if w.formula:

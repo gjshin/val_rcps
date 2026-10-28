@@ -268,7 +268,8 @@ def _so_head(run, row, mode):
                 nodes={}, delta=delta, u=row['u'], d=row['d'], S0=float(t.S0), K=float(row.get('K') or t.K0),
                 sig=float(t.sig), div_y=float(t.div_y), so_ex=int(t.so_ex), so_mult=float(t.so_mult),
                 so_exit=float(t.so_exit), nv=float(getattr(t, 'so_nv', 0.0)), nv_step=row.get('nv_step', 0.0),
-                exit_step=e_step, mkt=int(row.get('mkt') or 0), mkt_label=SO.MKT_LABELS[int(row.get('mkt') or 0)],
+                exit_step=e_step, mkt=int(row.get('mkt') or 0),
+                mkt_label=('측정기준일 전에 목표 도달 — 시장조건 충족' if row.get('hit') else SO.MKT_LABELS[int(row.get('mkt') or 0)]),
                 target=row.get('target'), vest_step=row['vest_step'], ex_step=row['ex_step'],
                 ex_label=SO.EX_LABELS[int(t.so_ex)], run_id=run.summary['run_id'])
 

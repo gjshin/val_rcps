@@ -41,12 +41,15 @@ def rows_editor(edited):
     shown = old or [dict(name='1차', vest='', start='', end='', qty=None, keep=1.0)]
     # 목표 주가 칸은 시장조건을 고르거나 이미 값이 있을 때만 보인다
     market = bool(edited.get('so_mkt')) or any(not _blank(r.get('target')) for r in old)
-    cols = COLS if market else COLS[:-1]
+    # 목표 도달 칸 — «한 번이라도» 판정을 부여일 뒤에 다시 잴 때(현금결제형 결산일·조건 변경일)만 보인다
+    touch = (int(edited.get('so_mkt') or 0) == 2 and str(edited.get('d_base') or '') > str(edited.get('d_issue') or '')
+             ) or any(SO.reached(r) for r in old)
+    cols = (COLS if market else COLS[:-1]) + ([('hit', HIT)] if touch else [])
     frame = pd.DataFrame([{'회차': r.get('name', ''), '가득일': _day(r.get('vest')),
                            '행사 시작일': _day(r.get('start')), '행사 종료일': _day(r.get('end')),
                            '부여 수량(주)': r.get('qty'),
                            '가득 예상 비율(%)': None if r.get('keep') is None else float(r['keep'])*100,
-                           '목표 주가(원)': r.get('target')}
+                           '목표 주가(원)': r.get('target'), HIT: SO.reached(r)}      # 불러온 파일의 1 도 켠 것으로
                           for r in shown], columns=[t for _, t in cols])
     for col in ('가득일', '행사 시작일', '행사 종료일'):
         frame[col] = pd.to_datetime(frame[col])      # 빈 날짜는 빈칸으로 보인다 (글자 «None» 이 아니라)
@@ -68,10 +71,13 @@ def rows_editor(edited):
             '목표 주가(원)': st.column_config.NumberColumn(
                 min_value=0., format='%,.0f',
                 help='시장조건의 목표 주가. 비우면 그 회차에는 시장조건이 없습니다. 판정 방식은 아래 «시장조건 판정» 에서 고릅니다.'),
+            HIT: st.column_config.CheckboxColumn(
+                help='«가득일까지 한 번이라도» 판정에서, 부여일부터 측정기준일 사이에 이미 목표 주가에 닿았으면 켭니다. '
+                     '켜면 시장조건을 채운 것으로 보고 보통 격자로 잽니다 (문단 21).'),
         })
     new = []
     for rec in table.to_dict('records'):
-        if all(_blank(v) for v in rec.values()):
+        if all(_blank(v) for k, v in rec.items() if k != HIT) and rec.get(HIT) is not True:
             continue
         qty, keep, goal = rec['부여 수량(주)'], rec['가득 예상 비율(%)'], rec.get('목표 주가(원)')
         row = dict(name=str(rec['회차'] or '').strip() or f'{len(new)+1}차',
@@ -80,11 +86,14 @@ def rows_editor(edited):
                    keep=1.0 if _blank(keep) else float(keep)/100)
         if not _blank(goal):
             row['target'] = float(goal)          # 빈 목표 주가는 저장하지 않는다 (시장조건 없는 회차)
+        if rec.get(HIT) is True:
+            row['hit'] = True
         new.append(row)
     if new != old and (new or old):
         edited['so_rows'] = new
 
 
+HIT = '목표 도달 (측정기준일 전)'
 MOD_COLS = [('name', '회차'), ('K', '변경 후 행사가격(원)'), ('vest', '변경 후 가득일'), ('start', '변경 후 행사 시작일'),
             ('end', '변경 후 행사 종료일'), ('qty', '변경 후 수량(주)'), ('grant_fv', '부여일 1주당 공정가치(원)')]
 
@@ -389,6 +398,7 @@ def calculation_panel(run):
                f"구간 {row['dt']*365:.2f}일 · 행사 가능 시점 {row['ex_step']}부터"
                + (f" · 가득 시점 {row['vest_step']} · 목표 주가 {row['target']:,.0f}원 ({SO.MKT_LABELS[row['mkt']]})"
                   if row.get('mkt') else '')
+               + (f" · 목표 주가 {row['target']:,.0f}원에 측정기준일 전 도달 — 보통 격자" if row.get('hit') else '')
                + (f" · 비가득조건 구간 중단 확률 {row['nv_step']:.6%}" if row.get('nv_step') else ''))
     if topic == '노드 스케줄':
         _worksheet(so_schedule_values(run, row))

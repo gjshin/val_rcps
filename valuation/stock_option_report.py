@@ -75,9 +75,9 @@ def mod_input_table(run):
 
 def input_rows_table(run):
     heads = ['회차', '가득일 (비용 배분 종료)', '행사 시작일', '행사 종료일', '부여 수량(주)', '가득 예상 비율',
-             '시장조건 목표 주가(원)']
-    return [heads] + [[r['name'], r['vest'], r['start'], r['end'], r['qty'], r['keep'], SO.target(r)]
-                      for r in SO.rows(run.terms)]
+             '시장조건 목표 주가(원)', '목표 도달 (측정기준일 전)']
+    return [heads] + [[r['name'], r['vest'], r['start'], r['end'], r['qty'], r['keep'], SO.target(r),
+                       '예' if SO.reached(r) else ''] for r in SO.rows(run.terms)]
 
 
 def bs_table(run):

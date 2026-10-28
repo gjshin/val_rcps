@@ -40,7 +40,7 @@ import math
 
 import numpy as np
 
-ROW_KEYS = ("name", "vest", "start", "end", "qty", "keep", "target")
+ROW_KEYS = ("name", "vest", "start", "end", "qty", "keep", "target", "hit")
 MOD_KEYS = ("name", "K", "vest", "start", "end", "qty", "grant_fv")
 EX_LABELS = {0: "만기에만 행사 (유럽형)", 1: "가득 뒤 최적 행사", 2: "행사 배수에 도달하면 행사"}
 SETTLE_LABELS = {0: "주식결제형", 1: "현금결제형 (차액보상)"}
@@ -94,7 +94,8 @@ def mod_row(row: dict, m: dict, tm) -> dict:
     return dict(name=row["name"], vest=vest, start=start,
                 end=row["end"] if _blank(m.get("end")) else str(m["end"]),
                 qty=float(row["qty"]) if _blank(m.get("qty")) else float(m["qty"]), keep=row["keep"],
-                K=float(tm.K0) if _blank(m.get("K")) else float(m["K"]), target=row.get("target"))
+                K=float(tm.K0) if _blank(m.get("K")) else float(m["K"]), target=row.get("target"),
+                hit=row.get("hit", False))
 
 
 def mod_map(tm) -> dict:
@@ -106,7 +107,7 @@ def _date(s):
 
 
 def row_defaults(row: dict, tm=None) -> dict:
-    out = {"name": "", "vest": "", "start": "", "end": "", "qty": 0.0, "keep": 1.0, "target": None}
+    out = {"name": "", "vest": "", "start": "", "end": "", "qty": 0.0, "keep": 1.0, "target": None, "hit": False}
     out.update({k: v for k, v in (row or {}).items() if k in ROW_KEYS})
     if not str(out["start"] or "").strip():
         out["start"] = out["vest"]          # 빈칸 = 가득일부터 행사
@@ -207,8 +208,32 @@ def target(row):
     return float(v)
 
 
+def reached(row) -> bool:
+    """측정기준일 전에 이미 목표 주가에 닿았는가 — «가득일까지 한 번이라도» 판정에서 조건을 이미 채운 회차."""
+    return row.get("hit") is True or (isinstance(row.get("hit"), int) and not isinstance(row.get("hit"), bool)
+                                      and row.get("hit") == 1)
+
+
+def _hit_issues(tm, label, r) -> list[str]:
+    h = r.get("hit")
+    if _blank(h) or h is False or (isinstance(h, int) and not isinstance(h, bool) and h == 0):
+        return []
+    if not reached(r):
+        return [f"{label}: «목표 도달 (측정기준일 전)» 은 예·아니오로 넣으십시오."]
+    if target(r) is None:
+        return [f"{label}: 목표 주가 없이 «목표 도달 (측정기준일 전)» 을 켰습니다 — 목표 주가를 넣거나 끄십시오."]
+    if int(getattr(tm, "so_mkt", 0)) != 2:
+        return [f"{label}: «목표 도달 (측정기준일 전)» 은 «가득일까지 한 번이라도 목표 주가 이상이면 가득» 판정에서만 켭니다."]
+    if not tm.d_base > tm.d_issue:
+        return [f"{label}: 부여일 평가에는 측정기준일 전 도달이 없습니다 — «목표 도달 (측정기준일 전)» 을 끄십시오."]
+    return []
+
+
 def _target_issues(tm, label, r, vest, db) -> list[str]:
     v = r.get("target")
+    hit = _hit_issues(tm, label, r)
+    if hit:
+        return hit
     if _blank(v):
         return []
     if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0):
@@ -328,6 +353,8 @@ def value_row(tm, row: dict, R=None) -> dict:
     vest_step = min(ex_step, max(0, int(math.ceil(t_vest/dt_ - 1e-9))))
     H = target(row)
     mkt = int(getattr(tm, "so_mkt", 0)) if H else 0
+    if mkt == 2 and reached(row):
+        mkt = 0                                # 측정기준일 전에 이미 목표에 닿았다 — 시장조건을 채웠으니 보통 격자 (문단 21)
     nv = float(getattr(tm, "so_nv", 0.0))
     nv_step = 1.0 - (1.0 - nv)**dt_ if nv > 0 else 0.0     # 한 구간에 비가득조건을 그만둘 확률 (가득 전)
     fwd = np.array([forward_rate(R, i*dt_, (i+1)*dt_) for i in range(n)])
@@ -410,7 +437,7 @@ def value_row(tm, row: dict, R=None) -> dict:
     return dict(
         name=row["name"], vest=row["vest"], start=row["start"], end=row["end"], qty=float(row["qty"]),
         keep=float(row["keep"]), K=K, t_ex=t_ex, t_end=t_end, n=n, dt=dt_, ex_step=ex_step, u=u, d=d,
-        vest_step=vest_step, target=H, mkt=mkt, nv_step=nv_step,
+        vest_step=vest_step, target=H, mkt=mkt, nv_step=nv_step, hit=reached(row),
         vest_exercise=exercise_life[vest_step].tolist() if mkt == 1 else None,   # 비율을 곱하기 전 행사 여부
         wait=None if wait is None else [w.tolist() for w in wait],
         fv=fv, bs_end=bs_end, bs_life=bs_life, life=life, r_end=r_end, qbad=qbad,
@@ -715,6 +742,7 @@ def summary_rows(tm, raw) -> list[dict]:
     base = [{"회차": x["name"], "가득일": x["vest"], "행사 시작일": x["start"], "행사 종료일": x["end"],
              "부여 수량": x["qty"], "가득 예상 비율": x["keep"], **({"시장조건 목표 주가": x.get("target")}
                                                              if any(r.get("target") for r in raw["rows"]) else {}),
+             **({"목표 도달 (측정기준일 전)": "예" if x.get("hit") else ""} if any(r.get("hit") for r in raw["rows"]) else {}),
              "구간 수": x["n"],
              "1주당 공정가치": x["fv"], "블랙-숄즈(행사 종료일)": x["bs_end"],
              "기대존속기간(년)": x["life"], "공정가치": x["fair"], "보상원가": x["cost"]} for x in raw["rows"]]

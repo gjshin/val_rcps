@@ -97,6 +97,15 @@ def so_review(tm, raw, add):
     from .stock_option import EX_LABELS, MKT_LABELS
     md = raw.get('mode', 'grant')
     goals = [f"{r['name']} {r['target']:,.0f}원" for r in raw['rows'] if r.get('mkt')]
+    later = tm.d_base > tm.d_issue
+    if int(getattr(tm, 'so_mkt', 0)) == 2 and later and any(r.get('target') for r in raw['rows']):
+        done = [str(r['name']) for r in raw['rows'] if r.get('hit')]
+        add('so_market_hit', 'so_rows',
+            '측정기준일이 부여일 뒤입니다 — ' + (f"«목표 도달 (측정기준일 전)» 을 켠 회차: {', '.join(done)}." if done else
+                                         '측정기준일 전에 목표 주가에 닿은 회차가 없다고 보고 평가했습니다.'),
+            '«가득일까지 한 번이라도» 판정은 부여일부터 센다. 이미 목표에 닿은 회차는 시장조건을 채웠으므로 보통 격자로 잽니다 '
+            '(문단 21).',
+            '부여일부터 측정기준일까지의 주가 기록으로 회차별 도달 여부를 확인하고 회차표의 «목표 도달 (측정기준일 전)» 에 넣으십시오.')
     if goals:
         add('so_market', 'so_mkt', f"시장조건: {MKT_LABELS[int(tm.so_mkt)]} — 목표 주가 " + ', '.join(goals) + '.',
             '시장조건은 1주당 공정가치(격자) 안에 반영했습니다. 근무조건을 채우면 시장조건을 못 채워도 인식한 비용을 '

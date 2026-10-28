@@ -197,6 +197,42 @@ def test_modification_values_both_sides_with_the_market_condition():
     assert r['target'] == 130.0 and r['mkt'] == 1
 
 
+def test_touch_condition_already_met_before_remeasurement_uses_the_ordinary_lattice():
+    # 현금결제형 결산일·조건 변경일에 다시 잴 때, 측정기준일 전에 이미 목표에 닿은 회차는 조건을 채웠다 (자동 검토 지적)
+    rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=0.9, target=130.0)]
+    cash = lambda rows, **kw: case(so_settle=1, d_base='2026-12-31', so_rows=rows, **kw)
+    free = calculate(cash([dict(rows[0], target=None)]))
+    wait = calculate(cash(rows, so_mkt=2))
+    met = calculate(cash([dict(rows[0], hit=True)], so_mkt=2))
+    assert met.raw['rows'][0]['fv'] == pytest.approx(free.raw['rows'][0]['fv'], rel=1e-12)
+    assert met.raw['rows'][0]['mkt'] == 0 and met.raw['rows'][0]['hit'] is True
+    assert wait.raw['rows'][0]['fv'] < met.raw['rows'][0]['fv']
+    assert 'so_market_hit' in {i.code for i in wait.issues}
+    assert met.summary['so_rows'][0]['목표 도달 (측정기준일 전)'] == '예'
+    A = _workbook(met, detail=True)['가정']
+    assert A[_cell(A, '회차', '1차', '목표 도달 (측정기준일 전)')].value == '예'
+    # 조건 변경 — 변경 전·후 모두 보통 격자
+    mod = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=[dict(rows[0], hit=True)], so_mkt=2))
+    plain = calculate(mod_case([dict(name='1차', K=80.0, grant_fv=20.0)], rows=[dict(rows[0], target=None)]))
+    assert mod.raw['rows'][0]['fv'] == pytest.approx(plain.raw['rows'][0]['fv'], rel=1e-12)
+    assert mod.raw['rows'][0]['fv_before'] == pytest.approx(plain.raw['rows'][0]['fv_before'], rel=1e-12)
+    # 화면 — 회차표에 «목표 도달» 칸이 생기고, 다시 그려도 값이 남는다
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=180)
+    app.run()
+    app.session_state['case'] = cash([dict(rows[0], hit=True)], so_mkt=2)
+    app.session_state['_workflow_stage'] = '입력·시장자료'
+    app.run()
+    app.run()
+    assert not app.exception, app.exception
+    assert app.session_state.case.contract['so_rows'][0].get('hit') is True
+    # 불러온 평가파일의 1 도 켠 것으로 보이고, 화면을 그려도 지워지지 않는다 (자동 검토 지적)
+    app.session_state['case'] = cash([dict(rows[0], hit=1)], so_mkt=2)
+    app.run()
+    app.run()
+    assert not app.exception, app.exception
+    assert SO.reached(app.session_state.case.contract['so_rows'][0])
+
+
 def test_condition_inputs_reach_the_workpapers_and_review():
     rows = [dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=1.0, target=130.0)]
     run = calculate(case(so_mkt=2, so_nv=0.05, so_rows=rows, grid_days=14.0))
@@ -275,6 +311,14 @@ def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
           so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=130.0)]), '시장조건이 이미 판정됐습니다'),
     (dict(so_mkt=1, so_mod=1, d_base='2027-01-01', so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=130.0)],
           so_mod_rows=[dict(name='1차', vest='2027-01-01', grant_fv=10.0)]), '변경 후 가득일이 조건 변경일 이전'),
+    (dict(so_mkt=1, so_settle=1, d_base='2026-12-31',
+          so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=130.0, hit=True)]), '판정에서만 켭니다'),
+    (dict(so_mkt=2, so_settle=1, d_base='2026-12-31', so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, hit=True),
+                                                             dict(name='2차', vest='2028-01-01', qty=1.0, target=130.0)]),
+     '목표 주가 없이'),
+    (dict(so_mkt=2, so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=130.0, hit=True)]), '부여일 평가에는'),
+    (dict(so_mkt=2, so_settle=1, d_base='2026-12-31',
+          so_rows=[dict(name='1차', vest='2028-01-01', qty=1.0, target=130.0, hit='예')]), '예·아니오'),
 ])
 def test_input_checks_block_calculation(over, words):
     c = case(**over)
@@ -712,11 +756,15 @@ FORMULA_CASES = {
         [dict(name='1차', K=80.0, grant_fv=20.0)], grid_days=14.0, so_ex=1, so_mkt=2, so_nv=0.05,
         rows=[dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=0.9, target=130.0)]),
     '현금결제형 · 가득일 판정': lambda: _targeted(cash_case(so_prev_liab=5000.0, grid_days=14.0, so_mkt=1)),
+    '현금결제형 · 한 번이라도 · 측정기준일 전 도달': lambda: _targeted(cash_case(so_prev_liab=5000.0, grid_days=14.0, so_mkt=2),
+                                                    hit=True),
 }
 
 
-def _targeted(c):
+def _targeted(c, hit=False):
     c.contract['so_rows'][0]['target'] = 120.0      # 가득일이 결산일 뒤인 회차만
+    if hit:
+        c.contract['so_rows'][0]['hit'] = True
     return c
 
 
