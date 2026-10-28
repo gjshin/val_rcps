@@ -125,8 +125,6 @@ def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', K=0.0, grant_fv=10.0)]), '행사가격은 0보다'),
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', vest='2026-06-30', grant_fv=10.0)]),
      '조건 변경일보다 빠릅니다'),
-    (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', end='2032-01-01', grant_fv=10.0)]),
-     '행사기간 종료일을 가장 늦은'),
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', price=1.0, grant_fv=10.0)]), '조건 변경표의 형식'),
     (dict(so_settle=1, d_base='2026-12-31', so_paid=-1.0), '결제액은 0 이상'),
     (dict(so_paid=100.0), '현금결제형에서만'),
@@ -334,6 +332,17 @@ def test_longer_vesting_keeps_the_original_cost_on_the_original_date():
     assert first[-1]['fy_end'] == '2028-12-31' and first[-2]['share'] == pytest.approx(729/730)   # 당초 가득일 2028-01-01
     assert inc[-1]['fy_end'] == '2029-12-31' and inc[0]['share'] == pytest.approx(364/(365 + 366))
     assert 'so_mod_vest_longer' in {i.code for i in run.issues}
+
+
+def test_extending_the_exercise_period_past_the_original_expiry():
+    # 회차 행사 종료일 빈칸 = 행사기간 종료일 2031-01-01. 연장한 종료일은 그보다 늦어도 되고, 변경 전은 그대로다 (자동 검토 지적)
+    run = calculate(mod_case([dict(name='1차', end='2032-01-01', grant_fv=20.0)]))
+    r = run.raw['rows'][0]
+    assert r['end_before'] == '2031-01-01' and r['end'] == '2032-01-01'
+    before = fv(case(d_base='2027-01-01', so_rows=ONE))
+    after = fv(case(d_base='2027-01-01', d_mat='2032-01-01', so_rows=ONE))
+    assert r['fv_before'] == pytest.approx(before, rel=1e-12) and r['fv'] == pytest.approx(after, rel=1e-12)
+    assert r['incr'] > 0 and run.raw['integrity'] == []
 
 
 def test_increment_after_vesting_is_recognised_at_once():

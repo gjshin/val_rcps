@@ -213,9 +213,8 @@ def mod_issues(tm, rs, di, db, dm) -> list[str]:
             out.append(f"{label}: 변경 후 행사 종료일이 행사 시작일보다 빠릅니다.")
         if end <= db:
             out.append(f"{label}: 변경 후 행사 종료일이 조건 변경일 이전입니다.")
-        if end > dm:
-            out.append(f"{label}: 변경 후 행사 종료일이 행사기간 종료일({tm.d_mat})보다 늦습니다 — "
-                       "행사기간 종료일을 가장 늦은 행사 종료일로 넣으십시오.")
+        # 변경 후 행사 종료일은 부여 조건의 행사기간 종료일보다 늦어도 된다 — 행사기간 종료일을 늘리면
+        # 빈칸으로 둔 변경 전 행사 종료일까지 늘어나 연장의 증분이 사라진다 (자동 검토 지적)
         if tm.so_exit > 0 and start > vest:
             out.append(f"{label}: 가득 뒤 퇴사율을 넣었는데 변경 후 행사 시작일이 가득일보다 늦습니다 — 퇴사율을 0%로 두십시오.")
     return out
