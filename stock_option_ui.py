@@ -132,6 +132,8 @@ def editor(edited, case, draft_errors):
                    '«공정가치 × 가득 예상 수량 × 근무 경과율» 을 부채로 잡습니다. 당기 비용 = 당기말 부채 − 전기말 부채 + '
                    '당기 현금 결제액. 회차표에는 결산일에 남아 있는 수량을 넣습니다.')
         W.fields(['so_prev_liab', 'so_paid'], edited, case)
+    elif edited.get('so_paid'):
+        edited['so_paid'] = 0.0            # 주식결제형에는 현금 결제액이 없다 (칸이 숨는다)
     st.subheader('가득 회차')
     st.caption('한 번에 모두 가득되면 한 줄, 2년 뒤 50%·3년 뒤 50% 처럼 나눠 가득되면 회차마다 한 줄을 넣습니다. '
                '회차마다 따로 평가하고 따로 비용을 나눕니다.')
