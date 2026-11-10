@@ -139,6 +139,32 @@ def mod_editor(edited):
         edited['so_mod_rows'] = new
 
 
+def sp_editor(edited):
+    """정산가격 표 — 확정일마다 한 줄. 사이 날짜는 직전 확정값을 쓴다."""
+    rev = st.session_state.get('revision', 0)
+    st.session_state.setdefault('_rendered_fields', set()).add('so_sp_rows')
+    old = list(edited.get('so_sp_rows') or [])
+    shown = old or [dict(date='', price=None)]
+    frame = pd.DataFrame([{'확정일': _day(r.get('date')), '정산가격(원)': r.get('price')} for r in shown],
+                         columns=['확정일', '정산가격(원)'])
+    frame['확정일'] = pd.to_datetime(frame['확정일'])
+    table = st.data_editor(
+        frame, num_rows='dynamic', hide_index=True, width='stretch', key=f'so_sp_rows_{rev}',
+        column_config={
+            '확정일': st.column_config.DateColumn(format='YYYY-MM-DD', help='정산가격이 정해지는 날. 연 1회면 해마다 한 줄.'),
+            '정산가격(원)': st.column_config.NumberColumn(min_value=0., format='%,.2f',
+                                                    help='계약 산식으로 계산한 1주당 정산가격. 다음 확정일까지 이 값을 씁니다.'),
+        })
+    new = []
+    for rec in table.to_dict('records'):
+        if _blank(rec['확정일']) and _blank(rec['정산가격(원)']):
+            continue
+        new.append({'date': _iso(rec['확정일']), 'price': None if _blank(rec['정산가격(원)']) else float(rec['정산가격(원)'])})
+    new.sort(key=lambda r: r['date'])
+    if new != old and (new or old):
+        edited['so_sp_rows'] = new
+
+
 def editor(edited, case, draft_errors):
     """입력 화면. 저장은 workspace_app._commit 이 한다."""
     st.subheader('부여 조건')
@@ -155,11 +181,23 @@ def editor(edited, case, draft_errors):
         W.fields(['so_prev_liab', 'so_paid'], edited, case)
     elif edited.get('so_paid'):
         edited['so_paid'] = 0.0            # 주식결제형에는 현금 결제액이 없다 (칸이 숨는다)
+    if edited.get('so_settle') == 2:
+        if edited.get('so_mod'):
+            edited['so_mod'] = 0           # 회사 선택 결제는 부여일 평가만 계산한다 (끌 칸이 숨는다)
+        st.subheader('정산가격 (회사 선택 결제)')
+        st.caption('행사할 때 회사가 주식 교부와 «정산가격 − 행사가격» 현금 지급 중 고를 수 있는 계약입니다. 정산가격은 주가가 '
+                   '아니라 계약이 정한 공식 가격입니다. 회사가 싼 쪽을 고른다고 보고 행사 손익을 큰 값(0, 작은 값(주가, '
+                   '정산가격) − 행사가격)으로 잽니다. 결과에는 ① 주가 기준 · ② 정산가격 기준 · ③ 회사 선택 반영(주 결과)을 '
+                   '나란히 보입니다. 현금을 지급할 현재의무가 있으면(과거 현금결제 관행 등) 현금결제형을 고르십시오 (문단 41~43).')
+        sp_editor(edited)
+        W.fields(['so_sp_note', 'so_sp_src'], edited, case)
+        st.caption('정산가격은 확정일마다 한 번 정해지고 다음 확정일까지 그대로라고 봅니다. 첫 확정일은 가장 이른 행사 '
+                   '시작일보다 늦지 않아야 합니다. 아직 확정되지 않은 연도는 추정값을 넣고 근거를 기록하십시오.')
     st.subheader('가득 회차')
     st.caption('한 번에 모두 가득되면 한 줄, 2년 뒤 50%·3년 뒤 50% 처럼 나눠 가득되면 회차마다 한 줄을 넣습니다. '
                '회차마다 따로 평가하고 따로 비용을 나눕니다.')
     rows_editor(edited)
-    if edited.get('so_settle') != 1:
+    if edited.get('so_settle') not in (1, 2):
         st.subheader('조건 변경')
         W.field('so_mod', edited, case)
         if edited.get('so_mod'):
@@ -173,6 +211,9 @@ def editor(edited, case, draft_errors):
     W.fields(['so_ex', 'so_exit'], edited, case)
     if edited.get('so_ex') == 2:
         W.field('so_mult', edited, case)
+    if edited.get('so_ex') == 3:
+        W.field('so_ex_m', edited, case)
+        st.caption('만기(회차별 행사 종료일) N개월 전까지는 행사하지 않고, 그때부터 내가격이면 바로 행사한다고 봅니다.')
     st.caption('가득 뒤 연간 퇴사율 — 행사할 수 있게 된 뒤 퇴사하면 그때 내가격이면 바로 행사하고, 아니면 소멸한다고 봅니다. '
                '행사 시작일이 가득일보다 늦은 회차가 있으면 이 비율을 넣을 수 없습니다(그 사이 퇴사의 처리가 계약마다 다름). '
                '가득 전 퇴사는 위 «가득 예상 비율» 에 넣습니다.')
@@ -259,20 +300,20 @@ def result_panel(run, case, current, pending):
         c2.metric('증분 공정가치 (원)', f"{tot['so_incr_fair']:,.0f}")
         c3.metric('당초 보상원가 (원)', f"{run.raw['grant_cost']:,.0f}", help='부여일 1주당 공정가치 × 수량 × 가득 예상 비율')
         st.caption(f"조건 변경일 {t.d_base} · 주가 {t.S0:,.0f}원 · 변동성 {t.sig:.2%} · "
-                   f"조기행사 가정: {SO.EX_LABELS[int(t.so_ex)]}")
+                   f"조기행사 가정: {SO.ex_label(t)}")
     elif md == 'cash':
         c1.metric('1주당 공정가치 (결산일, 원)', f"{ps['so_fair']:,.2f}")
         c2.metric('당기 비용 (원)', f"{s['so_cash']['당기 비용']:,.0f}", help='당기말 부채 − 전기말 부채 + 당기 현금 결제액')
         c3.metric('전기말 주식보상부채 (원)', f"{s['so_cash']['전기말 주식보상부채']:,.0f}")
         st.caption(f"결산일 {t.d_base} · 주가 {t.S0:,.0f}원 · 행사가격 {t.K0:,.0f}원 · 변동성 {t.sig:.2%} · "
-                   f"조기행사 가정: {SO.EX_LABELS[int(t.so_ex)]}")
+                   f"조기행사 가정: {SO.ex_label(t)}")
     else:
         c1.metric('1주당 공정가치 (가중평균, 원)', f"{ps['so_fair']:,.2f}",
                   help='회차별 1주당 공정가치를 부여 수량으로 가중평균한 값입니다.')
         c2.metric('부여 수량 전체의 공정가치 (원)', f"{tot['so_fair']:,.0f}")
         c3.metric('부여 수량 (주)', f"{run.raw['qty']:,.0f}")
         st.caption(f"주가 대비 {a100['so_fair']:.2f}% · 행사가격 {t.K0:,.0f}원 · 부여일 주가 {t.S0:,.0f}원 · "
-                   f"변동성 {t.sig:.2%} · 조기행사 가정: {SO.EX_LABELS[int(t.so_ex)]}")
+                   f"변동성 {t.sig:.2%} · 조기행사 가정: {SO.ex_label(t)}")
     st.subheader({'grant': '회차별 공정가치', 'mod': '회차별 조건 변경 전·후 공정가치', 'cash': '회차별 공정가치와 부채'}[md])
     frame = pd.DataFrame(s['so_rows'])           # 합계는 위의 지표 칸에 있다 (표에 합계 줄을 넣으면 빈칸이 생긴다)
     dataframe(frame.style.format(formats(frame), na_rep=''), hide_index=True, width='stretch')
@@ -283,6 +324,14 @@ def result_panel(run, case, current, pending):
                '증분 공정가치 = 1주당 증분 × 변경 전 수량 + 변경 후 1주당 × 늘어난 수량 (부록 나43⑴·⑵).',
         'cash': '주식보상부채 = 1주당 공정가치 × 부여 수량 × 가득 예상 비율 × 근무 경과율. 근무 경과율 = '
                 '(결산일 − 부여일) ÷ (가득일 − 부여일), 1을 넘지 않음 (문단 33).'}[md])
+    if run.raw.get('choice'):
+        st.subheader('결제방식 비교 — ① 주가 기준 · ② 정산가격 기준 · ③ 회사 선택')
+        comp = pd.DataFrame(SO.compare_rows(run.raw))
+        dataframe(comp.style.format({c: '{:,.2f}' if '1주당' in c else '{:,.0f}' for c in comp.columns if c != '회차'},
+                                    na_rep=''), hide_index=True, width='stretch')
+        st.caption('행사 손익 — ① 주가 − 행사가격, ② 정산가격 − 행사가격, ③ 작은 값(주가, 정산가격) − 행사가격 (모두 0 아래로 '
+                   '내려가지 않음). 회사가 싼 쪽을 고른다고 보아 ③ 을 공정가치·보상원가에 씁니다. ③ 은 ①·② 보다 크지 '
+                   '않습니다. ② 는 현금결제형으로 볼 때의 민감도입니다.')
     st.subheader('결산일 부채와 당기 비용' if md == 'cash' else '회계연도별 보상원가 배분')
     pivot, journal = cost_tables(run)
     dataframe(pivot.style.format({c: '{:,.0f}' for c in pivot.columns if c != '결산일'}),

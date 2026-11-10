@@ -13,6 +13,7 @@ INPUT_KEYS = frozenset({
     'inst', 'tranche', 'd_issue', 'd_base', 'd_mat', 'K0', 'so_settle', 'so_fy_end', 'base_shares', 'dil_shares',
     'unmod_note', 'S0', 'sig', 'div_y', 'y_type', 'cmp_rf', 'ticker', 's0_src', 's0_date', 's0_raw', 's0_adj',
     's0_splits', 'so_ex', 'so_mult', 'so_exit', 'grid_days', 'gap_m', 'so_mod', 'so_prev_liab', 'so_paid', 'so_mkt', 'so_nv',
+    'so_ex_m', 'so_sp_note', 'so_sp_src',
 })
 # 합계 줄에 더할 칸 — 평가 종류마다
 SUM_COLS = {'grant': ('부여 수량', '공정가치', '보상원가'),
@@ -36,13 +37,15 @@ def summary_rows(run):
             ['행사가격(원)', t.K0 if md != 'mod' else f'{t.K0:,.2f} (변경 전 — 회차별 변경 후 값은 «조건 변경» 시트)'],
             ['측정기준일 주가(원)', t.S0], ['부여 수량(주)', raw['qty']],
             ['평가모형', '이항격자 (CRR) — 회차마다 따로 · 블랙-숄즈 대조'],
-            ['조기행사 가정', SO.EX_LABELS[int(t.so_ex)] + (f' · 행사 배수 {t.so_mult:g}배' if int(t.so_ex) == 2 else '')],
+            ['조기행사 가정', SO.ex_label(t) + (f' · 행사 배수 {t.so_mult:g}배' if int(t.so_ex) == 2 else '')],
             ['가득 뒤 연간 퇴사율', t.so_exit],
             ['시장조건 판정', SO.MKT_LABELS[int(t.so_mkt)]],
             ['비가득조건 연간 중단율 (가득일까지)', t.so_nv],
             ['산출물 범위', '입력 조건에 따른 계산 결과']]
     for key in SO.AMOUNT_KEYS[md]:
         rows.append([AMOUNT_LABELS[key], tot[key], ps[key], a[key]])
+    if raw.get('choice'):
+        rows += compare_summary(run)
     if md == 'mod':
         rows.append(['당초 보상원가(원) — 부여일 공정가치 기준', raw['grant_cost']])
     if md == 'cash':
@@ -54,6 +57,30 @@ def summary_rows(run):
              ['입력 식별값', s['case_sha256']], ['계산 코드 식별값', s['code_sha256']],
              ['검토메모', run.case.notes]]
     return rows
+
+
+def compare_summary(run):
+    """평가요약의 결제방식 비교 — ①②③ 총액 · 1주당 · 주가 100 기준. ③ 이 주 결과다."""
+    t, raw = run.terms, run.raw
+    qty, S0 = float(raw['qty']), float(t.S0)
+    rows = [['결제방식 비교 (회사 선택 결제)', '공정가치 총액(원)', '1주당(원)', '측정기준일 주가 100 기준']]
+    for key in ('stock', 'price', 'min'):
+        v = float(raw['compare'][key])
+        ps = v/qty if qty else 0.0
+        rows.append([SO.PAYOFF_LABELS[key] + ' — ' + SO.PAYOFF_TEXT[key], v, ps, ps/S0*100])
+    rows += [['정산가격 결정 방식', getattr(t, 'so_sp_note', '') or '미기록'],
+             ['정산가격 출처', getattr(t, 'so_sp_src', '') or '미기록'],
+             ['비교 점검', '③ ≤ ① · ③ ≤ ② ' + ('맞음' if all(SO.choice_ok(r, S0) for r in raw['rows']) else '확인 필요')]]
+    return rows
+
+
+def compare_table(run):
+    rows = SO.compare_rows(run.raw)
+    return [list(SO.COMPARE_HEADS)] + [[r[h] for h in SO.COMPARE_HEADS] for r in rows]
+
+
+def price_table(run):
+    return [['확정일', '정산가격(원)']] + [[d.isoformat(), p] for d, p in SO.sp_path(run.terms)]
 
 
 def row_table(run):
@@ -159,6 +186,9 @@ def add_basic_sheets(wb, run, sheet):
     sheet('회차표 입력', input_rows_table(run))
     if md == 'mod':
         sheet('조건 변경표 입력', mod_input_table(run))
+    if run.raw.get('choice'):
+        sheet('결제방식 비교', compare_table(run))
+        sheet('정산가격 경로', price_table(run))
     sheet('블랙-숄즈 대조', bs_table(run))
     sheet('비용 배분', schedule_table(run))
 

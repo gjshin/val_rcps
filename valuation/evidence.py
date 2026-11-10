@@ -152,6 +152,15 @@ TOPICS = [
          questions=[], limitation='결제 방식은 계약과 관행으로 판단하며, 앱이 정하지 않습니다.',
          sources=[standard('1102', '41', '현금으로 결제한 과거의 실무관행'),
                   standard('1102', '30, 33')]),
+    dict(id='so_choice', title='회사가 결제 방식을 고를 수 있으면 어떻게 측정하나요?',
+         trigger='so_choice', fields=['so_settle', 'so_sp_rows', 'so_sp_note', 'so_sp_src'],
+         explanation='회사가 주식 교부와 현금 지급 중 고를 수 있으면 먼저 현금을 지급할 현재의무가 있는지 봅니다. 과거 현금결제 '
+                     '관행·명백한 방침이 있거나 현금결제 요구를 일반적으로 받아들이면 현금결제형(부채)이고, 아니면 '
+                     '주식결제형입니다. 주식결제형으로 볼 때 결제일에 공정가치가 더 큰 방식을 고르면 그 초과분을 추가 비용으로 '
+                     '인식합니다. 앱은 회사가 싼 쪽을 고른다고 보고 작은 값(주가, 정산가격) − 행사가격을 행사 손익으로 잽니다.',
+         questions=[], limitation='정산가격 경로는 평가자가 넣은 한 가지 경로로 고정됩니다. 미래 연도 정산가격의 불확실성과 '
+                                 '주가와의 상관은 반영하지 않으므로 ①·② 값과 함께 검토하십시오.',
+         sources=[standard('1102', '41'), standard('1102', '42'), standard('1102', '43')]),
     dict(id='so_conditions', title='조건을 근무·성과·시장·비가득조건 중 무엇으로 분류했나요?',
          trigger='so', fields=['so_rows', 'so_mkt', 'so_nv'],
          explanation='근무조건과 비시장 성과조건은 수량(가득 예상 비율)에, 시장조건과 비가득조건은 1주당 공정가치에 넣습니다. '
@@ -172,8 +181,9 @@ def applicable(topic, values):
     trigger = topic['trigger']
     if values.get('inst') == 'SO':
         # 주식선택권은 사채·우선주의 판단(분류·분리·콜·금리격자)이 없다 — 시장자료와 방법 변경만 함께 본다.
-        return trigger == 'so' or topic['id'] in ('fair_value_inputs', 'method_change')
-    return {'so': False, 'all': True, 'rcps': values.get('inst') == 'RCPS',
+        return (trigger == 'so' or topic['id'] in ('fair_value_inputs', 'method_change')
+                or (trigger == 'so_choice' and int(values.get('so_settle', 0) or 0) == 2))
+    return {'so': False, 'so_choice': False, 'all': True, 'rcps': values.get('inst') == 'RCPS',
             'holder': values.get('view') == 'holder', 'issuer': values.get('view') == 'issuer',
             'bond': values.get('inst') != 'SHA',
             'call': bool(values.get('k_w', 0) or values.get('issuer_call', 0) or values.get('sha_call_e', 0))}[trigger]

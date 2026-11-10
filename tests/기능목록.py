@@ -130,8 +130,9 @@ MANIFEST = {
     "sha_call_cmp": ("콜 가산 복리", {0: "단리", 1: "연 1회", 2: "연 2회", 4: "연 4회"}, ("SHA",)),
     # ── 주식선택권 (valuation/stock_option.py) ──
     "so_ex":       ("주식선택권 조기행사 가정", {0: "만기에만 행사 (유럽형)", 1: "가득 뒤 최적 행사",
-                                         2: "행사 배수에 도달하면 행사"}, ("SO",)),
-    "so_settle":   ("주식선택권 결제 방식", {0: "주식결제형", 1: "현금결제형 — 결산일마다 다시 잰다"}, ("SO",)),
+                                         2: "행사 배수에 도달하면 행사", 3: "만기 N개월 전부터 행사"}, ("SO",)),
+    "so_settle":   ("주식선택권 결제 방식", {0: "주식결제형", 1: "현금결제형 — 결산일마다 다시 잰다",
+                                       2: "회사 선택 — 주식 교부 또는 정산가격 차액 현금 (싼 쪽)"}, ("SO",)),
     "so_mod":      ("주식선택권 조건 변경 평가", {0: "부여일 평가", 1: "조건 변경 평가 — 증분 공정가치"}, ("SO",)),
     "so_mkt":      ("주식선택권 시장조건 판정", {0: "없음", 1: "가득일 주가가 목표 주가 이상이면 가득",
                                          2: "가득일까지 한 번이라도 목표 주가 이상이면 가득"}, ("SO",)),
@@ -226,7 +227,9 @@ def terms_enum_fields(G):
                  # 배당가능이익 재원 사용 시작일 — «월-일» 날짜 입력이다 (갈래가 아니다)
                  "dp_from",
                  # 주식선택권 결산일 — «월-일» 날짜 입력이다 (비용을 나누는 결산일, 갈래가 아니다)
-                 "so_fy_end"): continue
+                 "so_fy_end",
+                 # 정산가격의 결정 방식·출처 — 조서·판단 기록 문안 (계산은 정산가격 표로 한다)
+                 "so_sp_note", "so_sp_src"): continue
         # int 지만 개수·횟수인 것 (열거형이 아니다)
         if f in ("n", "cur_periods"): continue
         out[f] = ty
@@ -499,8 +502,17 @@ def collect_coverage(G):
         "test_cash_settled_liability_is_remeasured_at_year_end": ([("SO", "so_settle", 1)], "hand_calc_independent"),
         # 수식 조서 — 리브레오피스로 다시 계산해 상세 값 조서의 모든 숫자 칸과 맞춘다 (엔진 = 조서)
         "test_formula_workbook_recalculates_to_the_value_workbook":
-            ([("SO", "so_ex", 1), ("SO", "so_ex", 2), ("SO", "so_mod", 1), ("SO", "so_settle", 1)],
-             "engine_vs_formula_workbook"),
+            ([("SO", "so_ex", 1), ("SO", "so_ex", 2), ("SO", "so_ex", 3), ("SO", "so_mod", 1), ("SO", "so_settle", 1),
+              ("SO", "so_settle", 2)], "engine_vs_formula_workbook"),
+        # 회사 선택 결제 — ③ ≤ ① · ③ ≤ ②, 정산가격이 아주 크면 ③ = ① (같은 입력의 주식결제형 격자), 행사가격보다 낮으면 0
+        "test_company_choice_is_below_both_settlement_bases":
+            ([("SO", "so_settle", 2), ("SO", "so_ex", 0), ("SO", "so_ex", 1), ("SO", "so_ex", 2), ("SO", "so_ex", 3)],
+             "invariants"),
+        "test_company_choice_converges_to_each_basis": ([("SO", "so_settle", 2)], "invariants"),
+        "test_formula_workbook_follows_changed_settlement_prices_like_the_app":
+            ([("SO", "so_settle", 2)], "engine_vs_formula_workbook"),
+        # 만기 N개월 전부터 행사 — 그 전에는 행사하지 않고, N 이 아주 작으면 유럽형과 같고, 최적 행사보다 크지 않다
+        "test_exercise_from_months_before_expiry": ([("SO", "so_ex", 3)], "invariants"),
         "test_formula_workbook_follows_changed_estimates_like_the_app": ([("SO", "so_ex", 2)], "engine_vs_formula_workbook"),
         # 시장조건 — 가득일 판정은 갭 옵션 닫힌 식, 한 번 도달은 상향 진입 콜 닫힌 식(주 단위 관찰 보정)과 대조
         "test_market_condition_at_vest_matches_the_gap_option": ([("SO", "so_mkt", 1)], "hand_calc_independent"),

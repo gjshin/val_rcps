@@ -6,7 +6,7 @@ import math
 from dataclasses import asdict
 from . import legacy as L
 
-VERSION = '2026.10.07-v2.3'
+VERSION = '2026.11.10-v2.4'
 KINDS = {'hold': '계속 보유', 'conv': '전환', 'put': '상환청구', 'call': '콜 행사',
          'mat': '만기상환', 'auto': '만기 자동전환', 'ipo': '상장 강제전환'}
 
@@ -18,7 +18,10 @@ KINDS = {'hold': '계속 보유', 'conv': '전환', 'put': '상환청구', 'call
 _MARKET = ['S0', 'sig', 'div_y', 'rf_curve', 'cr_curve', 'cr_curve_b', 'rate_mode', 'd_base']
 # 판단과 무관한 기록 칸 — 주가 조회 출처·종목코드·원주가 등
 _RECORDS = {'s0_src', 's0_date', 's0_raw', 's0_adj', 's0_splits', 'ticker', 'cr_src', 'tranche', 'unmod_note',
-            'scen_md5', 'rvol_how', 'split_base_why', 'd1_reason'}
+            'scen_md5', 'rvol_how', 'split_base_why', 'd1_reason', 'so_sp_note', 'so_sp_src'}
+# 2026.11.10 판(v2.4)에서 생긴 입력 — 모두 기본값이면 이전 판이 저장한 메모 식별값을 그대로 인정한다
+# (새 입력이 생겼다는 까닭만으로 저장한 메모를 «재확인 필요» 로 만들지 않는다)
+_ADDED_V24 = ('so_ex_m', 'so_sp_rows', 'so_sp_note', 'so_sp_src')
 
 
 def memo_fields(topic, values=None):
@@ -37,9 +40,11 @@ def memo_fields(topic, values=None):
     return ['__all_but_market__']
 
 
-def memo_key(case, topic):
+def memo_key(case, topic, skip=()):
     """Conservative dependency signature; metadata and other memos do not reprice."""
     values = {**asdict(L.Terms()), **case.effective()}
+    for k in skip:
+        values.pop(k, None)
     fields = memo_fields(topic, values)
     if fields is None:
         fields = sorted(values)
@@ -72,13 +77,21 @@ def _memo_key_v21(case, topic):
         return None
 
 
+def _memo_key_v23(case, topic):
+    """2026.10.07 판(v2.3)까지의 식별값 — v2.4 에서 생긴 입력이 모두 기본값일 때만 같다고 본다."""
+    base, values = asdict(L.Terms()), case.effective()
+    if any(values.get(k, base[k]) != base[k] for k in _ADDED_V24):
+        return None
+    return memo_key(case, topic, skip=_ADDED_V24)
+
+
 def memo_status(case, topic):
     if not case.memos.get(topic):
         return '미작성'
     old = case.memo_context.get(topic)
     if not old:
         return '작성 당시 조건 미확인'
-    current = old == memo_key(case, topic) or old == _memo_key_v21(case, topic)
+    current = old in (memo_key(case, topic), _memo_key_v21(case, topic), _memo_key_v23(case, topic))
     return '현재 조건의 기록' if current else '이전 조건의 기록 · 재확인 필요'
 
 

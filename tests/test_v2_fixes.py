@@ -60,6 +60,21 @@ def test_memo_saved_by_previous_version():
     assert memo_status(c, 'call_method').startswith('이전 조건')
 
 
+def test_memo_saved_before_the_settlement_choice_inputs_existed():
+    # v2.4 에서 주식선택권 입력(만기 N개월 전 · 정산가격 표·기록)이 생겼다 — 그 입력이 기본값이면 이전 판의 메모는 그대로다.
+    from valuation.explain import _ADDED_V24
+    c = case()
+    c.memos['refixing'] = {'decision': '앱 판정에 동의', 'reason': '근거'}
+    c.memo_context['refixing'] = memo_key(c, 'refixing', skip=_ADDED_V24)     # 그 입력이 없던 판의 식별값
+    assert memo_context_differs(c, 'refixing') and memo_status(c, 'refixing') == '현재 조건의 기록'
+    c.method['so_ex_m'] = 6.0                                                 # 새 입력을 쓰면 다시 확인
+    assert memo_status(c, 'refixing').startswith('이전 조건')
+
+
+def memo_context_differs(c, t):
+    return c.memo_context[t] != memo_key(c, t)
+
+
 def test_memo_signatures_cover_the_inputs_each_judgment_uses():
     c = case(issuer_call=2, k_w=.3, k_s=3., k_e=9., k_prem=.02, k_cmp=1)
     for t in ('call_method', 'bdt', 'split_call'):

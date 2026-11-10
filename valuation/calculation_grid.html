@@ -22,7 +22,7 @@ let metric='value', curve=0, rowStart=0, selected=null, lastFocus=null;
 const SO=D.mode==='so_nodes'||D.mode==='so_schedule', NODES=D.mode==='nodes'||D.mode==='so_nodes', SCHED=D.mode==='schedule'||D.mode==='so_schedule';
 const f6=v=>v==null||!Number.isFinite(v)?'—':new Intl.NumberFormat('ko-KR',{minimumFractionDigits:6,maximumFractionDigits:6}).format(v);
 const nodeFields=SO?[['value','옵션 가치','원'],['stock','주가','원'],['kind','의사결정',''],['hold','계속 보유 가치','원'],['intrinsic','지금 행사 가치','원'],...(D.mkt===2?[['wait','목표 주가 미도달 상태 가치','원']]:[])]:[['stock','주가','원'],['P','전환확률','%'],['kind','의사결정',''],['hold','보유가치','원금 100'],['value','본체가치','원금 100'],...(D.model==='TF'?[['E','주식결제분','원금 100'],['B','현금결제분','원금 100'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%']]:[['ya','상승 할인율','%'],['yb','하락 할인율','%'],['df_up','상승 할인계수','%'],['df_down','하락 할인계수','%']])];
-const scheduleFields=SO?[['rf','선도 무위험 금리','%'],['q','상승 확률','%'],['down_q','하락 확률','%'],['df','할인계수','%'],['can_ex','행사 가능','bool'],['before_vest','가득 전 (비가득조건 적용)','bool'],['judged','시장조건 판정 시점','bool'],['exit','구간 퇴사 확률','%'],['nv','구간 비가득조건 중단 확률','%'],['u','상승 배수 u','배'],['d','하락 배수 d','배']]:[['rf','Rf 선도금리','%'],['cr','Kd 선도금리','%'],['q','상승 확률','%'],['down_q','하락 확률','%'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%'],['cv','전환 가능','bool'],['put','상환청구 가능','bool'],['call','계약상 콜 가능','bool'],['put_contract','계약 상환청구금액','원금 100'],['put_value','지급 제약 반영 상환가치','원금 100'],['call_contract','계약 콜금액','원금 100'],['coupon','이자·우선배당 지급','원금 100'],['host','권리 없는 주계약 가치','원금 100'],['u','상승계수 u','배'],['d','하락계수 d','배'],['refix','정기 리픽싱','bool'],['ipo','조건부 IPO 예정','bool'],['redemption','만기 지급가치','원금 100']];
+const scheduleFields=SO?[...(D.payoff!=='stock'?[['sp','정산가격','원']]:[]),...(D.so_ex===3?[['late','만기 전 행사 구간','bool']]:[]),['rf','선도 무위험 금리','%'],['q','상승 확률','%'],['down_q','하락 확률','%'],['df','할인계수','%'],['can_ex','행사 가능','bool'],['before_vest','가득 전 (비가득조건 적용)','bool'],['judged','시장조건 판정 시점','bool'],['exit','구간 퇴사 확률','%'],['nv','구간 비가득조건 중단 확률','%'],['u','상승 배수 u','배'],['d','하락 배수 d','배']]:[['rf','Rf 선도금리','%'],['cr','Kd 선도금리','%'],['q','상승 확률','%'],['down_q','하락 확률','%'],['df_rf','무위험 할인계수','%'],['df_cr','위험 할인계수','%'],['cv','전환 가능','bool'],['put','상환청구 가능','bool'],['call','계약상 콜 가능','bool'],['put_contract','계약 상환청구금액','원금 100'],['put_value','지급 제약 반영 상환가치','원금 100'],['call_contract','계약 콜금액','원금 100'],['coupon','이자·우선배당 지급','원금 100'],['host','권리 없는 주계약 가치','원금 100'],['u','상승계수 u','배'],['d','하락계수 d','배'],['refix','정기 리픽싱','bool'],['ipo','조건부 IPO 예정','bool'],['redemption','만기 지급가치','원금 100']];
 function val(n,k){if(k==='df_rf'||k==='df_cr')return n.terminal?null:D.steps[n.i][k];return n[k];}
 function showVal(v,unit){return unit==='bool'?(v?'가능·해당':'—'):typeof v==='string'?v:unit==='%'?pct(v):fmt(v);}
 function tabButton(text,id,on){const b=document.createElement('button');b.textContent=text;b.dataset.tab=id;b.setAttribute('aria-pressed',String(on));$('tabs').appendChild(b);return b;}
@@ -93,17 +93,22 @@ function soNodeDetail(key,focus=true){
  const cont=()=>a&&b?`계속 보유 C = exp(−r × Δt) × [p × V↑ + (1−p) × V↓]\n= ${px(s.df)} × [${px(s.q)} × ${fx(a.value)} + ${px(1-s.q)} × ${fx(b.value)}]\n= ${fx(n.cont)}`:'다음 시점 노드가 이 구간에 없어 계산표 시점 구간을 다음 구간으로 바꿔 확인하세요.';
  const hold=()=>{let t=cont();
   if(s.nv>0)t+=`\n\n비가득조건 (가득 전): H = (1 − 구간 중단 확률) × C\n= (1 − ${px(s.nv)}) × ${fx(n.cont)}\n= ${fx(n.hold)}`;
-  else if(s.exit>0)t+=`\n\n가득 뒤 퇴사: H = (1 − e) × C + e × 큰 값(S − K, 0)\n= (1 − ${px(s.exit)}) × ${fx(n.cont)} + ${px(s.exit)} × ${fx(Math.max(n.intrinsic,0))}\n= ${fx(n.hold)}`;
+  else if(s.exit>0)t+=`\n\n가득 뒤 퇴사: H = (1 − e) × C + e × 큰 값(${D.payoff==='stock'?'S − K':'X'}, 0)\n= (1 − ${px(s.exit)}) × ${fx(n.cont)} + ${px(s.exit)} × ${fx(Math.max(n.intrinsic??0,0))}\n= ${fx(n.hold)}`;
   else t+=`\n\nH = C = ${fx(n.hold)}`;return t;};
- const raw=n.terminal?Math.max(n.intrinsic,0):n.before_share;
- const decide=()=>{if(n.terminal)return `행사 종료일: V = 큰 값(S − K, 0)\n= 큰 값(${fx(n.stock)} − ${fx(K)}, 0) = ${fx(raw)}`;
+ const raw=n.terminal?Math.max(n.intrinsic??0,0):n.before_share;
+ const decide=()=>{if(n.terminal)return D.payoff==='stock'?`행사 종료일: V = 큰 값(S − K, 0)\n= 큰 값(${fx(n.stock)} − ${fx(K)}, 0) = ${fx(raw)}`:`행사 종료일: V = 큰 값(X, 0), X = ${D.payoff_text}\n= 큰 값(${fx(n.intrinsic)}, 0) = ${fx(raw)}`;
   if(!s.can_ex)return `행사 시작 전이라 행사할 수 없습니다 (행사 가능 시점 ${D.ex_step}부터): V = H = ${fx(n.hold)}`;
-  if(D.so_ex===1)return `가득 뒤 최적 행사: V = 큰 값(S − K, H)\n= 큰 값(${fx(n.intrinsic)}, ${fx(n.hold)}) = ${fx(raw)}`;
-  if(D.so_ex===2)return `행사 배수 ${fx(D.so_mult)}배: 주가가 배수 × K 이상이고 내가격이면 V = S − K, 아니면 V = H\n주가 ${fx(n.stock)} ${n.stock>=D.so_mult*K*(1-1e-12)?'≥':'<'} ${fx(D.so_mult)} × ${fx(K)} = ${fx(D.so_mult*K)}\n→ V = ${fx(raw)}`;
+  if(D.so_ex===1)return `가득 뒤 최적 행사: V = 큰 값(${D.payoff==='stock'?'S − K':'X'}, H)\n= 큰 값(${fx(n.intrinsic)}, ${fx(n.hold)}) = ${fx(raw)}`;
+  const X=D.payoff==='stock'?'S − K':'X';
+  if(D.so_ex===2)return `행사 배수 ${fx(D.so_mult)}배: 주가가 배수 × K 이상이고 받는 금액이 양수면 V = ${X}, 아니면 V = H\n주가 ${fx(n.stock)} ${n.stock>=D.so_mult*K*(1-1e-12)?'≥':'<'} ${fx(D.so_mult)} × ${fx(K)} = ${fx(D.so_mult*K)}\n→ V = ${fx(raw)}`;
+  if(D.so_ex===3)return n.i<D.late_step?`${D.ex_label}: 시점 ${D.late_step} 전이라 행사하지 않습니다 — V = H = ${fx(n.hold)}`:`${D.ex_label}: 받는 금액이 양수면 V = ${X}, 아니면 V = H\n→ V = ${fx(raw)}`;
   return `만기에만 행사 (유럽형): V = H = ${fx(n.hold)}`;};
  const cut=()=>share<1?`\n\n시장조건 (가득일 판정): 목표 주가 ${fx(D.target)}원 — 노드는 로그 주가로 위아래 반 칸씩의 구간을 대표하므로, 구간 가운데 목표 이상인 비율 w 만큼만 남깁니다.\nw = 최솟값(1, 큰 값(0, (ln S + ln u − ln 목표) ÷ (2 × ln u)))\n= ${f6(share)}\nV = w × ${fx(raw)} = ${fx(n.value)}`:'';
  if(metric==='stock')text=`S = S₀ × u^(상승 횟수) × d^(하락 횟수)\n= ${fx(D.S0)} × ${fx(D.u)}^${n.j} × ${fx(D.d)}^${n.down}\n= ${fx(n.stock)} 원\n\nu = exp(σ × √Δt) = exp(${px(D.sig)} × √${fx(D.delta)}) = ${fx(D.u)}, d = 1 ÷ u = ${fx(D.d)}`;
- else if(metric==='intrinsic')text=`지금 행사 가치 = S − K\n= ${fx(n.stock)} − ${fx(K)}\n= ${fx(n.intrinsic)} 원\n음수면 행사하지 않습니다.`;
+ else if(metric==='intrinsic')text=D.payoff==='stock'?`지금 행사 가치 = S − K\n= ${fx(n.stock)} − ${fx(K)}\n= ${fx(n.intrinsic)} 원\n음수면 행사하지 않습니다.`
+  :s.sp==null?'첫 정산가격 확정일 전이라 정산가격이 없습니다 — 행사할 수 없는 시점입니다.'
+  :D.payoff==='price'?`지금 행사 가치 X = P − K (정산가격 기준)\n= ${fx(s.sp)} − ${fx(K)}\n= ${fx(n.intrinsic)} 원`
+  :`회사 선택: 회사가 주식 교부(S − K)와 정산가격 차액 현금(P − K) 중 싼 쪽을 고릅니다.\nX = 작은 값(S, P) − K\n= 작은 값(${fx(n.stock)}, ${fx(s.sp)}) − ${fx(K)}\n= ${fx(n.intrinsic)} 원\nP 는 이 날짜의 직전 확정 정산가격입니다. 음수면 행사하지 않습니다.`;
  else if(metric==='hold')text=n.terminal?'행사 종료일에는 다음 시점이 없어 계속 보유 계산이 없습니다.':hold();
  else if(metric==='wait'){
   if(n.wait==null)text=`이 시점은 시장조건 판정 기간(가득 시점 ${D.vest_step}까지) 뒤라 «아직 닿지 않은 상태»가 없습니다.`;
@@ -112,7 +117,7 @@ function soNodeDetail(key,focus=true){
   else text=`아직 목표 주가 미만 — 다음 시점의 «닿지 않은 상태» 가치를 할인합니다.\nW = (1 − 구간 중단 확률) × exp(−r × Δt) × [p × W↑ + (1−p) × W↓]\n= (1 − ${px(s.nv)}) × ${px(s.df)} × [${px(s.q)} × ${fx(a?.wait)} + ${px(1-s.q)} × ${fx(b?.wait)}]\n= ${fx(n.wait)}`;
   text+='\n\n«가득일까지 한 번이라도 목표 주가 이상» 은 격자 노드(계산 간격)마다 관찰합니다. 시점 0의 W 가 1주당 공정가치입니다.';
  }else{text=(n.terminal?'':hold()+'\n\n')+decide()+cut()+(metric==='kind'?`\n\n판단: ${n.kind}`:'')+`\n\n${n.rule}`;}
- const rr=[['주가 S',fx(n.stock)+' 원'],['행사가격 K',fx(K)+' 원'],['상승 확률 p',px(s.q)],['선도 무위험 금리',px(s.rf)],['할인계수',px(s.df)],['구간 Δt',fx(D.delta)+' 년'],['구간 퇴사 확률',px(s.exit)],['구간 비가득조건 중단 확률',px(s.nv)],['조기행사 가정',D.ex_label],['행사 판단',n.kind]];
+ const rr=[['주가 S',fx(n.stock)+' 원'],['행사가격 K',fx(K)+' 원'],...(D.payoff!=='stock'?[['정산가격 P',s.sp==null?'—':fx(s.sp)+' 원'],['행사하면 받는 금액',D.payoff_text]]:[]),['상승 확률 p',px(s.q)],['선도 무위험 금리',px(s.rf)],['할인계수',px(s.df)],['구간 Δt',fx(D.delta)+' 년'],['구간 퇴사 확률',px(s.exit)],['구간 비가득조건 중단 확률',px(s.nv)],['조기행사 가정',D.ex_label],['행사 판단',n.kind]];
  if(D.mkt)rr.push(['시장조건 목표 주가',fx(D.target)+' 원'],['시장조건 판정',D.mkt_label]);
  let body='<span class="badge">'+safe(f[2]||'의사결정')+'</span><div class="result">'+safe(showVal(v,f[2]))+'</div>'+formula(text)+refs(rr);
  if(a&&b&&dependencies(n).length){const w=metric==='wait',refValue=x=>fx(w?x.wait:x.value),refName=w?'목표 주가 미도달 상태 가치':'옵션 가치';
@@ -126,6 +131,8 @@ function soScheduleDetail(i,row,focus=true){lastDetail=()=>soScheduleDetail(i,ro
  else if(['q','down_q'].includes(k))text=`p = [exp((r − 배당수익률) × Δt) − d] ÷ (u − d)\n= [exp((${px(s.rf)} − ${px(D.div_y)}) × ${fx(D.delta)}) − ${fx(D.d)}] ÷ (${fx(D.u)} − ${fx(D.d)})\n상승 p = ${px(s.q)}, 하락 1 − p = ${s.q==null?'—':px(1-s.q)}`;
  else if(k==='df')text=`할인계수 = exp(−r × Δt)\n= exp(−${px(s.rf)} × ${fx(D.delta)})\n= ${px(v)}`;
  else if(['u','d'].includes(k))text=`u = exp(σ × √Δt) = exp(${px(D.sig)} × √${fx(D.delta)}) = ${fx(D.u)}\nd = 1 ÷ u = ${fx(D.d)}`;
+ else if(k==='sp')text=v==null?'첫 정산가격 확정일 전이라 정산가격이 없습니다.':`정산가격 P = 이 날짜의 직전(같은 날 포함) 확정값\n= ${fx(v)} 원\n정산가격은 확정일마다 한 번 정해지고 다음 확정일까지 그대로입니다.`;
+ else if(k==='late')text=`${D.ex_label}: 시점 ${D.late_step}부터 내가격이면 행사합니다. 그 전에는 행사하지 않습니다.`;
  else if(k==='can_ex')text=`행사 가능 시점 = 행사 시작일 이후 첫 노드 (시점 ${D.ex_step}).\n그 전에는 행사할 수 없어 계속 보유 가치만 씁니다. 조기행사 가정: ${D.ex_label}`;
  else if(k==='before_vest')text=`가득 시점 = 가득일 이후 첫 노드 (시점 ${D.vest_step}).\n그 전 구간에는 비가득조건 중단 확률을 곱합니다 (연 중단율 ${px(D.nv)}).`;
  else if(k==='judged')text=D.mkt===1?`가득일 판정: 가득 시점 ${D.vest_step}의 노드에서 목표 주가 ${fx(D.target)}원 이상인지 봅니다.`:D.mkt===2?`한 번이라도 판정: 시점 0부터 가득 시점 ${D.vest_step}까지 노드마다 목표 주가 ${fx(D.target)}원 도달을 봅니다.`:'이 회차에는 시장조건이 없습니다.';

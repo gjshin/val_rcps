@@ -94,8 +94,29 @@ def review_issues(case, tm, raw):
 
 def so_review(tm, raw, add):
     """주식선택권 확인할 사항 — 기준서가 정한 판단을 평가자가 했는지 묻는다(값을 바꾸지 않는다)."""
-    from .stock_option import EX_LABELS, MKT_LABELS
+    from .stock_option import EX_LABELS, MKT_LABELS, ex_label, sp_path
     md = raw.get('mode', 'grant')
+    if raw.get('choice'):
+        c = raw['compare']
+        add('so_choice', 'so_settle',
+            f"결제 방식: 회사 선택 — ① 주가 기준 {c['stock']:,.0f}원 · ② 정산가격 기준 {c['price']:,.0f}원 · "
+            f"③ 회사 선택 반영 {c['min']:,.0f}원(주 결과, 부여 수량 전체).",
+            '회사가 싼 쪽을 고른다고 보고 행사 손익을 큰 값(0, 작은 값(주가, 정산가격) − 행사가격)으로 쟀습니다. 현금을 지급할 '
+            '현재의무가 없으면 주식결제형으로 보아 부여일 공정가치로 비용을 나눕니다 (문단 41·43). 현재의무가 있으면 '
+            '현금결제형입니다 (문단 42). 결제할 때 공정가치가 더 큰 방식을 고르면 그 초과분을 추가 비용으로 인식합니다 (문단 43⑶).',
+            '과거 현금결제 관행, 명백한 현금결제 방침, 현금결제 요구 수용 여부를 확인해 판단을 기록하십시오. 현재의무가 있으면 '
+            '«결제 방식» 을 현금결제형으로 바꾸십시오.')
+        path = sp_path(tm)
+        add('so_choice_price', 'so_sp_rows',
+            f"정산가격 표 {len(path)}줄 ({path[0][0]} ~ {path[-1][0]}) — 결정 방식: {tm.so_sp_note or '미기록'} · "
+            f"출처: {tm.so_sp_src or '미기록'}.",
+            '정산가격은 확정일마다 한 번 정해지고 다음 확정일까지 그대로라고 봤습니다(마지막 확정일 뒤에는 마지막 값). '
+            '정산가격 경로는 하나로 고정해 쓰며, 주가와 함께 움직이는 것은 반영하지 않습니다.',
+            '연도별 정산가격이 계약 산식대로 계산됐는지, 아직 확정되지 않은 연도의 값을 어떻게 추정했는지 기록하십시오.')
+    if int(tm.so_ex) == 3:
+        add('so_late_exercise', 'so_ex_m', f"조기행사 가정: {ex_label(tm)}.",
+            '그 전에는 행사하지 않고, 그때부터 내가격이면 바로 행사한다고 봤습니다. 행사 시점 가정은 공정가치에 영향을 줍니다 '
+            '(문단 B16~B19).', '행사 시점을 정한 근거(과거 행사 실적·임직원 행사 경향)를 기록하십시오.')
     goals = [f"{r['name']} {r['target']:,.0f}원" for r in raw['rows'] if r.get('mkt')]
     later = tm.d_base > tm.d_issue
     if int(getattr(tm, 'so_mkt', 0)) == 2 and later and any(r.get('target') for r in raw['rows']):

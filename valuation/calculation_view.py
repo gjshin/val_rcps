@@ -252,6 +252,7 @@ def _so_steps(t, row, e_step):
     for i in range(n + 1):
         s = dict(i=i, date=_date(t, i, delta), can_ex=i >= row['ex_step'], before_vest=i < row['vest_step'],
                  judged=bool(row.get('mkt')) and (i == row['vest_step'] if row['mkt'] == 1 else i <= row['vest_step']))
+        s.update(sp=(row.get('sp') or [None]*(n + 1))[i], late=i >= row.get('late_step', n))
         if i < n:
             s.update(q=row['p'][i], rf=row['fwd'][i], df=math.exp(-row['fwd'][i]*delta),
                      exit=e_step if i >= row['ex_step'] else 0.0,
@@ -271,7 +272,9 @@ def _so_head(run, row, mode):
                 exit_step=e_step, mkt=int(row.get('mkt') or 0),
                 mkt_label=('측정기준일 전에 목표 도달 — 시장조건 충족' if row.get('hit') else SO.MKT_LABELS[int(row.get('mkt') or 0)]),
                 target=row.get('target'), vest_step=row['vest_step'], ex_step=row['ex_step'],
-                ex_label=SO.EX_LABELS[int(t.so_ex)], run_id=run.summary['run_id'])
+                ex_label=SO.ex_label(t), payoff=row.get('payoff', 'stock'),
+                payoff_text=SO.PAYOFF_TEXT[row.get('payoff', 'stock')], late_step=row.get('late_step', row['n']),
+                run_id=run.summary['run_id'])
 
 
 def so_node_values(run, row, start=0, end=None):
@@ -285,7 +288,7 @@ def so_node_values(run, row, start=0, end=None):
         for down in range(i + 1):
             tr = SO.node_trace(t, row, i, down)
             r = dict(i=i, j=i - down, down=down, stock=tr['stock'], K=tr['strike'], value=tr['value'],
-                     intrinsic=tr['intrinsic'], exercise=tr['exercise'], terminal=tr['terminal'], kind=_so_kind(row, tr),
+                     intrinsic=_finite(tr['intrinsic']), exercise=tr['exercise'], terminal=tr['terminal'], kind=_so_kind(row, tr),
                      rule=tr['rule'], share=tr.get('pass_share', 1.0), before_share=tr.get('before_share'),
                      hold=tr.get('hold'), cont=tr.get('cont'), wait=_finite(tr.get('wait')), wait_rule=tr.get('wait_rule'),
                      up=None, dn=None)
