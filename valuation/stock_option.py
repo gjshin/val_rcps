@@ -9,6 +9,7 @@
     0 만기에만 행사 — 유럽형. 블랙-숄즈-머튼 공식과 같은 값으로 수렴한다.
     1 최적 행사 — 노드마다 «지금 행사» 와 «계속 보유» 중 큰 쪽.
     2 행사 배수 — 주가가 행사가격의 배수 이상이면 행사한다.
+    3 만기 N개월 전부터 행사 — 그 전에는 행사하지 않고, 그때부터 내가격이면 행사한다.
   가득 뒤 퇴사율을 넣으면 매 구간 그 비율만큼 퇴사해 내가격이면 행사, 아니면 소멸한다.
   가득일과 행사 시작일 사이에 퇴사하면 선택권이 남는지 소멸하는지는 계약마다 달라 정하지 않는다 —
   퇴사율을 넣었는데 행사 시작일이 가득일보다 늦은 회차가 있으면 입력 검사가 막는다.
@@ -24,6 +25,13 @@
   선택권을 잃는다고 보고 «1 − 구간 중단 확률» 을 곱한다. 기대존속기간은 가득된다고 보고 잰다 (문단 B18⑴).
 - 보상원가는 회차마다 «1주당 공정가치 × 부여 수량 × 가득 예상 비율» 이고, 부여일부터
   가득일까지 일수로 나눠 회계연도에 배분한다.
+
+회사 선택 결제 (so_settle = 2) — 행사 때 회사가 주식 교부(행사 손익 = 주가 − 행사가격)와 «계약상 정산가격 −
+행사가격» 현금 지급 중 고를 수 있다. 정산가격은 주가가 아니라 계약이 정한 공식 가격(예: 직전 연도말 연결 순자산 ×
+비율 ÷ 주식수)이고, 확정일마다 한 번 정해져 다음 확정일까지 그대로다. 회사는 싼 쪽을 고른다고 보고 행사 손익을
+큰 값(0, 작은 값(주가, 정산가격) − 행사가격)으로 잰다 (payoff "min", 주 결과 ③). 같은 격자로 ① 주가 기준(주식결제
+상한, payoff "stock")과 ② 정산가격 기준(현금결제 민감도, payoff "price")도 재어 나란히 싣는다. ③ ≤ ①, ③ ≤ ② 이다.
+회계는 현금을 지급할 현재의무가 없으면 주식결제형으로 본다 (문단 41~43) — 부여일 평가처럼 비용을 나눈다.
 
 세 가지로 쓴다 (mode):
 - 부여일 평가 — 위의 기본.
@@ -42,8 +50,13 @@ import numpy as np
 
 ROW_KEYS = ("name", "vest", "start", "end", "qty", "keep", "target", "hit")
 MOD_KEYS = ("name", "K", "vest", "start", "end", "qty", "grant_fv")
-EX_LABELS = {0: "만기에만 행사 (유럽형)", 1: "가득 뒤 최적 행사", 2: "행사 배수에 도달하면 행사"}
-SETTLE_LABELS = {0: "주식결제형", 1: "현금결제형 (차액보상)"}
+EX_LABELS = {0: "만기에만 행사 (유럽형)", 1: "가득 뒤 최적 행사", 2: "행사 배수에 도달하면 행사", 3: "만기 N개월 전부터 행사"}
+SETTLE_LABELS = {0: "주식결제형", 1: "현금결제형 (차액보상)", 2: "회사 선택 (주식 교부 또는 정산가격 차액 현금)"}
+SP_KEYS = ("date", "price")
+# 회사 선택 결제의 세 값 — 같은 격자, 행사 손익만 다르다
+PAYOFF_LABELS = {"stock": "① 주가 기준 (주식결제 상한)", "price": "② 정산가격 기준 (현금결제 민감도)",
+                 "min": "③ 회사 선택 반영 (주 결과)"}
+PAYOFF_TEXT = {"stock": "주가 − 행사가격", "price": "정산가격 − 행사가격", "min": "작은 값(주가, 정산가격) − 행사가격"}
 MKT_LABELS = {0: "없음", 1: "가득일 주가가 목표 주가 이상이면 가득", 2: "가득일까지 한 번이라도 목표 주가 이상이면 가득"}
 MKT_TOL = 1e-12          # 목표 주가 비교 — 엔진과 수식 조서가 같은 여유를 쓴다
 
@@ -53,6 +66,45 @@ def pass_share(S, u, H):
     return np.clip((np.log(S) + math.log(u) - math.log(H))/(2*math.log(u)), 0.0, 1.0)
 # 조기행사가 없을 때 격자값과 블랙-숄즈 값의 허용 차이 (상대). 주 단위 격자면 보통 0.1% 안쪽이다.
 BS_TOL = 0.005
+
+
+def ex_label(tm) -> str:
+    """조기행사 가정 — «만기 N개월 전부터» 는 N 을 넣어 적는다."""
+    if int(tm.so_ex) == 3:
+        return f"만기 {float(getattr(tm, 'so_ex_m', 0.0)):g}개월 전부터 행사"
+    return EX_LABELS[int(tm.so_ex)]
+
+
+def choice(tm) -> bool:
+    """회사 선택 결제인가 — 주식 교부와 정산가격 차액 현금 중 싼 쪽."""
+    return int(getattr(tm, "so_settle", 0)) == 2
+
+
+def sp_path(tm) -> list:
+    """정산가격 표 → [(확정일, 정산가격)] 확정일 순."""
+    out = []
+    for r in getattr(tm, "so_sp_rows", None) or []:
+        try:
+            out.append((_date(str(r["date"])), float(r["price"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(out)
+
+
+def sp_at(path, day):
+    """그날의 정산가격 — 직전(같은 날 포함) 확정값. 첫 확정일 전이면 None."""
+    out = None
+    for d, p in path:
+        if d <= day:
+            out = p
+        else:
+            break
+    return out
+
+
+def node_date(tm, i, dt_):
+    """격자 시점 i 의 날짜 — 화면·조서·정산가격이 같은 날짜를 쓴다."""
+    return _date(tm.d_base) + dt.timedelta(days=round(i*dt_*365))
 
 
 def is_so(tm) -> bool:
@@ -134,6 +186,12 @@ def issues(tm) -> list[str]:
         out.append("당기 현금 결제액은 현금결제형에서만 넣습니다.")
     if int(tm.so_ex) not in EX_LABELS:
         out.append("조기행사 가정을 고르십시오.")
+    if int(tm.so_ex) == 3:
+        m = getattr(tm, "so_ex_m", 0.0)
+        if not (isinstance(m, (int, float)) and not isinstance(m, bool) and math.isfinite(m) and m > 0):
+            out.append("«만기 N개월 전부터 행사» 의 개월 수는 0보다 커야 합니다.")
+    if choice(tm):
+        out += sp_issues(tm)
     if int(getattr(tm, "so_mkt", 0)) not in MKT_LABELS:
         out.append("시장조건 판정 방식을 고르십시오.")
     nv = getattr(tm, "so_nv", 0.0)
@@ -197,6 +255,42 @@ def issues(tm) -> list[str]:
         out.append("«시장조건 판정» 을 골랐는데 목표 주가를 넣은 회차가 없습니다 — 회차표의 «목표 주가(원)» 에 넣으십시오.")
     if int(tm.so_mod) == 1 and int(tm.so_settle) == 0:
         out += mod_issues(tm, rs, di, db, dm)
+    if choice(tm) and int(tm.so_mod) == 1:
+        out.append("회사 선택 결제는 부여일 평가만 계산합니다 — 조건 변경 평가는 따로 하십시오.")
+    if choice(tm) and sp_path(tm):
+        starts = []
+        for raw in rs:
+            try:
+                starts.append(_date(str(row_defaults(raw, tm)["start"])))
+            except (ValueError, TypeError):
+                pass
+        first = sp_path(tm)[0][0]
+        if starts and first > min(starts):
+            out.append(f"정산가격 표의 첫 확정일({first})이 가장 이른 행사 시작일({min(starts)})보다 늦습니다 — "
+                       "행사할 수 있는 날에는 정산가격이 있어야 합니다. 그 전에 확정된 정산가격을 넣으십시오.")
+    return out
+
+
+def sp_issues(tm) -> list[str]:
+    """정산가격 표 — 확정일(날짜)과 정산가격(0 이상), 확정일은 겹치지 않는다."""
+    rows_ = getattr(tm, "so_sp_rows", None) or []
+    if not rows_:
+        return ["회사 선택 결제는 정산가격 표가 필요합니다 — 확정일과 정산가격(원)을 한 줄 이상 넣으십시오."]
+    out, days = [], []
+    for k, r in enumerate(rows_, start=1):
+        if not isinstance(r, dict) or not set(r) <= set(SP_KEYS):
+            out.append(f"정산가격 표 {k}번째 줄의 형식이 올바르지 않습니다.")
+            continue
+        try:
+            days.append(_date(str(r.get("date"))))
+        except (ValueError, TypeError):
+            out.append(f"정산가격 표 {k}번째 줄: 확정일은 YYYY-MM-DD 로 넣으십시오.")
+        p = r.get("price")
+        if not (isinstance(p, (int, float)) and not isinstance(p, bool) and math.isfinite(p) and p >= 0):
+            out.append(f"정산가격 표 {k}번째 줄: 정산가격은 0 이상의 금액이어야 합니다.")
+    dup = sorted({str(d) for d in days if days.count(d) > 1})
+    if dup:
+        out.append("정산가격 표의 확정일이 겹칩니다: " + ", ".join(dup))
     return out
 
 
@@ -334,8 +428,12 @@ def steps_for(tm, years: float) -> int:
     return int(max(4, n))
 
 
-def value_row(tm, row: dict, R=None) -> dict:
-    """한 회차를 격자에서 잰다. 돌려주는 값은 1주당(원). 행사가격은 row["K"] (없으면 K0)."""
+def value_row(tm, row: dict, R=None, payoff: str = "stock") -> dict:
+    """한 회차를 격자에서 잰다. 돌려주는 값은 1주당(원). 행사가격은 row["K"] (없으면 K0).
+
+    payoff — 행사할 때 받는 금액: "stock" 주가 − 행사가격 · "price" 정산가격 − 행사가격 ·
+    "min" 작은 값(주가, 정산가격) − 행사가격 (회사 선택 결제). 정산가격은 그 노드 날짜의 직전 확정값이다.
+    """
     from .legacy import forward_rate, lattice_ud
     db = _date(tm.d_base)
     t_ex = max(0.0, (_date(row["start"]) - db).days/365)      # 행사 시작
@@ -363,12 +461,29 @@ def value_row(tm, row: dict, R=None) -> dict:
     qbad = bool(np.any((p <= 0) | (p >= 1)))
     e_step = 1.0 - (1.0 - float(tm.so_exit))**dt_          # 한 구간에 퇴사할 확률 (행사 시작 뒤)
     mode, mult = int(tm.so_ex), float(tm.so_mult)
+    # 만기 N개월 전부터 행사 — 그 시점(행사 시작 노드보다 이르지 않음)부터 내가격이면 행사
+    late = n
+    if mode == 3:
+        t_late = max(t_ex, t_end - float(getattr(tm, "so_ex_m", 0.0))/12)
+        late = min(n, max(ex_step, int(math.ceil(t_late/dt_ - 1e-9))))
+    sp = None
+    if payoff != "stock":
+        path = sp_path(tm)
+        sp = [sp_at(path, node_date(tm, i, dt_)) for i in range(n + 1)]
+        Pn = np.array([-np.inf if x is None else x for x in sp])     # 첫 확정일 전 — 행사할 수 없는 노드뿐이다 (입력 검사)
+
+    def exv(S, i):
+        if payoff == "stock":
+            return S - K
+        if payoff == "price":
+            return np.full_like(S, Pn[i]) - K
+        return np.minimum(S, Pn[i]) - K
     j = np.arange(n + 1)
     S = S0*u**(n - 2*j)
-    V = np.maximum(S - K, 0.0)
+    V = np.maximum(exv(S, n), 0.0)
     values, prices, exercise = [None]*(n + 1), [None]*(n + 1), [None]*(n + 1)
     exercise_life = [None]*(n + 1)             # 기대존속기간용 — 가득된다고 보고 잰다 (시장조건 소멸 전)
-    go = S - K > 0
+    go = exv(S, n) > 0
     exercise_life[n] = go.copy()
     if mkt == 1 and vest_step == n:
         w = pass_share(S, u, H)
@@ -378,13 +493,15 @@ def value_row(tm, row: dict, R=None) -> dict:
         jj = np.arange(i + 1)
         S = S0*u**(i - 2*jj)
         cont = disc[i]*(p[i]*V[:-1] + (1 - p[i])*V[1:])
-        ex = S - K
+        ex = exv(S, i)
         if i >= ex_step:
             hold = (1 - e_step)*cont + e_step*np.maximum(ex, 0.0)
             if mode == 1:
                 go = ex > hold + 1e-12*np.maximum(1.0, np.abs(hold))
             elif mode == 2:
-                go = (S >= mult*K - 1e-12*K) & (ex > 0)
+                go = (S >= mult*K - 1e-12*K) & (ex > 0)     # 행사 배수는 주가로 본다 — 받는 금액이 0 이하면 행사하지 않는다
+            elif mode == 3:
+                go = (ex > 0) & (i >= late)
             else:
                 go = np.zeros(i + 1, dtype=bool)
             V = np.where(go, ex, hold)
@@ -437,7 +554,7 @@ def value_row(tm, row: dict, R=None) -> dict:
     return dict(
         name=row["name"], vest=row["vest"], start=row["start"], end=row["end"], qty=float(row["qty"]),
         keep=float(row["keep"]), K=K, t_ex=t_ex, t_end=t_end, n=n, dt=dt_, ex_step=ex_step, u=u, d=d,
-        vest_step=vest_step, target=H, mkt=mkt, nv_step=nv_step, hit=reached(row),
+        vest_step=vest_step, target=H, mkt=mkt, nv_step=nv_step, hit=reached(row), payoff=payoff, sp=sp, late_step=late,
         vest_exercise=exercise_life[vest_step].tolist() if mkt == 1 else None,   # 비율을 곱하기 전 행사 여부
         wait=None if wait is None else [w.tolist() for w in wait],
         fv=fv, bs_end=bs_end, bs_life=bs_life, life=life, r_end=r_end, qbad=qbad,
@@ -515,7 +632,12 @@ def value(tm) -> dict:
             b["name"] = r["name"]
             before_rows.append(b)
         else:
-            v = value_row(tm, r, R)
+            if choice(tm):
+                v = value_row(tm, r, R, payoff="min")     # ③ 회사 선택 반영 — 주 결과
+                v["fv_stock"] = value_row(tm, r, R, payoff="stock")["fv"]     # ① 주가 기준
+                v["fv_price"] = value_row(tm, r, R, payoff="price")["fv"]     # ② 정산가격 기준
+            else:
+                v = value_row(tm, r, R)
             v["fair"] = v["fv"]*v["qty"]              # 부여 수량 전체의 공정가치
             v["cost"] = v["fv"]*v["qty"]*v["keep"]    # 보상원가 (가득 예상 수량)
             if md == "cash":
@@ -526,7 +648,10 @@ def value(tm) -> dict:
     fair = sum(r["fair"] for r in out_rows)
     cost = sum(r["cost"] for r in out_rows)
     raw = dict(mode=md, rows=out_rows, qty=qty, fair=fair, cost=cost, fv_avg=fair/qty if qty else 0.0,
-               qbad=any(r["qbad"] for r in out_rows + before_rows))
+               qbad=any(r["qbad"] for r in out_rows + before_rows), choice=choice(tm))
+    if choice(tm):
+        raw["compare"] = {k: sum(r[f] * r["qty"] for r in out_rows)
+                          for k, f in (("stock", "fv_stock"), ("price", "fv_price"), ("min", "fv"))}
     if md == "mod":
         raw["before_rows"] = before_rows
         raw["grant_cost"] = sum(r["grant_cost"] for r in out_rows)
@@ -590,6 +715,9 @@ def integrity(tm, raw) -> list[str]:
         if int(tm.so_ex) == 0 and tm.so_exit == 0 and not conditioned(r) and r["bs_end"] > 1e-6*S0:
             if abs(r["fv"] - r["bs_end"]) > BS_TOL*r["bs_end"] + 1e-9*S0:
                 bad.append(f"{r['name']} 유럽형 격자값과 블랙-숄즈 값의 수렴")
+    for r in raw["rows"]:
+        if "fv_stock" in r and not choice_ok(r, S0):
+            bad.append(f"{r['name']} 회사 선택 값이 주가 기준·정산가격 기준 값보다 큼")
     for b in raw.get("before_rows", []):
         if not (0 <= b["fv"] <= S0*(1 + 1e-9)) or not math.isfinite(b["fv"]):
             bad.append(f"{b['name']} 변경 전 공정가치 범위(0 ~ 주가)")
@@ -600,8 +728,14 @@ def integrity(tm, raw) -> list[str]:
 
 
 def conditioned(r) -> bool:
-    """시장조건·비가득조건이 들어간 회차 — 조건 없는 블랙-숄즈 값과 같을 까닭이 없다."""
-    return bool(r.get("mkt")) or bool(r.get("nv_step"))
+    """시장조건·비가득조건·정산가격이 들어간 회차 — 조건 없는 블랙-숄즈 값과 같을 까닭이 없다."""
+    return bool(r.get("mkt")) or bool(r.get("nv_step")) or r.get("payoff", "stock") != "stock"
+
+
+def choice_ok(r, S0) -> bool:
+    """③ 회사 선택 ≤ ① 주가 기준, ③ ≤ ② 정산가격 기준 — 받는 금액이 둘 다보다 크지 않다."""
+    tol = 1e-9*max(1.0, S0)
+    return r["fv"] <= r["fv_stock"] + tol and r["fv"] <= r["fv_price"] + tol
 
 
 def sched_total(raw):
@@ -632,6 +766,9 @@ def checks(tm, raw) -> list[dict]:
              detail={"mod": "회계연도별 비용의 합 = 당초 보상원가 + 증분 보상원가",
                      "cash": "회차별 부채의 합 = 결산일 주식보상부채"}.get(raw.get("mode"), "회계연도별 비용의 합 = 총 보상원가")),
     ]
+    if raw.get("choice"):
+        out.append(dict(name="회사 선택 ≤ 주가 기준 · ≤ 정산가격 기준", passed=all(choice_ok(r, S0) for r in rows_),
+                        detail="행사 손익 작은 값(주가, 정산가격) − 행사가격은 주가 기준·정산가격 기준 손익보다 크지 않음"))
     if raw.get("mode") == "mod":
         out.append(dict(name="증분 공정가치 (음수 없음)", passed=all(r["incr"] >= 0 for r in rows_),
                         detail="증분 = 큰 값(변경 후 − 변경 전, 0) — 줄어든 공정가치는 인식하지 않음 (문단 27)"))
@@ -646,6 +783,17 @@ def checks(tm, raw) -> list[dict]:
     return out
 
 
+def node_ex(row, S, K, i) -> float:
+    """노드에서 행사하면 받는 금액 — value_row 의 payoff 와 같다."""
+    pay = row.get("payoff", "stock")
+    if pay == "stock":
+        return S - K
+    P = (row.get("sp") or [None]*(i + 1))[i]
+    if P is None:
+        return -math.inf
+    return (P if pay == "price" else min(S, P)) - K
+
+
 def node_trace(tm, row: dict, i: int, j: int) -> dict:
     """한 노드의 계산을 풀어 쓴다 — 새로 평가하지 않고 value_row 가 남긴 격자를 읽는다.
 
@@ -658,14 +806,18 @@ def node_trace(tm, row: dict, i: int, j: int) -> dict:
         raise ValueError(f"노드 범위를 벗어났습니다 (시점 0~{n}, 자리 0~시점).")
     K, dt_ = float(row.get("K") or tm.K0), row["dt"]
     S = row["prices"][i][j]
+    ex = node_ex(row, S, K, i)
+    pay = row.get("payoff", "stock")
     out = dict(step=i, pos=j, time=i*dt_, date=(_date(tm.d_base) + dt.timedelta(days=round(i*dt_*365))).isoformat(),
-               stock=S, strike=K, intrinsic=S - K, value=row["values"][i][j], exercise=bool(row["exercise"][i][j]),
-               vested=i >= row["ex_step"], terminal=i == n)
+               stock=S, strike=K, intrinsic=ex, value=row["values"][i][j], exercise=bool(row["exercise"][i][j]),
+               vested=i >= row["ex_step"], terminal=i == n, payoff=pay,
+               settle_price=(row.get("sp") or [None]*(i + 1))[i] if pay != "stock" else None)
     if i == n:
-        out.update(rule="행사 종료일 — 내가격이면 행사, 아니면 소멸: max(주가 − 행사가격, 0)")
+        out.update(rule=f"행사 종료일 — 내가격이면 행사, 아니면 소멸: max({PAYOFF_TEXT[pay]}, 0)",
+                   reconciliation=out["value"] - max(ex, 0.0))
         if row.get("mkt") == 1 and row.get("vest_step") == n:
             share = float(pass_share(np.array([S]), row["u"], row["target"])[0])
-            out.update(pass_share=share, forfeit=share < 1.0, reconciliation=out["value"] - share*max(S - K, 0.0))
+            out.update(pass_share=share, forfeit=share < 1.0, reconciliation=out["value"] - share*max(ex, 0.0))
             if share < 1.0:
                 out["rule"] += f" × 목표 주가 이상인 비율 {share:.4f} (가득일 시장조건 판정)"
         if row.get("wait") is not None and n <= row["vest_step"]:
@@ -681,12 +833,12 @@ def node_trace(tm, row: dict, i: int, j: int) -> dict:
     cont = disc*(p*up + (1 - p)*dn)
     e = 1.0 - (1.0 - float(tm.so_exit))**dt_ if out["vested"] else 0.0
     nv = row.get("nv_step", 0.0) if i < row.get("vest_step", 0) else 0.0
-    hold = (1 - e)*(1 - nv)*cont + e*max(S - K, 0.0)
+    hold = (1 - e)*(1 - nv)*cont + e*max(ex, 0.0)
     judged = row.get("mkt") == 1 and i == row.get("vest_step")
     share = float(pass_share(np.array([S]), row["u"], row["target"])[0]) if judged else 1.0
     forfeit = share < 1.0
     went = row["vest_exercise"][j] if judged else out["exercise"]
-    raw_v = S - K if went else hold                    # 시장조건 비율을 곱하기 전 가치
+    raw_v = ex if went else hold                       # 시장조건 비율을 곱하기 전 가치
     want = share*raw_v
     out.update(up=up, down=dn, up_stock=row["prices"][i + 1][j], down_stock=row["prices"][i + 1][j + 1],
                p=p, fwd=f, disc=disc, cont=cont, exit_step=e, nv_step=nv, hold=hold, forfeit=forfeit,
@@ -715,9 +867,15 @@ def node_trace(tm, row: dict, i: int, j: int) -> dict:
                        + (" × (1 − 비가득조건 중단 확률)" if nv else ""))
     elif out["exercise"]:
         out["rule"] = {1: "지금 행사 가치가 계속 보유 가치보다 커서 행사",
-                       2: f"주가가 행사가격의 {float(tm.so_mult):g}배 이상이라 행사"}.get(int(tm.so_ex), "행사")
+                       2: f"주가가 행사가격의 {float(tm.so_mult):g}배 이상이라 행사",
+                       3: f"만기 {float(getattr(tm, 'so_ex_m', 0.0)):g}개월 전부터 — 내가격이라 행사"}.get(int(tm.so_ex), "행사")
+    elif int(tm.so_ex) == 3 and i < row.get("late_step", n):
+        out["rule"] = (f"만기 {float(getattr(tm, 'so_ex_m', 0.0)):g}개월 전(시점 {row.get('late_step')}) 전이라 행사하지 않고 계속 보유"
+                       + (" (퇴사하면 그때 내가격분만 받음)" if e > 0 else ""))
     else:
         out["rule"] = "계속 보유" + (" (퇴사하면 그때 내가격분만 받음)" if e > 0 else "")
+    if pay != "stock" and out["settle_price"] is not None:
+        out["rule"] += f" · 행사하면 받는 금액 = {PAYOFF_TEXT[pay]} (정산가격 {out['settle_price']:,.2f}원)"
     return out
 
 
@@ -750,13 +908,30 @@ def summary_rows(tm, raw) -> list[dict]:
                                                              if any(r.get("target") for r in raw["rows"]) else {}),
              **({"목표 도달 (측정기준일 전)": "예" if x.get("hit") else ""} if any(r.get("hit") for r in raw["rows"]) else {}),
              "구간 수": x["n"],
-             "1주당 공정가치": x["fv"], "블랙-숄즈(행사 종료일)": x["bs_end"],
+             "1주당 공정가치": x["fv"], **({"① 주가 기준 1주당": x["fv_stock"], "② 정산가격 기준 1주당": x["fv_price"]}
+                                          if "fv_stock" in x else {}),
+             "블랙-숄즈(행사 종료일)": x["bs_end"],
              "기대존속기간(년)": x["life"], "공정가치": x["fair"], "보상원가": x["cost"]} for x in raw["rows"]]
     if md == "cash":
         for b, x in zip(base, raw["rows"]):
             b.pop("보상원가")
             b.update({"가득 예상 수량의 공정가치": x["cost"], "근무 경과율": x["service"], "주식보상부채": x["liab"]})
     return base
+
+
+COMPARE_HEADS = ("회차", "부여 수량", "① 주가 기준 1주당", "② 정산가격 기준 1주당", "③ 회사 선택 1주당",
+                 "① 주가 기준 공정가치", "② 정산가격 기준 공정가치", "③ 회사 선택 공정가치")
+
+
+def compare_rows(raw) -> list[dict]:
+    """회사 선택 결제의 비교표 — 회차마다 ①②③ 1주당과 부여 수량 전체, 마지막 줄은 합계."""
+    out = []
+    for r in raw["rows"]:
+        out.append(dict(zip(COMPARE_HEADS, (r["name"], r["qty"], r["fv_stock"], r["fv_price"], r["fv"],
+                                            r["fv_stock"]*r["qty"], r["fv_price"]*r["qty"], r["fv"]*r["qty"]))))
+    c = raw["compare"]
+    out.append(dict(zip(COMPARE_HEADS, ("합계", raw["qty"], None, None, None, c["stock"], c["price"], c["min"]))))
+    return out
 
 
 def summary_schedule(tm, raw) -> list[dict]:

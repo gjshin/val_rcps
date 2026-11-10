@@ -1,8 +1,11 @@
 """주식선택권 상세 조서 — 전환사채·상환전환우선주 상세 조서(legacy.build_xlsx)와 같은 서식으로 만든다.
 
-시트: 해설 → 가정 → 격자(회차마다 한 장) → 결과 → 비용 배분 → 회계처리 → 금리곡선.
+시트: 해설 → 가정 → (정산가격 경로) → 격자(회차마다 한 장, 회사 선택 결제면 선택 시트가 뒤따른다) → 결과
+→ 비용 배분 → 회계처리 → 금리곡선.
 격자 시트는 전환사채 조서처럼 1~17행에 시점별 공통조건을 두고, 그 아래 ① 주가 · ② 옵션 가치
 (· ③ 목표 주가 미도달 상태) 트리를 싣는다. 행 번호 r 은 하락 횟수다.
+회사 선택 결제(주식 교부 또는 정산가격 차액 현금 — 싼 쪽)면 «선택» 시트가 노드마다 받는 금액
+X = 작은 값(주가, 정산가격) − 행사가격 을 계산하고, 격자 시트의 ② 옵션 가치트리가 그 칸을 쓴다.
 
 값 조서는 평가 당시의 값을, 수식 조서는 같은 시트·같은 칸에 엔진과 같은 순서의 수식을 넣는다.
 수식 조서를 다시 계산하면 값 조서와 같은 값이 나와야 한다 (tests/test_stock_option.py 가 리브레오피스로 대조).
@@ -33,6 +36,7 @@ _THIN = Side(style="thin", color="BFC7D0")
 BOX = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 
 ASSUME = '가정'
+PRICE = '정산가격 경로'
 RESULT = '결과'
 SCHED = '비용 배분'
 JOURNAL = '회계처리'
@@ -139,9 +143,13 @@ def guide_sheet(w, wb, run):
     H.column_dimensions["B"].width = 24
     H.column_dimensions["C"].width = 100
     w.title(H, 2, "이 조서를 읽는 법", span=2)
+    choice = SO.choice(t)
+    xt = "작은 값(주가, 정산가격) − 행사가격" if choice else "주가 − 행사가격"
     ex_text = {0: "만기에만 행사 (유럽형) — 행사 종료일 전에는 H 를 그대로 씁니다.",
-               1: "가득 뒤 최적 행사 — 큰 값(주가 − 행사가격, H).",
-               2: f"행사 배수에 도달하면 행사 — 주가 ≥ {float(t.so_mult):g} × 행사가격이고 내가격이면 주가 − 행사가격, 아니면 H."
+               1: f"가득 뒤 최적 행사 — 큰 값({xt}, H).",
+               2: f"행사 배수에 도달하면 행사 — 주가 ≥ {float(t.so_mult):g} × 행사가격이고 {xt} > 0 이면 {xt}, 아니면 H.",
+               3: f"만기 {float(getattr(t, 'so_ex_m', 0.0)):g}개월 전부터 행사 — 그 시점(회차마다 격자 시트 아래 메모) 뒤 "
+                  f"노드에서 {xt} > 0 이면 {xt}, 그 전이나 0 이하면 H."
                }[int(t.so_ex)]
     mkt_text = {0: "이 평가에는 시장조건이 없습니다.",
                 1: "가득일 판정 — 가득 시점 노드에서 주가가 목표 미만이면 0 입니다. 목표가 걸친 노드는 그 노드가 대표하는 로그 주가 "
@@ -150,7 +158,8 @@ def guide_sheet(w, wb, run):
                 2: "한 번이라도 판정 — ③ 목표 주가 미도달 상태 가치트리: 목표에 닿은 노드는 ② 옵션 가치, 가득 시점까지 못 닿으면 0, "
                    "그 사이는 다음 시점의 미도달 상태 가치를 할인합니다. 격자 노드(계산 간격)마다 관찰하며, 시점 0의 값이 "
                    "1주당 공정가치입니다."}[mkt]
-    flow = "가정 → 격자 (회차마다 한 장) → 결과 → 비용 배분 → 회계처리 → 금리곡선"
+    flow = ("가정 → 정산가격 경로 → 격자·선택 (회차마다 한 장씩) → 결과 → 비용 배분 → 회계처리 → 금리곡선" if choice else
+            "가정 → 격자 (회차마다 한 장) → 결과 → 비용 배분 → 회계처리 → 금리곡선")
     kind = {'grant': "부여일 평가입니다.",
             'mod': "조건 변경 평가입니다 — 회차마다 같은 날·같은 시장자료로 잰 변경 후·변경 전 격자가 따로 있습니다.",
             'cash': "현금결제형 결산일 재측정입니다 — 결산일의 시장자료로 다시 잰 격자입니다."}[md]
@@ -176,14 +185,25 @@ def guide_sheet(w, wb, run):
           ("빈칸", "그 시점에는 존재하지 않는 노드입니다."),
           ("", ""),
           ("계산 순서", ""),
-          ("행사 종료일부터", "행사 종료일에는 내가격이면 행사, 아니면 소멸합니다: 큰 값(주가 − 행사가격, 0)."),
+          ("행사 종료일부터", f"행사 종료일에는 받는 금액이 0보다 크면 행사, 아니면 소멸합니다: 큰 값({xt}, 0)."),
           ("한 시점씩 앞으로", "계속 보유 C = 할인계수 × [q × 위 노드 가치 + (1 − q) × 아래 노드 가치]."),
           ("가득 전", "비가득조건이 있으면 C × (1 − 구간 중단 확률). 행사 시작 전에는 행사할 수 없어 이 값이 노드 가치입니다."),
-          ("행사 시작 뒤", "퇴사 반영 H = (1 − 구간 퇴사 확률) × C + 구간 퇴사 확률 × 큰 값(주가 − 행사가격, 0). "
+          ("행사 시작 뒤", f"퇴사 반영 H = (1 − 구간 퇴사 확률) × C + 구간 퇴사 확률 × 큰 값({xt}, 0). "
                         "조기행사 가정: " + ex_text),
           ("시장조건", mkt_text),
           ("순환참조가 없는 이유", "각 칸은 같은 시점의 값과 다음 시점의 계산 결과만 참조하므로 순환참조가 발생하지 않습니다."),
           ("", ""),
+          *([("회사 선택 결제", ""),
+             ("받는 금액 X", "행사하면 회사가 주식 교부(주가 − 행사가격)와 정산가격 차액 현금(정산가격 − 행사가격) 가운데 싼 쪽을 "
+                          "고른다고 봅니다: X = 작은 값(주가, 정산가격) − 행사가격. «선택» 시트가 노드마다 X 를 계산하고, 격자 "
+                          "시트의 ② 옵션 가치트리는 주가 − 행사가격 대신 그 칸을 씁니다."),
+             ("정산가격", "«정산가격 경로» 시트의 확정일·정산가격 표에서 노드 날짜의 직전(같은 날 포함) 확정값을 씁니다. 확정일 "
+                        "사이에는 마지막 확정값 그대로입니다."),
+             ("①·②·③ 비교", "① 주가 기준 (주식결제 상한) · ② 정산가격 기준 (현금결제 민감도) · ③ 회사 선택 반영 (주 결과). "
+                           "같은 격자에서 받는 금액만 다릅니다. ③ 은 ① 과 ② 보다 크지 않아야 합니다 (결과 시트 4번 표)."),
+             ("회계 근거", "현금으로 결제할 현재의무가 없으면 주식결제형으로 회계처리합니다 (K-IFRS 1102 문단 41~43). 결제할 때 "
+                         "공정가치가 더 큰 방식을 고르면 그 초과분을 추가 비용으로 인식합니다 (문단 43(3))."),
+             ("", "")] if choice else []),
           ("근무조건과 비시장 성과조건", ""),
           ("수량에 반영", "근무조건·비시장 성과조건은 1주당 공정가치가 아니라 가득 예상 비율(수량)에 반영합니다 (문단 19·20). "
                        "보상원가 = 1주당 공정가치 × 부여 수량 × 가득 예상 비율."),
@@ -191,7 +211,9 @@ def guide_sheet(w, wb, run):
           ("이 파일의 성격", ""),
           ("값 조서", "앱이 계산한 결과를 값으로 담았습니다. 수식이 아니므로 칸을 바꿔도 다시 계산되지 않습니다."),
           ("수식 조서", "같은 시트·같은 칸에 엔진과 같은 순서의 수식이 들어 있습니다. 고치지 않고 열면 값 조서와 같은 값입니다. "
-                     "가정 시트의 노란 칸만 고칠 수 있고, 날짜·행사가격·수량·구간 수·금리는 앱에서 바꾼 뒤 조서를 다시 만듭니다.")]
+                     "가정 시트의 노란 칸만 고칠 수 있고, 날짜·행사가격·수량·구간 수·금리는 앱에서 바꾼 뒤 조서를 다시 만듭니다."
+                     + (" 정산가격 경로 시트의 정산가격도 노란 칸입니다. ①·② 비교값은 앱이 잰 고정값이라 입력을 바꾸면 ③ 만 "
+                        "다시 계산됩니다." if choice else ""))]
     r = 4
     for a, b in ex:
         if a and not b:
@@ -273,8 +295,11 @@ def assumption_sheet(w, wb, run):
     block("3. 평가방법", [
         ("평가모형", "이항격자 (CRR) — 회차마다 따로 · 블랙-숄즈 대조", None),
         ("계산 간격", f"{t.grid_days:g}일" if t.grid_days else f"{t.gap_m:g}개월", None),
-        ("조기행사 가정", SO.EX_LABELS[int(t.so_ex)] + (f" · 행사 배수 {t.so_mult:g}배" if int(t.so_ex) == 2 else ""), None),
+        ("조기행사 가정", SO.ex_label(t) + (f" · 행사 배수 {t.so_mult:g}배" if int(t.so_ex) == 2 else ""), None),
         ("시장조건 판정", SO.MKT_LABELS[int(getattr(t, 'so_mkt', 0))], None),
+        *([("행사할 때 받는 금액", SO.PAYOFF_TEXT['min'] + " — 회사가 싼 쪽을 고른다고 봄", None),
+           ("정산가격 결정 방식", getattr(t, 'so_sp_note', '') or "미기록", None),
+           ("정산가격 출처", getattr(t, 'so_sp_src', '') or "미기록", None)] if SO.choice(t) else []),
         ("무위험 금리곡선", ("만기수익률 곡선" if t.y_type == "par" else "현물이자율 곡선") + f" · 연 {t.cmp_rf}회", None),
         ("금리곡선 출처", sources.get('rf_curve', '미기록'), None),
         ("주가 출처", t.s0_src or sources.get('S0', '직접 입력'), None),
@@ -334,8 +359,11 @@ def assumption_sheet(w, wb, run):
 
 # ── 격자 ─────────────────────────────────────────────────────────────────
 
-def lattice_sheet(w, wb, run, row, name, title, refs):
-    """한 회차의 격자 — 1~17행 공통조건, ① 주가, ② 옵션 가치, (③ 목표 주가 미도달 상태). 돌려주는 값은 뿌리 칸."""
+def lattice_sheet(w, wb, run, row, name, title, refs, sel=None):
+    """한 회차의 격자 — 1~17행 공통조건, ① 주가, ② 옵션 가치, (③ 목표 주가 미도달 상태). 돌려주는 값은 뿌리 칸.
+
+    sel — 회사 선택 결제면 받는 금액 X 를 계산하는 «선택» 시트 이름 (② 옵션 가치트리가 그 칸을 쓴다).
+    """
     t = run.terms
     n, dt_ = row['n'], row['dt']
     W = wb.create_sheet(name)
@@ -374,8 +402,10 @@ def lattice_sheet(w, wb, run, row, name, title, refs):
             g(HR['구간 비가득조건 중단 확률'], row['nv_step'] if i < vest_step else 0.0, P4)
     trees = [(pos['stock'], "① 주가트리  S = S0 × u^(스텝−r) × d^r", "위로 갈수록 주가 상승 횟수가 많은 경로다.",
               row['prices'], n),
-             (pos['value'], "② 옵션가치트리  V = 행사(주가 − 행사가격)와 계속 보유 가운데 조기행사 가정이 고른 값",
-              "주황 칸은 그 노드에서 행사한다.", row['values'], n)]
+             (pos['value'], "② 옵션가치트리  V = 행사(" + ("작은 값(주가, 정산가격) − 행사가격 — 선택 시트" if sel else
+                                                  "주가 − 행사가격") + ")와 계속 보유 가운데 조기행사 가정이 고른 값",
+              "주황 칸은 그 노드에서 행사한다." + (" 수식 조서는 칠하지 않는다 — 값 조서에서 본다." if sel else ""),
+              row['values'], n)]
     if row.get('wait') is not None:
         trees.append((pos['wait'], "③ 목표 주가 미도달 상태 가치트리  W — 목표에 닿으면 ② 의 값, 가득 시점까지 못 닿으면 0",
                       f"가득 시점 {vest_step}까지만 있다. 시점 0의 값이 1주당 공정가치다.", row['wait'], vest_step))
@@ -394,22 +424,25 @@ def lattice_sheet(w, wb, run, row, name, title, refs):
                 go = mark and row['exercise'][i][r] and not w.formula
                 w.put(W, r0 + r, 3 + i, grid[i][r], fmt=N2, size=8, align="right", fill=(RFXC if go else None))
     end = (pos['wait'] + vest_step) if row.get('wait') is not None else (pos['value'] + n)
+    late = int(row.get('late_step', n))
     w.note(W, end + 2, "r 은 하락 횟수. 위로 갈수록 주가가 높다. 주황 열은 가득 시점이다."
-           + (" 측정기준일 전에 목표 주가에 닿아 시장조건을 채운 회차라 보통 격자로 잰다." if row.get('hit') else ""))
-    w.put(W, end + 3, 2, "이 시트가 참조하는 시트: 가정", color=GREEN, size=9)
+           + (" 측정기준일 전에 목표 주가에 닿아 시장조건을 채운 회차라 보통 격자로 잰다." if row.get('hit') else "")
+           + (f" «{SO.ex_label(t)}» — 시점 {late}부터 받는 금액이 0보다 크면 행사한다." if int(t.so_ex) == 3 else ""))
+    w.put(W, end + 3, 2, "이 시트가 참조하는 시트: 가정" + (f", {sel} (받는 금액)" if sel else ""), color=GREEN, size=9)
     W.freeze_panes = "C20"
     if w.formula:
-        formula_lattice(w, W, run, row, refs)
+        formula_lattice(w, W, run, row, refs, sel)
     root = pos['wait'] if row.get('wait') is not None else pos['value']
     return f"C{root}"
 
 
-def formula_lattice(w, W, run, row, refs):
-    """격자 칸마다 엔진(value_row)과 같은 순서의 수식."""
+def formula_lattice(w, W, run, row, refs, sel=None):
+    """격자 칸마다 엔진(value_row)과 같은 순서의 수식. sel 이 있으면 받는 금액은 선택 시트의 같은 자리 칸이다."""
     t, n = run.terms, row['n']
     pos = layout(n)
     S0, SIG, Q, MULT, EXIT, NV = (refs[k] for k in ('S0', 'sig', 'div_y', 'so_mult', 'so_exit', 'so_nv'))
     mkt, vest_step, ex_step, mode = int(row.get('mkt') or 0), int(row['vest_step']), int(row['ex_step']), int(t.so_ex)
+    late = int(row.get('late_step', n))
     R0, R1, R2 = pos['stock'], pos['value'], pos['wait']
     h = HR
     for i in range(n + 1):
@@ -434,31 +467,37 @@ def formula_lattice(w, W, run, row, refs):
         for r in range(i + 1):
             w.fx(W, R0 + r, 3 + i, f"={S0}*{U}^({i - 2*r})")
             S = f"{c}{R0 + r}"
+            X = f"{_q(sel)}!{c}{SEL_TREE + r}" if sel else f"{S}-{K}"     # 행사하면 받는 금액
             if i == n:
-                f = f"=MAX({S}-{K},0)"
+                f = f"=MAX({X},0)"
             else:
                 c1 = gl(4 + i)
                 cont = f"{DF}*({P}*{c1}{R1 + r}+{NP}*{c1}{R1 + r + 1})"
                 if i < ex_step:
                     f = f"=(1-{NVS})*({cont})"          # 가득 전 비가득조건 (가득 뒤·중단율 0이면 그대로)
                 else:
-                    Hh = f"((1-{E})*({cont})+{E}*MAX({S}-{K},0))"
+                    Hh = f"((1-{E})*({cont})+{E}*MAX({X},0))"
                     if mode == 1:
-                        f = f"=IF({S}-{K}>{Hh}+1E-12*MAX(1,ABS({Hh})),{S}-{K},{Hh})"
+                        f = f"=IF({X}>{Hh}+1E-12*MAX(1,ABS({Hh})),{X},{Hh})"
                     elif mode == 2:
-                        f = f"=IF(AND({S}>={MULT}*{K}-1E-12*{K},{S}-{K}>0),{S}-{K},{Hh})"
+                        f = f"=IF(AND({S}>={MULT}*{K}-1E-12*{K},{X}>0),{X},{Hh})"
+                    elif mode == 3 and i >= late:
+                        f = f"=IF({X}>0,{X},{Hh})"      # 만기 N개월 전부터 — 받는 금액이 있으면 행사
                     else:
                         f = f"={Hh}"
             if mkt == 1 and i == vest_step:
                 # 가득일 주가가 목표 미만이면 소멸 — 목표가 걸친 노드는 구간 가운데 목표 이상인 비율만큼 (엔진 pass_share)
                 f = f"=MIN(1,MAX(0,(LN({S})+LN({Uc})-LN({TGT}))/(2*LN({Uc}))))*({f[1:]})"
             w.fx(W, R1 + r, 3 + i, f)
-    # 행사 노드 색 — 행사할 수 있는 시점에서 옵션 가치가 지금 행사한 값(주가 − 행사가격 > 0)과 같은 칸
+    # 행사 노드 색 — 행사할 수 있는 시점에서 옵션 가치가 지금 행사한 값(주가 − 행사가격 > 0)과 같은 칸.
+    # 회사 선택 결제는 받는 금액이 다른 시트에 있어 조건부 서식으로 칠하지 않는다 (다른 시트를 가리키는 조건부 서식은
+    # 엑셀 판마다 열리지 않을 수 있다) — 값 조서의 주황 칸으로 본다.
     last = gl(3 + n)
-    rule = FormulaRule(formula=[f"AND(C${h['행사 가능 (1=예)']}=1,C{R0}-C${h['행사가격']}>0,"
+    rule = None if sel else FormulaRule(formula=[f"AND(C${h['행사 가능 (1=예)']}=1,C{R0}-C${h['행사가격']}>0,"
                                 f"ABS(C{R1}-(C{R0}-C${h['행사가격']}))<=1E-9*MAX(1,ABS(C{R1})))"],
                        fill=PatternFill("solid", fgColor=RFXC))
-    W.conditional_formatting.add(f"C{R1}:{last}{R1 + n}", rule)
+    if rule is not None:
+        W.conditional_formatting.add(f"C{R1}:{last}{R1 + n}", rule)
     if mkt == 2:
         for i in range(vest_step + 1):
             c = gl(3 + i)
@@ -474,6 +513,101 @@ def formula_lattice(w, W, run, row, refs):
                     c1 = gl(4 + i)
                     f = f"=IF({hit},{V},(1-{NVS})*({DF}*({P}*{c1}{R2 + r}+{NP}*{c1}{R2 + r + 1})))"
                 w.fx(W, R2 + r, 3 + i, f)
+
+
+# ── 회사 선택 결제 — 정산가격 경로 · 선택 ──────────────────────────────────
+
+# 선택 시트 1~4행 — 격자 시트와 같은 열(스텝)에 둔다
+SEL_HEAD = ('날짜', '스텝(노드 번호)', '정산가격 P (직전 확정값)', '행사가격 K')
+SR = {h: i + 1 for i, h in enumerate(SEL_HEAD)}
+SEL_TREE = 8                                   # 6행 제목, 7행 스텝, 8행부터 노드 (r = 하락 횟수)
+
+
+def price_sheet(w, wb, run):
+    """정산가격 경로 — 확정일·정산가격 표 (수식 조서에서는 정산가격이 노란 칸). 돌려주는 값은 찾기 범위."""
+    t = run.terms
+    P = wb.create_sheet(PRICE)
+    P.sheet_view.showGridLines = False
+    for cc, wd in (("B", 22), ("C", 18), ("D", 70)):
+        P.column_dimensions[cc].width = wd
+    w.title(P, 2, "정산가격 경로 — 회사 선택 결제", span=3)
+    w.note(P, 3, "회사는 행사 때 주식 교부(주가 − 행사가격)와 정산가격 차액 현금(정산가격 − 행사가격) 가운데 싼 쪽을 "
+                 "고른다고 본다. 받는 금액 = 작은 값(주가, 정산가격) − 행사가격.")
+    w.sec(P, 5, "1. 정산가격 표 — 확정일마다 한 번 정해지고 다음 확정일까지 그대로", span=3)
+    w.head(P, 6, 2, ['확정일', '정산가격(원)'])
+    path = SO.sp_path(t)
+    r = 7
+    for d, price in path:
+        w.put(P, r, 2, d, fmt=DATE, align="center", border=True)
+        w.value_in(P, r, 3, float(price), IN_NUM)
+        r += 1
+    last = r - 1
+    r += 1
+    w.sec(P, r, "2. 정산가격의 근거", span=3)
+    r += 1
+    for nm, v in (("결정 방식", getattr(t, 'so_sp_note', '') or "미기록"),
+                  ("출처", getattr(t, 'so_sp_src', '') or "미기록"),
+                  ("노드에 쓰는 값", "노드 날짜의 직전(같은 날 포함) 확정값. 첫 확정일 전 노드는 행사할 수 없는 구간이다 "
+                                "(첫 확정일은 행사 시작일보다 늦지 않아야 한다)."),
+                  ("회계 근거", "현금으로 결제할 현재의무가 없으면 주식결제형으로 회계처리한다 (K-IFRS 1102 문단 41~43). "
+                              "결제할 때 공정가치가 더 큰 방식을 고르면 그 초과분을 추가 비용으로 인식한다 (문단 43(3)).")):
+        w.put(P, r, 2, nm, bold=True, size=9, border=True)
+        w.put(P, r, 3, v, size=9, wrap=True, border=True)
+        P.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+        P.row_dimensions[r].height = 30
+        r += 1
+    w.note(P, r + 1, "이 표를 쓰는 시트: 선택 (회차마다). 수식 조서에서는 정산가격(노란 칸)을 바꾸면 선택 · 격자 · 결과가 다시 "
+                     "계산된다. 확정일은 앱에서 바꾼다.")
+    return dict(dates=f"{_q(PRICE)}!$B$7:$B${last}", prices=f"{_q(PRICE)}!$C$7:$C${last}")
+
+
+def choice_sheet(w, wb, run, row, name, lat, refs):
+    """회사 선택 행사가치 격자 — 노드마다 X = 작은 값(주가, 정산가격) − 행사가격. 격자 시트와 같은 열·같은 r."""
+    t = run.terms
+    n, dt_ = row['n'], row['dt']
+    X = wb.create_sheet(name)
+    X.sheet_view.showGridLines = False
+    X.column_dimensions["B"].width = 26
+    for i in range(n + 1):
+        X.column_dimensions[gl(3 + i)].width = 10
+    K = float(row.get('K') or t.K0)
+    sp = row.get('sp') or [None]*(n + 1)
+    for h, r in SR.items():
+        w.put(X, r, 2, h, bold=True, size=8, fill=LIGHT, border=True)
+    for i in range(n + 1):
+        g = lambda r, v, fm=None, col="000000", i=i: w.put(X, r, 3 + i, v, fmt=fm, align="center", size=8, color=col)
+        g(SR['날짜'], SO.node_date(t, i, dt_), DATE, GREY)
+        g(SR['스텝(노드 번호)'], i, N0)
+        g(SR['정산가격 P (직전 확정값)'], "확정 전" if sp[i] is None else float(sp[i]), None if sp[i] is None else N2)
+        g(SR['행사가격 K'], K, N2)
+    w.title(X, SEL_TREE - 2, "회사 선택 행사가치 격자  X = 작은 값(주가, 정산가격) − 행사가격", span=min(n + 1, 14))
+    w.put(X, SEL_TREE - 2, 3 + min(n + 1, 14), "격자 시트 ① 주가트리의 같은 자리 주가와 3행의 정산가격 가운데 작은 값에서 "
+                                                "행사가격을 뺀다. 0 이하면 행사하지 않는다.", color=GREY, size=9)
+    w.put(X, SEL_TREE - 1, 2, "하락 횟수 r ＼ 스텝", bold=True, size=8, fill=LIGHT, border=True, align="center")
+    for i in range(n + 1):
+        w.put(X, SEL_TREE - 1, 3 + i, i, bold=True, size=8, fmt=N0, align="center", fill=LIGHT, border=True)
+    for r in range(n + 1):
+        w.put(X, SEL_TREE + r, 2, r, bold=True, size=8, fmt=N0, align="center", fill=LIGHT, border=True)
+    for i in range(n + 1):
+        if sp[i] is None:
+            continue                           # 첫 확정일 전 — 행사할 수 없는 구간이라 받는 금액이 없다
+        for r in range(i + 1):
+            w.put(X, SEL_TREE + r, 3 + i, min(row['prices'][i][r], float(sp[i])) - K, fmt=N2, size=8, align="right")
+    w.note(X, SEL_TREE + n + 2, "r 은 하락 횟수. 빈 열은 첫 정산가격 확정일 전이다 (행사 시작 전이라 쓰지 않는다).")
+    w.put(X, SEL_TREE + n + 3, 2, f"이 시트가 참조하는 시트: {lat} (주가), {PRICE}", color=GREEN, size=9)
+    w.put(X, SEL_TREE + n + 4, 2, f"이 시트를 쓰는 시트: {lat} (② 옵션 가치트리)", color=GREEN, size=9)
+    X.freeze_panes = f"C{SEL_TREE}"
+    if not w.formula:
+        return
+    R0 = layout(n)['stock']
+    for i in range(n + 1):
+        if sp[i] is None:
+            continue
+        c = gl(3 + i)
+        w.fx(X, SR['정산가격 P (직전 확정값)'], 3 + i, f"=LOOKUP({c}${SR['날짜']},{refs['sp']['dates']},{refs['sp']['prices']})")
+        w.fx(X, SR['행사가격 K'], 3 + i, f"={_q(lat)}!{c}${HR['행사가격']}")
+        for r in range(i + 1):
+            w.fx(X, SEL_TREE + r, 3 + i, f"=MIN({_q(lat)}!{c}{R0 + r},{c}${SR['정산가격 P (직전 확정값)']})-{c}${SR['행사가격 K']}")
 
 
 # ── 결과 ─────────────────────────────────────────────────────────────────
@@ -542,6 +676,29 @@ def result_sheet(w, wb, run):
              'cash': "부채 = 1주당 공정가치 × 부여 수량 × 가득 예상 비율 × 근무 경과율. 결산일마다 다시 잰다 (문단 30)."}
     w.note(R, r + 1, notes[md])
     w.note(R, r + 2, "블랙-숄즈 값은 조기행사·퇴사·조건이 없을 때의 대조값이다. 만기에만 행사하고 조건이 없으면 격자값과 같아야 한다.")
+    if raw.get('choice'):
+        r += 4
+        w.sec(R, r, "4. 결제방식 비교 — ① 주가 기준 · ② 정산가격 기준 · ③ 회사 선택 반영 (주 결과)", span=span)
+        tol = 1e-9*max(1.0, float(t.S0))
+        ok = lambda a, b: "맞음" if a is None or a <= b + tol else "확인"
+        body = []
+        for x in SO.compare_rows(raw):
+            v = [x[h] for h in SO.COMPARE_HEADS]
+            if x['회차'] == '합계':
+                v += ["맞음" if all(SO.choice_ok(y, float(t.S0)) for y in raw['rows']) else "확인"] * 2
+            else:
+                v += [ok(x['③ 회사 선택 1주당'], x['① 주가 기준 1주당']), ok(x['③ 회사 선택 1주당'], x['② 정산가격 기준 1주당'])]
+            body.append(v)
+        heads = list(SO.COMPARE_HEADS) + ['③ ≤ ①', '③ ≤ ②']
+        out['cmp_cols'], out['cmp_first'] = _table(w, R, r + 1, heads, body, total=True,
+                                                   fmts={'부여 수량': N0})
+        out['cmp_total'] = out['cmp_first'] + len(body) - 1
+        r = out['cmp_total'] + 2
+        w.note(R, r, "같은 격자에서 행사할 때 받는 금액만 다르다 — ① 주가 − 행사가격 · ② 정산가격 − 행사가격 · ③ 작은 값(주가, "
+                     "정산가격) − 행사가격. ③ 이 보상원가에 쓰는 주 결과다.")
+        w.note(R, r + 1, "③ 은 ① 주식결제 상한과 ② 현금결제 민감도보다 크지 않아야 한다. 정산가격이 아주 크면 ③ = ①, 아주 "
+                         "작으면 ③ 은 ② 에 가깝다. ①·② 1주당은 앱이 같은 격자로 잰 값이라 수식 조서에서도 고정값이다 — 수식 "
+                         "조서에서 입력을 바꾸면 ③ 만 다시 계산되므로 앱에서 다시 평가해 맞춘다.")
     R.freeze_panes = "C4"
     return out
 
@@ -671,6 +828,22 @@ def formula_tables(w, wb, run, refs, roots, res, sched, jat):
             put('주식보상부채', f"={cell('가득 예상 수량의 공정가치')}*{cell('근무 경과율')}")
         else:
             put('보상원가', f"={cell('1주당 공정가치')}*{cell('부여 수량')}*{cell('가득 예상 비율')}")
+    if raw.get('choice'):
+        cc, cf, ct = res['cmp_cols'], res['cmp_first'], res['cmp_total']
+        tol = f"1E-9*MAX(1,{S0})"
+        for k, x in enumerate(raw['rows']):
+            rr = cf + k
+            q = lambda h, rr=rr: f"{cc[h]}{rr}"
+            w.fx(R, rr, _col(cc['③ 회사 선택 1주당']), f"={root(x['name'])}")
+            for a, b in (('① 주가 기준 공정가치', '① 주가 기준 1주당'), ('② 정산가격 기준 공정가치', '② 정산가격 기준 1주당'),
+                         ('③ 회사 선택 공정가치', '③ 회사 선택 1주당')):
+                w.fx(R, rr, _col(cc[a]), f"={q(b)}*{q('부여 수량')}")
+            w.fx(R, rr, _col(cc['③ ≤ ①']), f'=IF({q("③ 회사 선택 1주당")}<={q("① 주가 기준 1주당")}+{tol},"맞음","확인")')
+            w.fx(R, rr, _col(cc['③ ≤ ②']), f'=IF({q("③ 회사 선택 1주당")}<={q("② 정산가격 기준 1주당")}+{tol},"맞음","확인")')
+        for h in ('부여 수량', '① 주가 기준 공정가치', '② 정산가격 기준 공정가치', '③ 회사 선택 공정가치'):
+            w.fx(R, ct, _col(cc[h]), f"=SUM({cc[h]}{cf}:{cc[h]}{ct - 1})")
+        for h in ('③ ≤ ①', '③ ≤ ②'):
+            w.fx(R, ct, _col(cc[h]), f'=IF(COUNTIF({cc[h]}{cf}:{cc[h]}{ct - 1},"확인")=0,"맞음","확인")')
     tot_r = res['rows_total']
     total = {}
     for h in SOR.SUM_COLS[md]:
@@ -750,6 +923,9 @@ def key_cells(run, roots, res):
     for name, row in SOR.lattices(run).items():
         sheet, cell = roots[name]
         out.append((f'{name} 1주당 공정가치', sheet, cell, row['fv']))
+    if raw.get('choice'):
+        out.append(('③ 회사 선택 공정가치 합계 (원)', RESULT, f"{res['cmp_cols']['③ 회사 선택 공정가치']}{res['cmp_total']}",
+                    raw['compare']['min']))
     if raw['mode'] == 'mod':
         out.append(('당초 보상원가 (원)', RESULT, f"C{am['grant_cost']}", raw['grant_cost']))
     if raw['mode'] == 'cash':
@@ -764,11 +940,16 @@ def detail_workbook(run, *, accounting=False, formula=False):
     wb.remove(wb.active)
     guide_sheet(w, wb, run)
     refs = assumption_sheet(w, wb, run)
+    if run.raw.get('choice'):
+        refs['sp'] = price_sheet(w, wb, run)
     used = set(wb.sheetnames) | {RESULT, SCHED, JOURNAL, '금리곡선'}
     roots = {}
     for name, row in SOR.lattices(run).items():
         sheet = SOR._sheet_name(f"격자 {name}", used)
-        roots[name] = (sheet, lattice_sheet(w, wb, run, row, sheet, name, refs))
+        sel = SOR._sheet_name(f"선택 {name}", used) if row.get('payoff') == 'min' else None
+        roots[name] = (sheet, lattice_sheet(w, wb, run, row, sheet, name, refs, sel))
+        if sel:
+            choice_sheet(w, wb, run, row, sel, sheet, refs)
     res = result_sheet(w, wb, run)
     sched = schedule_sheet(w, wb, run)
     jat = journal_sheet(w, wb, run) if accounting else None

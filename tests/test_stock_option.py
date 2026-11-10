@@ -29,14 +29,29 @@ def case(**over):
     market = dict(S0=100.0, sig=0.3, div_y=0.0, rf_curve=[[1, 0.03], [5, 0.03]], y_type='spot', cmp_rf=1)
     method = dict(d_base='2026-01-01', so_ex=0, so_mult=2.0, so_exit=0.0, grid_days=7.0, gap_m=1.0, so_prev_liab=-1.0,
                   so_paid=0.0, so_nv=0.0)
+    extra = dict(so_sp_rows=contract, so_sp_note=contract, so_sp_src=contract, so_ex_m=method)   # 쓸 때만 넣는 입력
     for key, value in over.items():
         for group in (contract, market, method):
             if key in group:
                 group[key] = value
                 break
         else:
-            raise KeyError(key)
+            if key not in extra:
+                raise KeyError(key)
+            extra[key][key] = value
     return Case(name='가상 주식선택권', contract=contract, market=market, method=method)
+
+
+# 회사 선택 결제의 가상 정산가격 — 해마다 한 번 확정 (직전 연도말 순자산 기준이라고 가정한 가상 숫자)
+SP = [dict(date='2026-12-31', price=105.0), dict(date='2027-12-31', price=112.0), dict(date='2028-12-31', price=118.0),
+      dict(date='2029-12-31', price=125.0)]
+
+
+def choice_case(**over):
+    base = dict(so_settle=2, so_sp_rows=[dict(x) for x in SP], so_sp_note='직전 연도말 연결 순자산 × 1.2 ÷ 발행주식수 (가상)',
+                so_sp_src='가상 감사보고서', so_ex=1, div_y=0.01, so_exit=0.05, grid_days=14.0)
+    base.update(over)
+    return case(**base)
 
 
 def fv(c):
@@ -272,7 +287,19 @@ def test_cost_schedule_is_day_proportional_and_stops_after_vesting():
 
 
 @pytest.mark.parametrize('over, words', [
-    (dict(so_settle=2), '지원하지 않는 선택값'),
+    (dict(so_settle=3), '지원하지 않는 선택값'),
+    (dict(so_ex=4), '지원하지 않는 선택값'),
+    (dict(so_ex=3), '개월 수는 0보다'),
+    (dict(so_settle=2), '정산가격 표가 필요합니다'),
+    (dict(so_settle=2, so_sp_rows=[dict(date='2026/12/31', price=105.0)]), '확정일은 YYYY-MM-DD'),
+    (dict(so_settle=2, so_sp_rows=[dict(date='2026-12-31', price=-1.0)]), '0 이상의 금액'),
+    (dict(so_settle=2, so_sp_rows=[dict(date='2026-12-31', price='백원')]), '0 이상의 금액'),
+    (dict(so_settle=2, so_sp_rows=[dict(date='2026-12-31', price=1.0), dict(date='2026-12-31', price=2.0)]),
+     '확정일이 겹칩니다'),
+    (dict(so_settle=2, so_sp_rows=[dict(date='2026-12-31', price=1.0, note='가상')]), '형식이 올바르지'),
+    (dict(so_settle=2, so_sp_rows=[dict(date='2028-06-30', price=110.0)]), '첫 확정일'),
+    (dict(so_settle=2, so_sp_rows=SP, so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', grant_fv=10.0)]),
+     '부여일 평가만'),
     (dict(so_settle=1, so_mod=1, d_base='2026-12-31'), '조건 변경 평가를 따로 하지 않습니다'),
     (dict(so_mod=1, d_base='2026-01-01', so_mod_rows=[dict(name='1차', grant_fv=10.0)]), '부여일보다 뒤'),
     (dict(so_mod=1, d_base='2027-01-01', so_mod_rows=[dict(name='1차', K=80.0)]), '부여일 1주당 공정가치'),
@@ -758,6 +785,13 @@ FORMULA_CASES = {
         [dict(name='1차', K=80.0, grant_fv=20.0)], grid_days=14.0, so_ex=1, so_mkt=2, so_nv=0.05,
         rows=[dict(name='1차', vest='2028-01-01', end='', qty=1000.0, keep=0.9, target=130.0)]),
     '현금결제형 · 가득일 판정': lambda: _targeted(cash_case(so_prev_liab=5000.0, grid_days=14.0, so_mkt=1)),
+    # 만기 N개월 전부터 행사 · 회사 선택 결제 (정산가격 경로 · 선택 시트 · 결제방식 비교표까지 수식으로)
+    '만기 N개월 전부터 행사 · 배당 · 퇴사': lambda: case(so_ex=3, so_ex_m=9.0, div_y=0.02, so_exit=0.05, d_mat='2029-07-01',
+                                             so_rows=THREE, grid_days=14.0),
+    '회사 선택 · 최적 행사 · 퇴사': lambda: choice_case(d_mat='2029-07-01', so_rows=THREE),
+    '회사 선택 · 행사 배수': lambda: choice_case(so_ex=2, so_mult=1.15, d_mat='2029-07-01', so_rows=THREE),
+    '회사 선택 · 만기 N개월 전 · 시장조건': lambda: choice_case(so_ex=3, so_ex_m=6.0, so_mkt=1, so_nv=0.03,
+                                                 d_mat='2029-07-01', so_rows=TARGETS),
     '현금결제형 · 한 번이라도 · 측정기준일 전 도달': lambda: _targeted(cash_case(so_prev_liab=5000.0, grid_days=14.0, so_mkt=2),
                                                     hit=True),
 }
@@ -996,3 +1030,204 @@ def test_calculation_grid_reads_the_engine_lattice(mkt, monkeypatch):
     curve = SO.rate_fn(run.terms, r['t_end'])
     assert len(boot['curves']) == 1
     assert all(row['spot'] == pytest.approx(curve(row['t'])) for row in boot['curves'][0]['rows'])
+
+
+# ── 회사 선택 결제 — 주식 교부 또는 정산가격 차액 현금 가운데 싼 쪽 (문단 41~43) · 만기 N개월 전부터 행사 ─────
+
+@pytest.mark.parametrize('ex', [0, 1, 2, 3])
+def test_company_choice_is_below_both_settlement_bases(ex):
+    run = calculate(choice_case(so_ex=ex, so_mult=1.5, so_ex_m=6.0))
+    r = run.raw['rows'][0]
+    assert run.raw['choice'] and run.raw['integrity'] == [] and run.raw['mode'] == 'grant'
+    assert r['payoff'] == 'min'
+    assert r['fv'] <= r['fv_stock'] + 1e-9 and r['fv'] <= r['fv_price'] + 1e-9
+    assert 0 < r['fv'] < min(r['fv_stock'], r['fv_price'])        # 정산가격이 주가 경로 안쪽이라 실제로 낮아진다
+    c = run.raw['compare']
+    assert c == pytest.approx(dict(stock=r['fv_stock']*r['qty'], price=r['fv_price']*r['qty'], min=r['fv']*r['qty']))
+    assert run.raw['fair'] == pytest.approx(c['min'])               # 보상원가는 ③ 으로 잰다
+    assert next(x for x in run.summary['checks'] if x['name'].startswith('회사 선택'))['passed']
+    # ① 은 같은 입력의 주식결제형 값과 같다
+    plain = calculate(case(so_ex=ex, so_mult=1.5, so_ex_m=6.0, div_y=0.01, so_exit=0.05, grid_days=14.0)).raw['rows'][0]
+    assert r['fv_stock'] == pytest.approx(plain['fv'], rel=1e-12)
+    assert run.summary['so_compare'][-1]['③ 회사 선택 공정가치'] == pytest.approx(c['min'])
+
+
+@pytest.mark.parametrize('ex', [0, 1, 2, 3])
+def test_company_choice_converges_to_each_basis(ex):
+    def row(price):
+        return calculate(choice_case(so_ex=ex, so_mult=1.5, so_ex_m=6.0,
+                                     so_sp_rows=[dict(date='2026-12-31', price=price)])).raw['rows'][0]
+    big = row(1e9)                                     # 정산가격이 아주 크면 회사는 늘 주식을 준다 — ③ = ①
+    assert big['fv'] == pytest.approx(big['fv_stock'], rel=1e-12)
+    small = row(90.0)                                   # 정산가격이 행사가격보다 낮으면 받는 금액이 없다 — ③ = ② = 0
+    assert small['fv'] == 0 and small['fv_price'] == 0
+    values = [row(p)['fv'] for p in (100.0, 105.0, 120.0, 150.0, 300.0)]
+    assert values == sorted(values) and values[-1] <= big['fv_stock'] + 1e-9   # 정산가격이 오를수록 커지고 ① 을 넘지 않는다
+
+
+def test_settlement_price_is_the_last_fixed_value_at_each_node():
+    run = calculate(choice_case())
+    r = run.raw['rows'][0]
+    path = SO.sp_path(run.terms)
+    for i in range(0, r['n'] + 1, 7):
+        day = SO.node_date(run.terms, i, r['dt'])
+        want = max((p for d, p in path if d <= day), default=None, key=lambda p: [d for d, q in path if q == p][0])
+        assert r['sp'][i] == (None if day < path[0][0] else want)
+    assert r['sp'][r['ex_step']] is not None and r['sp'][-1] == 125.0
+    # 노드 풀이 — 받는 금액 = 작은 값(주가, 정산가격) − 행사가격, 대사 차이 0
+    worst = max(abs(SO.node_trace(run.terms, r, i, j)['reconciliation'])
+                for i in range(0, r['n'] + 1, 4) for j in range(0, i + 1, 3))
+    assert worst < 1e-9
+    tr = SO.node_trace(run.terms, r, r['n'], 0)
+    assert tr['payoff'] == 'min' and tr['settle_price'] == 125.0
+    assert tr['intrinsic'] == pytest.approx(min(tr['stock'], 125.0) - 100.0)
+
+
+def test_exercise_from_months_before_expiry():
+    base = dict(div_y=0.03, so_exit=0.05, grid_days=14.0)
+    r3 = calculate(case(so_ex=3, so_ex_m=12.0, **base)).raw['rows'][0]
+    r1 = calculate(case(so_ex=1, **base)).raw['rows'][0]
+    r0 = calculate(case(so_ex=0, **base)).raw['rows'][0]
+    assert r3['late_step'] == math.ceil((r3['t_end'] - 1.0)/r3['dt'] - 1e-9) and r3['ex_step'] <= r3['late_step'] < r3['n']
+    assert not any(any(g) for g in r3['exercise'][r3['ex_step']:r3['late_step']])     # 그 전에는 행사하지 않는다
+    assert any(any(g) for g in r3['exercise'][r3['late_step']:r3['n']])                # 그 뒤에는 내가격이면 행사
+    assert r3['fv'] <= r1['fv'] + 1e-9 and r3['fv'] != r0['fv']       # 정해진 규칙이라 최적 행사보다 크지 않다 (유럽형보다 작을 수도 있다)
+    tiny = calculate(case(so_ex=3, so_ex_m=0.001, **base)).raw['rows'][0]             # 마지막 노드뿐 — 유럽형과 같다
+    assert tiny['late_step'] == tiny['n'] and tiny['fv'] == pytest.approx(r0['fv'], rel=1e-12)
+    whole = calculate(case(so_ex=3, so_ex_m=120.0, **base)).raw['rows'][0]           # 행사 시작부터
+    assert whole['late_step'] == whole['ex_step']
+    tr = SO.node_trace(calculate(case(so_ex=3, so_ex_m=12.0, **base)).terms, r3, r3['late_step'] - 1, 0)
+    assert '만기 12개월 전' in tr['rule'] and abs(tr['reconciliation']) < 1e-9
+
+
+def test_company_choice_reaches_review_evidence_and_workpapers():
+    run = calculate(choice_case(so_ex=3, so_ex_m=6.0))
+    codes = {i.code for i in run.issues}
+    assert {'so_choice', 'so_choice_price', 'so_late_exercise'} <= codes
+    topic = next(t for t in TOPICS if t['id'] == 'so_choice')
+    assert applicable(topic, run.case.effective()) and not applicable(topic, case().effective())
+    assert {s['title'] for s in topic['sources']} >= {f'K-IFRS 제1102호 {p}' for p in ('41', '42', '43')}
+    c = run.raw['compare']
+    # 기본 값 조서 — 평가요약에 ①②③, 결제방식 비교 · 정산가격 경로 시트
+    basic = _workbook(run)
+    assert {'결제방식 비교', '정산가격 경로'} <= set(basic.sheetnames)
+    summary = {r[0]: r[1:] for r in basic['평가요약'].iter_rows(values_only=True) if r and r[0]}
+    for key in ('stock', 'price', 'min'):
+        got = summary[SO.PAYOFF_LABELS[key] + ' — ' + SO.PAYOFF_TEXT[key]]
+        assert got[0] == pytest.approx(c[key]) and got[1] == pytest.approx(c[key]/1000.0)
+    assert summary['결제 방식'][0] == SO.SETTLE_LABELS[2] and summary['조기행사 가정'][0] == '만기 6개월 전부터 행사'
+    assert summary['정산가격 결정 방식'][0].startswith('직전 연도말') and summary['비교 점검'][0].endswith('맞음')
+    prices = list(basic['정산가격 경로'].iter_rows(values_only=True))
+    assert prices[0] == ('확정일', '정산가격(원)') and prices[1:] == [(x['date'], x['price']) for x in SP]
+    # 상세 값 조서 — 정산가격 경로 · 선택 시트 · 결과 4번 표 · 판단·근거
+    wb = _workbook(run, detail=True)
+    names = wb.sheetnames
+    assert names.index('정산가격 경로') == names.index('가정') + 1 and names.index('선택 1차') == names.index('격자 1차') + 1
+    X, G = wb['선택 1차'], wb['격자 1차']
+    r = run.raw['rows'][0]
+    for i in (r['ex_step'], r['n']):
+        for down in (0, i // 2, i):
+            P = r['sp'][i]
+            assert X.cell(SOW.SR['정산가격 P (직전 확정값)'], 3 + i).value == P
+            assert X.cell(SOW.SEL_TREE + down, 3 + i).value == pytest.approx(min(G.cell(20 + down, 3 + i).value, P) - 100.0)
+    rows = _records(wb['결과'], '회차', '③ 회사 선택 1주당')
+    assert rows[-1]['회차'] == '합계' and rows[-1]['③ 회사 선택 공정가치'] == pytest.approx(c['min'])
+    assert rows[0]['③ ≤ ①'] == rows[0]['③ ≤ ②'] == '맞음'
+    guide = ' '.join(str(v) for row in wb['해설'].iter_rows(values_only=True) for v in row if v)
+    assert '작은 값(주가, 정산가격) − 행사가격' in guide and '문단 43(3)' in guide and '만기 6개월 전부터 행사' in guide
+    basis = ' '.join(str(v) for row in wb['판단·근거'].iter_rows(values_only=True) for v in row if v)
+    assert '1102' in basis and '41' in basis and '43' in basis
+
+
+def test_formula_workbook_opens_only_the_settlement_prices_as_new_inputs():
+    run = calculate(FORMULA_CASES['회사 선택 · 최적 행사 · 퇴사']())
+    wb = load_workbook(io.BytesIO(_xlsx(run, detail=True, formula=True)))
+    editable = {(s.title, c.coordinate) for s in wb for row in s.iter_rows() for c in row if c.protection.locked is False}
+    assert {x for x in editable if x[0] == '정산가격 경로'} == {('정산가격 경로', f'C{7 + k}') for k in range(len(SP))}
+    assert {x[0] for x in editable} == {'가정', '정산가격 경로'}
+    X = wb['선택 1차']
+    r = run.raw['rows'][0]
+    c = 3 + r['n']
+    assert X.cell(SOW.SR['정산가격 P (직전 확정값)'], c).value.startswith('=LOOKUP(')
+    assert X.cell(SOW.SEL_TREE, c).value.startswith("=MIN('격자 1차'!")
+    assert "'선택 1차'!" in wb['격자 1차'].cell(SOW.layout(r['n'])['value'], c).value      # 마지막 열 = 큰 값(X, 0)
+
+
+@pytest.mark.skipif(not LIBRE, reason='리브레오피스 없음')
+def test_formula_workbook_follows_changed_settlement_prices_like_the_app():
+    c = FORMULA_CASES['회사 선택 · 최적 행사 · 퇴사']()
+    wb = load_workbook(io.BytesIO(_xlsx(calculate(c), detail=True, formula=True)))
+    P = wb['정산가격 경로']
+    row = next(r for r in range(7, 7 + len(SP)) if P.cell(r, 3).value == 112.0)
+    P.cell(row, 3).value = 140.0
+    wb['가정'][_input(wb, '측정기준일 주가(원)')].value = 110.0
+    out = io.BytesIO()
+    wb.save(out)
+    live = _recalc(out.getvalue())
+    c2 = copy.deepcopy(c)
+    c2.contract['so_sp_rows'][1]['price'] = 140.0
+    c2.market['S0'] = 110.0
+    app = calculate(c2)
+    from valuation.service import AMOUNT_LABELS
+    lab = _amount_rows(live['결과'])
+    for key, want in app.summary['amounts_total'].items():
+        assert lab[AMOUNT_LABELS[key]][0] == pytest.approx(want, rel=1e-10), key
+    rows = _records(live['결과'], '회차', '③ 회사 선택 1주당')
+    assert [x['③ 회사 선택 1주당'] for x in rows[:-1]] == pytest.approx([x['fv'] for x in app.raw['rows']], rel=1e-10)
+    assert rows[-1]['③ 회사 선택 공정가치'] == pytest.approx(app.raw['compare']['min'], rel=1e-10)
+
+
+def test_calculation_grid_shows_the_settlement_price(monkeypatch):
+    import json
+    from valuation.calculation_view import so_node_values, so_schedule_values, worksheet_html
+    run = calculate(choice_case(so_ex=3, so_ex_m=6.0))
+    r = run.raw['rows'][0]
+    monkeypatch.setattr(SO, 'value_row', lambda *a, **k: pytest.fail('화면이 다시 평가했습니다'))
+    sched = so_schedule_values(run, r)
+    assert [s['sp'] for s in sched['steps']] == r['sp']
+    assert [s['late'] for s in sched['steps']] == [i >= r['late_step'] for i in range(r['n'] + 1)]
+    view = so_node_values(run, r, r['late_step'] - 2, r['late_step'] + 2)
+    for n in view['nodes'].values():
+        P = r['sp'][n['i']]
+        assert n['intrinsic'] == pytest.approx(min(n['stock'], P) - 100.0)
+        assert n['value'] == r['values'][n['i']][n['down']]
+    early = so_node_values(run, r, 0, 2)                # 첫 확정일 전 노드 — 받는 금액이 없어도 화면 자료는 숫자만
+    page = worksheet_html(early) + worksheet_html(view)
+    assert 'NaN' not in page and 'Infinity' not in page
+    payload = json.loads(worksheet_html(view).split('type="application/json">')[1].split('</script>')[0])
+    assert payload['payoff'] == 'min' and payload['late_step'] == r['late_step']
+
+
+def test_screens_take_the_company_choice_settlement():
+    app = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=180)
+    app.run()
+    app.session_state['case'] = choice_case(so_ex=3, so_ex_m=6.0)
+    app.session_state['_workflow_stage'] = '입력·시장자료'
+    app.run()
+    assert not app.exception, app.exception
+    assert '정산가격 (회사 선택 결제)' in [h.value for h in app.subheader]
+    assert '조건 변경' not in [h.value for h in app.subheader]
+    assert any(n.label.startswith('만기 몇 개월 전부터 행사') for n in app.number_input)
+    app.session_state['_workflow_stage'] = '평가·분석'
+    app.run()
+    next(b for b in app.button if b.label == '현재 입력으로 평가').click().run()
+    assert not app.exception, app.exception
+    assert app.session_state.run.raw['choice']
+    assert any('결제방식 비교' in str(m.value) for m in app.markdown) or \
+        any('결제방식 비교' in h.value for h in app.subheader)
+    app.session_state['_workflow_stage'] = '계산내역'
+    for topic in ('노드 계산표', '노드 스케줄'):
+        app.session_state['_calc_topic'] = topic
+        app.run()
+        assert not app.exception, (topic, app.exception)
+
+
+def test_scenario_file_for_the_company_choice_runs():
+    import json
+    path = ROOT / '시나리오' / '주식선택권_회사선택결제_가상.json'
+    c = Case.from_dict(json.loads(path.read_text(encoding='utf-8')))
+    run = calculate(c)
+    assert run.raw['choice'] and run.raw['integrity'] == []
+    assert all(x['passed'] for x in run.summary['checks'])
+    k = run.raw['compare']
+    assert k['min'] <= k['stock'] and k['min'] <= k['price']

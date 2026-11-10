@@ -1,0 +1,113 @@
+{
+ "name": "가상 주식선택권 · 회사 선택 결제 (가상 사례)",
+ "schema": "valuation-case/2",
+ "contract": {
+  "inst": "SO",
+  "tranche": "제1차 (가상)",
+  "d_issue": "2026-03-31",
+  "d_mat": "2032-03-31",
+  "K0": 20000.0,
+  "so_settle": 2,
+  "so_fy_end": "12-31",
+  "so_mod": 0,
+  "so_mod_rows": [],
+  "so_mkt": 0,
+  "so_rows": [
+   {
+    "name": "1차 (50%)",
+    "vest": "2028-03-31",
+    "end": "",
+    "qty": 50000.0,
+    "keep": 0.9
+   },
+   {
+    "name": "2차 (50%)",
+    "vest": "2029-03-31",
+    "end": "",
+    "qty": 50000.0,
+    "keep": 0.85
+   }
+  ],
+  "so_sp_rows": [
+   {
+    "date": "2027-03-31",
+    "price": 21000.0
+   },
+   {
+    "date": "2028-03-31",
+    "price": 22400.0
+   },
+   {
+    "date": "2029-03-31",
+    "price": 23600.0
+   },
+   {
+    "date": "2030-03-31",
+    "price": 25000.0
+   },
+   {
+    "date": "2031-03-31",
+    "price": 26200.0
+   }
+  ],
+  "so_sp_note": "직전 사업연도말 연결 순자산 × 1.5 ÷ 발행주식 총수 — 정기주주총회 승인 재무제표 기준, 해마다 3월 말 확정 (가상)",
+  "so_sp_src": "가상 사례 — 실제 회사 자료 아님"
+ },
+ "market": {
+  "S0": 20000.0,
+  "sig": 0.35,
+  "div_y": 0.005,
+  "rf_curve": [
+   [
+    1,
+    0.028
+   ],
+   [
+    3,
+    0.029
+   ],
+   [
+    5,
+    0.03
+   ],
+   [
+    10,
+    0.031
+   ]
+  ],
+  "y_type": "spot",
+  "cmp_rf": 1,
+  "s0_src": "가상 주가"
+ },
+ "method": {
+  "d_base": "2026-03-31",
+  "so_ex": 3,
+  "so_ex_m": 6.0,
+  "so_mult": 2.0,
+  "so_exit": 0.04,
+  "grid_days": 14.0,
+  "gap_m": 1.0,
+  "so_prev_liab": -1.0,
+  "so_paid": 0.0,
+  "so_nv": 0.0
+ },
+ "sources": {
+  "contract": "가상 사례 — 고객 자료가 아닌 시험용 숫자",
+  "so_sp_rows": "가상 — 직전 사업연도말 순자산 기준 공식가격을 해마다 한 번 확정한다고 가정",
+  "so_ex": "가상 — 만기 6개월 전부터 내가격이면 행사한다고 가정"
+ },
+ "assumptions": [],
+ "additional_rights": [],
+ "judgments": {},
+ "exercise_styles": {},
+ "contract_review": {},
+ "contract_scenarios": [],
+ "cashflow_scenarios": [],
+ "market_evidence": {},
+ "review_controls": {},
+ "imported_defaults": [],
+ "notes": "",
+ "memos": {},
+ "calibration": {},
+ "memo_context": {}
+}

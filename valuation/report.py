@@ -434,9 +434,18 @@ def judgment_rows(run):
             if legacy.pc_overlap(t):
                 add('평가방법', '풋·콜 우선순위', ['투자자 조기상환 우선', '발행자 매도청구 우선'][int(t.pc_order)], '', 'priority', 'priority')
         add('평가방법', '이자율모형(BDT)', '적용' if legacy.put_bdt_on(t) else '확정금리 격자', '', 'bdt', 'bdt')
+    if legacy.is_so(t) and r.get('choice'):
+        c = r['compare']
+        add('결제방식', '회사 선택 결제 (주식 교부 또는 정산가격 차액 현금)',
+            '현금으로 결제할 현재의무가 없다고 보고 주식결제형으로 측정합니다 (1102 문단 41·43). 현재의무가 있으면 '
+            '현금결제형입니다 (문단 42). 회사가 싼 쪽을 고른다고 보고 행사 손익을 작은 값(주가, 정산가격) − 행사가격으로 '
+            '잽니다. 결제일에 공정가치가 더 큰 방식을 고르면 초과 결제가치를 추가 비용으로 인식합니다 (문단 43(3)).',
+            f"① 주가 기준 {c['stock']:,.0f}원 · ② 정산가격 기준 {c['price']:,.0f}원 · ③ 회사 선택 {c['min']:,.0f}원 "
+            "(공정가치 합계 · ③ 이 주 결과)", 'so_choice', 'so_choice')
     values = run.case.effective()
     for tp in TOPICS:
-        if tp['id'] in {'embedded', 'third_party_call', 'bdt'} or not applicable(tp, values) or not memos.get(tp['id']):
+        if (tp['id'] in {'embedded', 'third_party_call', 'bdt'} | exported_memos or not applicable(tp, values)
+                or not memos.get(tp['id'])):
             continue
         add('평가자 메모', tp['title'], '기록만 · 계산 설정은 입력에서 변경', '', tp['id'], tp['id'])
     day1 = run.summary.get('day1')
